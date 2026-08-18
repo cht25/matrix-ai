@@ -71,7 +71,7 @@ export function QuizClient({
     return (
       <Card className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-extrabold text-ink">{result.passed ? "🎉 You passed!" : "Keep going — try again!"}</h2>
+          <h2 className="text-xl font-extrabold text-ink">{result.passed ? " You passed!" : "Keep going — try again!"}</h2>
           <Badge className={result.passed ? "border-success/30 bg-success-soft text-success" : "border-warning/30 bg-warning-soft text-warning"}>
             {result.score_percent}% (needed {passPercent}%)
           </Badge>
@@ -86,11 +86,11 @@ export function QuizClient({
             const correct = options.find((o) => o.id === r?.correct_option_id);
             return (
               <div key={q.id} className={`rounded-xl border px-4 py-3 ${r?.correct ? "border-success/30 bg-success-soft/50" : "border-danger/30 bg-danger-soft/50"}`}>
-                <p className="font-medium text-ink">{r?.correct ? "✅" : "❌"} {q.question}</p>
+                <p className="font-medium text-ink">{r?.correct ? "✓" : "✕"} {q.question}</p>
                 <p className="mt-1 text-sm text-ink-2">
                   {r?.correct ? "Correct!" : <>Your answer: <strong>{selected?.option_text ?? "—"}</strong> · Correct: <strong>{correct?.option_text}</strong></>}
                 </p>
-                {q.explanation ? <p className="mt-1 text-xs text-ink-3">💡 {q.explanation}</p> : null}
+                {q.explanation ? <p className="mt-1 text-xs text-ink-3"> {q.explanation}</p> : null}
               </div>
             );
           })}
@@ -98,7 +98,7 @@ export function QuizClient({
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => { setResult(null); setAnswers({}); }}>Retake quiz</Button>
           <Button onClick={() => router.push(`/courses/${courseSlug}`)}>Back to course</Button>
-          {result.passed ? <Button onClick={() => void issueCertificate()} disabled={busy}>🏅 Claim your certificate</Button> : null}
+          {result.passed ? <Button onClick={() => void issueCertificate()} disabled={busy}> Claim your certificate</Button> : null}
         </div>
       </Card>
     );
@@ -108,7 +108,7 @@ export function QuizClient({
     <Card className="space-y-6">
       <div>
         <h2 className="text-xl font-extrabold text-ink">{quizTitle}</h2>
-        <p className="mt-1 text-sm text-ink-3">You need {passPercent}% to pass. Scoring happens server-side — no shortcuts! 😉</p>
+        <p className="mt-1 text-sm text-ink-3">You need {passPercent}% to pass. Scoring happens server-side — no shortcuts! </p>
       </div>
 
       {questions.map((q, qi) => (

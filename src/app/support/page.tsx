@@ -1,15 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { BookOpen, FileQuestion, LifeBuoy, ShieldAlert } from "lucide-react";
 import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Support" };
 
 const TOPICS = [
-  { icon: "🚨", title: "Emergency help", body: "Account hacked, OTP shared, money lost or being threatened? Get immediate defensive steps.", href: "/emergency", cta: "I Need Help Now" },
-  { icon: "📚", title: "Documentation", body: "Guides for every part of MATRIX: chat, scanner, courses, certificates, privacy and more.", href: "/docs", cta: "Read the docs" },
-  { icon: "📢", title: "Report a scam", body: "File a private report or find the verified official reporting resource for your country.", href: "/report", cta: "Report a scam" },
-  { icon: "❓", title: "FAQ", body: "Common questions about accounts, age verification, the AI, memory and deletion.", href: "/docs/faq", cta: "Open the FAQ" },
+  { icon: <ShieldAlert size={18} strokeWidth={1.5} />, title: "Emergency help", body: "Account hacked, OTP shared, money lost or being threatened? Get immediate defensive steps.", href: "/emergency", cta: "I Need Help Now" },
+  { icon: <BookOpen size={18} strokeWidth={1.5} />, title: "Documentation", body: "Guides for every part of MATRIX: chat, scanner, courses, certificates, privacy and more.", href: "/docs", cta: "Read the docs" },
+  { icon: <LifeBuoy size={18} strokeWidth={1.5} />, title: "Report a scam", body: "File a private report or find the verified official reporting resource for your country.", href: "/report", cta: "Report a scam" },
+  { icon: "", title: "FAQ", body: "Common questions about accounts, age verification, the AI, memory and deletion.", href: "/docs/faq", cta: "Open the FAQ" },
 ];
 
 export default function SupportPage() {
@@ -30,7 +31,7 @@ export default function SupportPage() {
         <div className="mt-8 grid gap-4 sm:grid-cols-2">
           {TOPICS.map((t) => (
             <div key={t.title} className="card card-hover flex flex-col !p-5">
-              <span className="text-2xl" aria-hidden="true">{t.icon}</span>
+              <span className="text-ink-3" aria-hidden="true">{t.icon}</span>
               <h2 className="mt-2 font-bold text-ink">{t.title}</h2>
               <p className="mt-1 flex-1 text-sm text-ink-2">{t.body}</p>
               <Link href={t.href} className="mt-3"><Button variant="outline" className="w-full">{t.cta} →</Button></Link>

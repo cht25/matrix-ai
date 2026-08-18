@@ -47,7 +47,7 @@ export default async function DashboardPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Hi {profile?.full_name?.split(" ")[0] ?? "there"} 👋</h1>
+          <h1 className="font-display text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Hi {profile?.full_name?.split(" ")[0] ?? "there"}</h1>
           <p className="mt-1 text-ink-2">Your cyber safety snapshot.</p>
         </div>
         <Link href="/chat"><span className="hidden sm:inline-block"><span className="inline-flex min-h-11 items-center rounded-xl bg-accent px-4 text-sm font-semibold text-white shadow-[0_4px_16px_var(--accent-glow)] hover:brightness-110">Open MATRIX AI</span></span></Link>

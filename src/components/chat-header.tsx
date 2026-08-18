@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { MoreVertical } from "lucide-react";
 import { createClient } from "@/lib/supabase/browser";
 import { Input } from "@/components/ui";
 
@@ -59,7 +60,7 @@ export function ChatHeader({ conversationId, initialTitle }: { conversationId: s
       ) : (
         <button onClick={() => setEditing(true)} className="group flex min-h-11 items-center gap-2 text-left" aria-label="Rename conversation">
           <h1 className="max-w-[65vw] truncate text-lg font-bold text-ink group-hover:text-accent">{title}</h1>
-          <span className="text-xs text-ink-3 opacity-0 transition-opacity group-hover:opacity-100">✏️ rename</span>
+          <span className="text-[11px] text-ink-3 opacity-0 transition-opacity group-hover:opacity-100">Rename</span>
         </button>
       )}
       <div className="relative shrink-0">
@@ -67,9 +68,9 @@ export function ChatHeader({ conversationId, initialTitle }: { conversationId: s
           onClick={() => setMenu(!menu)}
           aria-label="Conversation actions"
           aria-expanded={menu}
-          className="grid h-11 w-11 place-items-center rounded-xl text-ink-2 transition-colors hover:bg-surface-2"
+          className="grid h-10 w-10 place-items-center rounded-md text-ink-2 transition-colors hover:bg-surface-2"
         >
-          ⋯
+          <MoreVertical size={16} strokeWidth={1.6} />
         </button>
         {menu ? (
           <>

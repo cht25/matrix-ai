@@ -29,10 +29,10 @@ export default async function ScamArticlePage({ params }: { params: Promise<{ sl
         <p className="mt-2 text-ink-2">{article.description}</p>
       </div>
 
-      <Section title="⚠️ Warning signs" body={article.warning_signs} />
-      <Section title="🛡️ How to prevent it" body={article.prevention} />
-      <Section title="✅ What to do if it happened" body={article.response_steps} />
-      <Section title="📢 Reporting guidance" body={article.reporting_guidance} />
+      <Section title="Warning signs" body={article.warning_signs} />
+      <Section title="How to prevent it" body={article.prevention} />
+      <Section title="What to do if it happened" body={article.response_steps} />
+      <Section title="Reporting guidance" body={article.reporting_guidance} />
 
       <Card className="!p-4 text-sm text-ink-3">
         Source: <a href={article.source_url || "#"} target="_blank" rel="noopener noreferrer" className="font-medium text-accent hover:underline">{article.source_name || "Verified research"}</a>

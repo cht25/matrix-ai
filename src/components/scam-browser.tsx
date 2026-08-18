@@ -2,7 +2,7 @@
 
 // Searchable, filterable scam library browser.
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Card, EmptyState, Input } from "@/components/ui";
 import { cn } from "@/lib/utils";
@@ -10,9 +10,26 @@ import { cn } from "@/lib/utils";
 type Category = { id: string; slug: string; name: string; description: string; icon: string };
 type Article = { id: string; category_id: string; title: string; slug: string; description: string; source_name: string; last_verified: string };
 
-const EMOJI: Record<string, string> = {
-  fish: "🐟", cart: "🛒", briefcase: "💼", wrench: "🔧", gift: "🎁", heart: "💔",
-  chart: "📈", mask: "🎭", bug: "🐛", fingerprint: "🖐️", shield: "🛡️", key: "🔑", otp: "🔢",
+import {
+  AlertTriangle, Briefcase, Bug, CreditCard, Fingerprint, Gift, KeyRound, MessageSquare,
+  QrCode, Search, Shield, ShieldAlert, ShoppingCart, TrendingUp, UserX, Wrench,
+} from "lucide-react";
+
+const CATEGORY_ICONS: Record<string, ReactNode> = {
+  fish: <MessageSquare size={15} strokeWidth={1.5} />,
+  cart: <ShoppingCart size={15} strokeWidth={1.5} />,
+  briefcase: <Briefcase size={15} strokeWidth={1.5} />,
+  wrench: <Wrench size={15} strokeWidth={1.5} />,
+  gift: <Gift size={15} strokeWidth={1.5} />,
+  heart: <UserX size={15} strokeWidth={1.5} />,
+  chart: <TrendingUp size={15} strokeWidth={1.5} />,
+  mask: <UserX size={15} strokeWidth={1.5} />,
+  bug: <Bug size={15} strokeWidth={1.5} />,
+  fingerprint: <Fingerprint size={15} strokeWidth={1.5} />,
+  shield: <Shield size={15} strokeWidth={1.5} />,
+  key: <KeyRound size={15} strokeWidth={1.5} />,
+  otp: <AlertTriangle size={15} strokeWidth={1.5} />,
+  qr: <QrCode size={15} strokeWidth={1.5} />,
 };
 
 export function ScamBrowser({ categories, articles }: { categories: Category[]; articles: Article[] }) {
@@ -55,7 +72,7 @@ export function ScamBrowser({ categories, articles }: { categories: Category[]; 
               cat === c.id ? "border-accent bg-accent-soft text-accent" : "border-border-strong bg-surface text-ink-2 hover:border-accent",
             )}
           >
-            {EMOJI[c.icon] ?? "🛡️"} {c.name}
+            {CATEGORY_ICONS[c.icon] ?? <ShieldAlert size={15} strokeWidth={1.5} />} {c.name}
           </button>
         ))}
       </div>
@@ -68,7 +85,7 @@ export function ScamBrowser({ categories, articles }: { categories: Category[]; 
             const c = categories.find((x) => x.id === a.category_id);
             return (
               <Link key={a.id} href={`/scams/${a.slug}`} className="card card-hover flex flex-col !p-5">
-                <span className="text-2xl" aria-hidden="true">{EMOJI[c?.icon ?? ""] ?? "🛡️"}</span>
+                <span className="text-ink-3" aria-hidden="true">{CATEGORY_ICONS[c?.icon ?? ""] ?? <ShieldAlert size={18} strokeWidth={1.5} />}</span>
                 <h3 className="mt-2 font-bold text-ink">{a.title}</h3>
                 <p className="mt-1 line-clamp-3 flex-1 text-sm text-ink-2">{a.description}</p>
                 <p className="mt-3 text-xs text-ink-3">
@@ -84,7 +101,7 @@ export function ScamBrowser({ categories, articles }: { categories: Category[]; 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {categories.map((c) => (
             <Card key={c.id} className="!p-4">
-              <p className="text-xl" aria-hidden="true">{EMOJI[c.icon] ?? "🛡️"}</p>
+              <p className="text-ink-3" aria-hidden="true">{CATEGORY_ICONS[c.icon] ?? <ShieldAlert size={18} strokeWidth={1.5} />}</p>
               <h2 className="mt-1 font-bold text-ink">{c.name}</h2>
               <p className="mt-0.5 text-xs text-ink-2">{c.description}</p>
             </Card>

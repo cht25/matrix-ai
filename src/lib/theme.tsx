@@ -2,6 +2,7 @@
 
 // Theme system: dark (default) · light · system, persisted in localStorage.
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Monitor, Moon, Sun } from "lucide-react";
 
 export type Theme = "dark" | "light" | "system";
 const KEY = "matrix-theme";
@@ -69,20 +70,20 @@ export function useTheme() {
 
 const ORDER: Theme[] = ["dark", "light", "system"];
 const LABELS: Record<Theme, string> = { dark: "Dark", light: "Light", system: "System" };
-const ICONS: Record<Theme, string> = { dark: "🌙", light: "☀️", system: "🖥️" };
 
 export function ThemeToggle({ compact = false }: { compact?: boolean }) {
   const { theme, setTheme } = useTheme();
   const next = ORDER[(ORDER.indexOf(theme) + 1) % ORDER.length];
+  const Icon = theme === "dark" ? Moon : theme === "light" ? Sun : Monitor;
   return (
     <button
       type="button"
       onClick={() => setTheme(next)}
       aria-label={`Theme: ${LABELS[theme]}. Switch to ${LABELS[next]}.`}
       title={`Theme: ${LABELS[theme]} — click to switch to ${LABELS[next]}`}
-      className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-border bg-surface px-3 text-sm font-medium text-ink-2 transition-colors hover:border-border-strong hover:text-ink"
+      className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border bg-surface px-3 text-sm font-medium text-ink-2 transition-colors hover:border-border-strong hover:text-ink"
     >
-      <span aria-hidden="true">{ICONS[theme]}</span>
+      <Icon size={15} strokeWidth={1.75} aria-hidden="true" />
       {!compact ? LABELS[theme] : null}
     </button>
   );

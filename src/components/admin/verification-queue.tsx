@@ -45,7 +45,7 @@ export function VerificationQueue({ codes }: { codes: Set<string> }) {
     return <Card><p className="text-sm text-ink-3">You need the <strong>verification.review</strong> permission.</p></Card>;
   }
   if (!items) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;
-  if (items.length === 0) return <Card><p className="text-sm text-ink-3">🎉 No pending age verifications.</p></Card>;
+  if (items.length === 0) return <Card><p className="text-sm text-ink-3"> No pending age verifications.</p></Card>;
 
   return (
     <div className="space-y-3">
@@ -114,7 +114,7 @@ export function ConsentQueue({ codes }: { codes: Set<string> }) {
     return <Card><p className="text-sm text-ink-3">You need the <strong>consent.review</strong> permission.</p></Card>;
   }
   if (!items) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;
-  if (items.length === 0) return <Card><p className="text-sm text-ink-3">🎉 No pending consents.</p></Card>;
+  if (items.length === 0) return <Card><p className="text-sm text-ink-3"> No pending consents.</p></Card>;
 
   return (
     <div className="space-y-3">

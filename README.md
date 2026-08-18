@@ -37,7 +37,7 @@ server-side AI gateway.
 | Layer | Technology |
 |---|---|
 | Frontend | Next.js 15 (App Router), React 19, TypeScript, Tailwind CSS 4 |
-| Design | MATRIX design system: dark/light/system themes, animated cyber background (canvas, reduced-motion aware), design tokens |
+| Design | **MATRIX visual identity**: monochromatic (deep black · charcoal · off-white) with restrained steel-blue accent; editorial Inter + Manrope typography; custom calligraphic vector wordmark; monochrome lucide iconography; animated cinematic background (fine grids, sparse network topology, reduced-motion aware) |
 | Database | **Supabase PostgreSQL** (single source of truth — no other database) |
 | Auth | Supabase Auth (email/password, Google, Facebook, MFA/TOTP) |
 | Storage | Supabase Storage (private buckets + signed URLs) |
@@ -69,6 +69,17 @@ Open MATRIX  →  Login (root / shows the login screen for guests)
 - AI responses **stream progressively** with stop / retry / regenerate, markdown, code blocks with copy buttons, timestamps, and image attachments that run the screenshot scanner.
 - `/docs` is a full documentation system: sticky sidebar, Ctrl+K search, reading progress, breadcrumbs, table of contents, prev/next navigation, callouts and code blocks.
 - Admin panel lives at `/admin` with sub-routes: `/admin/users`, `/admin/verification`, `/admin/consents`, `/admin/reports`, `/admin/courses`, `/admin/scams`, `/admin/security`, `/admin/audit-logs`.
+
+### Visual identity (design override)
+
+- **Logo** — custom calligraphic vector MATRIX wordmark (editorial letterforms + signature swash) with a monogram M mark; used on login, sidebar, docs, certificate and footer; monochrome, theme-adaptive.
+- **Typography** — Inter for UI, Manrope for display moments (bundled locally via Fontsource); the wordmark is the only calligraphic element.
+- **Color** — near-monochrome: `#050608` deep black, `#0b0d10` surfaces, `#e9ebee` ink, restrained steel-blue `#93a5be` accent. No bright gradients, no neon, no rainbow.
+- **Background** — fine geometric grid, sparse network nodes, thin data paths, faint technical glyphs; extremely subtle, mobile-reduced, static under `prefers-reduced-motion`.
+- **Chat** — editorial layout: AI replies are typographic (hairline rule, no bubbles); user messages are understated bordered notes; large centered composer with attachment and send controls.
+- **Icons** — monochromatic lucide icon set; no emoji in navigation or UI chrome (content copy may carry typographic marks only).
+- **Certificate** — bordered certificate document with corner accents, the calligraphic wordmark, and public-safe fields only.
+- Regenerate favicons anytime with `node scripts/generate-icons.mjs`.
 
 ## Architecture
 

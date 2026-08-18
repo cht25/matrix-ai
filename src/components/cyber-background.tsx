@@ -1,9 +1,9 @@
 "use client";
 
-// MATRIX animated cyber background — faint grid, drifting network nodes with
-// connecting lines, slow binary particles, soft electric-blue highlights.
-// Lightweight canvas: capped DPR, mobile-reduced density, static frame under
-// prefers-reduced-motion, pauses when the tab is hidden.
+// MATRIX ambient background — a quiet, cinematic cyber-intelligence
+// environment: fine geometric grid, sparse network topology, thin data
+// paths, minimal particles, faint technical glyphs. Monochrome, extremely
+// subtle, reduced-motion aware, mobile-reduced, pauses when hidden.
 
 import { useEffect, useRef } from "react";
 
@@ -13,8 +13,7 @@ type Particle = {
   vx: number;
   vy: number;
   r: number;
-  accent: boolean;
-  text: string | null;
+  glyph: string | null;
   phase: number;
 };
 
@@ -29,12 +28,12 @@ export function CyberBackground() {
 
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const isMobile = window.innerWidth < 768;
-    const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.25 : 1.75);
+    const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.25 : 1.5);
 
     let raf = 0;
     let running = true;
     let particles: Particle[] = [];
-    const BINARY = ["0", "1"];
+    const GLYPHS = ["0", "1", "·", "×", "+", "//"];
 
     const resize = () => {
       const w = window.innerWidth;
@@ -45,34 +44,32 @@ export function CyberBackground() {
       canvas.style.height = `${h}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      const count = Math.min(70, Math.floor((w * h) / 22000)) * (isMobile ? 0.55 : 1);
-      particles = Array.from({ length: Math.max(18, Math.floor(count)) }, (_, i) => ({
+      const count = Math.min(46, Math.floor((w * h) / 34000)) * (isMobile ? 0.5 : 1);
+      particles = Array.from({ length: Math.max(10, Math.floor(count)) }, () => ({
         x: Math.random() * w,
         y: Math.random() * h,
-        vx: (Math.random() - 0.5) * 0.22,
-        vy: (Math.random() - 0.5) * 0.22,
-        r: 1 + Math.random() * 2.2,
-        accent: i % 5 === 0,
-        text: Math.random() < 0.16 ? BINARY[Math.floor(Math.random() * 2)] : null,
+        vx: (Math.random() - 0.5) * 0.14,
+        vy: (Math.random() - 0.5) * 0.14,
+        r: 0.8 + Math.random() * 1.4,
+        glyph: Math.random() < 0.12 ? GLYPHS[Math.floor(Math.random() * GLYPHS.length)] : null,
         phase: Math.random() * Math.PI * 2,
       }));
     };
 
-    const draw = (t: number) => {
+    const draw = () => {
       const w = window.innerWidth;
       const h = window.innerHeight;
       const dark = document.documentElement.getAttribute("data-theme") !== "light";
       ctx.clearRect(0, 0, w, h);
 
-      const gridLine = dark ? "rgba(170,190,240,0.05)" : "rgba(11,18,32,0.045)";
-      const nodeLine = dark ? "rgba(122,162,255,0.14)" : "rgba(47,95,224,0.12)";
-      const nodeCore = dark ? "rgba(122,162,255,0.55)" : "rgba(47,95,224,0.5)";
-      const nodeDim = dark ? "rgba(170,190,240,0.22)" : "rgba(11,18,32,0.16)";
-      const accent = dark ? "rgba(122,162,255,0.85)" : "rgba(47,95,224,0.85)";
+      const grid = dark ? "rgba(226,230,238,0.035)" : "rgba(16,19,23,0.035)";
+      const line = dark ? "rgba(147,165,190,0.075)" : "rgba(60,74,96,0.08)";
+      const node = dark ? "rgba(147,165,190,0.3)" : "rgba(60,74,96,0.3)";
+      const glyph = dark ? "rgba(226,230,238,0.14)" : "rgba(16,19,23,0.12)";
 
-      // Faint grid
-      const step = 64;
-      ctx.strokeStyle = gridLine;
+      // Fine geometric grid
+      const step = 72;
+      ctx.strokeStyle = grid;
       ctx.lineWidth = 1;
       ctx.beginPath();
       for (let x = 0; x <= w; x += step) {
@@ -85,19 +82,18 @@ export function CyberBackground() {
       }
       ctx.stroke();
 
-      // Update particles
+      // Sparse network topology
       for (const p of particles) {
         p.x += p.vx;
         p.y += p.vy;
-        p.phase += 0.004;
-        if (p.x < -20) p.x = w + 20;
-        if (p.x > w + 20) p.x = -20;
-        if (p.y < -20) p.y = h + 20;
-        if (p.y > h + 20) p.y = -20;
+        p.phase += 0.002;
+        if (p.x < -16) p.x = w + 16;
+        if (p.x > w + 16) p.x = -16;
+        if (p.y < -16) p.y = h + 16;
+        if (p.y > h + 16) p.y = -16;
       }
 
-      // Connecting lines (distance-based)
-      const LINK = 130;
+      const LINK = 150;
       for (let i = 0; i < particles.length; i++) {
         for (let j = i + 1; j < particles.length; j++) {
           const a = particles[i];
@@ -106,9 +102,9 @@ export function CyberBackground() {
           const dy = a.y - b.y;
           const d2 = dx * dx + dy * dy;
           if (d2 < LINK * LINK) {
-            const alpha = (1 - Math.sqrt(d2) / LINK) * 0.55;
-            ctx.strokeStyle = nodeLine.replace("0.14", String((dark ? 0.14 : 0.12) * alpha));
-            ctx.lineWidth = 1;
+            const alpha = (1 - Math.sqrt(d2) / LINK) * 0.5;
+            ctx.strokeStyle = line.replace("0.075", String(0.075 * alpha)).replace("0.08", String(0.08 * alpha));
+            ctx.lineWidth = 0.75;
             ctx.beginPath();
             ctx.moveTo(a.x, a.y);
             ctx.lineTo(b.x, b.y);
@@ -117,48 +113,30 @@ export function CyberBackground() {
         }
       }
 
-      // Nodes
       for (const p of particles) {
-        if (p.accent) {
-          const pulse = 0.6 + 0.4 * Math.sin(p.phase * 2);
-          ctx.fillStyle = accent;
-          ctx.globalAlpha = 0.25 * pulse;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.r * 3.2, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.globalAlpha = 1;
-          ctx.fillStyle = accent;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-          ctx.fill();
-        } else {
-          ctx.fillStyle = nodeCore;
-          ctx.globalAlpha = 0.5;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.globalAlpha = 1;
-        }
-        if (p.text) {
-          ctx.fillStyle = nodeDim;
-          ctx.font = "10px ui-monospace, monospace";
-          ctx.globalAlpha = 0.5;
-          ctx.fillText(p.text, p.x + 5, p.y - 5);
-          ctx.globalAlpha = 1;
+        ctx.fillStyle = node;
+        ctx.globalAlpha = 0.5 + 0.3 * Math.sin(p.phase * 2);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        if (p.glyph) {
+          ctx.fillStyle = glyph;
+          ctx.font = "9px ui-monospace, monospace";
+          ctx.fillText(p.glyph, p.x + 5, p.y - 5);
         }
       }
     };
 
-    const loop = (t: number) => {
+    const loop = () => {
       if (!running) return;
-      draw(t);
+      draw();
       raf = requestAnimationFrame(loop);
     };
 
     resize();
     if (reduced) {
-      // Static frame only — respect reduced motion.
-      draw(0);
+      draw();
     } else {
       raf = requestAnimationFrame(loop);
     }
@@ -183,11 +161,5 @@ export function CyberBackground() {
     };
   }, []);
 
-  return (
-    <canvas
-      ref={canvasRef}
-      aria-hidden="true"
-      className="pointer-events-none fixed inset-0 -z-10"
-    />
-  );
+  return <canvas ref={canvasRef} aria-hidden="true" className="pointer-events-none fixed inset-0 -z-10" />;
 }

@@ -9,6 +9,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/browser";
 import { isValidEmail, validateAgeForRegistration, cn } from "@/lib/utils";
+import { Check, Upload } from "lucide-react";
 import { Alert, Button, Field, Input, Select, Spinner } from "@/components/ui";
 import { AuthFooterLink, AuthShell, Divider, OAuthButtons } from "@/components/auth/login-screen";
 
@@ -216,7 +217,7 @@ export function RegisterForm() {
             verification result is stored — never the document number.
           </p>
           <label className="flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-border-strong bg-surface-2 px-4 py-3 text-sm font-semibold text-ink transition-colors hover:border-accent">
-            {busy ? <Spinner /> : "📄 Choose document"}
+            {busy ? <Spinner /> : <><Upload size={15} strokeWidth={1.6} /> Choose document</>}
             <input type="file" accept="image/png,image/jpeg" className="sr-only" onChange={(e) => void uploadIdentity(e)} disabled={busy} />
           </label>
           {info ? <Alert tone="success">{info}</Alert> : null}
@@ -268,7 +269,7 @@ export function RegisterForm() {
 
       {step === 5 && (
         <div className="space-y-4 text-center">
-          <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-success-soft text-2xl" aria-hidden="true">🎉</div>
+          <div className="mx-auto grid h-12 w-12 place-items-center rounded-full border border-success/40 text-success"><Check size={20} strokeWidth={1.6} /></div>
           <h1 className="text-lg font-bold text-ink">Welcome to MATRIX</h1>
           <p className="text-sm text-ink-2">
             Your account is ready. Head into the chat to ask your first cybersecurity question.

@@ -1,4 +1,9 @@
 import type { Metadata } from "next";
+import "@fontsource/inter/400.css";
+import "@fontsource/inter/500.css";
+import "@fontsource/inter/600.css";
+import "@fontsource/manrope/500.css";
+import "@fontsource/manrope/600.css";
 import "./globals.css";
 import { ThemeProvider } from "@/lib/theme";
 import { CyberBackground } from "@/components/cyber-background";

@@ -1,65 +1,47 @@
 "use client";
 
-// Premium MATRIX authentication screen — shared by `/` and `/login`.
-// Black/white cyber aesthetic with subtle electric blue, animated by the
-// global CyberBackground, gentle card, loading/error states, accessible.
+// MATRIX authentication — premium, editorial, monochrome.
+// Calligraphic brand lockup as the primary identity; restrained inputs;
+// black sign-in button; OAuth as secondary actions.
 
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/browser";
-import { Logo, LogoWordmark } from "@/components/logo";
+import { BrandLockup } from "@/components/logo";
 import { Alert, Button, Field, Input, Spinner } from "@/components/ui";
 import { ThemeToggle } from "@/lib/theme";
 
 export function LoginScreen() {
   return (
-    <AuthShell title="AI Cyber Safety" subtitle="Sign in to continue to MATRIX">
+    <AuthShell>
       <LoginForm />
     </AuthShell>
   );
 }
 
-export function AuthShell({
-  title,
-  subtitle,
-  children,
-  footer,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-  footer?: React.ReactNode;
-}) {
+export function AuthShell({ children, title, subtitle }: { children: React.ReactNode; title?: string; subtitle?: string }) {
   return (
     <div className="relative flex min-h-dvh flex-col items-center justify-center px-4 py-10">
-      <div className="absolute right-4 top-4"><ThemeToggle /></div>
-      <div className="mb-8 flex flex-col items-center gap-3">
-        <Logo size="lg" showWordmark={false} />
-        <LogoWordmark className="text-3xl" />
-        <p className="text-xs font-semibold uppercase tracking-[0.3em] text-ink-3">{title}</p>
-        {subtitle ? <p className="text-sm text-ink-2">{subtitle}</p> : null}
-      </div>
-      <div className="card w-full max-w-md !rounded-[var(--radius-lg)] p-6 sm:p-8">{children}</div>
-      <p className="mt-6 text-center text-xs text-ink-3">
-        MATRIX is for users aged 11–17 · Powered by THAMJJ13.TOP White Hat Team
+      <div className="absolute right-4 top-4"><ThemeToggle compact /></div>
+      <div className="mb-8"><BrandLockup /></div>
+      {title ? (
+        <div className="mb-7 max-w-sm text-center">
+          <p className="text-lg font-medium tracking-tight text-ink">{title}</p>
+          {subtitle ? <p className="mt-1 text-[13px] leading-relaxed text-ink-2">{subtitle}</p> : null}
+        </div>
+      ) : null}
+      <div className="w-full max-w-sm">{children}</div>
+      <p className="mt-10 text-[11px] uppercase tracking-[0.18em] text-ink-3">
+        For ages 11–17 · THAMJJ13.TOP White Hat Team
       </p>
-      {footer}
     </div>
-  );
-}
-
-export function AuthFooterLink({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <p className="mt-5 text-center text-sm text-ink-2">
-      <Link href={href} className="font-semibold text-accent hover:text-accent-2">{children}</Link>
-    </p>
   );
 }
 
 export function Divider() {
   return (
-    <div className="my-5 flex items-center gap-3 text-[11px] font-semibold uppercase tracking-widest text-ink-3" aria-hidden="true">
+    <div className="my-6 flex items-center gap-4 text-[10.5px] font-medium uppercase tracking-[0.2em] text-ink-3" aria-hidden="true">
       <span className="h-px flex-1 bg-border" /> or <span className="h-px flex-1 bg-border" />
     </div>
   );
@@ -68,12 +50,12 @@ export function Divider() {
 export function OAuthButtons({ onGoogle, onFacebook }: { onGoogle: () => void; onFacebook: () => void }) {
   const [busy, setBusy] = useState<"google" | "facebook" | null>(null);
   return (
-    <div className="grid grid-cols-2 gap-3">
+    <div className="grid grid-cols-2 gap-2.5">
       <button
         type="button"
         disabled={busy !== null}
         onClick={() => { setBusy("google"); onGoogle(); }}
-        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-border-strong bg-surface px-3 text-sm font-semibold text-ink transition-colors hover:border-accent hover:text-ink disabled:opacity-60"
+        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border-strong bg-surface px-3 text-[13px] font-medium text-ink transition-colors hover:border-accent hover:text-accent disabled:opacity-60"
       >
         {busy === "google" ? <Spinner /> : <GoogleIcon />} Google
       </button>
@@ -81,7 +63,7 @@ export function OAuthButtons({ onGoogle, onFacebook }: { onGoogle: () => void; o
         type="button"
         disabled={busy !== null}
         onClick={() => { setBusy("facebook"); onFacebook(); }}
-        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-border-strong bg-surface px-3 text-sm font-semibold text-ink transition-colors hover:border-accent hover:text-ink disabled:opacity-60"
+        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border-strong bg-surface px-3 text-[13px] font-medium text-ink transition-colors hover:border-accent hover:text-accent disabled:opacity-60"
       >
         {busy === "facebook" ? <Spinner /> : <FacebookIcon />} Facebook
       </button>
@@ -191,11 +173,11 @@ export function LoginForm() {
           <Input id="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
         </Field>
         {error ? <Alert tone="danger">{error}</Alert> : null}
-        <Button type="submit" className="w-full !py-3" disabled={busy}>
+        <Button type="submit" className="w-full" disabled={busy}>
           {busy ? <Spinner /> : "Sign In"}
         </Button>
-        <p className="text-right text-sm">
-          <Link href="/forgot-password" className="font-medium text-accent hover:text-accent-2">
+        <p className="text-right text-[13px]">
+          <Link href="/forgot-password" className="text-ink-2 transition-colors hover:text-ink">
             Forgot password?
           </Link>
         </p>
@@ -203,12 +185,20 @@ export function LoginForm() {
 
       <Divider />
       <OAuthButtons onGoogle={() => oauth("google")} onFacebook={() => oauth("facebook")} />
-      <p className="mt-5 text-center text-sm text-ink-2">
+      <p className="mt-6 text-center text-[13px] text-ink-2">
         Don't have an account?{" "}
-        <Link href="/register" className="font-semibold text-accent hover:text-accent-2">
+        <Link href="/register" className="font-medium text-ink transition-colors hover:text-accent">
           Create account
         </Link>
       </p>
     </div>
+  );
+}
+
+export function AuthFooterLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <p className="mt-5 text-center text-[13px] text-ink-2">
+      <Link href={href} className="font-medium text-ink transition-colors hover:text-accent">{children}</Link>
+    </p>
   );
 }

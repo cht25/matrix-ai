@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/browser";
 import { calculateAge } from "@/lib/utils";
+import { Check, Circle, Upload } from "lucide-react";
 import { Alert, Button, Card, Field, Input, Select, Spinner } from "@/components/ui";
 
 type Profile = { full_name: string; date_of_birth: string | null; age_verified: boolean; school_name: string; class_grade: string; country: string };
@@ -133,7 +134,7 @@ export function OnboardingClient({
         <ul className="mt-3 space-y-2">
           {steps.map((s) => (
             <li key={s.title} className="flex items-start gap-3 text-sm">
-              <span aria-hidden="true">{s.done ? "✅" : "⬜"}</span>
+              <span className="mt-0.5 text-ink-3" aria-hidden="true">{s.done ? <Check size={15} strokeWidth={1.8} /> : <Circle size={15} strokeWidth={1.4} />}</span>
               <div>
                 <p className="font-medium text-ink">{s.title}</p>
                 {s.body ? <p className="text-ink-3">{s.body}</p> : null}
@@ -143,7 +144,7 @@ export function OnboardingClient({
         </ul>
         {allDone ? (
           <div className="mt-4">
-            <Alert tone="success">🎉 You're all set! Head to your dashboard.</Alert>
+            <Alert tone="success">You're all set — head to your dashboard.</Alert>
             <Button className="mt-3" onClick={() => router.push("/dashboard")}>Go to dashboard →</Button>
           </div>
         ) : null}
@@ -253,7 +254,7 @@ function IdentityUpload({ onUpload, busy }: { onUpload: (e: React.ChangeEvent<HT
         private storage bucket, is never exposed publicly, and is never sent to the AI.
       </p>
       <label className="mt-3 inline-flex cursor-pointer items-center gap-2 rounded-xl border border-border-strong bg-surface px-4 py-2.5 text-sm font-semibold text-ink-2 hover:bg-bg">
-        {busy ? <Spinner /> : "📄 Choose document"}
+        {busy ? <Spinner /> : <><Upload size={15} strokeWidth={1.6} /> Choose document</>}
         <input type="file" accept="image/png,image/jpeg" className="sr-only" onChange={onUpload} disabled={busy} />
       </label>
     </div>

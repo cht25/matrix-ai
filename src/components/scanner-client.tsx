@@ -6,6 +6,7 @@
 
 import { useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/browser";
+import { ImageIcon } from "lucide-react";
 import { Alert, Button, Card, Spinner } from "@/components/ui";
 import { Markdown } from "@/components/markdown";
 import { riskColor } from "@/lib/utils";
@@ -42,7 +43,7 @@ export function ScannerClient() {
           risk_level: "high",
           confidence: 0.85,
           reply:
-            "**Risk: High**  \n**Confidence: 85%**  \n\n**What we found:** Classic scam markers — urgency, a request for a one-time code, and a lookalike sender address.\n\n**Suspicious indicators:**\n- Pressure to act immediately\n- A request for a verification code\n- Sender address that mimics a real company\n\n**Recommended actions:**\n1. Don't reply or click anything.\n2. Tell a trusted adult.\n3. Report it using the verified resources.\n\n**What NOT to do:**\n- Don't share the code or password\n- Don't call numbers in the message\n\n**If you've already interacted:** Change affected passwords, sign out of all devices, and tell a trusted adult.\n\n_⚠️ Demo preview — real analysis runs when the AI gateway is deployed with GROQ_API_KEY._",
+            "**Risk: High**  \n**Confidence: 85%**  \n\n**What we found:** Classic scam markers — urgency, a request for a one-time code, and a lookalike sender address.\n\n**Suspicious indicators:**\n- Pressure to act immediately\n- A request for a verification code\n- Sender address that mimics a real company\n\n**Recommended actions:**\n1. Don't reply or click anything.\n2. Tell a trusted adult.\n3. Report it using the verified resources.\n\n**What NOT to do:**\n- Don't share the code or password\n- Don't call numbers in the message\n\n**If you've already interacted:** Change affected passwords, sign out of all devices, and tell a trusted adult.\n\n_Demo preview — real analysis runs when the AI gateway is deployed with GROQ_API_KEY._",
         });
         return;
       }
@@ -109,11 +110,11 @@ export function ScannerClient() {
         tabIndex={0}
         aria-label="Upload, drop or paste a screenshot to analyse"
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") inputRef.current?.click(); }}
-        className={`flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-14 text-center transition-colors ${
+        className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed px-6 py-14 text-center transition-colors ${
           dragOver ? "border-accent bg-accent-soft" : "border-border-strong bg-surface hover:border-accent"
         }`}
       >
-        <span className="text-4xl" aria-hidden="true">📸</span>
+        <span className="text-ink-3" aria-hidden="true"><ImageIcon size={28} strokeWidth={1.2} /></span>
         <p className="mt-3 font-semibold text-ink">Drop a screenshot here, click to choose one, or paste an image</p>
         <p className="mt-1 text-sm text-ink-3">PNG, JPEG or WebP · max 8 MB · stored privately</p>
         <input ref={inputRef} type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" onChange={(e) => void handleFile(e.target.files?.[0])} />

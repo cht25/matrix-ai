@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
+import { Award } from "lucide-react";
 import { Badge, Card, EmptyState } from "@/components/ui";
 import { formatDate } from "@/lib/utils";
 
@@ -40,9 +41,9 @@ export default async function CertificatesPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
           {certList.map((c) => (
-            <Card key={c.id} className="border-accent/20 bg-gradient-to-br from-surface to-accent-soft/40">
+            <Card key={c.id} className="border-border">
               <div className="flex items-start justify-between">
-                <span className="text-3xl" aria-hidden="true">🏅</span>
+                <span className="text-ink-3" aria-hidden="true"><Award size={26} strokeWidth={1.2} /></span>
                 <Badge className={c.verification_status === "valid" ? "border-success/30 bg-success-soft text-success" : "border-danger/30 bg-danger-soft text-danger"}>
                   {c.verification_status}
                 </Badge>

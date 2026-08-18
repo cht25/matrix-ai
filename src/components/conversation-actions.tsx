@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { MoreVertical } from "lucide-react";
 import { createClient } from "@/lib/supabase/browser";
 
 export function ConversationActions({ conversationId }: { conversationId: string }) {
@@ -42,7 +43,7 @@ export function ConversationActions({ conversationId }: { conversationId: string
         onClick={() => setMenu(!menu)}
         className="rounded-lg px-2 py-1.5 text-ink-3 hover:bg-surface-2 hover:text-ink-2"
       >
-        ⋯
+        More
       </button>
       {menu ? (
         <>

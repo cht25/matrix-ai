@@ -6,7 +6,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Logo, LogoWordmark } from "@/components/logo";
+import { Search } from "lucide-react";
+import { Logo, MatrixWordmark } from "@/components/logo";
 import { ThemeToggle } from "@/lib/theme";
 import { DOC_INDEX, DOC_SECTIONS, docNav, type DocSection } from "@/content/docs";
 import { cn } from "@/lib/utils";
@@ -84,7 +85,7 @@ function DocSearch({ onClose }: { onClose: () => void }) {
     <div className="fade-in fixed inset-0 z-[80] flex items-start justify-center bg-black/60 px-4 pt-[12vh] backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Search documentation">
       <div className="card w-full max-w-lg overflow-hidden !rounded-2xl shadow-[var(--shadow-pop)]">
         <div className="flex items-center gap-2 border-b border-border px-4">
-          <span className="text-ink-3">🔎</span>
+          <span className="text-ink-3"><Search size={15} strokeWidth={1.6} /></span>
           <input
             ref={inputRef}
             value={q}
@@ -176,10 +177,10 @@ export function DocsShell({ slug, children }: { slug: string; children: React.Re
         <div className="flex items-center gap-2">
           <button
             onClick={() => setSearchOpen(true)}
-            className="flex min-h-10 items-center gap-2 rounded-xl border border-border bg-surface px-3 text-sm text-ink-3 transition-colors hover:border-border-strong"
+            className="flex min-h-9 items-center gap-2 rounded-lg border border-border bg-surface px-3 text-[13px] text-ink-3 transition-colors hover:border-border-strong"
             aria-label="Search documentation (Ctrl+K)"
           >
-            🔎 <span className="hidden sm:inline">Search</span>
+            <Search size={14} strokeWidth={1.6} /> <span className="hidden sm:inline">Search</span>
             <kbd className="hidden rounded-md border border-border px-1.5 py-0.5 text-[10px] sm:inline">Ctrl K</kbd>
           </button>
           <ThemeToggle compact />
@@ -199,11 +200,10 @@ export function DocsShell({ slug, children }: { slug: string; children: React.Re
                 key={s.slug}
                 href={`/docs/${s.slug}`}
                 className={cn(
-                  "flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm transition-colors",
-                  s.slug === slug ? "bg-accent-soft font-semibold text-accent" : "text-ink-2 hover:bg-surface-2 hover:text-ink",
+                  "block rounded-md px-2.5 py-1.5 text-[13px] transition-colors",
+                  s.slug === slug ? "bg-surface-2 font-medium text-ink" : "text-ink-2 hover:bg-surface-2 hover:text-ink",
                 )}
               >
-                <span aria-hidden="true">{s.icon}</span>
                 {s.title}
               </Link>
             ))}
@@ -232,13 +232,13 @@ export function DocsShell({ slug, children }: { slug: string; children: React.Re
             {prev ? (
               <Link href={`/docs/${prev.slug}`} className="card card-hover group !p-4">
                 <p className="text-xs text-ink-3">← Previous</p>
-                <p className="mt-1 font-semibold text-ink group-hover:text-accent">{prev.icon} {prev.title}</p>
+                <p className="mt-1 font-semibold text-ink group-hover:text-accent">{prev.title}</p>
               </Link>
             ) : <span />}
             {next ? (
               <Link href={`/docs/${next.slug}`} className="card card-hover group !p-4 text-right">
                 <p className="text-xs text-ink-3">Next →</p>
-                <p className="mt-1 font-semibold text-ink group-hover:text-accent">{next.icon} {next.title}</p>
+                <p className="mt-1 font-semibold text-ink group-hover:text-accent">{next.title}</p>
               </Link>
             ) : null}
           </nav>
@@ -285,7 +285,7 @@ export function DocsShell({ slug, children }: { slug: string; children: React.Re
       {/* Footer */}
       <footer className="border-t border-border">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-4 py-8 text-sm text-ink-3 sm:flex-row">
-          <LogoWordmark className="text-lg" />
+          <MatrixWordmark className="h-5 w-24 text-ink" />
           <p>Powered by THAMJJ13.TOP White Hat Team</p>
         </div>
       </footer>

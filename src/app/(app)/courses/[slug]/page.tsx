@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
 import { Badge, Card, Progress } from "@/components/ui";
+import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Course" };
 
@@ -67,7 +68,7 @@ export default async function CourseDetailPage({ params }: { params: Promise<{ s
               {modLessons.map((l) => (
                 <li key={l.id}>
                   <Link href={`/courses/${course.slug}/lesson/${l.id}`} className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm hover:bg-bg">
-                    <span aria-hidden="true">{done.has(l.id) ? "✅" : "📖"}</span>
+                    <span className={cn("w-5 text-center text-[11px]", done.has(l.id) ? "text-success" : "text-ink-3")} aria-hidden="true">{done.has(l.id) ? "✓" : ""}</span>
                     <span className={done.has(l.id) ? "text-ink-3" : "font-medium text-ink"}>{l.title}</span>
                   </Link>
                 </li>
@@ -75,7 +76,7 @@ export default async function CourseDetailPage({ params }: { params: Promise<{ s
               {modQuizzes.map((q) => (
                 <li key={q.id}>
                   <Link href={`/courses/${course.slug}/quiz/${q.id}`} className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm hover:bg-bg">
-                    <span aria-hidden="true">{passedQuizzes.has(q.id) ? "🏆" : "🧠"}</span>
+                    <span aria-hidden="true">{passedQuizzes.has(q.id) ? "" : "Quiz"}</span>
                     <span className={passedQuizzes.has(q.id) ? "text-ink-3" : "font-medium text-ink"}>{q.title}</span>
                     {passedQuizzes.has(q.id) ? <Badge className="border-success/30 bg-success-soft text-success">Passed ✓</Badge> : <Badge className="border-border bg-surface text-ink-3">Needs {q.pass_percent}% to pass</Badge>}
                   </Link>
@@ -88,7 +89,7 @@ export default async function CourseDetailPage({ params }: { params: Promise<{ s
 
       {cert ? (
         <Card className="border-success/30 bg-success-soft">
-          <h2 className="font-bold text-success">🎉 You earned a certificate for this course!</h2>
+          <h2 className="font-bold text-success"> You earned a certificate for this course!</h2>
           <p className="mt-1 font-mono text-sm text-success">{cert.certificate_id}</p>
           <p className="mt-1 text-xs text-success">Issued {cert.issued_at?.slice(0, 10)} · Verify it publicly at /certificate/verify/…</p>
         </Card>
