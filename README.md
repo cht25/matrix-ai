@@ -185,6 +185,29 @@ npm run build && npm run start   # or deploy to Vercel/your host
 Enable email confirmations, restrict Auth redirect URLs, and configure Google/Facebook OAuth
 providers in the Supabase dashboard. Configure SMTP for branded emails (verification, reset, alerts).
 
+### Deploy to Render
+
+The repo ships a `render.yaml` blueprint (Node web service, `npm ci && npm run build`, `npm start`).
+Whether you created the service from the blueprint or manually, the service **must** have these
+environment variables (Render dashboard → your service → **Environment**), or the app has no
+backend to talk to:
+
+| Render env var | Value |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | your project URL, e.g. `https://<project-ref>.supabase.co` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | your project's `anon` `public` key |
+
+Both values come from **Supabase dashboard → Project Settings → Data API / API keys**
+(`https://supabase.com/dashboard/project/<ref>/settings/api`). Saving env vars on Render triggers a
+fresh build and deploy — required anyway, because `NEXT_PUBLIC_*` variables are inlined into the
+bundle at build time.
+
+> **Safety net:** a deployment built *without* these variables no longer crashes. Instead it boots
+> in a loudly-logged demo fallback (sample data, no AI, no real accounts — same experience as
+> `NEXT_PUBLIC_DEMO_MODE=true`) until real credentials are provided and the service is redeployed.
+> Symptom to look for in logs: `Your project's URL and Key are required to create a Supabase
+> client!` means the environment variables are missing — set them and redeploy.
+
 ### Promote your first admin
 
 ```sql
