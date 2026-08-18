@@ -1,16 +1,13 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { AuthShell } from "@/components/auth-shell";
-import { LoginForm } from "./login-form";
+import { LoginScreen } from "@/components/auth/login-screen";
 
 export const metadata: Metadata = { title: "Sign in" };
 
 export default function LoginPage() {
   return (
-    <AuthShell title="Welcome back" subtitle="Sign in to your MATRIX AI account.">
-      <Suspense fallback={<p className="text-sm text-slate-500">Loading…</p>}>
-        <LoginForm />
-      </Suspense>
-    </AuthShell>
+    <Suspense fallback={null}>
+      <LoginScreen />
+    </Suspense>
   );
 }

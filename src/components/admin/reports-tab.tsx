@@ -45,10 +45,10 @@ export function ReportsTab({ codes }: { codes: Set<string> }) {
   }
 
   if (!codes.has("reports.view")) {
-    return <Card><p className="text-sm text-slate-500">You need the <strong>reports.view</strong> permission.</p></Card>;
+    return <Card><p className="text-sm text-ink-3">You need the <strong>reports.view</strong> permission.</p></Card>;
   }
-  if (!items) return <Card className="flex items-center gap-2 text-slate-500"><Spinner /> Loading…</Card>;
-  if (items.length === 0) return <Card><p className="text-sm text-slate-500">No reports yet.</p></Card>;
+  if (!items) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;
+  if (items.length === 0) return <Card><p className="text-sm text-ink-3">No reports yet.</p></Card>;
 
   return (
     <div className="space-y-3">
@@ -56,11 +56,11 @@ export function ReportsTab({ codes }: { codes: Set<string> }) {
       {items.map((r) => (
         <Card key={r.id}>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge className="border-slate-200 bg-white capitalize text-slate-600">{r.status}</Badge>
-            <span className="text-sm text-slate-400">{r.platform || "unknown platform"} · {r.country || "—"} · {formatDate(r.created_at)}</span>
+            <Badge className="border-border bg-surface capitalize text-ink-2">{r.status}</Badge>
+            <span className="text-sm text-ink-3">{r.platform || "unknown platform"} · {r.country || "—"} · {formatDate(r.created_at)}</span>
           </div>
-          <p className="mt-2 text-sm text-slate-700">{r.description}</p>
-          <p className="mt-1 text-xs text-slate-400">
+          <p className="mt-2 text-sm text-ink-2">{r.description}</p>
+          <p className="mt-1 text-xs text-ink-3">
             Money lost: ${r.money_lost} · Account compromised: {r.account_compromised ? "yes" : "no"} · Info shared: {r.personal_information_shared ? "yes" : "no"}
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -100,27 +100,27 @@ export function AiSafetyTab({ codes }: { codes: Set<string> }) {
   }, [codes]);
 
   if (!codes.has("ai.view")) {
-    return <Card><p className="text-sm text-slate-500">You need the <strong>ai.view</strong> permission.</p></Card>;
+    return <Card><p className="text-sm text-ink-3">You need the <strong>ai.view</strong> permission.</p></Card>;
   }
-  if (!items) return <Card className="flex items-center gap-2 text-slate-500"><Spinner /> Loading…</Card>;
+  if (!items) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;
 
   return (
     <Card>
-      <h2 className="font-bold text-slate-900">AI safety events</h2>
-      <p className="mt-1 text-xs text-slate-400">Off-topic, harmful, injection, PII and refusal events. Only minimal safe metadata is stored — never raw secrets.</p>
+      <h2 className="font-bold text-ink">AI safety events</h2>
+      <p className="mt-1 text-xs text-ink-3">Off-topic, harmful, injection, PII and refusal events. Only minimal safe metadata is stored — never raw secrets.</p>
       <div className="no-scrollbar mt-3 overflow-x-auto">
         <table className="w-full min-w-[560px] text-left text-sm">
           <thead>
-            <tr className="border-b border-slate-200 text-xs uppercase text-slate-400">
+            <tr className="border-b border-border text-xs uppercase text-ink-3">
               <th className="py-2 pr-3">Event</th><th className="py-2 pr-3">Detail</th><th className="py-2">When</th>
             </tr>
           </thead>
           <tbody>
             {items.map((e) => (
-              <tr key={e.id} className="border-b border-slate-100">
-                <td className="py-2.5 pr-3"><Badge className="border-slate-200 bg-white text-slate-600">{e.event_type}</Badge></td>
-                <td className="max-w-xs truncate py-2.5 pr-3 text-slate-500">{e.detail || "—"}</td>
-                <td className="py-2.5 text-slate-400">{formatDate(e.created_at)}</td>
+              <tr key={e.id} className="border-b border-border">
+                <td className="py-2.5 pr-3"><Badge className="border-border bg-surface text-ink-2">{e.event_type}</Badge></td>
+                <td className="max-w-xs truncate py-2.5 pr-3 text-ink-3">{e.detail || "—"}</td>
+                <td className="py-2.5 text-ink-3">{formatDate(e.created_at)}</td>
               </tr>
             ))}
           </tbody>
@@ -145,27 +145,27 @@ export function AuditTab({ codes }: { codes: Set<string> }) {
   }, [codes]);
 
   if (!codes.has("audit.view")) {
-    return <Card><p className="text-sm text-slate-500">You need the <strong>audit.view</strong> permission (auditor/super_admin).</p></Card>;
+    return <Card><p className="text-sm text-ink-3">You need the <strong>audit.view</strong> permission (auditor/super_admin).</p></Card>;
   }
-  if (!items) return <Card className="flex items-center gap-2 text-slate-500"><Spinner /> Loading…</Card>;
+  if (!items) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;
 
   return (
     <Card>
-      <h2 className="font-bold text-slate-900">Audit logs</h2>
+      <h2 className="font-bold text-ink">Audit logs</h2>
       <div className="no-scrollbar mt-3 overflow-x-auto">
         <table className="w-full min-w-[640px] text-left text-sm">
           <thead>
-            <tr className="border-b border-slate-200 text-xs uppercase text-slate-400">
+            <tr className="border-b border-border text-xs uppercase text-ink-3">
               <th className="py-2 pr-3">Action</th><th className="py-2 pr-3">Target</th><th className="py-2 pr-3">Reason</th><th className="py-2">When</th>
             </tr>
           </thead>
           <tbody>
             {items.map((e) => (
-              <tr key={e.id} className="border-b border-slate-100">
-                <td className="py-2.5 pr-3 font-medium text-slate-700">{e.action}</td>
-                <td className="py-2.5 pr-3 text-slate-500">{e.target_type}{e.target_id ? `:${e.target_id.slice(0, 8)}` : ""}</td>
-                <td className="max-w-xs truncate py-2.5 pr-3 text-slate-500">{e.reason || "—"}</td>
-                <td className="py-2.5 text-slate-400">{formatDate(e.created_at)}</td>
+              <tr key={e.id} className="border-b border-border">
+                <td className="py-2.5 pr-3 font-medium text-ink-2">{e.action}</td>
+                <td className="py-2.5 pr-3 text-ink-3">{e.target_type}{e.target_id ? `:${e.target_id.slice(0, 8)}` : ""}</td>
+                <td className="max-w-xs truncate py-2.5 pr-3 text-ink-3">{e.reason || "—"}</td>
+                <td className="py-2.5 text-ink-3">{formatDate(e.created_at)}</td>
               </tr>
             ))}
           </tbody>

@@ -42,10 +42,10 @@ export function VerificationQueue({ codes }: { codes: Set<string> }) {
   }
 
   if (!codes.has("verification.review")) {
-    return <Card><p className="text-sm text-slate-500">You need the <strong>verification.review</strong> permission.</p></Card>;
+    return <Card><p className="text-sm text-ink-3">You need the <strong>verification.review</strong> permission.</p></Card>;
   }
-  if (!items) return <Card className="flex items-center gap-2 text-slate-500"><Spinner /> Loading…</Card>;
-  if (items.length === 0) return <Card><p className="text-sm text-slate-500">🎉 No pending age verifications.</p></Card>;
+  if (!items) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;
+  if (items.length === 0) return <Card><p className="text-sm text-ink-3">🎉 No pending age verifications.</p></Card>;
 
   return (
     <div className="space-y-3">
@@ -53,14 +53,14 @@ export function VerificationQueue({ codes }: { codes: Set<string> }) {
       {items.map((v) => (
         <Card key={v.id}>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge className="border-amber-200 bg-amber-50 text-amber-700">pending_review</Badge>
-            <span className="font-mono text-xs text-slate-400">{v.user_id}</span>
+            <Badge className="border-warning/30 bg-warning-soft text-warning">pending_review</Badge>
+            <span className="font-mono text-xs text-ink-3">{v.user_id}</span>
           </div>
-          <p className="mt-2 text-sm text-slate-600">
-            Type: {v.verification_type} · Submitted {formatDate(v.created_at)} · Reference: <code className="rounded bg-slate-100 px-1 text-xs">{v.verification_reference}</code>
+          <p className="mt-2 text-sm text-ink-2">
+            Type: {v.verification_type} · Submitted {formatDate(v.created_at)} · Reference: <code className="rounded bg-surface-2 px-1 text-xs">{v.verification_reference}</code>
           </p>
-          <p className="mt-1 text-xs text-slate-400">
-            The document itself lives in the private <code className="rounded bg-slate-100 px-1">identity-documents</code> bucket — download it via storage to review.
+          <p className="mt-1 text-xs text-ink-3">
+            The document itself lives in the private <code className="rounded bg-surface-2 px-1">identity-documents</code> bucket — download it via storage to review.
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Input
@@ -111,10 +111,10 @@ export function ConsentQueue({ codes }: { codes: Set<string> }) {
   }
 
   if (!codes.has("consent.review")) {
-    return <Card><p className="text-sm text-slate-500">You need the <strong>consent.review</strong> permission.</p></Card>;
+    return <Card><p className="text-sm text-ink-3">You need the <strong>consent.review</strong> permission.</p></Card>;
   }
-  if (!items) return <Card className="flex items-center gap-2 text-slate-500"><Spinner /> Loading…</Card>;
-  if (items.length === 0) return <Card><p className="text-sm text-slate-500">🎉 No pending consents.</p></Card>;
+  if (!items) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;
+  if (items.length === 0) return <Card><p className="text-sm text-ink-3">🎉 No pending consents.</p></Card>;
 
   return (
     <div className="space-y-3">
@@ -122,13 +122,13 @@ export function ConsentQueue({ codes }: { codes: Set<string> }) {
       {items.map((c) => (
         <Card key={c.id}>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge className="border-amber-200 bg-amber-50 text-amber-700">pending</Badge>
-            <span className="font-mono text-xs text-slate-400">{c.user_id}</span>
+            <Badge className="border-warning/30 bg-warning-soft text-warning">pending</Badge>
+            <span className="font-mono text-xs text-ink-3">{c.user_id}</span>
           </div>
-          <p className="mt-2 text-sm text-slate-700">
+          <p className="mt-2 text-sm text-ink-2">
             Guardian: <strong>{c.guardian_name || "—"}</strong> ({c.guardian_email || "no email"}) · method: {c.consent_method}
           </p>
-          <p className="mt-1 text-xs text-slate-400">Submitted {formatDate(c.created_at)}</p>
+          <p className="mt-1 text-xs text-ink-3">Submitted {formatDate(c.created_at)}</p>
           <div className="mt-3 flex gap-2">
             <Button onClick={() => void review(c.user_id, true)}>Approve</Button>
             <Button variant="danger" onClick={() => void review(c.user_id, false)}>Revoke</Button>

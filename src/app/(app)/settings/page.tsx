@@ -6,6 +6,8 @@ import { AccountForm } from "@/components/settings/account-form";
 import { PrivacyPanel } from "@/components/settings/privacy-panel";
 import { SecurityPanel } from "@/components/settings/security-panel";
 import { NotificationsForm } from "@/components/settings/notifications-form";
+import { AppearancePanel } from "@/components/settings/appearance-panel";
+import { LanguagePanel } from "@/components/settings/language-panel";
 
 export const metadata: Metadata = { title: "Settings" };
 
@@ -17,7 +19,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   if (!user && !demo) redirect("/login");
 
   const [{ data: profile }, { data: settings }, { data: memories }, { data: countries }] = await Promise.all([
-    db.from("profiles").select("id, full_name, email, phone, school_name, class_grade, country, date_of_birth, created_at").eq("id", user!.id).maybeSingle(),
+    db.from("profiles").select("id, full_name, email, phone, school_name, class_grade, country, date_of_birth").eq("id", user!.id).maybeSingle(),
     db.from("user_security_settings").select("*").eq("user_id", user!.id).maybeSingle(),
     db.from("user_memories").select("id, memory, source, created_at").eq("user_id", user!.id).order("created_at", { ascending: false }),
     db.from("countries").select("id, name").order("name"),
@@ -25,16 +27,18 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
 
   const tabs = [
     { id: "account", label: "Account" },
-    { id: "privacy", label: "Privacy" },
     { id: "security", label: "Security" },
+    { id: "privacy", label: "Privacy" },
+    { id: "appearance", label: "Appearance" },
     { id: "notifications", label: "Notifications" },
+    { id: "language", label: "Language" },
   ];
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
-        <h1 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">Settings</h1>
-        <p className="mt-1 text-slate-500">Manage your account, privacy, security and notifications.</p>
+        <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Settings</h1>
+        <p className="mt-1 text-ink-2">Manage your account, security, privacy, appearance and notifications.</p>
       </div>
 
       <SettingsTabs tabs={tabs} active={tab} />
@@ -52,9 +56,11 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         />
       )}
       {tab === "security" && <SecurityPanel />}
+      {tab === "appearance" && <AppearancePanel />}
       {tab === "notifications" && (
         <NotificationsForm settings={(settings?.data ?? settings) as { notifications_email: boolean; notifications_push: boolean; notifications_security_alerts: boolean } | null} />
       )}
+      {tab === "language" && <LanguagePanel />}
     </div>
   );
 }

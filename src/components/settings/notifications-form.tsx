@@ -11,16 +11,16 @@ function Toggle({ label, description, checked, onChange }: { label: string; desc
   return (
     <div className="flex items-center justify-between gap-4 py-3">
       <div>
-        <p className="font-semibold text-slate-800">{label}</p>
-        <p className="mt-0.5 text-sm text-slate-500">{description}</p>
+        <p className="font-semibold text-ink">{label}</p>
+        <p className="mt-0.5 text-sm text-ink-3">{description}</p>
       </div>
       <button
         role="switch"
         aria-checked={checked}
         onClick={() => onChange(!checked)}
-        className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${checked ? "bg-brand-600" : "bg-slate-300"}`}
+        className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${checked ? "bg-accent" : "bg-surface-3"}`}
       >
-        <span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-all ${checked ? "left-6" : "left-1"}`} />
+        <span className={`absolute top-1 h-5 w-5 rounded-full bg-surface transition-all ${checked ? "left-6" : "left-1"}`} />
       </button>
     </div>
   );
@@ -48,15 +48,15 @@ export function NotificationsForm({ settings }: { settings: Settings | null }) {
 
   return (
     <Card>
-      <h2 className="font-bold text-slate-900">Notifications</h2>
-      <div className="divide-y divide-slate-100">
+      <h2 className="font-bold text-ink">Notifications</h2>
+      <div className="divide-y divide-border">
         <Toggle label="Email notifications" description="Course milestones, certificates and important updates by email." checked={email} onChange={setEmail} />
         <Toggle label="Push notifications" description="In-app notifications when available on your device." checked={push} onChange={setPush} />
         <Toggle label="Security alerts" description="New logins, password changes and suspicious activity — recommended." checked={alerts} onChange={setAlerts} />
       </div>
       {msg ? <Alert tone="success" >{msg}</Alert> : null}
       <Button onClick={() => void save()} className="mt-4">Save preferences</Button>
-      <p className="mt-3 text-xs text-slate-400">
+      <p className="mt-3 text-xs text-ink-3">
         Email templates never include passwords, verification data or security secrets.
       </p>
     </Card>

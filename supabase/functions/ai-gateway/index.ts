@@ -15,7 +15,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 import { corsHeaders, jsonResponse, handleCors } from "../_shared/cors.ts";
 import { redactPII, containsCredentials, leakedPII } from "../_shared/pii.ts";
 import { classify } from "../_shared/domain.ts";
-import { createProvider, MODELS, type AIMessage } from "../_shared/groq.ts";
+import { createProvider, MODELS, type AIMessage, type AIProvider } from "../_shared/groq.ts";
 import { buildSystemMessages, validateOutput, buildSummaryPrompt } from "../_shared/prompts.ts";
 import { validateImageUpload } from "../_shared/storage.ts";
 
@@ -130,11 +130,78 @@ async function loadSafeMemories(sb: ReturnType<typeof adminClient>, userId: stri
 // ---------------------------------------------------------------------------
 // Chat action
 // ---------------------------------------------------------------------------
+const encoder = new TextEncoder();
+
+async function finalizeChat(sb: ReturnType<typeof adminClient>, opts: {
+  provider: AIProvider;
+  user: { id: string };
+  conversationId: string;
+  isTemporary: boolean;
+  message: string;
+  redactedMessage: string;
+  reply: string;
+  history: AIMessage[];
+  redaction: ReturnType<typeof redactPII>;
+  started: number;
+  model: string;
+}) {
+  const { provider, user, conversationId, isTemporary, message, redactedMessage, reply, history, redaction, started, model } = opts;
+
+  await sb.from("conversation_messages").insert({ conversation_id: conversationId, role: "assistant", content: reply });
+
+  // Rolling summary for permanent chats (spec §21) — best-effort.
+  if (!isTemporary) {
+    const { count } = await sb
+      .from("conversation_messages")
+      .select("id", { count: "exact", head: true })
+      .eq("conversation_id", conversationId)
+      .eq("role", "user");
+    if ((count ?? 0) >= 10 && (count ?? 0) % 10 === 0) {
+      try {
+        const sum = await provider.chat({ model: MODELS.fast, messages: [{ role: "user", content: buildSummaryPrompt(history.slice(-6)) }], maxTokens: 300 });
+        await sb.from("conversation_summaries").upsert({ conversation_id: conversationId, summary: sum.content, message_count: count ?? 0 }, { onConflict: "conversation_id" });
+      } catch {
+        // never fail the chat over a summary
+      }
+    }
+  }
+
+  // Memory extraction — only safe, useful context (spec §20).
+  if (!isTemporary && redaction.safe && !message.toLowerCase().includes("remember")) {
+    const { count } = await sb
+      .from("conversation_messages")
+      .select("id", { count: "exact", head: true })
+      .eq("conversation_id", conversationId)
+      .eq("role", "user");
+    if ((count ?? 0) % 5 === 0 && (count ?? 0) > 0) {
+      try {
+        const mem = await provider.chat({
+          model: MODELS.fast,
+          messages: [
+            { role: "system", content: "Extract at most one safe, useful fact about the user relevant to cybersecurity learning (e.g. 'User is a beginner in cybersecurity.', 'User uses an Android phone.'). Return ONLY the fact, or the word NONE if nothing is worth remembering. Never output passwords, codes, IDs, emails, addresses or payment info." },
+            { role: "user", content: redactedMessage },
+          ],
+          maxTokens: 60,
+        });
+        const fact = mem.content.trim();
+        if (fact && fact !== "NONE" && fact.length < 160) {
+          await sb.from("user_memories").insert({ user_id: user.id, memory: fact, source: "ai" });
+        }
+      } catch {
+        // best-effort
+      }
+    }
+  }
+
+  await logUsage(sb, user.id, model, "chat", {}, Date.now() - started, "ok");
+}
+
 async function handleChat(sb: ReturnType<typeof adminClient>, user: { id: string }, body: Record<string, unknown>) {
   const started = Date.now();
   const message = typeof body.message === "string" ? body.message.trim() : "";
   const conversationId = typeof body.conversation_id === "string" ? body.conversation_id : null;
   const isTemporary = body.is_temporary === true;
+  const wantStream = body.stream === true;
 
   if (!message) return jsonResponse({ error: "MESSAGE_REQUIRED" }, 400);
   if (message.length > 4000) return jsonResponse({ error: "MESSAGE_TOO_LONG" }, 400);
@@ -168,8 +235,10 @@ async function handleChat(sb: ReturnType<typeof adminClient>, user: { id: string
 
   // --- store the user message (original stays in the DB; PII never hits Groq) --
   const redaction = redactPII(message);
-  const userMsgRow = { conversation_id: convId, role: "user", content: message, metadata: { pii_redacted: !redaction.safe, detected: redaction.detected.map((d) => d.type) } };
-  await sb.from("conversation_messages").insert(userMsgRow);
+  await sb.from("conversation_messages").insert({
+    conversation_id: convId, role: "user", content: message,
+    metadata: { pii_redacted: !redaction.safe, detected: redaction.detected.map((d) => d.type) },
+  });
 
   // --- classification (no LLM call needed for refusals) ------------------------
   const classification = classify(redaction.redacted);
@@ -200,7 +269,7 @@ async function handleChat(sb: ReturnType<typeof adminClient>, user: { id: string
     return jsonResponse({ reply: "AI_GATEWAY_NOT_CONFIGURED", conversation_id: convId }, 503);
   }
 
-  // Context: summary + recent messages (already redacted on the way in) + memory + RAG
+  // Context: summary + recent messages + safe memory + RAG
   const { data: summaryRow } = await sb.from("conversation_summaries").select("summary").eq("conversation_id", convId).maybeSingle();
   const { data: recent } = await sb
     .from("conversation_messages")
@@ -228,24 +297,89 @@ async function handleChat(sb: ReturnType<typeof adminClient>, user: { id: string
     { role: "user", content: redaction.redacted },
   ];
 
-  // --- Groq ---------------------------------------------------------------------
+  // --- Groq: streaming path ----------------------------------------------------
+  if (wantStream && provider.streamChat) {
+    let done = false;
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const emit = (obj: Record<string, unknown>) => {
+          try {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
+          } catch {
+            throw new Error("CLIENT_DISCONNECTED");
+          }
+        };
+        let full = "";
+        let window = "";
+        try {
+          for await (const delta of provider.streamChat!({ model: MODELS.chat, messages, temperature: 0.4, maxTokens: 1024 })) {
+            // Per-delta output safety + PII leak filtering.
+            const probe = (window + delta).slice(-400);
+            const check = validateOutput(probe);
+            const leaks = leakedPII(message, delta);
+            if (check.ok && leaks.length === 0) {
+              full += delta;
+              window = (window + delta).slice(-400);
+              emit({ delta });
+            }
+          }
+          done = true;
+          await finalizeChat(sb, {
+            provider, user, conversationId: convId, isTemporary, message,
+            redactedMessage: redaction.redacted, reply: full, history, redaction, started,
+            model: MODELS.chat,
+          });
+          emit({ done: true, conversation_id: convId, pii_redacted: !redaction.safe });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "stream error";
+          if (msg !== "CLIENT_DISCONNECTED") {
+            await logUsage(sb, user.id, MODELS.chat, "chat", {}, Date.now() - started, "error");
+            // Persist what streamed, so the user can retry cleanly.
+            if (full && done) {
+              await finalizeChat(sb, {
+                provider, user, conversationId: convId, isTemporary, message,
+                redactedMessage: redaction.redacted, reply: full, history, redaction, started,
+                model: MODELS.chat,
+              });
+            }
+            try {
+              emit({ error: "STREAM_FAILED" });
+            } catch {
+              /* client gone */
+            }
+          }
+        } finally {
+          try { controller.close(); } catch { /* already closed */ }
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        "X-Accel-Buffering": "no",
+      },
+    });
+  }
+
+  // --- Groq: non-streaming path -------------------------------------------------
   let reply: string;
   let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   try {
     const result = await provider.chat({ model: MODELS.chat, messages, temperature: 0.4, maxTokens: 1024 });
     reply = result.content;
     usage = result.usage;
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "unknown";
+  } catch {
     await logUsage(sb, user.id, MODELS.chat, "chat", {}, Date.now() - started, "error");
     await sb.from("conversation_messages").insert({
       conversation_id: convId, role: "assistant",
       content: "I hit a technical hiccup. Please try again in a moment.",
     });
-    return jsonResponse({ error: "AI_GATEWAY_ERROR", detail: msg }, 502);
+    return jsonResponse({ error: "AI_GATEWAY_ERROR" }, 502);
   }
 
-  // --- output validation ---------------------------------------------------------
   const check = validateOutput(reply);
   if (!check.ok) {
     await logSafety(sb, user.id, "output_blocked", check.reason ?? "unknown");
@@ -257,53 +391,12 @@ async function handleChat(sb: ReturnType<typeof adminClient>, user: { id: string
     for (const l of leaks) reply = reply.replaceAll(l, "[redacted]");
   }
 
-  await sb.from("conversation_messages").insert({ conversation_id: convId, role: "assistant", content: reply });
-
-  // --- rolling summary for permanent chats (spec §21) ----------------------------
-  if (!isTemporary) {
-    const { count } = await sb
-      .from("conversation_messages")
-      .select("id", { count: "exact", head: true })
-      .eq("conversation_id", convId)
-      .eq("role", "user");
-    if ((count ?? 0) >= 10 && (count ?? 0) % 10 === 0) {
-      try {
-        const sum = await provider.chat({ model: MODELS.fast, messages: [{ role: "user", content: buildSummaryPrompt(history.slice(-6)) }], maxTokens: 300 });
-        await sb.from("conversation_summaries").upsert({ conversation_id: convId, summary: sum.content, message_count: count ?? 0 }, { onConflict: "conversation_id" });
-      } catch {
-        // Summaries are best-effort; never fail the chat over them.
-      }
-    }
-  }
-
-  // --- memory extraction (spec §20) — only safe, useful context ------------------
-  if (!isTemporary && redaction.safe && message.toLowerCase().includes("remember") === false) {
-    const { count } = await sb
-      .from("conversation_messages")
-      .select("id", { count: "exact", head: true })
-      .eq("conversation_id", convId)
-      .eq("role", "user");
-    if ((count ?? 0) % 5 === 0 && (count ?? 0) > 0) {
-      try {
-        const mem = await provider.chat({
-          model: MODELS.fast,
-          messages: [
-            { role: "system", content: "Extract at most one safe, useful fact about the user relevant to cybersecurity learning (e.g. 'User is a beginner in cybersecurity.', 'User uses an Android phone.'). Return ONLY the fact, or the word NONE if nothing is worth remembering. Never output passwords, codes, IDs, emails, addresses or payment info." },
-            { role: "user", content: redaction.redacted },
-          ],
-          maxTokens: 60,
-        });
-        const fact = mem.content.trim();
-        if (fact && fact !== "NONE" && fact.length < 160) {
-          await sb.from("user_memories").insert({ user_id: user.id, memory: fact, source: "ai" });
-        }
-      } catch {
-        // best-effort
-      }
-    }
-  }
-
-  await logUsage(sb, user.id, MODELS.chat, "chat", usage, Date.now() - started, "ok");
+  await finalizeChat(sb, {
+    provider, user, conversationId: convId, isTemporary, message,
+    redactedMessage: redaction.redacted, reply, history, redaction, started,
+    model: MODELS.chat,
+  });
+  void usage;
   return jsonResponse({ reply, conversation_id: convId, refused: false, pii_redacted: !redaction.safe });
 }
 

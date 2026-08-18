@@ -29,6 +29,10 @@ const TABLES: Record<string, Row[]> = {
   notifications: demoNotifications as unknown as Row[],
   quiz_attempts: demoQuizAttempts as unknown as Row[],
   course_progress: demoProgress as unknown as Row[],
+  user_sessions: [
+    { id: "s1", user_id: DEMO_USER.id, session_ref: "evt-1", device_name: "Chrome on Windows", ip_hash: "abc", user_agent: "Mozilla/5.0", last_seen_at: "2026-08-18T08:00:00Z", revoked_at: null, created_at: "2026-08-01T09:00:00Z" },
+    { id: "s2", user_id: DEMO_USER.id, session_ref: "evt-2", device_name: "iPhone", ip_hash: "def", user_agent: "Safari", last_seen_at: "2026-08-17T20:00:00Z", revoked_at: "2026-08-17T21:00:00Z", created_at: "2026-08-17T19:00:00Z" },
+  ],
   course_modules: demoModules as unknown as Row[],
   lessons: demoLessons as unknown as Row[],
   quizzes: demoQuizzes as unknown as Row[],

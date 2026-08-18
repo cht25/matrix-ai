@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
-import { Badge, Card, EmptyState } from "@/components/ui";
+import { Badge, Card, EmptyState, Progress } from "@/components/ui";
 import { RevokeSessionButton } from "@/components/revoke-session-button";
 import { timeAgo } from "@/lib/utils";
 
@@ -13,37 +14,95 @@ export default async function SecurityPage() {
   const demo = isDemoMode();
   if (!user && !demo) redirect("/login");
 
-  const [eventsRes, sessionsRes] = await Promise.all([
+  const [eventsRes, sessionsRes, scoreRes, profileRes, settingsRes, progressRes, certRes] = await Promise.all([
     db.from("security_events").select("id, event_type, metadata, created_at").eq("user_id", user!.id).order("created_at", { ascending: false }).limit(50),
-    db.from("user_sessions").select("id, device_name, last_seen_at, revoked_at, user_agent").eq("user_id", user!.id).order("last_seen_at", { ascending: false }).limit(20),
+    db.from("user_sessions").select("id, device_name, last_seen_at, revoked_at").eq("user_id", user!.id).order("last_seen_at", { ascending: false }).limit(20),
+    db.rpc("security_score"),
+    db.from("profiles").select("age_verified").eq("id", user!.id).maybeSingle(),
+    db.from("user_security_settings").select("memory_enabled, chat_history_enabled, notifications_security_alerts").eq("user_id", user!.id).maybeSingle(),
+    db.from("course_progress").select("status").eq("user_id", user!.id).eq("status", "completed"),
+    db.from("certificates").select("id").eq("user_id", user!.id),
   ]);
 
   const events = (eventsRes.data ?? []) as { id: string; event_type: string; metadata: Record<string, unknown>; created_at: string }[];
-  const sessions = (sessionsRes.data ?? []) as { id: string; device_name: string; last_seen_at: string; revoked_at: string | null; user_agent: string }[];
+  const sessions = (sessionsRes.data ?? []) as { id: string; device_name: string; last_seen_at: string; revoked_at: string | null }[];
+  const score = typeof scoreRes.data === "number" ? scoreRes.data : 0;
+  const profile = profileRes.data as { age_verified?: boolean } | null;
+  const settings = settingsRes.data as { memory_enabled?: boolean; chat_history_enabled?: boolean; notifications_security_alerts?: boolean } | null;
+  const lessonsDone = progressRes.data?.length ?? 0;
+  const certCount = certRes.data?.length ?? 0;
+  const emailVerified = Boolean(user?.email_confirmed_at) || demo;
+
+  // Derived, honest sub-scores from real signals:
+  const mfaEvent = [...events].find((e) => e.event_type === "mfa_enabled" || e.event_type === "mfa_disabled");
+  const mfaOn = mfaEvent ? mfaEvent.event_type === "mfa_enabled" : false;
+  const changedPassword = events.some((e) => e.event_type === "password_changed" || e.event_type === "password_reset");
+
+  const bars = [
+    { label: "Password", value: Math.min(100, 40 + (emailVerified ? 25 : 0) + (changedPassword ? 20 : 0) + (mfaOn ? 15 : 0)), hint: mfaOn ? "Strong passphrase + 2FA" : "Use a unique passphrase" },
+    { label: "MFA", value: mfaOn ? 100 : 10, hint: mfaOn ? "Two-factor authentication on" : "Enable MFA to lock out attackers" },
+    { label: "Account protection", value: Math.min(100, 30 + (emailVerified ? 15 : 0) + (profile?.age_verified || demo ? 15 : 0) + Math.min(25, lessonsDone * 2) + Math.min(15, certCount * 5)), hint: "Verification, learning and recovery" },
+    { label: "Privacy", value: Math.min(100, 40 + (settings?.memory_enabled ? 15 : 0) + (settings?.chat_history_enabled ? 15 : 0) + (settings?.notifications_security_alerts ? 30 : 0)), hint: "Memory, history and alert controls" },
+  ];
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">Security</h1>
-        <p className="mt-1 text-slate-500">
-          Your login history, active sessions and security events. Sensitive details are never logged —
-          only safe metadata.
-        </p>
+        <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Security</h1>
+        <p className="mt-1 text-ink-2">Your account protection at a glance — computed server-side from real signals.</p>
       </div>
 
+      {/* Score bars */}
       <Card>
-        <h2 className="font-bold text-slate-900">Active sessions</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="font-bold text-ink">Cyber Safety Score</h2>
+          <span className="text-3xl font-extrabold text-accent">{score}<span className="text-sm font-semibold text-ink-3">/100</span></span>
+        </div>
+        <div className="mt-4 space-y-4">
+          {bars.map((b) => (
+            <div key={b.label}>
+              <div className="mb-1.5 flex items-center justify-between text-sm">
+                <span className="font-medium text-ink">{b.label}</span>
+                <span className="text-xs text-ink-3">{b.value}/100 · {b.hint}</span>
+              </div>
+              <Progress value={b.value} />
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* Recommendations */}
+      <Card>
+        <h2 className="font-bold text-ink">Recommendations</h2>
+        <ul className="mt-3 space-y-2">
+          {[
+            { text: mfaOn ? "MFA is enabled — excellent." : "Enable MFA — the single most effective protection.", href: "/settings?tab=security", cta: "Set up 2FA" },
+            { text: changedPassword ? "Password recently updated." : "Update your password to a fresh passphrase.", href: "/settings?tab=security", cta: "Change password" },
+            { text: lessonsDone > 0 ? `${lessonsDone} lessons completed — keep going.` : "Complete the security courses to strengthen your score.", href: "/courses", cta: "Browse courses" },
+            { text: sessions.length > 0 ? "Review your active sessions below." : "Sessions appear here after sign-ins.", href: "#sessions", cta: "Review sessions" },
+          ].map((r, i) => (
+            <li key={i} className="flex items-start justify-between gap-3 rounded-xl bg-surface-2 px-3 py-2.5 text-sm">
+              <span className="text-ink-2">{r.text}</span>
+              <Link href={r.href} className="shrink-0 font-semibold text-accent hover:text-accent-2">{r.cta} →</Link>
+            </li>
+          ))}
+        </ul>
+      </Card>
+
+      {/* Sessions */}
+      <Card id="sessions">
+        <h2 className="font-bold text-ink">Active sessions</h2>
         {sessions.length === 0 ? (
-          <p className="mt-2 text-sm text-slate-500">No device sessions recorded yet. They appear when you sign in.</p>
+          <p className="mt-2 text-sm text-ink-3">No device sessions recorded yet. They appear when you sign in.</p>
         ) : (
           <ul className="mt-3 space-y-2">
             {sessions.map((s) => (
-              <li key={s.id} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
+              <li key={s.id} className="flex items-center justify-between gap-3 rounded-xl bg-surface-2 px-3 py-2.5 text-sm">
                 <div className="min-w-0">
-                  <p className="font-medium text-slate-800">
-                    {s.device_name || "Device"} {s.revoked_at ? <Badge className="ml-2 border-slate-200 bg-white text-slate-400">revoked</Badge> : null}
+                  <p className="font-medium text-ink">
+                    {s.device_name || "Device"} {s.revoked_at ? <Badge className="ml-2 border-border bg-surface text-ink-3">revoked</Badge> : null}
                   </p>
-                  <p className="truncate text-xs text-slate-400">Last seen {timeAgo(s.last_seen_at)}</p>
+                  <p className="text-xs text-ink-3">Last seen {timeAgo(s.last_seen_at)}</p>
                 </div>
                 {!s.revoked_at ? <RevokeSessionButton sessionId={s.id} /> : null}
               </li>
@@ -52,16 +111,17 @@ export default async function SecurityPage() {
         )}
       </Card>
 
+      {/* Events */}
       <Card>
-        <h2 className="font-bold text-slate-900">Security events</h2>
+        <h2 className="font-bold text-ink">Security events</h2>
         {events.length === 0 ? (
           <EmptyState title="No events yet" body="Logins, password changes and MFA updates will appear here." />
         ) : (
           <ul className="mt-3 space-y-2">
             {events.map((e) => (
-              <li key={e.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
-                <span className="capitalize text-slate-700">{e.event_type.replaceAll("_", " ")}</span>
-                <span className="text-xs text-slate-400">{timeAgo(e.created_at)}</span>
+              <li key={e.id} className="flex items-center justify-between rounded-xl bg-surface-2 px-3 py-2.5 text-sm">
+                <span className="capitalize text-ink-2">{e.event_type.replaceAll("_", " ")}</span>
+                <span className="text-xs text-ink-3">{timeAgo(e.created_at)}</span>
               </li>
             ))}
           </ul>

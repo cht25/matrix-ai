@@ -49,13 +49,13 @@ export function ReportForm({ categories, countries }: { categories: { id: string
       <Alert tone="success">
         <strong>Report submitted — thank you for helping keep everyone safer.</strong>
         <p className="mt-1">Your report is private. The support team may follow up. You can also report to an official organisation using the resources below.</p>
-        <button onClick={() => { router.push("/dashboard"); router.refresh(); }} className="mt-2 font-semibold text-emerald-800 underline">Go to dashboard →</button>
+        <button onClick={() => { router.push("/dashboard"); router.refresh(); }} className="mt-2 font-semibold text-success underline">Go to dashboard →</button>
       </Alert>
     );
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <form onSubmit={handleSubmit} className="space-y-4 rounded-2xl border border-border bg-surface p-6 shadow-sm">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Scam type" htmlFor="category">
           <Select id="category" value={category} onChange={(e) => setCategory(e.target.value)}>
@@ -84,14 +84,14 @@ export function ReportForm({ categories, countries }: { categories: { id: string
       </div>
 
       <fieldset className="space-y-2">
-        <legend className="text-sm font-medium text-slate-700">What was affected?</legend>
-        <label className="flex items-center gap-2 text-sm text-slate-700">
+        <legend className="text-sm font-medium text-ink-2">What was affected?</legend>
+        <label className="flex items-center gap-2 text-sm text-ink-2">
           <input type="checkbox" checked={accountCompromised} onChange={(e) => setAccountCompromised(e.target.checked)} /> An account was taken over
         </label>
-        <label className="flex items-center gap-2 text-sm text-slate-700">
+        <label className="flex items-center gap-2 text-sm text-ink-2">
           <input type="checkbox" checked={infoShared} onChange={(e) => setInfoShared(e.target.checked)} /> Personal information was shared
         </label>
-        <label className="flex items-center gap-2 text-sm text-slate-700">
+        <label className="flex items-center gap-2 text-sm text-ink-2">
           <input type="checkbox" checked={evidence} onChange={(e) => setEvidence(e.target.checked)} /> I have evidence (screenshots, messages)
         </label>
       </fieldset>

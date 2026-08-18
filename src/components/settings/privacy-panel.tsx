@@ -94,8 +94,8 @@ export function PrivacyPanel({ settings, memories }: { settings: { memory_enable
       <Card>
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h2 className="font-bold text-slate-900">AI memory</h2>
-            <p className="mt-1 text-sm text-slate-500">
+            <h2 className="font-bold text-ink">AI memory</h2>
+            <p className="mt-1 text-sm text-ink-3">
               MATRIX AI can remember safe facts like "you are a beginner" to personalise help.
               It never stores passwords, codes, IDs or contact details.
             </p>
@@ -104,9 +104,9 @@ export function PrivacyPanel({ settings, memories }: { settings: { memory_enable
             role="switch"
             aria-checked={memoryEnabled}
             onClick={() => { setMemoryEnabled(!memoryEnabled); void toggle({ memory_enabled: !memoryEnabled }); }}
-            className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${memoryEnabled ? "bg-brand-600" : "bg-slate-300"}`}
+            className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${memoryEnabled ? "bg-accent" : "bg-surface-3"}`}
           >
-            <span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-all ${memoryEnabled ? "left-6" : "left-1"}`} />
+            <span className={`absolute top-1 h-5 w-5 rounded-full bg-surface transition-all ${memoryEnabled ? "left-6" : "left-1"}`} />
           </button>
         </div>
       </Card>
@@ -114,35 +114,35 @@ export function PrivacyPanel({ settings, memories }: { settings: { memory_enable
       <Card>
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h2 className="font-bold text-slate-900">Save chat history</h2>
-            <p className="mt-1 text-sm text-slate-500">When off, new chats behave like temporary chats — nothing is kept.</p>
+            <h2 className="font-bold text-ink">Save chat history</h2>
+            <p className="mt-1 text-sm text-ink-3">When off, new chats behave like temporary chats — nothing is kept.</p>
           </div>
           <button
             role="switch"
             aria-checked={historyEnabled}
             onClick={() => { setHistoryEnabled(!historyEnabled); void toggle({ chat_history_enabled: !historyEnabled }); }}
-            className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${historyEnabled ? "bg-brand-600" : "bg-slate-300"}`}
+            className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${historyEnabled ? "bg-accent" : "bg-surface-3"}`}
           >
-            <span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-all ${historyEnabled ? "left-6" : "left-1"}`} />
+            <span className={`absolute top-1 h-5 w-5 rounded-full bg-surface transition-all ${historyEnabled ? "left-6" : "left-1"}`} />
           </button>
         </div>
       </Card>
 
       <Card>
         <div className="flex items-center justify-between">
-          <h2 className="font-bold text-slate-900">Saved memories ({memories.length})</h2>
+          <h2 className="font-bold text-ink">Saved memories ({memories.length})</h2>
           {memories.length > 0 ? (
             <Button variant="danger" onClick={() => void clearAllMemories()} className="!px-3 !py-1.5 text-xs">Clear all</Button>
           ) : null}
         </div>
         {memories.length === 0 ? (
-          <p className="mt-2 text-sm text-slate-500">No memories saved yet.</p>
+          <p className="mt-2 text-sm text-ink-3">No memories saved yet.</p>
         ) : (
           <ul className="mt-3 space-y-2">
             {memories.map((m) => (
-              <li key={m.id} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
-                <span className="text-slate-700">{m.memory}</span>
-                <button onClick={() => void deleteMemory(m.id)} className="shrink-0 text-xs font-semibold text-red-500 hover:text-red-700">Delete</button>
+              <li key={m.id} className="flex items-center justify-between gap-3 rounded-xl bg-bg px-3 py-2.5 text-sm">
+                <span className="text-ink-2">{m.memory}</span>
+                <button onClick={() => void deleteMemory(m.id)} className="shrink-0 text-xs font-semibold text-red-500 hover:text-danger">Delete</button>
               </li>
             ))}
           </ul>
@@ -150,17 +150,17 @@ export function PrivacyPanel({ settings, memories }: { settings: { memory_enable
       </Card>
 
       <Card>
-        <h2 className="font-bold text-slate-900">Export my data</h2>
-        <p className="mt-1 text-sm text-slate-500">
+        <h2 className="font-bold text-ink">Export my data</h2>
+        <p className="mt-1 text-sm text-ink-3">
           Download everything you've created: profile, conversations, progress, certificates and settings.
           The export never includes passwords, tokens or internal secrets.
         </p>
         <Button onClick={() => void exportData()} disabled={busy} className="mt-3">{busy ? "Preparing…" : "Create export file"}</Button>
       </Card>
 
-      <Card className="border-red-200">
-        <h2 className="font-bold text-red-700">Delete my account</h2>
-        <p className="mt-1 text-sm text-slate-500">
+      <Card className="border-danger/30">
+        <h2 className="font-bold text-danger">Delete my account</h2>
+        <p className="mt-1 text-sm text-ink-3">
           Permanently deletes your profile, chats, memories, progress, certificates, reports and files.
           You will be asked to re-authenticate first. This cannot be undone.
         </p>

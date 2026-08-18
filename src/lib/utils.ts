@@ -33,19 +33,19 @@ export function timeAgo(iso: string | null | undefined): string {
 
 export function riskColor(level: string): string {
   switch (level) {
-    case "critical": return "bg-red-100 text-red-700 border-red-200";
+    case "critical": return "bg-danger-soft text-danger border-danger/30";
     case "high": return "bg-orange-100 text-orange-700 border-orange-200";
-    case "medium": return "bg-amber-100 text-amber-700 border-amber-200";
-    case "low": return "bg-emerald-100 text-emerald-700 border-emerald-200";
-    default: return "bg-slate-100 text-slate-600 border-slate-200";
+    case "medium": return "bg-warning-soft text-warning border-warning/30";
+    case "low": return "bg-success-soft text-success border-success/30";
+    default: return "bg-surface-2 text-ink-2 border-border";
   }
 }
 
 export function scoreLabel(score: number): { label: string; color: string } {
-  if (score >= 80) return { label: "Strong", color: "text-emerald-600" };
+  if (score >= 80) return { label: "Strong", color: "text-success" };
   if (score >= 60) return { label: "Good", color: "text-teal-600" };
-  if (score >= 40) return { label: "Building", color: "text-amber-600" };
-  return { label: "Getting started", color: "text-slate-500" };
+  if (score >= 40) return { label: "Building", color: "text-warning" };
+  return { label: "Getting started", color: "text-ink-3" };
 }
 
 export function isValidEmail(email: string): boolean {

@@ -26,50 +26,50 @@ export default async function CertificateVerifyPage({ params }: { params: Promis
   if (error || !result) notFound();
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="border-b border-slate-200 bg-white">
+    <div className="min-h-screen bg-bg">
+      <header className="border-b border-border bg-surface">
         <div className="mx-auto flex h-16 max-w-2xl items-center justify-between px-4">
           <Logo />
-          <span className="text-sm font-semibold text-slate-500">Certificate verification</span>
+          <span className="text-sm font-semibold text-ink-3">Certificate verification</span>
         </div>
       </header>
       <main className="mx-auto max-w-2xl px-4 py-12">
         <Card className="text-center">
-          <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-emerald-50">
+          <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-success-soft">
             <span className="text-2xl" aria-hidden="true">{result.valid ? "✅" : "❌"}</span>
           </div>
-          <h1 className="mt-4 text-2xl font-extrabold text-slate-900">
+          <h1 className="mt-4 text-2xl font-extrabold text-ink">
             {result.valid ? "This certificate is authentic" : "Certificate not found"}
           </h1>
           {result.valid && (
             <dl className="mt-6 space-y-3 text-sm">
-              <div className="flex justify-between gap-4 border-b border-slate-100 pb-2">
-                <dt className="text-slate-500">Certificate ID</dt>
+              <div className="flex justify-between gap-4 border-b border-border pb-2">
+                <dt className="text-ink-3">Certificate ID</dt>
                 <dd className="font-mono font-semibold">{result.certificate_id}</dd>
               </div>
-              <div className="flex justify-between gap-4 border-b border-slate-100 pb-2">
-                <dt className="text-slate-500">Course</dt>
+              <div className="flex justify-between gap-4 border-b border-border pb-2">
+                <dt className="text-ink-3">Course</dt>
                 <dd className="font-semibold">{result.course}</dd>
               </div>
-              <div className="flex justify-between gap-4 border-b border-slate-100 pb-2">
-                <dt className="text-slate-500">Display name</dt>
+              <div className="flex justify-between gap-4 border-b border-border pb-2">
+                <dt className="text-ink-3">Display name</dt>
                 <dd className="font-semibold">{result.display_name}</dd>
               </div>
-              <div className="flex justify-between gap-4 border-b border-slate-100 pb-2">
-                <dt className="text-slate-500">Completion date</dt>
+              <div className="flex justify-between gap-4 border-b border-border pb-2">
+                <dt className="text-ink-3">Completion date</dt>
                 <dd className="font-semibold">{formatDate(result.issued_at ?? null)}</dd>
               </div>
-              <div className="flex justify-between gap-4 border-b border-slate-100 pb-2">
-                <dt className="text-slate-500">Issued by</dt>
+              <div className="flex justify-between gap-4 border-b border-border pb-2">
+                <dt className="text-ink-3">Issued by</dt>
                 <dd className="font-semibold">{result.issued_by}</dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Verification status</dt>
-                <dd className="font-semibold text-emerald-600 capitalize">{result.verification_status}</dd>
+                <dt className="text-ink-3">Verification status</dt>
+                <dd className="font-semibold text-success capitalize">{result.verification_status}</dd>
               </div>
             </dl>
           )}
-          <p className="mt-6 text-xs text-slate-400">
+          <p className="mt-6 text-xs text-ink-3">
             Verification shows only public certificate information — no email, phone, date of birth or address.
           </p>
         </Card>

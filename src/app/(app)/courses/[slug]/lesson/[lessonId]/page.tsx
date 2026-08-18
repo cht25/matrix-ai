@@ -39,17 +39,17 @@ export default async function LessonPage({ params }: { params: Promise<{ slug: s
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
-      <Link href={`/courses/${slug}`} className="text-sm font-medium text-brand-600 hover:text-brand-700">← {course.data.title}</Link>
+      <Link href={`/courses/${slug}`} className="text-sm font-medium text-accent hover:text-accent-2">← {course.data.title}</Link>
 
       <Card className="!p-6 sm:!p-8">
-        <p className="text-xs font-semibold uppercase tracking-wide text-brand-600">Lesson {idx + 1} of {ordered.length}</p>
-        <h1 className="mt-1 text-2xl font-extrabold text-slate-900 sm:text-3xl">{lesson.title}</h1>
-        {lesson.summary ? <p className="mt-2 text-slate-600">{lesson.summary}</p> : null}
-        <div className="mt-5 whitespace-pre-line text-[15px] leading-relaxed text-slate-800">{lesson.body}</div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-accent">Lesson {idx + 1} of {ordered.length}</p>
+        <h1 className="mt-1 text-2xl font-extrabold text-ink sm:text-3xl">{lesson.title}</h1>
+        {lesson.summary ? <p className="mt-2 text-ink-2">{lesson.summary}</p> : null}
+        <div className="mt-5 whitespace-pre-line text-[15px] leading-relaxed text-ink">{lesson.body}</div>
 
-        <div className="mt-8 flex flex-col gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mt-8 flex flex-col gap-3 border-t border-border pt-5 sm:flex-row sm:items-center sm:justify-between">
           {prev ? (
-            <Link href={`/courses/${slug}/lesson/${prev.id}`} className="text-sm font-medium text-slate-500 hover:text-slate-800">← {prev.title}</Link>
+            <Link href={`/courses/${slug}/lesson/${prev.id}`} className="text-sm font-medium text-ink-3 hover:text-ink">← {prev.title}</Link>
           ) : <span />}
           <div className="flex gap-2">
             {nextHref ? (

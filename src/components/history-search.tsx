@@ -33,11 +33,11 @@ export function HistorySearch({ conversations }: { conversations: Conv[] }) {
       ) : (
         <div className="space-y-2.5">
           {filtered.map((c) => (
-            <div key={c.id} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div key={c.id} className="card flex items-center justify-between gap-3 !p-4">
               <Link href={`/chat/${c.id}`} className="min-w-0 flex-1">
-                <p className="truncate font-semibold text-slate-900 hover:text-brand-700">{c.title}</p>
-                {c.summary ? <p className="mt-0.5 line-clamp-1 text-sm text-slate-500">{c.summary}</p> : null}
-                <p className="mt-1 text-xs text-slate-400">
+                <p className="truncate font-semibold text-ink hover:text-accent">{c.title}</p>
+                {c.summary ? <p className="mt-0.5 line-clamp-1 text-sm text-ink-2">{c.summary}</p> : null}
+                <p className="mt-1 text-xs text-ink-3">
                   {timeAgo(c.updated_at)} · {c.archived_at ? "archived" : "active"}
                 </p>
               </Link>

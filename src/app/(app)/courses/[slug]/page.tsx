@@ -38,16 +38,16 @@ export default async function CourseDetailPage({ params }: { params: Promise<{ s
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <Link href="/courses" className="text-sm font-medium text-brand-600 hover:text-brand-700">← All courses</Link>
+      <Link href="/courses" className="text-sm font-medium text-accent hover:text-accent-2">← All courses</Link>
 
       <div>
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">{course.title}</h1>
-          {cert ? <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">✓ Certificate earned</Badge> : null}
+          <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">{course.title}</h1>
+          {cert ? <Badge className="border-success/30 bg-success-soft text-success">✓ Certificate earned</Badge> : null}
         </div>
-        <p className="mt-2 text-slate-600">{course.description}</p>
-        <div className="mt-4 flex items-center gap-3 text-sm text-slate-500">
-          <span className="capitalize">{course.level}</span>·<span>{course.duration_minutes} min</span>·<span className="font-semibold text-slate-700">{pct}% complete</span>
+        <p className="mt-2 text-ink-2">{course.description}</p>
+        <div className="mt-4 flex items-center gap-3 text-sm text-ink-3">
+          <span className="capitalize">{course.level}</span>·<span>{course.duration_minutes} min</span>·<span className="font-semibold text-ink-2">{pct}% complete</span>
         </div>
         <Progress value={pct} className="mt-2" />
       </div>
@@ -59,25 +59,25 @@ export default async function CourseDetailPage({ params }: { params: Promise<{ s
         return (
           <Card key={m.id}>
             <div className="flex items-center justify-between">
-              <h2 className="font-bold text-slate-900">{m.title}</h2>
-              <span className="text-xs text-slate-400">{modDone}/{modLessons.length} lessons</span>
+              <h2 className="font-bold text-ink">{m.title}</h2>
+              <span className="text-xs text-ink-3">{modDone}/{modLessons.length} lessons</span>
             </div>
-            {m.description ? <p className="mt-1 text-sm text-slate-500">{m.description}</p> : null}
+            {m.description ? <p className="mt-1 text-sm text-ink-3">{m.description}</p> : null}
             <ul className="mt-3 space-y-1.5">
               {modLessons.map((l) => (
                 <li key={l.id}>
-                  <Link href={`/courses/${course.slug}/lesson/${l.id}`} className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm hover:bg-slate-50">
+                  <Link href={`/courses/${course.slug}/lesson/${l.id}`} className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm hover:bg-bg">
                     <span aria-hidden="true">{done.has(l.id) ? "✅" : "📖"}</span>
-                    <span className={done.has(l.id) ? "text-slate-500" : "font-medium text-slate-800"}>{l.title}</span>
+                    <span className={done.has(l.id) ? "text-ink-3" : "font-medium text-ink"}>{l.title}</span>
                   </Link>
                 </li>
               ))}
               {modQuizzes.map((q) => (
                 <li key={q.id}>
-                  <Link href={`/courses/${course.slug}/quiz/${q.id}`} className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm hover:bg-slate-50">
+                  <Link href={`/courses/${course.slug}/quiz/${q.id}`} className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm hover:bg-bg">
                     <span aria-hidden="true">{passedQuizzes.has(q.id) ? "🏆" : "🧠"}</span>
-                    <span className={passedQuizzes.has(q.id) ? "text-slate-500" : "font-medium text-slate-800"}>{q.title}</span>
-                    {passedQuizzes.has(q.id) ? <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">Passed ✓</Badge> : <Badge className="border-slate-200 bg-white text-slate-500">Needs {q.pass_percent}% to pass</Badge>}
+                    <span className={passedQuizzes.has(q.id) ? "text-ink-3" : "font-medium text-ink"}>{q.title}</span>
+                    {passedQuizzes.has(q.id) ? <Badge className="border-success/30 bg-success-soft text-success">Passed ✓</Badge> : <Badge className="border-border bg-surface text-ink-3">Needs {q.pass_percent}% to pass</Badge>}
                   </Link>
                 </li>
               ))}
@@ -87,10 +87,10 @@ export default async function CourseDetailPage({ params }: { params: Promise<{ s
       })}
 
       {cert ? (
-        <Card className="border-emerald-200 bg-emerald-50">
-          <h2 className="font-bold text-emerald-900">🎉 You earned a certificate for this course!</h2>
-          <p className="mt-1 font-mono text-sm text-emerald-800">{cert.certificate_id}</p>
-          <p className="mt-1 text-xs text-emerald-700">Issued {cert.issued_at?.slice(0, 10)} · Verify it publicly at /certificate/verify/…</p>
+        <Card className="border-success/30 bg-success-soft">
+          <h2 className="font-bold text-success">🎉 You earned a certificate for this course!</h2>
+          <p className="mt-1 font-mono text-sm text-success">{cert.certificate_id}</p>
+          <p className="mt-1 text-xs text-success">Issued {cert.issued_at?.slice(0, 10)} · Verify it publicly at /certificate/verify/…</p>
         </Card>
       ) : null}
     </div>

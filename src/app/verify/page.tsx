@@ -4,8 +4,8 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/browser";
+import { AuthShell } from "@/components/auth/login-screen";
 import { Alert, Button } from "@/components/ui";
-import { Logo } from "@/components/logo";
 
 function VerifyInner() {
   const router = useRouter();
@@ -14,7 +14,7 @@ function VerifyInner() {
   const [message, setMessage] = useState("Verifying your email…");
 
   useEffect(() => {
-    const next = params.get("next") ?? "/dashboard";
+    const next = params.get("next") ?? "/chat";
     const tokenHash = params.get("token_hash");
     const type = params.get("type");
     const code = params.get("code");
@@ -29,7 +29,6 @@ function VerifyInner() {
           const { error } = await supabase.auth.exchangeCodeForSession(code);
           if (error) throw error;
         } else {
-          // Possibly already verified (OAuth redirect or confirmation click).
           const { data } = await supabase.auth.getSession();
           if (!data.session) {
             setStatus("error");
@@ -38,36 +37,33 @@ function VerifyInner() {
           }
         }
         setStatus("done");
-        setMessage("Your email is verified. Welcome to MATRIX AI!");
-        setTimeout(() => router.push(next), 1200);
-      } catch (e) {
+        setMessage("Your email is verified. Welcome to MATRIX!");
+        setTimeout(() => router.push(next), 1100);
+      } catch {
         setStatus("error");
-        setMessage(e instanceof Error ? e.message : "Verification failed. Please try again.");
+        setMessage("Verification failed. Please try again with the link from your email.");
       }
     }
     void verify();
   }, [params, router]);
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4">
-      <div className="mb-6"><Logo size="lg" /></div>
-      <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm">
-        {status === "working" && <p className="text-slate-600">{message}</p>}
-        {status === "done" && <Alert tone="success">{message}</Alert>}
-        {status === "error" && (
-          <div className="space-y-4">
-            <Alert tone="danger">{message}</Alert>
-            <Link href="/login"><Button variant="outline" className="w-full">Go to sign in</Button></Link>
-          </div>
-        )}
-      </div>
-    </div>
+    <AuthShell title="Verification" subtitle="Confirming your account">
+      {status === "working" && <p className="text-center text-sm text-ink-2">{message}</p>}
+      {status === "done" && <Alert tone="success">{message}</Alert>}
+      {status === "error" && (
+        <div className="space-y-4">
+          <Alert tone="danger">{message}</Alert>
+          <Link href="/login"><Button variant="outline" className="w-full">Go to sign in</Button></Link>
+        </div>
+      )}
+    </AuthShell>
   );
 }
 
 export default function VerifyPage() {
   return (
-    <Suspense fallback={<div className="flex min-h-screen items-center justify-center text-slate-500">Loading…</div>}>
+    <Suspense fallback={null}>
       <VerifyInner />
     </Suspense>
   );

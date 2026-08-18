@@ -21,8 +21,8 @@ export default async function OnboardingPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
-        <h1 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">Welcome to MATRIX AI 🎉</h1>
-        <p className="mt-1 text-slate-500">
+        <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Welcome to MATRIX AI 🎉</h1>
+        <p className="mt-1 text-ink-3">
           A few quick steps to set up your safe account. Some steps need a security team review — you can
           still explore the scam library while you wait.
         </p>

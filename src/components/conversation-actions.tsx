@@ -40,17 +40,17 @@ export function ConversationActions({ conversationId }: { conversationId: string
         aria-label="Conversation actions"
         aria-expanded={menu}
         onClick={() => setMenu(!menu)}
-        className="rounded-lg px-2 py-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+        className="rounded-lg px-2 py-1.5 text-ink-3 hover:bg-surface-2 hover:text-ink-2"
       >
         ⋯
       </button>
       {menu ? (
         <>
           <button className="fixed inset-0 z-10 cursor-default" aria-hidden="true" onClick={() => setMenu(false)} />
-          <div className="absolute right-0 z-20 mt-1 w-40 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
-            <button onClick={() => { setMenu(false); void exportJson(); }} className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">Export JSON</button>
-            <button onClick={() => { setMenu(false); void archive(); }} className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">Archive</button>
-            <button onClick={() => { setMenu(false); void remove(); }} className="block w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50">Delete</button>
+          <div className="absolute right-0 z-20 mt-1 w-40 overflow-hidden rounded-xl border border-border bg-surface shadow-lg">
+            <button onClick={() => { setMenu(false); void exportJson(); }} className="block w-full px-4 py-2 text-left text-sm text-ink-2 hover:bg-bg">Export JSON</button>
+            <button onClick={() => { setMenu(false); void archive(); }} className="block w-full px-4 py-2 text-left text-sm text-ink-2 hover:bg-bg">Archive</button>
+            <button onClick={() => { setMenu(false); void remove(); }} className="block w-full px-4 py-2 text-left text-sm text-danger hover:bg-danger-soft">Delete</button>
           </div>
         </>
       ) : null}

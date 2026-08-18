@@ -34,13 +34,13 @@ export function AccountForm({ profile, countries }: { profile: Profile | null; c
 
   return (
     <Card>
-      <h2 className="font-bold text-slate-900">Account details</h2>
-      <p className="mt-1 text-sm text-slate-500">Email and date of birth are shown for reference and cannot be edited here for safety reasons.</p>
+      <h2 className="font-bold text-ink">Account details</h2>
+      <p className="mt-1 text-sm text-ink-3">Email and date of birth are shown for reference and cannot be edited here for safety reasons.</p>
       <form onSubmit={save} className="mt-4 space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Full name" htmlFor="full-name"><Input id="full-name" value={fullName} onChange={(e) => setFullName(e.target.value)} required /></Field>
-          <Field label="Email" htmlFor="email"><Input id="email" value={profile?.email ?? ""} disabled className="bg-slate-50 text-slate-500" /></Field>
-          <Field label="Date of birth" htmlFor="dob"><Input id="dob" value={profile?.date_of_birth ?? ""} disabled className="bg-slate-50 text-slate-500" /></Field>
+          <Field label="Email" htmlFor="email"><Input id="email" value={profile?.email ?? ""} disabled className="bg-bg text-ink-3" /></Field>
+          <Field label="Date of birth" htmlFor="dob"><Input id="dob" value={profile?.date_of_birth ?? ""} disabled className="bg-bg text-ink-3" /></Field>
           <Field label="Phone (optional)" htmlFor="phone"><Input id="phone" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+1 555…" /></Field>
           <Field label="School (optional)" htmlFor="school"><Input id="school" value={school} onChange={(e) => setSchool(e.target.value)} placeholder="Your school" /></Field>
           <Field label="Class / grade" htmlFor="grade"><Input id="grade" value={grade} onChange={(e) => setGrade(e.target.value)} placeholder="Grade 8" /></Field>

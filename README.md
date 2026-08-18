@@ -37,16 +37,38 @@ server-side AI gateway.
 | Layer | Technology |
 |---|---|
 | Frontend | Next.js 15 (App Router), React 19, TypeScript, Tailwind CSS 4 |
+| Design | MATRIX design system: dark/light/system themes, animated cyber background (canvas, reduced-motion aware), design tokens |
 | Database | **Supabase PostgreSQL** (single source of truth — no other database) |
 | Auth | Supabase Auth (email/password, Google, Facebook, MFA/TOTP) |
 | Storage | Supabase Storage (private buckets + signed URLs) |
 | Authorization | PostgreSQL Row Level Security (RLS) + role-based admin access |
 | Backend/API | Supabase Edge Functions (Deno) |
-| AI | **Groq** (`llama-3.3-70b-versatile` chat, `llama-3.2-11b-vision-preview` scanning) behind the AI Gateway |
+| AI | **Groq** (`llama-3.3-70b-versatile` chat, `llama-3.2-11b-vision-preview` scanning) behind the AI Gateway, **streaming responses** |
 | i18n | English + Bangla dictionaries (architecture ready for more) |
 | Tests | Vitest (AI pipeline, PII, classification, file validation, age rules) + SQL RLS test suite |
 
 The `service_role` key and `GROQ_API_KEY` exist **only server-side** (edge functions / server env) and are never exposed to the browser.
+
+## Product experience
+
+```
+Open MATRIX  →  Login (root / shows the login screen for guests)
+                    ↓
+            Onboarding / verification (multi-step: basic → DOB → age
+            verification → email → profile)
+                    ↓
+            MATRIX AI chat (streaming, temporary chat, screenshot
+            attachments, empty-state suggestion cards)
+                    ↓
+            Scanner · Scam Library · Report · Emergency · Courses ·
+            Certificates · Security dashboard · Settings · Docs
+```
+
+- `/` shows the professional login experience for unauthenticated users and routes authenticated users straight to `/chat` (no landing page).
+- Chat has a desktop sidebar (logo, new chat, search, grouped history — Today / Yesterday / Previous 7 days / Older, with rename/archive/delete) and a mobile drawer + bottom navigation bar.
+- AI responses **stream progressively** with stop / retry / regenerate, markdown, code blocks with copy buttons, timestamps, and image attachments that run the screenshot scanner.
+- `/docs` is a full documentation system: sticky sidebar, Ctrl+K search, reading progress, breadcrumbs, table of contents, prev/next navigation, callouts and code blocks.
+- Admin panel lives at `/admin` with sub-routes: `/admin/users`, `/admin/verification`, `/admin/consents`, `/admin/reports`, `/admin/courses`, `/admin/scams`, `/admin/security`, `/admin/audit-logs`.
 
 ## Architecture
 

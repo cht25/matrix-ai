@@ -28,10 +28,10 @@ export default async function HistoryPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">Chat History</h1>
-          <p className="mt-1 text-slate-500">Search, archive, export or delete your saved conversations. Temporary chats never appear here.</p>
+          <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Chat History</h1>
+          <p className="mt-1 text-ink-2">Search, archive, export or delete your saved conversations. Temporary chats never appear here.</p>
         </div>
-        <Link href="/chat/new" className="text-sm font-semibold text-brand-600 hover:text-brand-700">+ New chat</Link>
+        <Link href="/chat" className="text-sm font-semibold text-accent hover:text-accent-2">+ New chat</Link>
       </div>
 
       {conversations.length === 0 ? (

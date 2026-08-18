@@ -98,7 +98,7 @@ export function SecurityPanel() {
   return (
     <div className="space-y-4">
       <Card>
-        <h2 className="font-bold text-slate-900">Change password</h2>
+        <h2 className="font-bold text-ink">Change password</h2>
         <form onSubmit={changePassword} className="mt-4 space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="New password" htmlFor="new-password">
@@ -115,8 +115,8 @@ export function SecurityPanel() {
       <Card>
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="font-bold text-slate-900">Two-factor authentication (2FA)</h2>
-            <p className="mt-1 text-sm text-slate-500">
+            <h2 className="font-bold text-ink">Two-factor authentication (2FA)</h2>
+            <p className="mt-1 text-sm text-ink-3">
               {factors.length > 0
                 ? "Enabled — your account needs a code from your authenticator app after your password."
                 : "Not enabled. 2FA is the single most effective protection against account takeover."}
@@ -126,11 +126,11 @@ export function SecurityPanel() {
         </div>
 
         {enrolling && qrCode ? (
-          <div className="mt-4 rounded-xl bg-slate-50 p-4">
-            <p className="text-sm font-semibold text-slate-800">1. Scan this QR code with your authenticator app (e.g. Google Authenticator)</p>
+          <div className="mt-4 rounded-xl bg-bg p-4">
+            <p className="text-sm font-semibold text-ink">1. Scan this QR code with your authenticator app (e.g. Google Authenticator)</p>
             {/* The QR SVG comes from Supabase Auth and is safe to render as an image */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={`data:image/svg+xml;base64,${btoa(qrCode)}`} alt="QR code for authenticator app" className="mt-3 h-44 w-44 rounded-xl bg-white p-2 shadow-sm" />
+            <img src={`data:image/svg+xml;base64,${btoa(qrCode)}`} alt="QR code for authenticator app" className="mt-3 h-44 w-44 rounded-xl bg-surface p-2 shadow-sm" />
             <form onSubmit={verifyEnroll} className="mt-4 flex max-w-sm items-end gap-2">
               <Field label="2. Enter the 6-digit code" htmlFor="mfa-code">
                 <Input id="mfa-code" inputMode="numeric" value={verifyCode} onChange={(e) => setVerifyCode(e.target.value)} placeholder="000000" required />
@@ -143,18 +143,18 @@ export function SecurityPanel() {
         {factors.length > 0 ? (
           <ul className="mt-4 space-y-2">
             {factors.map((f) => (
-              <li key={f.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
-                <span className="text-slate-700">{f.factor_type === "totp" ? "Authenticator app (TOTP)" : f.factor_type} · verified</span>
-                <button onClick={() => void disableMfa(f.id)} className="text-xs font-semibold text-red-500 hover:text-red-700">Disable</button>
+              <li key={f.id} className="flex items-center justify-between rounded-xl bg-bg px-3 py-2.5 text-sm">
+                <span className="text-ink-2">{f.factor_type === "totp" ? "Authenticator app (TOTP)" : f.factor_type} · verified</span>
+                <button onClick={() => void disableMfa(f.id)} className="text-xs font-semibold text-red-500 hover:text-danger">Disable</button>
               </li>
             ))}
           </ul>
         ) : null}
       </Card>
 
-      <Card className="!p-4 text-sm text-slate-500">
-        <p className="font-semibold text-slate-700">Active sessions &amp; login history</p>
-        <p className="mt-1">See who's signed in to your account and revoke devices on the <a href="/security" className="font-semibold text-brand-600 hover:underline">Security page</a>.</p>
+      <Card className="!p-4 text-sm text-ink-3">
+        <p className="font-semibold text-ink-2">Active sessions &amp; login history</p>
+        <p className="mt-1">See who's signed in to your account and revoke devices on the <a href="/security" className="font-semibold text-accent hover:underline">Security page</a>.</p>
       </Card>
 
       {msg ? <Alert tone={msg.tone}>{msg.text}</Alert> : null}

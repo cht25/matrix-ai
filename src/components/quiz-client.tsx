@@ -71,12 +71,12 @@ export function QuizClient({
     return (
       <Card className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-extrabold text-slate-900">{result.passed ? "🎉 You passed!" : "Keep going — try again!"}</h2>
-          <Badge className={result.passed ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>
+          <h2 className="text-xl font-extrabold text-ink">{result.passed ? "🎉 You passed!" : "Keep going — try again!"}</h2>
+          <Badge className={result.passed ? "border-success/30 bg-success-soft text-success" : "border-warning/30 bg-warning-soft text-warning"}>
             {result.score_percent}% (needed {passPercent}%)
           </Badge>
         </div>
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-ink-2">
           You answered {correctCount} of {questions.length} correctly. Your best score is what counts — you can retake the quiz.
         </p>
         <div className="space-y-3">
@@ -85,12 +85,12 @@ export function QuizClient({
             const selected = options.find((o) => o.id === r?.selected_option_id);
             const correct = options.find((o) => o.id === r?.correct_option_id);
             return (
-              <div key={q.id} className={`rounded-xl border px-4 py-3 ${r?.correct ? "border-emerald-200 bg-emerald-50/50" : "border-red-200 bg-red-50/50"}`}>
-                <p className="font-medium text-slate-800">{r?.correct ? "✅" : "❌"} {q.question}</p>
-                <p className="mt-1 text-sm text-slate-600">
+              <div key={q.id} className={`rounded-xl border px-4 py-3 ${r?.correct ? "border-success/30 bg-success-soft/50" : "border-danger/30 bg-danger-soft/50"}`}>
+                <p className="font-medium text-ink">{r?.correct ? "✅" : "❌"} {q.question}</p>
+                <p className="mt-1 text-sm text-ink-2">
                   {r?.correct ? "Correct!" : <>Your answer: <strong>{selected?.option_text ?? "—"}</strong> · Correct: <strong>{correct?.option_text}</strong></>}
                 </p>
-                {q.explanation ? <p className="mt-1 text-xs text-slate-500">💡 {q.explanation}</p> : null}
+                {q.explanation ? <p className="mt-1 text-xs text-ink-3">💡 {q.explanation}</p> : null}
               </div>
             );
           })}
@@ -107,22 +107,22 @@ export function QuizClient({
   return (
     <Card className="space-y-6">
       <div>
-        <h2 className="text-xl font-extrabold text-slate-900">{quizTitle}</h2>
-        <p className="mt-1 text-sm text-slate-500">You need {passPercent}% to pass. Scoring happens server-side — no shortcuts! 😉</p>
+        <h2 className="text-xl font-extrabold text-ink">{quizTitle}</h2>
+        <p className="mt-1 text-sm text-ink-3">You need {passPercent}% to pass. Scoring happens server-side — no shortcuts! 😉</p>
       </div>
 
       {questions.map((q, qi) => (
         <fieldset key={q.id} className="space-y-2.5">
-          <legend className="font-semibold text-slate-800">{qi + 1}. {q.question}</legend>
+          <legend className="font-semibold text-ink">{qi + 1}. {q.question}</legend>
           {options.filter((o) => o.question_id === q.id).map((o) => (
-            <label key={o.id} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-2.5 text-sm transition-colors ${answers[q.id] === o.id ? "border-brand-500 bg-brand-50 font-medium text-brand-800" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}>
+            <label key={o.id} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-2.5 text-sm transition-colors ${answers[q.id] === o.id ? "border-accent bg-accent-soft font-medium text-ink" : "border-border bg-surface text-ink-2 hover:bg-bg"}`}>
               <input
                 type="radio"
                 name={q.id}
                 value={o.id}
                 checked={answers[q.id] === o.id}
                 onChange={() => setAnswers((a) => ({ ...a, [q.id]: o.id }))}
-                className="accent-brand-600"
+                className="accent-accent"
               />
               {o.option_text}
             </label>

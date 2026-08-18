@@ -37,26 +37,26 @@ const SECTIONS = [
 
 export default function PrivacyPage() {
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="border-b border-slate-200 bg-white">
+    <div className="min-h-screen bg-bg">
+      <header className="border-b border-border bg-surface">
         <div className="mx-auto flex h-16 max-w-3xl items-center justify-between px-4">
           <Logo />
-          <Link href="/" className="text-sm font-medium text-brand-600 hover:text-brand-700">← Home</Link>
+          <Link href="/" className="text-sm font-medium text-accent hover:text-accent-2">← Home</Link>
         </div>
       </header>
       <main className="mx-auto max-w-3xl space-y-5 px-4 py-10">
-        <h1 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">Privacy at MATRIX AI</h1>
-        <p className="text-slate-600">
+        <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Privacy at MATRIX AI</h1>
+        <p className="text-ink-2">
           MATRIX AI is operated by <strong>THAMJJ13.TOP White Hat Team</strong> for users aged 11–17.
           Privacy is not a feature here — it is the architecture.
         </p>
         {SECTIONS.map((s) => (
-          <section key={s.title} className="rounded-2xl border border-slate-200 bg-white p-5">
-            <h2 className="font-bold text-slate-900">{s.title}</h2>
-            <p className="mt-1.5 text-sm leading-relaxed text-slate-600">{s.body}</p>
+          <section key={s.title} className="rounded-2xl border border-border bg-surface p-5">
+            <h2 className="font-bold text-ink">{s.title}</h2>
+            <p className="mt-1.5 text-sm leading-relaxed text-ink-2">{s.body}</p>
           </section>
         ))}
-        <p className="pb-8 text-sm text-slate-500">
+        <p className="pb-8 text-sm text-ink-3">
           Questions? Contact the <strong>THAMJJ13.TOP White Hat Team</strong> through your parent or guardian.
         </p>
       </main>

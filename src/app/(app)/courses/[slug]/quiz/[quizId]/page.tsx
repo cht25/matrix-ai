@@ -26,7 +26,7 @@ export default async function QuizPage({ params }: { params: Promise<{ slug: str
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
-      <Link href={`/courses/${slug}`} className="text-sm font-medium text-brand-600 hover:text-brand-700">← {course.data.title}</Link>
+      <Link href={`/courses/${slug}`} className="text-sm font-medium text-accent hover:text-accent-2">← {course.data.title}</Link>
       <QuizClient
         quizId={quizId}
         quizTitle={quiz.title}

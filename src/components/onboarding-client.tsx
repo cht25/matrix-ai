@@ -129,14 +129,14 @@ export function OnboardingClient({
     <div className="space-y-5">
       {/* Progress steps */}
       <Card>
-        <h2 className="font-bold text-slate-900">Your setup checklist</h2>
+        <h2 className="font-bold text-ink">Your setup checklist</h2>
         <ul className="mt-3 space-y-2">
           {steps.map((s) => (
             <li key={s.title} className="flex items-start gap-3 text-sm">
               <span aria-hidden="true">{s.done ? "✅" : "⬜"}</span>
               <div>
-                <p className="font-medium text-slate-800">{s.title}</p>
-                {s.body ? <p className="text-slate-500">{s.body}</p> : null}
+                <p className="font-medium text-ink">{s.title}</p>
+                {s.body ? <p className="text-ink-3">{s.body}</p> : null}
               </div>
             </li>
           ))}
@@ -151,7 +151,7 @@ export function OnboardingClient({
 
       {/* Step 1: profile */}
       <Card>
-        <h2 className="font-bold text-slate-900">1 · Your profile</h2>
+        <h2 className="font-bold text-ink">1 · Your profile</h2>
         <form onSubmit={saveProfile} className="mt-4 space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Date of birth" htmlFor="dob" hint={age ? `Age calculated server-side: ${age}` : "Required — validated in the database."}>
@@ -180,14 +180,14 @@ export function OnboardingClient({
 
       {/* Step 2: consent */}
       <Card>
-        <h2 className="font-bold text-slate-900">2 · Guardian consent</h2>
+        <h2 className="font-bold text-ink">2 · Guardian consent</h2>
         {consentStatus === "approved" ? (
           <Alert tone="success">Consent approved ✓</Alert>
         ) : consentStatus === "pending" && consent?.consent_method === "self" ? (
           <Alert tone="info">Self-consent confirmed at signup (you're at/above the consent age in your country).</Alert>
         ) : (
           <>
-            <p className="mt-2 text-sm text-slate-600">
+            <p className="mt-2 text-sm text-ink-2">
               Your country ({countries.find((c) => c.id === country)?.name ?? country}) requires guardian consent.
               A parent or guardian needs to provide their details; a security team member reviews them.
             </p>
@@ -212,7 +212,7 @@ export function OnboardingClient({
 
       {/* Step 3: identity verification */}
       <Card>
-        <h2 className="font-bold text-slate-900">3 · Age verification</h2>
+        <h2 className="font-bold text-ink">3 · Age verification</h2>
         {profile?.age_verified ? (
           <Alert tone="success">Age verified ✓</Alert>
         ) : verificationStatus === "pending_review" ? (
@@ -229,12 +229,12 @@ export function OnboardingClient({
 
       {/* Step 4: email */}
       <Card>
-        <h2 className="font-bold text-slate-900">4 · Email verification</h2>
+        <h2 className="font-bold text-ink">4 · Email verification</h2>
         {emailVerified || demo ? (
           <Alert tone="success">Email verified ✓</Alert>
         ) : (
           <>
-            <p className="mt-2 text-sm text-slate-600">Check your inbox for the confirmation link. Didn't get it?</p>
+            <p className="mt-2 text-sm text-ink-2">Check your inbox for the confirmation link. Didn't get it?</p>
             <ResendEmail />
           </>
         )}
@@ -248,11 +248,11 @@ export function OnboardingClient({
 function IdentityUpload({ onUpload, busy }: { onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void; busy: boolean }) {
   return (
     <div className="mt-4">
-      <p className="text-sm text-slate-600">
+      <p className="text-sm text-ink-2">
         Upload a clear photo of a birth certificate or other accepted ID (PNG/JPG, max 5 MB). It goes to a
         private storage bucket, is never exposed publicly, and is never sent to the AI.
       </p>
-      <label className="mt-3 inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+      <label className="mt-3 inline-flex cursor-pointer items-center gap-2 rounded-xl border border-border-strong bg-surface px-4 py-2.5 text-sm font-semibold text-ink-2 hover:bg-bg">
         {busy ? <Spinner /> : "📄 Choose document"}
         <input type="file" accept="image/png,image/jpeg" className="sr-only" onChange={onUpload} disabled={busy} />
       </label>
@@ -269,7 +269,7 @@ function ResendEmail() {
     await supabase.auth.resend({ type: "signup", email: user.email, options: { emailRedirectTo: `${window.location.origin}/verify?next=/onboarding` } });
     setSent(true);
   }
-  return sent ? <p className="mt-2 text-sm font-medium text-emerald-700">Resent ✓ check your inbox.</p> : (
-    <button onClick={() => void resend()} className="mt-2 text-sm font-semibold text-brand-600 hover:text-brand-700">Resend confirmation email</button>
+  return sent ? <p className="mt-2 text-sm font-medium text-success">Resent ✓ check your inbox.</p> : (
+    <button onClick={() => void resend()} className="mt-2 text-sm font-semibold text-accent hover:text-accent-2">Resend confirmation email</button>
   );
 }

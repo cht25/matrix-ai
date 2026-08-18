@@ -39,8 +39,8 @@ export default async function CoursesPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">Cyber Safety Courses</h1>
-        <p className="mt-1 text-slate-500">Learn at your own pace. Finish a course, pass its quizzes, and earn a verifiable certificate.</p>
+        <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Cyber Safety Courses</h1>
+        <p className="mt-1 text-ink-3">Learn at your own pace. Finish a course, pass its quizzes, and earn a verifiable certificate.</p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -48,13 +48,13 @@ export default async function CoursesPage() {
           <Link key={c.id} href={`/courses/${c.slug}`}>
             <Card className="h-full transition-shadow hover:shadow-md">
               <div className="flex items-start justify-between gap-2">
-                <h2 className="font-bold text-slate-900">{c.title}</h2>
-                {c.cert ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-700">✓ Certified</span> : null}
+                <h2 className="font-bold text-ink">{c.title}</h2>
+                {c.cert ? <span className="rounded-full border border-success/30 bg-success-soft px-2 py-0.5 text-[10px] font-bold uppercase text-success">✓ Certified</span> : null}
               </div>
-              <p className="mt-1 line-clamp-2 text-sm text-slate-600">{c.description}</p>
-              <div className="mt-4 flex items-center justify-between text-xs text-slate-400">
+              <p className="mt-1 line-clamp-2 text-sm text-ink-2">{c.description}</p>
+              <div className="mt-4 flex items-center justify-between text-xs text-ink-3">
                 <span className="capitalize">{c.level} · {c.duration_minutes} min · {c.lessonCount} lessons</span>
-                <span className="font-semibold text-slate-600">{c.pct}%</span>
+                <span className="font-semibold text-ink-2">{c.pct}%</span>
               </div>
               <Progress value={c.pct} className="mt-2" />
             </Card>

@@ -41,9 +41,9 @@ export function ContentTab({ codes }: { codes: Set<string> }) {
   }
 
   if (!canManage) {
-    return <Card><p className="text-sm text-slate-500">You need the <strong>content.manage</strong> permission (content_admin / super_admin).</p></Card>;
+    return <Card><p className="text-sm text-ink-3">You need the <strong>content.manage</strong> permission (content_admin / super_admin).</p></Card>;
   }
-  if (!articles) return <Card className="flex items-center gap-2 text-slate-500"><Spinner /> Loading…</Card>;
+  if (!articles) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;
 
   const visible = articles.filter((a) => filter === "all" || a.status === filter);
 
@@ -52,7 +52,7 @@ export function ContentTab({ codes }: { codes: Set<string> }) {
       {msg ? <Alert tone="info">{msg}</Alert> : null}
       <Card>
         <div className="flex items-center justify-between gap-3">
-          <h2 className="font-bold text-slate-900">Scam articles ({visible.length})</h2>
+          <h2 className="font-bold text-ink">Scam articles ({visible.length})</h2>
           <Select value={filter} onChange={(e) => setFilter(e.target.value)} className="w-36">
             <option value="all">All</option>
             <option value="active">Active</option>
@@ -60,7 +60,7 @@ export function ContentTab({ codes }: { codes: Set<string> }) {
             <option value="review">Review</option>
           </Select>
         </div>
-        <p className="mt-1 text-xs text-slate-400">
+        <p className="mt-1 text-xs text-ink-3">
           Only <strong>active</strong> articles are visible to users. Changes are audited. Articles carry
           verification timestamps and source names — the AI never invents reporting guidance.
         </p>
@@ -68,14 +68,14 @@ export function ContentTab({ codes }: { codes: Set<string> }) {
           {visible.map((a) => {
             const cat = categories.find((c) => c.id === a.category_id);
             return (
-              <li key={a.id} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2.5">
+              <li key={a.id} className="flex items-center justify-between gap-3 rounded-xl bg-bg px-3 py-2.5">
                 <div className="min-w-0">
-                  <p className="truncate font-medium text-slate-800">{a.title}</p>
-                  <p className="text-xs text-slate-400">
+                  <p className="truncate font-medium text-ink">{a.title}</p>
+                  <p className="text-xs text-ink-3">
                     {cat?.name ?? "uncategorised"} · verified {a.last_verified?.slice(0, 10)} · {a.source_name || "no source"}
                   </p>
                 </div>
-                <Badge className={a.status === "active" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-white text-slate-500"}>{a.status}</Badge>
+                <Badge className={a.status === "active" ? "border-success/30 bg-success-soft text-success" : "border-border bg-surface text-ink-3"}>{a.status}</Badge>
                 <Button variant="outline" onClick={() => void toggleStatus(a)} className="!px-3 !py-1.5 text-xs">
                   {a.status === "active" ? "Deactivate" : "Activate"}
                 </Button>
@@ -84,7 +84,7 @@ export function ContentTab({ codes }: { codes: Set<string> }) {
           })}
         </ul>
       </Card>
-      <Card className="!p-4 text-sm text-slate-500">
+      <Card className="!p-4 text-sm text-ink-3">
         Course, lesson and quiz content is managed through the same content.manage permission via the
         database (or the Supabase Studio content editor). Editing UI for those lives in the database-backed
         admin API — see the README for the migration workflow.
@@ -143,7 +143,7 @@ export function GrantsTab({ codes }: { codes: Set<string> }) {
   }
 
   if (!canAccess) {
-    return <Card><p className="text-sm text-slate-500">You need the <strong>privacy.access</strong> permission.</p></Card>;
+    return <Card><p className="text-sm text-ink-3">You need the <strong>privacy.access</strong> permission.</p></Card>;
   }
 
   return (
@@ -151,8 +151,8 @@ export function GrantsTab({ codes }: { codes: Set<string> }) {
       {msg ? <Alert tone="info">{msg}</Alert> : null}
 
       <Card>
-        <h2 className="font-bold text-slate-900">Request privileged access to a user's conversations</h2>
-        <p className="mt-1 text-sm text-slate-500">
+        <h2 className="font-bold text-ink">Request privileged access to a user's conversations</h2>
+        <p className="mt-1 text-sm text-ink-3">
           Time-limited (default 24h), reason-required, fully audited. Conversations are never shown by default.
         </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -170,14 +170,14 @@ export function GrantsTab({ codes }: { codes: Set<string> }) {
 
       {convList && activeGrant ? (
         <Card>
-          <h3 className="font-bold text-slate-900">Conversations of the target user</h3>
-          {convList.length === 0 ? <p className="mt-2 text-sm text-slate-500">No conversations found.</p> : (
+          <h3 className="font-bold text-ink">Conversations of the target user</h3>
+          {convList.length === 0 ? <p className="mt-2 text-sm text-ink-3">No conversations found.</p> : (
             <ul className="mt-3 space-y-2">
               {convList.map((c) => (
-                <li key={c.id} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
+                <li key={c.id} className="flex items-center justify-between gap-3 rounded-xl bg-bg px-3 py-2.5 text-sm">
                   <div>
-                    <p className="font-medium text-slate-800">{c.title} {c.is_temporary ? <Badge className="ml-1 border-amber-200 bg-amber-50 text-amber-700">temporary</Badge> : null}</p>
-                    <p className="text-xs text-slate-400">{formatDate(c.updated_at)}</p>
+                    <p className="font-medium text-ink">{c.title} {c.is_temporary ? <Badge className="ml-1 border-warning/30 bg-warning-soft text-warning">temporary</Badge> : null}</p>
+                    <p className="text-xs text-ink-3">{formatDate(c.updated_at)}</p>
                   </div>
                   <Button variant="outline" onClick={() => void viewConversation(activeGrant, c.id)} className="!px-3 !py-1.5 text-xs">View messages</Button>
                 </li>
@@ -189,30 +189,30 @@ export function GrantsTab({ codes }: { codes: Set<string> }) {
 
       {conversationView ? (
         <Card>
-          <h3 className="font-bold text-slate-900">Conversation transcript</h3>
+          <h3 className="font-bold text-ink">Conversation transcript</h3>
           <div className="mt-3 space-y-2">
             {conversationView.map((m, i) => (
-              <div key={i} className={`rounded-xl px-3 py-2 text-sm ${m.role === "user" ? "bg-brand-50 text-brand-900" : "bg-slate-50 text-slate-700"}`}>
-                <span className="mr-2 text-xs font-bold uppercase text-slate-400">{m.role}</span>
+              <div key={i} className={`rounded-xl px-3 py-2 text-sm ${m.role === "user" ? "bg-accent-soft text-ink" : "bg-bg text-ink-2"}`}>
+                <span className="mr-2 text-xs font-bold uppercase text-ink-3">{m.role}</span>
                 {m.content}
               </div>
             ))}
           </div>
-          <button onClick={() => setConversationView(null)} className="mt-3 text-sm font-semibold text-brand-600">Close transcript</button>
+          <button onClick={() => setConversationView(null)} className="mt-3 text-sm font-semibold text-accent">Close transcript</button>
         </Card>
       ) : null}
 
       {grants && grants.length > 0 ? (
         <Card>
-          <h2 className="font-bold text-slate-900">Recent grants</h2>
+          <h2 className="font-bold text-ink">Recent grants</h2>
           <ul className="mt-3 space-y-2">
             {grants.map((g) => (
-              <li key={g.id} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
+              <li key={g.id} className="flex items-center justify-between gap-3 rounded-xl bg-bg px-3 py-2.5 text-sm">
                 <div>
-                  <p className="font-medium text-slate-800">→ {g.target_user_id.slice(0, 8)} · {g.scope}</p>
-                  <p className="text-xs text-slate-400">{g.reason} · expires {formatDate(g.expires_at)}</p>
+                  <p className="font-medium text-ink">→ {g.target_user_id.slice(0, 8)} · {g.scope}</p>
+                  <p className="text-xs text-ink-3">{g.reason} · expires {formatDate(g.expires_at)}</p>
                 </div>
-                <Badge className={g.status === "active" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-white text-slate-500"}>{g.status}</Badge>
+                <Badge className={g.status === "active" ? "border-success/30 bg-success-soft text-success" : "border-border bg-surface text-ink-3"}>{g.status}</Badge>
               </li>
             ))}
           </ul>

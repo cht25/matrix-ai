@@ -3,12 +3,11 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/browser";
-import { AuthShell } from "@/components/auth-shell";
-import { Alert, Button, Field, Input } from "@/components/ui";
+import { AuthShell } from "@/components/auth/login-screen";
+import { Alert, Button, Field, Input, Spinner } from "@/components/ui";
 
 function ResetPasswordInner() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -17,10 +16,7 @@ function ResetPasswordInner() {
 
   useEffect(() => {
     const supabase = createClient();
-    supabase.auth.getSession().then(({ data }) => {
-      // The reset flow arrives with a session from the recovery link.
-      setReady(Boolean(data.session));
-    });
+    supabase.auth.getSession().then(({ data }) => setReady(Boolean(data.session)));
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -32,14 +28,14 @@ function ResetPasswordInner() {
     const supabase = createClient();
     const { error } = await supabase.auth.updateUser({ password });
     setBusy(false);
-    if (error) return setError(error.message);
+    if (error) return setError("We couldn't update your password. The link may have expired — request a new one.");
     await supabase.rpc("record_security_event", { p_event_type: "password_changed", p_metadata: {} });
-    router.push("/dashboard?reset=1");
+    router.push("/chat?reset=1");
     router.refresh();
   }
 
   if (!ready && !error) {
-    return <AuthShell title="Reset your password"><p className="text-sm text-slate-500">Checking your reset link…</p></AuthShell>;
+    return <AuthShell title="Reset password"><p className="text-sm text-ink-2">Checking your reset link…</p></AuthShell>;
   }
 
   return (
@@ -52,7 +48,7 @@ function ResetPasswordInner() {
           <Input id="confirm-password" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
         </Field>
         {error ? <Alert tone="danger">{error}</Alert> : null}
-        <Button type="submit" className="w-full" disabled={busy}>{busy ? "Saving…" : "Update password"}</Button>
+        <Button type="submit" className="w-full" disabled={busy}>{busy ? <Spinner /> : "Update password"}</Button>
       </form>
     </AuthShell>
   );
@@ -60,7 +56,7 @@ function ResetPasswordInner() {
 
 export default function ResetPasswordPage() {
   return (
-    <Suspense fallback={<AuthShell title="Reset your password"><p className="text-sm text-slate-500">Loading…</p></AuthShell>}>
+    <Suspense fallback={null}>
       <ResetPasswordInner />
     </Suspense>
   );

@@ -5,7 +5,7 @@ import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
 import { Badge, Card, EmptyState, Progress } from "@/components/ui";
 import { formatDate, scoreLabel, timeAgo } from "@/lib/utils";
 
-export const metadata: Metadata = { title: "Dashboard" };
+export const metadata: Metadata = { title: "Security overview" };
 
 type Recommendation = { text: string; href: string; cta: string };
 
@@ -15,10 +15,9 @@ export default async function DashboardPage() {
   const demo = isDemoMode();
   if (!user && !demo) redirect("/login");
 
-  const [scoreRes, profileRes, convRes, progressRes, certRes, eventsRes, analysesRes, settingsRes] = await Promise.all([
+  const [scoreRes, profileRes, progressRes, certRes, eventsRes, analysesRes, settingsRes] = await Promise.all([
     db.rpc("security_score"),
     db.from("profiles").select("id, full_name, age_verified, email, created_at").eq("id", user!.id).maybeSingle(),
-    db.from("conversations").select("id, title, updated_at").eq("user_id", user!.id).neq("is_temporary", true).order("updated_at", { ascending: false }).limit(3),
     db.from("course_progress").select("status").eq("user_id", user!.id).eq("status", "completed"),
     db.from("certificates").select("id, certificate_id, issued_at").eq("user_id", user!.id).limit(5),
     db.from("security_events").select("event_type, created_at").eq("user_id", user!.id).order("created_at", { ascending: false }).limit(5),
@@ -27,13 +26,12 @@ export default async function DashboardPage() {
   ]);
 
   const score = typeof scoreRes.data === "number" ? scoreRes.data : 0;
-  const profile = profileRes.data as { full_name?: string; age_verified?: boolean; email?: string } | null;
+  const profile = profileRes.data as { full_name?: string; age_verified?: boolean } | null;
   const completedLessons = progressRes.data?.length ?? 0;
   const certificates = certRes.data as { id: string; certificate_id: string; issued_at: string }[] | null;
   const events = eventsRes.data as { event_type: string; created_at: string }[] | null;
   const analyses = analysesRes.data as { risk_level: string; created_at: string }[] | null;
   const settings = settingsRes.data as { notifications_security_alerts?: boolean } | null;
-
   const scoreInfo = scoreLabel(score);
 
   const recommendations: Recommendation[] = [];
@@ -47,140 +45,116 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">
-          Hi {profile?.full_name?.split(" ")[0] ?? "there"} 👋
-        </h1>
-        <p className="mt-1 text-slate-500">Here's your cyber safety snapshot today.</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Hi {profile?.full_name?.split(" ")[0] ?? "there"} 👋</h1>
+          <p className="mt-1 text-ink-2">Your cyber safety snapshot.</p>
+        </div>
+        <Link href="/chat"><span className="hidden sm:inline-block"><span className="inline-flex min-h-11 items-center rounded-xl bg-accent px-4 text-sm font-semibold text-white shadow-[0_4px_16px_var(--accent-glow)] hover:brightness-110">Open MATRIX AI</span></span></Link>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="flex flex-col justify-between">
-          <p className="text-sm font-medium text-slate-500">Cyber Safety Score</p>
+          <p className="text-sm font-medium text-ink-2">Cyber Safety Score</p>
           <div className="mt-2 flex items-end gap-2">
             <span className={`text-4xl font-extrabold ${scoreInfo.color}`}>{score}</span>
-            <span className="mb-1 text-sm font-semibold text-slate-500">/100</span>
+            <span className="mb-1 text-sm font-semibold text-ink-3">/100</span>
           </div>
           <Progress value={score} className="mt-3" />
-          <p className="mt-2 text-xs font-semibold text-slate-500">{scoreInfo.label}</p>
+          <p className="mt-2 text-xs font-semibold text-ink-3">{scoreInfo.label}</p>
         </Card>
         <Card>
-          <p className="text-sm font-medium text-slate-500">Email verification</p>
+          <p className="text-sm font-medium text-ink-2">Email verification</p>
           <div className="mt-2">
-            {user?.email_confirmed_at || demo ? <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700">Verified ✓</Badge> : <Badge className="border-amber-200 bg-amber-50 text-amber-700">Not verified</Badge>}
+            {user?.email_confirmed_at || demo ? <Badge className="border-success/30 bg-success-soft text-success">Verified ✓</Badge> : <Badge className="border-warning/30 bg-warning-soft text-warning">Not verified</Badge>}
           </div>
-          <p className="mt-3 text-xs text-slate-400">MFA: <span className="font-medium text-slate-600">see Security page</span></p>
+          <p className="mt-3 text-xs text-ink-3">Age verified: {profile?.age_verified || demo ? "✓" : "pending"}</p>
         </Card>
         <Card>
-          <p className="text-sm font-medium text-slate-500">Lessons completed</p>
-          <p className="mt-2 text-4xl font-extrabold text-slate-900">{completedLessons}</p>
-          <p className="mt-2 text-xs text-slate-400">Keep going — every lesson raises your score.</p>
+          <p className="text-sm font-medium text-ink-2">Lessons completed</p>
+          <p className="mt-2 text-4xl font-extrabold text-ink">{completedLessons}</p>
+          <p className="mt-2 text-xs text-ink-3">Every lesson raises your score.</p>
         </Card>
         <Card>
-          <p className="text-sm font-medium text-slate-500">Certificates</p>
-          <p className="mt-2 text-4xl font-extrabold text-slate-900">{certificates?.length ?? 0}</p>
-          <Link href="/certificate" className="mt-2 inline-block text-xs font-semibold text-brand-600 hover:text-brand-700">View certificates →</Link>
+          <p className="text-sm font-medium text-ink-2">Certificates</p>
+          <p className="mt-2 text-4xl font-extrabold text-ink">{certificates?.length ?? 0}</p>
+          <Link href="/certificates" className="mt-2 inline-block text-xs font-semibold text-accent hover:text-accent-2">View certificates →</Link>
         </Card>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        {/* Recommendations */}
         <Card>
-          <h2 className="font-bold text-slate-900">Security recommendations</h2>
+          <h2 className="font-bold text-ink">Security recommendations</h2>
           <ul className="mt-3 space-y-2">
             {recommendations.map((r, i) => (
-              <li key={i} className="flex items-start justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
-                <span className="text-slate-700">{r.text}</span>
-                <Link href={r.href} className="shrink-0 font-semibold text-brand-600 hover:text-brand-700">{r.cta} →</Link>
+              <li key={i} className="flex items-start justify-between gap-3 rounded-xl bg-surface-2 px-3 py-2.5 text-sm">
+                <span className="text-ink-2">{r.text}</span>
+                <Link href={r.href} className="shrink-0 font-semibold text-accent hover:text-accent-2">{r.cta} →</Link>
               </li>
             ))}
           </ul>
         </Card>
 
-        {/* Recent security events */}
         <Card>
           <div className="flex items-center justify-between">
-            <h2 className="font-bold text-slate-900">Recent security events</h2>
-            <Link href="/security" className="text-xs font-semibold text-brand-600 hover:text-brand-700">View all →</Link>
+            <h2 className="font-bold text-ink">Recent security events</h2>
+            <Link href="/security" className="text-xs font-semibold text-accent hover:text-accent-2">View all →</Link>
           </div>
           {events && events.length > 0 ? (
             <ul className="mt-3 space-y-2">
               {events.map((e, i) => (
-                <li key={i} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
-                  <span className="capitalize text-slate-700">{e.event_type.replaceAll("_", " ")}</span>
-                  <span className="text-xs text-slate-400">{timeAgo(e.created_at)}</span>
+                <li key={i} className="flex items-center justify-between rounded-xl bg-surface-2 px-3 py-2.5 text-sm">
+                  <span className="capitalize text-ink-2">{e.event_type.replaceAll("_", " ")}</span>
+                  <span className="text-xs text-ink-3">{timeAgo(e.created_at)}</span>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="mt-3 text-sm text-slate-500">No security events yet. Logins and important changes will appear here.</p>
+            <p className="mt-3 text-sm text-ink-3">No security events yet.</p>
           )}
         </Card>
 
-        {/* Recent analyses */}
         <Card>
           <div className="flex items-center justify-between">
-            <h2 className="font-bold text-slate-900">Recent scam analyses</h2>
-            <Link href="/scanner" className="text-xs font-semibold text-brand-600 hover:text-brand-700">Scan something →</Link>
+            <h2 className="font-bold text-ink">Recent scam analyses</h2>
+            <Link href="/scanner" className="text-xs font-semibold text-accent hover:text-accent-2">Scan something →</Link>
           </div>
           {analyses && analyses.length > 0 ? (
             <ul className="mt-3 space-y-2">
               {analyses.map((a, i) => (
-                <li key={i} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
-                  <span className="capitalize text-slate-700">Screenshot analysis</span>
+                <li key={i} className="flex items-center justify-between rounded-xl bg-surface-2 px-3 py-2.5 text-sm">
+                  <span className="capitalize text-ink-2">Screenshot analysis</span>
                   <span className="flex items-center gap-2">
-                    <Badge className="border-slate-200 bg-white text-slate-600 capitalize">{a.risk_level} risk</Badge>
-                    <span className="text-xs text-slate-400">{timeAgo(a.created_at)}</span>
+                    <Badge className="border-border bg-surface capitalize text-ink-2">{a.risk_level} risk</Badge>
+                    <span className="text-xs text-ink-3">{timeAgo(a.created_at)}</span>
                   </span>
                 </li>
               ))}
             </ul>
           ) : (
-            <EmptyState title="No analyses yet" body="Upload a suspicious screenshot and the AI scanner will analyse it." />
+            <EmptyState title="No analyses yet" body="Upload a suspicious screenshot and MATRIX will analyse it." />
           )}
         </Card>
 
-        {/* Recent conversations */}
         <Card>
-          <div className="flex items-center justify-between">
-            <h2 className="font-bold text-slate-900">Recent chats</h2>
-            <Link href="/chat" className="text-xs font-semibold text-brand-600 hover:text-brand-700">Open chat →</Link>
-          </div>
-          {convRes.data && (convRes.data as unknown[]).length > 0 ? (
-            <ul className="mt-3 space-y-2">
-              {(convRes.data as { id: string; title: string; updated_at: string }[]).map((c) => (
-                <li key={c.id}>
-                  <Link href={`/chat/${c.id}`} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5 text-sm hover:bg-slate-100">
-                    <span className="truncate font-medium text-slate-700">{c.title}</span>
-                    <span className="ml-3 shrink-0 text-xs text-slate-400">{timeAgo(c.updated_at)}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <EmptyState title="No conversations yet" body="Ask the AI about a suspicious message, a password question, or anything cyber." action={
-              <Link href="/chat" className="mt-2 text-sm font-semibold text-brand-600">Start chatting →</Link>
-            } />
-          )}
+          <h2 className="font-bold text-ink">Recent chats</h2>
+          <Link href="/chat" className="text-xs font-semibold text-accent hover:text-accent-2">Open chat →</Link>
+          <p className="mt-3 text-sm text-ink-3">Your latest conversations live in the sidebar — or head to the chat to continue.</p>
+          {certificates && certificates.length > 0 ? (
+            <div className="mt-3 border-t border-border pt-3">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-ink-3">Certificates</h3>
+              <ul className="mt-2 space-y-1.5">
+                {certificates.map((c) => (
+                  <li key={c.id} className="flex items-center justify-between rounded-xl bg-surface-2 px-3 py-2.5 text-sm">
+                    <span className="font-mono text-ink-2">{c.certificate_id}</span>
+                    <span className="text-xs text-ink-3">{formatDate(c.issued_at)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </Card>
       </div>
-
-      {certificates && certificates.length > 0 ? (
-        <Card>
-          <div className="flex items-center justify-between">
-            <h2 className="font-bold text-slate-900">Completed certificates</h2>
-            <Link href="/certificate" className="text-xs font-semibold text-brand-600 hover:text-brand-700">View all →</Link>
-          </div>
-          <ul className="mt-3 space-y-2">
-            {certificates.map((c) => (
-              <li key={c.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
-                <span className="font-mono text-slate-700">{c.certificate_id}</span>
-                <span className="text-xs text-slate-400">{formatDate(c.issued_at)}</span>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      ) : null}
     </div>
   );
 }

@@ -1,7 +1,10 @@
 import { cn } from "@/lib/utils";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
 
-// --- Button ---------------------------------------------------------------
+// =============================================================================
+// MATRIX design system primitives (spec §52–§53)
+// =============================================================================
+
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "outline";
 
 export function Button({
@@ -11,16 +14,17 @@ export function Button({
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) {
   const styles: Record<ButtonVariant, string> = {
-    primary: "bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800 shadow-sm",
-    secondary: "bg-brand-50 text-brand-700 hover:bg-brand-100",
-    ghost: "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
-    danger: "bg-red-600 text-white hover:bg-red-700",
-    outline: "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
+    primary:
+      "bg-accent text-white hover:brightness-110 active:brightness-95 shadow-[0_0_0_1px_rgba(255,255,255,0.06)_inset,0_4px_16px_var(--accent-glow)]",
+    secondary: "bg-accent-soft text-accent hover:bg-[var(--accent-soft)] hover:brightness-105",
+    ghost: "text-ink-2 hover:bg-surface-2 hover:text-ink",
+    danger: "bg-danger text-white hover:brightness-110 active:brightness-95",
+    outline: "border border-border-strong bg-surface text-ink hover:border-accent hover:text-ink",
   };
   return (
     <button
       className={cn(
-        "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-50",
         styles[variant],
         className,
       )}
@@ -31,66 +35,38 @@ export function Button({
   );
 }
 
-// --- Inputs ---------------------------------------------------------------
 export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      className={cn(
-        "w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-500",
-        className,
-      )}
-      {...props}
-    />
-  );
+  return <input className={cn("input-base", className)} {...props} />;
 }
 
 export function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return (
-    <textarea
-      className={cn(
-        "w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-500",
-        className,
-      )}
-      {...props}
-    />
-  );
+  return <textarea className={cn("input-base min-h-11 resize-none", className)} {...props} />;
 }
 
 export function Select({ className, children, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <select
-      className={cn(
-        "w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-brand-500",
-        className,
-      )}
-      {...props}
-    >
+    <select className={cn("input-base cursor-pointer", className)} {...props}>
       {children}
     </select>
   );
 }
 
-// --- Form field -------------------------------------------------------------
 export function Field({ label, htmlFor, hint, children }: { label: string; htmlFor?: string; hint?: string; children: ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <label htmlFor={htmlFor} className="block text-sm font-medium text-slate-700">
+      <label htmlFor={htmlFor} className="block text-sm font-medium text-ink-2">
         {label}
       </label>
       {children}
-      {hint ? <p className="text-xs text-slate-500">{hint}</p> : null}
+      {hint ? <p className="text-xs text-ink-3">{hint}</p> : null}
     </div>
   );
 }
 
-// --- Card -------------------------------------------------------------------
-export function Card({ className, children }: { className?: string; children: ReactNode }) {
-  return (
-    <div className={cn("rounded-2xl border border-slate-200 bg-white p-5 shadow-sm", className)}>{children}</div>
-  );
+export function Card({ className, children, id }: { className?: string; children: ReactNode; id?: string }) {
+  return <div id={id} className={cn("card p-5", className)}>{children}</div>;
 }
 
-// --- Badge ------------------------------------------------------------------
 export function Badge({ className, children }: { className?: string; children: ReactNode }) {
   return (
     <span className={cn("inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium", className)}>
@@ -99,27 +75,33 @@ export function Badge({ className, children }: { className?: string; children: R
   );
 }
 
-// --- Progress bar ------------------------------------------------------------
 export function Progress({ value, className }: { value: number; className?: string }) {
   return (
-    <div className={cn("h-2 w-full overflow-hidden rounded-full bg-slate-200", className)} role="progressbar" aria-valuenow={value} aria-valuemin={0} aria-valuemax={100}>
-      <div className="h-full rounded-full bg-brand-600 transition-all" style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
+    <div
+      className={cn("h-2 w-full overflow-hidden rounded-full bg-surface-3", className)}
+      role="progressbar"
+      aria-valuenow={value}
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
+      <div
+        className="h-full rounded-full bg-gradient-to-r from-accent to-accent-2 transition-all duration-500"
+        style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
+      />
     </div>
   );
 }
 
-// --- Alert -------------------------------------------------------------------
 export function Alert({ tone = "info", children }: { tone?: "info" | "success" | "warning" | "danger"; children: ReactNode }) {
   const tones = {
-    info: "border-brand-200 bg-brand-50 text-brand-800",
-    success: "border-emerald-200 bg-emerald-50 text-emerald-800",
-    warning: "border-amber-200 bg-amber-50 text-amber-800",
-    danger: "border-red-200 bg-red-50 text-red-800",
+    info: "border-accent/30 bg-accent-soft text-accent",
+    success: "border-success/30 bg-success-soft text-success",
+    warning: "border-warning/30 bg-warning-soft text-warning",
+    danger: "border-danger/30 bg-danger-soft text-danger",
   };
-  return <div className={cn("rounded-xl border px-4 py-3 text-sm", tones[tone])}>{children}</div>;
+  return <div className={cn("rounded-xl border px-4 py-3 text-sm leading-relaxed", tones[tone])}>{children}</div>;
 }
 
-// --- Spinner -----------------------------------------------------------------
 export function Spinner({ className }: { className?: string }) {
   return (
     <span
@@ -130,14 +112,38 @@ export function Spinner({ className }: { className?: string }) {
   );
 }
 
-// --- Empty state ---------------------------------------------------------------
 export function EmptyState({ icon, title, body, action }: { icon?: ReactNode; title: string; body?: string; action?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center">
+    <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border-strong bg-surface px-6 py-12 text-center">
       {icon}
-      <p className="font-semibold text-slate-700">{title}</p>
-      {body ? <p className="max-w-sm text-sm text-slate-500">{body}</p> : null}
+      <p className="font-semibold text-ink">{title}</p>
+      {body ? <p className="max-w-sm text-sm text-ink-2">{body}</p> : null}
       {action}
     </div>
+  );
+}
+
+// --- Dropdown menu -----------------------------------------------------------
+
+export function Menu({ trigger, items }: { trigger: ReactNode; items: { label: string; icon?: ReactNode; danger?: boolean; onClick: () => void }[] }) {
+  return (
+    <details className="group relative">
+      <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">{trigger}</summary>
+      <div className="card fade-in absolute right-0 z-30 mt-1 w-44 overflow-hidden !rounded-xl !p-1 shadow-[var(--shadow-pop)]">
+        {items.map((it, i) => (
+          <button
+            key={i}
+            onClick={it.onClick}
+            className={cn(
+              "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors",
+              it.danger ? "text-danger hover:bg-danger-soft" : "text-ink hover:bg-surface-2",
+            )}
+          >
+            {it.icon}
+            {it.label}
+          </button>
+        ))}
+      </div>
+    </details>
   );
 }

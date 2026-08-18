@@ -12,12 +12,12 @@ export default async function TemporaryChatPage() {
   if (!user && !demo) redirect("/login");
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="mx-auto h-full max-w-3xl">
       <div className="mb-4">
-        <h1 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">Temporary Chat</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          For questions you do not want saved. Nothing here enters your history, memory, summaries or search —
-          and it is deleted after 24 hours.
+        <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Temporary Chat</h1>
+        <p className="mt-1 text-sm text-ink-2">
+          For questions you do not want saved. Nothing here enters your history, memory, summaries or
+          search — and it's deleted after 24 hours.
         </p>
       </div>
       <ChatClient initialMessages={[]} conversationId={null} isTemporary />

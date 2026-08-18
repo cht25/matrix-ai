@@ -25,6 +25,8 @@ export type AIProviderResponse = {
 
 export interface AIProvider {
   chat(req: AIProviderRequest): Promise<AIProviderResponse>;
+  /** Optional streaming support — yields text deltas as they arrive. */
+  streamChat?(req: AIProviderRequest): AsyncGenerator<string>;
 }
 
 export class GroqProvider implements AIProvider {
@@ -35,15 +37,15 @@ export class GroqProvider implements AIProvider {
     this.apiKey = apiKey;
   }
 
-  async chat(req: AIProviderRequest): Promise<AIProviderResponse> {
+  private buildBody(req: AIProviderRequest, stream: boolean): Record<string, unknown> {
     const body: Record<string, unknown> = {
       model: req.model,
       messages: req.messages,
       temperature: req.temperature ?? 0.4,
       max_tokens: req.maxTokens ?? 1024,
+      stream,
     };
     if (req.imageDataUrl) {
-      // Vision: attach the image to the last user message.
       const last = req.messages[req.messages.length - 1];
       body.messages = [
         ...req.messages.slice(0, -1),
@@ -56,14 +58,17 @@ export class GroqProvider implements AIProvider {
         },
       ];
     }
+    return body;
+  }
 
+  async chat(req: AIProviderRequest): Promise<AIProviderResponse> {
     const res = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.apiKey}`,
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(this.buildBody(req, false)),
       signal: req.signal,
     });
 
@@ -87,6 +92,47 @@ export class GroqProvider implements AIProvider {
         totalTokens: data.usage?.total_tokens ?? 0,
       },
     };
+  }
+
+  async *streamChat(req: AIProviderRequest): AsyncGenerator<string> {
+    const res = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify(this.buildBody(req, true)),
+      signal: req.signal,
+    });
+
+    if (!res.ok || !res.body) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`Groq error ${res.status}: ${detail.slice(0, 300)}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const payload = trimmed.slice(5).trim();
+        if (payload === "[DONE]") return;
+        try {
+          const json = JSON.parse(payload) as { choices?: { delta?: { content?: string } }[] };
+          const delta = json.choices?.[0]?.delta?.content;
+          if (delta) yield delta;
+        } catch {
+          // Ignore malformed keep-alive lines.
+        }
+      }
+    }
   }
 }
 

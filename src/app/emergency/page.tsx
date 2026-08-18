@@ -114,8 +114,8 @@ const CATEGORIES: EmergencyCategory[] = [
 
 export default function EmergencyPage() {
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="sticky top-0 z-40 border-b border-amber-200 bg-white/90 backdrop-blur">
+    <div className="min-h-screen bg-bg">
+      <header className="sticky top-0 z-40 border-b border-warning/30 bg-surface/90 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-4xl items-center justify-between px-4">
           <Logo />
           <Link href="/login"><Button variant="outline" className="!py-2">Sign in for personalised help</Button></Link>
@@ -123,9 +123,9 @@ export default function EmergencyPage() {
       </header>
 
       <main className="mx-auto max-w-4xl px-4 py-10">
-        <div className="rounded-3xl border border-amber-200 bg-amber-50 p-6 sm:p-8">
-          <h1 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">I Need Help Now</h1>
-          <p className="mt-2 text-slate-700">
+        <div className="rounded-3xl border border-warning/30 bg-warning-soft p-6 sm:p-8">
+          <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">I Need Help Now</h1>
+          <p className="mt-2 text-ink-2">
             Something happened online? Pick the closest situation. These are calm, immediate, defensive steps —
             <strong> no judgment, no panic</strong>. Always tell a trusted adult when something serious happened.
           </p>
@@ -134,20 +134,20 @@ export default function EmergencyPage() {
         <div className="mt-8 grid gap-4 sm:grid-cols-2">
           {CATEGORIES.map((c) => (
             <Card key={c.id} className="flex flex-col">
-              <h2 className="flex items-center gap-2 text-lg font-bold text-slate-900">
+              <h2 className="flex items-center gap-2 text-lg font-bold text-ink">
                 <span aria-hidden="true">{c.icon}</span> {c.title}
               </h2>
-              <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-700">
+              <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-ink-2">
                 {c.steps.map((s, i) => <li key={i}>{s}</li>)}
               </ol>
-              {c.warning ? <p className="mt-3 text-xs font-semibold text-red-600">{c.warning}</p> : null}
+              {c.warning ? <p className="mt-3 text-xs font-semibold text-danger">{c.warning}</p> : null}
             </Card>
           ))}
         </div>
 
-        <div className="mt-10 rounded-2xl border border-slate-200 bg-white p-6 text-center">
-          <h2 className="text-lg font-bold text-slate-900">Not sure which one fits?</h2>
-          <p className="mt-1 text-sm text-slate-600">
+        <div className="mt-10 rounded-2xl border border-border bg-surface p-6 text-center">
+          <h2 className="text-lg font-bold text-ink">Not sure which one fits?</h2>
+          <p className="mt-1 text-sm text-ink-2">
             Ask the MATRIX AI chat — it will walk you through what to do based on exactly what happened.
           </p>
           <Link href="/login" className="mt-4 inline-block"><Button>Open the AI chat</Button></Link>

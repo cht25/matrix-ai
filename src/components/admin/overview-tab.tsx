@@ -24,18 +24,18 @@ export async function OverviewTab({ codes }: { codes: Set<string> }) {
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {stats.filter((s) => s.visible).map((s) => (
         <Card key={s.label}>
-          <p className="text-sm font-medium text-slate-500">{s.label}</p>
-          <p className="mt-2 text-3xl font-extrabold text-slate-900">{s.value}</p>
+          <p className="text-sm font-medium text-ink-3">{s.label}</p>
+          <p className="mt-2 text-3xl font-extrabold text-ink">{s.value}</p>
         </Card>
       ))}
       {!stats.some((s) => s.visible) ? (
-        <Card><p className="text-sm text-slate-500">Your role has no overview permissions. Ask a super admin for the appropriate role.</p></Card>
+        <Card><p className="text-sm text-ink-3">Your role has no overview permissions. Ask a super admin for the appropriate role.</p></Card>
       ) : null}
       <Card>
-        <p className="text-sm font-medium text-slate-500">Your permissions</p>
+        <p className="text-sm font-medium text-ink-3">Your permissions</p>
         <div className="mt-2 flex flex-wrap gap-1.5">
           {[...codes].map((c) => (
-            <span key={c} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-600">{c}</span>
+            <span key={c} className="rounded-full border border-border bg-bg px-2 py-0.5 text-xs text-ink-2">{c}</span>
           ))}
         </div>
       </Card>

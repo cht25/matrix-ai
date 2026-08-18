@@ -23,10 +23,10 @@ export default async function ScamArticlePage({ params }: { params: Promise<{ sl
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
-      <Link href="/scams" className="text-sm font-medium text-brand-600 hover:text-brand-700">← Back to Scam Library</Link>
+      <Link href="/scams" className="text-sm font-medium text-accent hover:text-accent-2">← Back to Scam Library</Link>
       <div>
-        <h1 className="text-2xl font-extrabold text-slate-900 sm:text-3xl">{article.title}</h1>
-        <p className="mt-2 text-slate-600">{article.description}</p>
+        <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">{article.title}</h1>
+        <p className="mt-2 text-ink-2">{article.description}</p>
       </div>
 
       <Section title="⚠️ Warning signs" body={article.warning_signs} />
@@ -34,14 +34,14 @@ export default async function ScamArticlePage({ params }: { params: Promise<{ sl
       <Section title="✅ What to do if it happened" body={article.response_steps} />
       <Section title="📢 Reporting guidance" body={article.reporting_guidance} />
 
-      <Card className="!p-4 text-sm text-slate-500">
-        Source: <a href={article.source_url || "#"} target="_blank" rel="noopener noreferrer" className="font-medium text-brand-600 hover:underline">{article.source_name || "Verified research"}</a>
+      <Card className="!p-4 text-sm text-ink-3">
+        Source: <a href={article.source_url || "#"} target="_blank" rel="noopener noreferrer" className="font-medium text-accent hover:underline">{article.source_name || "Verified research"}</a>
         {" "}· last verified {article.last_verified?.slice(0, 10)}
       </Card>
 
       <div className="flex flex-wrap gap-3">
         <Link href="/report"><Button>Report a similar scam</Button></Link>
-        <Link href="/chat/new"><Button variant="outline">Ask the AI about it</Button></Link>
+        <Link href="/chat"><Button variant="outline">Ask MATRIX AI about it</Button></Link>
       </div>
     </div>
   );
@@ -50,8 +50,8 @@ export default async function ScamArticlePage({ params }: { params: Promise<{ sl
 function Section({ title, body }: { title: string; body: string }) {
   return (
     <Card>
-      <h2 className="font-bold text-slate-900">{title}</h2>
-      <p className="mt-2 whitespace-pre-line text-[15px] leading-relaxed text-slate-700">{body}</p>
+      <h2 className="font-bold text-ink">{title}</h2>
+      <p className="mt-2 whitespace-pre-line text-[15px] leading-relaxed text-ink-2">{body}</p>
     </Card>
   );
 }
