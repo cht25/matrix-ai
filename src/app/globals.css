@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Noto Sans Bengali", sans-serif;
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dce7fd;
+  --color-brand-200: #c0d4fb;
+  --color-brand-300: #94b8f8;
+  --color-brand-400: #6192f2;
+  --color-brand-500: #3d6cec;
+  --color-brand-600: #2c4fe0;
+  --color-brand-700: #243cc5;
+  --color-brand-800: #2334a0;
+  --color-brand-900: #22317f;
+  --color-brand-950: #19204e;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Accessible focus states */
+:focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Simple markdown-ish formatting for AI replies */
+.ai-reply strong {
+  @apply font-semibold text-slate-900;
+}
+.ai-reply ul {
+  @apply my-2 list-disc space-y-1 pl-5;
+}
+.ai-reply ol {
+  @apply my-2 list-decimal space-y-1 pl-5;
+}
+.ai-reply p {
+  @apply my-2;
+}
+
+/* Hide scrollbars in chat lists but keep scrolling */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Skip link for keyboard users */
+.skip-link {
+  @apply absolute -top-12 left-4 z-[100] rounded-lg bg-brand-600 px-4 py-2 text-white transition-all;
+}
+.skip-link:focus {
+  @apply top-4;
+}
