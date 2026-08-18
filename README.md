@@ -27,7 +27,7 @@ server-side AI gateway.
 11. [Admin roles & permissions](#admin-roles--permissions)
 12. [Testing](#testing)
 13. [Production security checklist](#production-security-checklist)
-14. [Demo mode](#demo-mode)
+14. [Fakes-free behavior & health](#fakes-free-behavior--health)
 15. [Internationalization](#internationalization)
 
 ---
@@ -121,7 +121,7 @@ The frontend **never calls Groq directly** — it calls the `ai-gateway` edge fu
 │   ├── components/               # UI kit + feature components
 │   ├── lib/
 │   │   ├── supabase/             # browser + server clients
-│   │   ├── demo/                 # demo-mode preview data (never in production)
+│   │   ├── api-errors.ts         # user-safe failure taxonomy (Server problem / Retry)
 │   │   ├── i18n/                 # en + bn dictionaries
 │   │   └── utils.ts              # age validation etc.
 │   └── middleware.ts             # route protection + admin RBAC gate
@@ -161,29 +161,72 @@ npm run dev
 
 ## Deploy to production
 
+Nothing in MATRIX runs on mock data — these steps are **mandatory**, not optional. You need the
+Supabase CLI and your dashboard access (never paste real secrets into a chat or commit them).
+
 ```bash
-# Database + seed
-supabase link --project-ref <ref>
+# 0. Log in and link THIS project (ref: bwjwktjclupjbuawjdeo)
+supabase login                      # browser-based personal access token flow
+supabase link --project-ref bwjwktjclupjbuawjdeo
+
+# 1. Database schema + RLS + seed data
 supabase db push
-supabase db seed --path supabase/migrations/0007_seed.sql   # if not included in push
 
-# Edge functions
-supabase secrets set GROQ_API_KEY=gsk_...
-supabase secrets set SUPABASE_WEBHOOK_SECRET=<random>
-supabase functions deploy ai-gateway export-data delete-account auth-events
+# 2. AI gateway secrets (set as edge secrets — never exposed to the browser)
+supabase secrets set GROQ_API_KEY=gsk_...                 # https://console.groq.com/keys
+supabase secrets set SUPABASE_WEBHOOK_SECRET=$(openssl rand -hex 32)
 
-# Auth webhook (optional but recommended): Dashboard → Auth → Webhooks →
+# 3. Edge functions (the only path to Groq)
+supabase functions deploy ai-gateway export-data delete-account auth-events --no-verify-jwt
+
+# 4. Web app environment (Render → your service → Environment; triggers rebuild)
+#    NEXT_PUBLIC_SUPABASE_URL = https://bwjwktjclupjbuawjdeo.supabase.co
+#    NEXT_PUBLIC_SUPABASE_ANON_KEY = <anon public key from the API settings page>
+
+# 5. Auth webhook (optional but recommended): Dashboard → Auth → Webhooks →
 #   "New webhook" → events user.signed_in / user.signed_out / user.updated /
 #   user.password_recovery_requested / user.password_updated / user.identity_created
-#   URL: https://<project-ref>.supabase.co/functions/v1/auth-events
+#   URL: https://bwjwktjclupjbuawjdeo.supabase.co/functions/v1/auth-events
 #   secret: the SUPABASE_WEBHOOK_SECRET you set
 
 # Frontend
-npm run build && npm run start   # or deploy to Vercel/your host
+npm run build && npm run start   # or deploy to Render/your host
 ```
 
-Enable email confirmations, restrict Auth redirect URLs, and configure Google/Facebook OAuth
-providers in the Supabase dashboard. Configure SMTP for branded emails (verification, reset, alerts).
+**Verify it is all real afterwards:**
+
+```bash
+curl -s https://<your-host>/api/health
+# {"ok":true,"supabase":"reachable","ai":"online","checkedAt":"…"}
+```
+
+Enable email confirmations, restrict Auth redirect URLs (add your Render URL), and configure
+Google/Facebook OAuth providers in the Supabase dashboard — OAuth buttons show "Authentication
+failed" style errors (not silent breakage) until the providers are configured. Configure SMTP for
+branded emails (verification, reset, alerts).
+
+### Deploy to Render
+
+The repo ships a `render.yaml` blueprint (Node web service, `npm ci && npm run build`, `npm start`).
+Whether you created the service from the blueprint or manually, the service **must** have these
+environment variables (Render dashboard → your service → **Environment**), or the app has no
+backend to talk to:
+
+| Render env var | Value |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | project URL — this deployment: `https://bwjwktjclupjbuawjdeo.supabase.co` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | the project's `anon` `public` key |
+
+Both values come from **Supabase dashboard → Project Settings → Data API / API keys**
+(`https://supabase.com/dashboard/project/bwjwktjclupjbuawjdeo/settings/api`). Saving env vars on
+Render triggers a fresh build and deploy — required anyway, because `NEXT_PUBLIC_*` variables are
+inlined into the bundle at build time.
+
+> **Safety net:** a deployment built *without* these variables no longer crashes — it renders an
+> honest **"Server problem — service not configured"** screen (no fake data, no demo content, a
+> one-line actionable log). Symptom to look for in logs:
+> `Your project's URL and Key are required to create a Supabase client!` means the environment
+> variables are missing — set them and redeploy.
 
 ### Promote your first admin
 
@@ -200,7 +243,6 @@ See `.env.example`. Summary:
 |---|---|---|
 | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | frontend | Supabase client |
 | `NEXT_PUBLIC_APP_URL` | frontend | canonical URL |
-| `NEXT_PUBLIC_DEMO_MODE` | frontend | `true` = clearly-badged UI preview (never in production) |
 | `SUPABASE_SERVICE_ROLE_KEY` | server-only | admin API access (edge functions use their own injected copy) |
 | `GROQ_API_KEY` | server-only (edge secret) | AI gateway |
 | `SUPABASE_WEBHOOK_SECRET` | server-only (edge secret) | auth webhook signature verification |
@@ -361,13 +403,35 @@ SECURITY DEFINER function exposure and profile-column protection. Run them with
 - [ ] Backups enabled (Supabase project settings)
 - [ ] Auth webhook configured → login alerts + security events
 - [ ] SMTP configured with safe templates (no secrets in emails)
-- [ ] `NEXT_PUBLIC_DEMO_MODE` stays `false` in production
+- [ ] `/api/health` returns 200 and the in-app indicator shows "AI Online"
 
-## Demo mode
+## Fakes-free behavior & health
 
-`NEXT_PUBLIC_DEMO_MODE=true` serves a clearly-badged preview with sample data so you can click
-through the product **without any backend**. It stores nothing, calls no AI, and is intended for
-development/testing only. All production behavior requires the real Supabase project + Groq key.
+MATRIX has **no demo mode and no mock layer**. Every chat reply is a real Groq completion via the
+`ai-gateway` edge function; every table read/write hits the real PostgreSQL database through RLS;
+authentication is real Supabase Auth (email/password, Google, Facebook, MFA/TOTP, password reset,
+email verification).
+
+When something is wrong, MATRIX says so instead of pretending:
+
+| Situation | What the user sees |
+|---|---|
+| Groq down / invalid key / gateway error | **Server problem** — "MATRIX could not connect to the AI service right now. Please try again in a moment." + `[Retry]` |
+| No response / offline / DNS failure | **Server problem** (network category) + `[Retry]` |
+| Connect takes > 25 s or stream idles > 45 s | **Server problem** (timeout category) + `[Retry]` |
+| 429 from the gateway | **Slow down** (rate limit) + `[Retry]` |
+| Session expired / 401–403 | **Authentication failed** + `[Sign in]` |
+| `GROQ_API_KEY` secret missing on the project | **Server problem** — "AI service is not configured on the server" |
+| Supabase env vars missing on the web host | Full-screen **"Server problem — service not configured"** (no data is fabricated) |
+
+Health is checked for real, never assumed:
+
+- `GET /api/health` — live JSON status (`supabase: reachable?`, `ai: online?` via a real Groq probe). 503 when anything is down; safe for Render's health check and uptime monitors.
+- `POST {supabase-url}/functions/v1/ai-gateway { action: "health" }` — unauthenticated; performs an actual Groq API call with a 5 s deadline and returns `online` / `unavailable` / `unconfigured`.
+- The app shell shows **● AI Online / ● AI Unavailable** (polls every 45 s + on window refocus; click to re-check immediately).
+
+Secrets (`GROQ_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, SMTP, OAuth) exist only as Supabase edge
+secrets / server env — never in client code, never in this repository.
 
 ## Internationalization
 

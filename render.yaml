@@ -1,0 +1,22 @@
+# Render blueprint for MATRIX AI (Next.js web service).
+# If you already created the service manually you can ignore this file — just
+# make sure the same env vars below are set in Dashboard → your service →
+# Environment. See "Deploy to Render" in README.md.
+services:
+  - type: web
+    name: matrix-ai
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      # Required — the app renders honest "not configured" screens without
+      # them. Values from https://supabase.com/dashboard/project/_/settings/api
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        value: https://bwjwktjclupjbuawjdeo.supabase.co
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      # Canonical app URL (used for links/redirects). Set to your Render URL.
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false

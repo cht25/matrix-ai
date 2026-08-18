@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
+import { getDataClient, getCurrentUser } from "@/lib/data";
 import { EmptyState } from "@/components/ui";
 import { HistorySearch } from "@/components/history-search";
 
@@ -10,8 +10,7 @@ export const metadata: Metadata = { title: "History" };
 export default async function HistoryPage() {
   const db = await getDataClient();
   const user = await getCurrentUser(db);
-  const demo = isDemoMode();
-  if (!user && !demo) redirect("/login");
+  if (!user) redirect("/login");
 
   const { data } = await db
     .from("conversations")

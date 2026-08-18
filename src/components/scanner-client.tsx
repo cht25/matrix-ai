@@ -3,18 +3,23 @@
 // Screenshot scanner (spec §29): upload, drag & drop, or paste an image.
 // Results show risk, confidence, indicators, actions, what-not-to-do and
 // already-interacted guidance. Never claims 100% certainty.
+//
+// Real analysis only: failures render "Server problem" / category-aware
+// cards with [Retry] — never a fabricated finding.
 
 import { useRef, useState } from "react";
-import { createClient } from "@/lib/supabase/browser";
+import { createClient, supabasePublic, supabaseBrowserConfigured } from "@/lib/supabase/browser";
 import { ImageIcon } from "lucide-react";
-import { Alert, Button, Card, Spinner } from "@/components/ui";
+import { Button, Card, Spinner } from "@/components/ui";
 import { Markdown } from "@/components/markdown";
+import { ServerProblem } from "@/components/server-problem";
+import { classifyGatewayResponse, classifyRequestException, failureCopy, type ApiFailure } from "@/lib/api-errors";
 import { riskColor } from "@/lib/utils";
-import { env } from "@/lib/env";
 
 const MAX_SIZE = 8 * 1024 * 1024;
 const ALLOWED = ["image/png", "image/jpeg", "image/webp"];
 const SOURCES = ["SMS", "Email", "Website", "Social Media", "Payment Request", "Login Page"];
+const SCAN_TIMEOUT_MS = 45_000;
 
 type ScanResult = { risk_level?: string; confidence?: number; reply?: string; error?: string };
 
@@ -22,59 +27,92 @@ export function ScannerClient() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<ApiFailure | null>(null);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [source, setSource] = useState<string>("SMS");
+  const pendingFile = useRef<File | null>(null);
 
   async function handleFile(file: File | undefined | null) {
     if (!file) return;
-    setError(null);
+    pendingFile.current = file;
+    setFailure(null);
     setResult(null);
-    if (!ALLOWED.includes(file.type)) return setError("Only PNG, JPEG and WebP images are supported.");
-    if (file.size > MAX_SIZE) return setError("File is too large (max 8 MB).");
-    if (file.size < 64) return setError("This file looks too small to be a real screenshot.");
+    if (!ALLOWED.includes(file.type)) {
+      setFailure({ ...failureCopy("invalid-request"), title: "Unsupported file", detail: "Only PNG, JPEG and WebP images are supported.", retryable: false });
+      return;
+    }
+    if (file.size > MAX_SIZE) {
+      setFailure({ ...failureCopy("invalid-request"), title: "Upload failed", detail: "The image is too large (maximum 8 MB). Choose a smaller screenshot.", retryable: false });
+      return;
+    }
+    if (file.size < 64) {
+      setFailure({ ...failureCopy("invalid-request"), title: "Upload failed", detail: "This file looks too small to be a real screenshot.", retryable: false });
+      return;
+    }
+    if (!supabaseBrowserConfigured) {
+      setFailure({ ...failureCopy("not-configured"), detail: "The MATRIX backend is not configured on this deployment yet, so screenshots cannot be analysed." });
+      return;
+    }
 
     setBusy(true);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(new DOMException("Scan timed out.", "TimeoutError")), SCAN_TIMEOUT_MS);
     try {
       const supabase = createClient();
-      if (env.demoMode) {
-        await new Promise((r) => setTimeout(r, 800));
-        setResult({
-          risk_level: "high",
-          confidence: 0.85,
-          reply:
-            "**Risk: High**  \n**Confidence: 85%**  \n\n**What we found:** Classic scam markers — urgency, a request for a one-time code, and a lookalike sender address.\n\n**Suspicious indicators:**\n- Pressure to act immediately\n- A request for a verification code\n- Sender address that mimics a real company\n\n**Recommended actions:**\n1. Don't reply or click anything.\n2. Tell a trusted adult.\n3. Report it using the verified resources.\n\n**What NOT to do:**\n- Don't share the code or password\n- Don't call numbers in the message\n\n**If you've already interacted:** Change affected passwords, sign out of all devices, and tell a trusted adult.\n\n_Demo preview — real analysis runs when the AI gateway is deployed with GROQ_API_KEY._",
-        });
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setFailure(failureCopy("auth"));
         return;
       }
-
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not signed in");
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
       const ext = file.type.split("/")[1] === "jpeg" ? "jpg" : file.type.split("/")[1];
       const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
       const { error: upErr } = await supabase.storage.from("security-screenshots").upload(path, file, { contentType: file.type });
-      if (upErr) throw new Error("Upload failed.");
-
-      const { data, error: invErr } = await supabase.functions.invoke("ai-gateway", {
-        body: { action: "scan", storage_path: path },
-      });
-      if (invErr || (data as ScanResult | null)?.error) {
-        const code = (data as ScanResult | null)?.error;
-        if (code === "AI_GATEWAY_NOT_CONFIGURED") {
-          setError("The AI gateway isn't deployed yet. Deploy the edge functions and set GROQ_API_KEY (see the README).");
-        } else if (code === "RATE_LIMITED_MINUTE" || code === "RATE_LIMITED_DAY") {
-          setError("You've scanned several images in a row. Take a short break and try again.");
-        } else {
-          setError("Analysis failed. Try a different image.");
-        }
+      if (upErr) {
+        setFailure({ ...failureCopy("server"), title: "Upload failed", detail: "The screenshot could not be uploaded. Please try again." });
         return;
       }
-      setResult(data as ScanResult);
-    } catch {
-      setError("Something went wrong. Please try again.");
+
+      const res = await fetch(`${supabasePublic.url}/functions/v1/ai-gateway`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          apikey: supabasePublic.anonKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "scan", storage_path: path }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        let code: string | null = null;
+        try {
+          const body = (await res.json()) as { error?: unknown };
+          code = typeof body.error === "string" ? body.error : null;
+        } catch {
+          code = null;
+        }
+        setFailure(classifyGatewayResponse(res.status, code));
+        return;
+      }
+      const data = (await res.json()) as ScanResult;
+      if (!data.reply || data.error) {
+        setFailure(classifyGatewayResponse(502, typeof data.error === "string" ? data.error : null));
+        return;
+      }
+      setResult(data);
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === "AbortError")) setFailure(classifyRequestException(err));
     } finally {
+      clearTimeout(timeout);
       setBusy(false);
     }
+  }
+
+  function retry() {
+    setFailure(null);
+    void handleFile(pendingFile.current);
   }
 
   return (
@@ -121,11 +159,15 @@ export function ScannerClient() {
       </div>
 
       {busy ? (
-        <Card className="flex items-center gap-3 text-ink-2">
-          <Spinner /> Analysing your {source.toLowerCase()} screenshot… (files are validated; the AI never repeats personal details)
-        </Card>
+        <div role="status" aria-label="MATRIX is analysing your screenshot">
+          <Card className="flex items-center gap-3 text-ink-2">
+            <Spinner /> MATRIX is responding — analysing your {source.toLowerCase()} screenshot…
+          </Card>
+        </div>
       ) : null}
-      {error ? <Alert tone="danger">{error}</Alert> : null}
+      {failure ? (
+        <ServerProblem failure={failure} onRetry={failure.retryable ? retry : undefined} onDismiss={() => setFailure(null)} />
+      ) : null}
 
       {result?.reply ? (
         <Card>

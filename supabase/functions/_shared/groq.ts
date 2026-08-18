@@ -27,6 +27,8 @@ export interface AIProvider {
   chat(req: AIProviderRequest): Promise<AIProviderResponse>;
   /** Optional streaming support — yields text deltas as they arrive. */
   streamChat?(req: AIProviderRequest): AsyncGenerator<string>;
+  /** Real reachability check against the upstream API (never cached, never faked). */
+  healthCheck(): Promise<boolean>;
 }
 
 export class GroqProvider implements AIProvider {
@@ -59,6 +61,18 @@ export class GroqProvider implements AIProvider {
       ];
     }
     return body;
+  }
+
+  async healthCheck(): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.baseUrl}/models`, {
+        headers: { Authorization: `Bearer ${this.apiKey}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
   }
 
   async chat(req: AIProviderRequest): Promise<AIProviderResponse> {

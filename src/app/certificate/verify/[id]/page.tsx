@@ -2,9 +2,12 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getDataClient } from "@/lib/data";
 import { MatrixMark, MatrixWordmark } from "@/components/logo";
+import { ServerProblemScreen } from "@/components/server-problem";
+import { isConfigured } from "@/lib/env";
 import { formatDate } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Certificate verification" };
+export const dynamic = "force-dynamic";
 
 type VerifyResult = {
   valid?: boolean;
@@ -18,6 +21,9 @@ type VerifyResult = {
 
 export default async function CertificateVerifyPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  if (!isConfigured()) {
+    return <ServerProblemScreen kind="config" />;
+  }
   const db = await getDataClient();
   const { data, error } = await db.rpc("verify_certificate_lookup", { p_certificate_id: id });
   const result = (data ?? null) as VerifyResult | null;

@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/browser";
 import { Logo } from "@/components/logo";
+import { AiStatus } from "@/components/ai-status";
 import { ThemeToggle } from "@/lib/theme";
 import { ToastProvider } from "@/components/toast";
 import { SignOutButton } from "@/components/sign-out-button";
@@ -191,8 +192,9 @@ function SidebarBody({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between px-4 pb-4 pt-5">
+      <div className="flex items-center justify-between gap-2 px-4 pb-4 pt-5">
         <Logo size="sm" href="/chat" />
+        <AiStatus />
       </div>
       <div className="px-3 pb-4">
         <Link
@@ -373,6 +375,7 @@ export function AppShell({
               <Menu size={18} strokeWidth={1.6} />
             </button>
             <Logo size="sm" href="/chat" />
+            <AiStatus />
           </div>
           <div className="flex items-center gap-1">
             <Link

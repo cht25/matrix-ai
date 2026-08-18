@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/browser";
 import { Alert, Button, Card, Field, Input, Spinner } from "@/components/ui";
-import { env } from "@/lib/env";
 
 type Factor = { id: string; factor_type: string; status: string };
 
@@ -52,10 +51,6 @@ export function SecurityPanel() {
 
   async function startEnroll() {
     setMsg(null);
-    if (env.demoMode) {
-      setMsg({ tone: "danger", text: "MFA is disabled in demo mode — it works with a real Supabase project." });
-      return;
-    }
     const supabase = createClient();
     const { data, error } = await supabase.auth.mfa.enroll({ factorType: "totp" });
     if (error || !data) return setMsg({ tone: "danger", text: error?.message ?? "Could not start MFA enrollment." });

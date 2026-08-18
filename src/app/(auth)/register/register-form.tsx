@@ -11,7 +11,8 @@ import { createClient } from "@/lib/supabase/browser";
 import { isValidEmail, validateAgeForRegistration, cn } from "@/lib/utils";
 import { Check, Upload } from "lucide-react";
 import { Alert, Button, Field, Input, Select, Spinner } from "@/components/ui";
-import { AuthFooterLink, AuthShell, Divider, OAuthButtons } from "@/components/auth/login-screen";
+import { AuthFooterLink, AuthShell, AuthUnavailable, Divider, OAuthButtons } from "@/components/auth/login-screen";
+import { supabaseBrowserConfigured } from "@/lib/supabase/browser";
 
 const STEPS = ["Basic", "Date of birth", "Age verification", "Email", "Profile", "Complete"];
 
@@ -154,6 +155,10 @@ export function RegisterForm() {
   function oauth(provider: "google" | "facebook") {
     const sb = supabase();
     sb.auth.signInWithOAuth({ provider, options: { redirectTo: `${window.location.origin}/verify?next=/onboarding` } });
+  }
+
+  if (!supabaseBrowserConfigured) {
+    return <AuthUnavailable />;
   }
 
   return (

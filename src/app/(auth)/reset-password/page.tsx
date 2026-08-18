@@ -2,8 +2,8 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { createClient } from "@/lib/supabase/browser";
-import { AuthShell } from "@/components/auth/login-screen";
+import { createClient, supabaseBrowserConfigured } from "@/lib/supabase/browser";
+import { AuthShell, AuthUnavailable } from "@/components/auth/login-screen";
 import { Alert, Button, Field, Input, Spinner } from "@/components/ui";
 
 function ResetPasswordInner() {
@@ -15,6 +15,7 @@ function ResetPasswordInner() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    if (!supabaseBrowserConfigured) return;
     const supabase = createClient();
     supabase.auth.getSession().then(({ data }) => setReady(Boolean(data.session)));
   }, []);
@@ -32,6 +33,14 @@ function ResetPasswordInner() {
     await supabase.rpc("record_security_event", { p_event_type: "password_changed", p_metadata: {} });
     router.push("/chat?reset=1");
     router.refresh();
+  }
+
+  if (!supabaseBrowserConfigured) {
+    return (
+      <AuthShell title="Reset password">
+        <AuthUnavailable />
+      </AuthShell>
+    );
   }
 
   if (!ready && !error) {

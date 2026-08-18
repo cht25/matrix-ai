@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
+import { getDataClient, getCurrentUser } from "@/lib/data";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { AccountForm } from "@/components/settings/account-form";
 import { PrivacyPanel } from "@/components/settings/privacy-panel";
@@ -15,8 +15,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const { tab = "account" } = await searchParams;
   const db = await getDataClient();
   const user = await getCurrentUser(db);
-  const demo = isDemoMode();
-  if (!user && !demo) redirect("/login");
+  if (!user) redirect("/login");
 
   const [{ data: profile }, { data: settings }, { data: memories }, { data: countries }] = await Promise.all([
     db.from("profiles").select("id, full_name, email, phone, school_name, class_grade, country, date_of_birth").eq("id", user!.id).maybeSingle(),

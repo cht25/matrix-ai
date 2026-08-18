@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
+import { getDataClient, getCurrentUser } from "@/lib/data";
 import { QuizClient } from "@/components/quiz-client";
 
 export const metadata: Metadata = { title: "Quiz" };
@@ -10,8 +10,7 @@ export default async function QuizPage({ params }: { params: Promise<{ slug: str
   const { slug, quizId } = await params;
   const db = await getDataClient();
   const user = await getCurrentUser(db);
-  const demo = isDemoMode();
-  if (!user && !demo) redirect("/login");
+  if (!user) redirect("/login");
 
   const { data: quiz } = await db.from("quizzes").select("id, title, pass_percent").eq("id", quizId).maybeSingle();
   if (!quiz) notFound();

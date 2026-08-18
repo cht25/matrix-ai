@@ -7,10 +7,26 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { createClient } from "@/lib/supabase/browser";
+import { createClient, supabaseBrowserConfigured } from "@/lib/supabase/browser";
 import { BrandLockup } from "@/components/logo";
 import { Alert, Button, Field, Input, Spinner } from "@/components/ui";
 import { ThemeToggle } from "@/lib/theme";
+import { ServerProblem } from "@/components/server-problem";
+import { failureCopy } from "@/lib/api-errors";
+
+/** Rendered (instead of any auth form) when the deployment has no Supabase
+ *  configuration — authentication honestly cannot work, so we say so. */
+export function AuthUnavailable() {
+  return (
+    <ServerProblem
+      failure={{
+        ...failureCopy("not-configured"),
+        detail:
+          "MATRIX is not connected to its backend services yet, so authentication is unavailable. The administrator must set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY and redeploy.",
+      }}
+    />
+  );
+}
 
 export function LoginScreen() {
   return (
@@ -103,6 +119,7 @@ export function LoginForm() {
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
+    if (!supabaseBrowserConfigured) return;
     setError(null);
     setBusy(true);
     const supabase = createClient();
@@ -147,6 +164,10 @@ export function LoginForm() {
   function oauth(provider: "google" | "facebook") {
     const supabase = createClient();
     supabase.auth.signInWithOAuth({ provider, options: { redirectTo: `${window.location.origin}/verify?next=${next}` } });
+  }
+
+  if (!supabaseBrowserConfigured) {
+    return <AuthUnavailable />;
   }
 
   if (mfa) {

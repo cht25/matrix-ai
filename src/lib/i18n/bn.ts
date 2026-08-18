@@ -30,7 +30,6 @@ export const bn: En = {
   "common.submit": "জমা দিন",
   "common.search": "খুঁজুন",
   "common.error": "কিছু ভুল হয়েছে। আবার চেষ্টা করুন।",
-  "common.demoBadge": "ডেমো মোড — শুধু প্রিভিউ, কোনো আসল ডেটা বা এআই নেই",
   "common.trustedBy": "পরিচালনায় THAMJJ13.TOP",
   "auth.welcome": "ফিরে আসার জন্য স্বাগতম",
   "auth.email": "ইমেইল",

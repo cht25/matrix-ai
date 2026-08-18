@@ -7,8 +7,6 @@ import "@fontsource/manrope/600.css";
 import "./globals.css";
 import { ThemeProvider } from "@/lib/theme";
 import { CyberBackground } from "@/components/cyber-background";
-import { DemoModeBanner } from "@/components/demo-banner";
-import { isDemoMode } from "@/lib/data";
 
 export const metadata: Metadata = {
   title: {
@@ -39,7 +37,6 @@ export const metadata: Metadata = {
 const THEME_SCRIPT = `try{var t=localStorage.getItem('matrix-theme')||'dark';var r=t==='system'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):t;document.documentElement.setAttribute('data-theme',r);}catch(e){}`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  const demo = isDemoMode();
   return (
     <html lang="en" data-theme="dark" suppressHydrationWarning>
       <head>
@@ -51,7 +48,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <a href="#main" className="skip-link">
             Skip to content
           </a>
-          {demo ? <DemoModeBanner /> : null}
           <main id="main">{children}</main>
         </ThemeProvider>
       </body>

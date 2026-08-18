@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
+import { getDataClient, getCurrentUser } from "@/lib/data";
 import { OnboardingClient } from "@/components/onboarding-client";
 
 export const metadata: Metadata = { title: "Onboarding" };
@@ -8,8 +8,7 @@ export const metadata: Metadata = { title: "Onboarding" };
 export default async function OnboardingPage() {
   const db = await getDataClient();
   const user = await getCurrentUser(db);
-  const demo = isDemoMode();
-  if (!user && !demo) redirect("/login");
+  if (!user) redirect("/login");
 
   const [{ data: profile }, { data: consent }, { data: verification }, { data: countries }] = await Promise.all([
     db.from("profiles").select("id, full_name, date_of_birth, age_verified, school_name, class_grade, country").eq("id", user!.id).maybeSingle(),
@@ -33,7 +32,6 @@ export default async function OnboardingPage() {
         verification={(verification?.data ?? verification) as { verification_status: string; rejection_reason: string } | null}
         countries={(countries?.data ?? countries ?? []) as { id: string; name: string; consent_required: boolean; consent_min_age: number }[]}
         emailVerified={Boolean(user?.email_confirmed_at)}
-        demo={demo}
       />
     </div>
   );

@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/browser";
-import { AuthShell } from "@/components/auth/login-screen";
+import { createClient, supabaseBrowserConfigured } from "@/lib/supabase/browser";
+import { AuthShell, AuthUnavailable } from "@/components/auth/login-screen";
 import { Alert, Button, Field, Input, Spinner } from "@/components/ui";
 
 export default function ForgotPasswordPage() {
@@ -23,6 +23,14 @@ export default function ForgotPasswordPage() {
     setBusy(false);
     if (error) return setError("We couldn't send a reset link. Please try again.");
     setSent(true);
+  }
+
+  if (!supabaseBrowserConfigured) {
+    return (
+      <AuthShell title="Reset password">
+        <AuthUnavailable />
+      </AuthShell>
+    );
   }
 
   return (

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
+import { getDataClient, getCurrentUser } from "@/lib/data";
 import { Badge, Card, EmptyState, Progress } from "@/components/ui";
 import { formatDate, scoreLabel, timeAgo } from "@/lib/utils";
 
@@ -12,8 +12,7 @@ type Recommendation = { text: string; href: string; cta: string };
 export default async function DashboardPage() {
   const db = await getDataClient();
   const user = await getCurrentUser(db);
-  const demo = isDemoMode();
-  if (!user && !demo) redirect("/login");
+  if (!user) redirect("/login");
 
   const [scoreRes, profileRes, progressRes, certRes, eventsRes, analysesRes, settingsRes] = await Promise.all([
     db.rpc("security_score"),
@@ -69,9 +68,9 @@ export default async function DashboardPage() {
         <Card>
           <p className="text-sm font-medium text-ink-2">Email verification</p>
           <div className="mt-2">
-            {user?.email_confirmed_at || demo ? <Badge className="border-success/30 bg-success-soft text-success">Verified ✓</Badge> : <Badge className="border-warning/30 bg-warning-soft text-warning">Not verified</Badge>}
+            {user?.email_confirmed_at ? <Badge className="border-success/30 bg-success-soft text-success">Verified ✓</Badge> : <Badge className="border-warning/30 bg-warning-soft text-warning">Not verified</Badge>}
           </div>
-          <p className="mt-3 text-xs text-ink-3">Age verified: {profile?.age_verified || demo ? "✓" : "pending"}</p>
+          <p className="mt-3 text-xs text-ink-3">Age verified: {profile?.age_verified ? "✓" : "pending"}</p>
         </Card>
         <Card>
           <p className="text-sm font-medium text-ink-2">Lessons completed</p>

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
+import { getDataClient, getCurrentUser } from "@/lib/data";
 import { Award } from "lucide-react";
 import { Badge, Card, EmptyState } from "@/components/ui";
 import { formatDate } from "@/lib/utils";
@@ -11,8 +11,7 @@ export const metadata: Metadata = { title: "Certificates" };
 export default async function CertificatesPage() {
   const db = await getDataClient();
   const user = await getCurrentUser(db);
-  const demo = isDemoMode();
-  if (!user && !demo) redirect("/login");
+  if (!user) redirect("/login");
 
   const [{ data: certs }, { data: courses }] = await Promise.all([
     db.from("certificates").select("id, certificate_id, course_id, issued_at, verification_status").eq("user_id", user!.id).order("issued_at", { ascending: false }),

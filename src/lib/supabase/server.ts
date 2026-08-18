@@ -1,14 +1,24 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { env, isConfigured, logMissingSupabaseConfig } from "@/lib/env";
+import { NotConfiguredError } from "@/lib/data";
 
 type CookieToSet = { name: string; value: string; options: CookieOptions };
 
 export async function createClient() {
+  // Real backend only: when Supabase credentials are missing/placeholders,
+  // fail fast with a typed error the layout catches and renders as an honest
+  // "Server problem" configuration screen — never silently fabricate data.
+  if (!isConfigured()) {
+    logMissingSupabaseConfig();
+    throw new NotConfiguredError();
+  }
+
   const cookieStore = await cookies();
 
   return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    env.supabaseUrl,
+    env.supabaseAnonKey,
     {
       cookies: {
         getAll() {
