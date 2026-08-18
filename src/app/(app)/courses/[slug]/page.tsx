@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
+import { getDataClient, getCurrentUser } from "@/lib/data";
 import { Badge, Card, Progress } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
@@ -11,8 +11,7 @@ export default async function CourseDetailPage({ params }: { params: Promise<{ s
   const { slug } = await params;
   const db = await getDataClient();
   const user = await getCurrentUser(db);
-  const demo = isDemoMode();
-  if (!user && !demo) redirect("/login");
+  if (!user) redirect("/login");
 
   const { data: course } = await db.from("courses").select("*").eq("slug", slug).eq("status", "published").maybeSingle();
   if (!course) notFound();

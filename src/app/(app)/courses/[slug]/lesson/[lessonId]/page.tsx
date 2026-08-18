@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
+import { getDataClient, getCurrentUser } from "@/lib/data";
 import { CompleteLessonButton } from "@/components/complete-lesson-button";
 import { Card } from "@/components/ui";
 
@@ -11,8 +11,7 @@ export default async function LessonPage({ params }: { params: Promise<{ slug: s
   const { slug, lessonId } = await params;
   const db = await getDataClient();
   const user = await getCurrentUser(db);
-  const demo = isDemoMode();
-  if (!user && !demo) redirect("/login");
+  if (!user) redirect("/login");
 
   const { data: lesson } = await db.from("lessons").select("id, module_id, title, summary, body, sort_order").eq("id", lessonId).maybeSingle();
   if (!lesson) notFound();

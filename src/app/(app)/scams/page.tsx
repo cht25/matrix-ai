@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
+import { getDataClient, getCurrentUser } from "@/lib/data";
 import { ScamBrowser } from "@/components/scam-browser";
 
 export const metadata: Metadata = { title: "Scam Library" };
@@ -8,8 +8,7 @@ export const metadata: Metadata = { title: "Scam Library" };
 export default async function ScamsPage() {
   const db = await getDataClient();
   const user = await getCurrentUser(db);
-  const demo = isDemoMode();
-  if (!user && !demo) redirect("/login");
+  if (!user) redirect("/login");
 
   const [cats, articles] = await Promise.all([
     db.from("scam_categories").select("id, slug, name, description, icon").eq("status", "active").order("sort_order"),

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
+import { getDataClient, getCurrentUser } from "@/lib/data";
 import { AdminNav } from "@/components/admin/admin-nav";
 import { OverviewTab } from "@/components/admin/overview-tab";
 import { Card } from "@/components/ui";
@@ -16,11 +16,10 @@ async function getPerms() {
 export default async function AdminPage() {
   const db = await getDataClient();
   const user = await getCurrentUser(db);
-  const demo = isDemoMode();
-  if (!user && !demo) redirect("/login");
+  if (!user) redirect("/login");
 
   const codes = await getPerms();
-  if (!demo && codes.size === 0) redirect("/chat");
+  if (codes.size === 0) redirect("/chat");
 
   return (
     <div className="space-y-6">

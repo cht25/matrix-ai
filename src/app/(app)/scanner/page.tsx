@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
+import { getDataClient, getCurrentUser } from "@/lib/data";
 import { ScannerClient } from "@/components/scanner-client";
 import { Card } from "@/components/ui";
 import { riskColor } from "@/lib/utils";
@@ -10,8 +10,7 @@ export const metadata: Metadata = { title: "Screenshot Scanner" };
 export default async function ScannerPage() {
   const db = await getDataClient();
   const user = await getCurrentUser(db);
-  const demo = isDemoMode();
-  if (!user && !demo) redirect("/login");
+  if (!user) redirect("/login");
 
   const { data: analyses } = await db
     .from("security_analyses")

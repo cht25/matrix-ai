@@ -1,21 +1,26 @@
 "use client";
 
-// MATRIX chat — minimal, editorial, premium. Streaming responses, stop,
-// retry/regenerate, copy, timestamps, code blocks, image attachment →
-// scanner analysis, temporary chat, empty-state suggestions. The AI gateway
-// is the only path to Groq.
+// MATRIX chat — minimal, editorial, premium. Real streaming responses from
+// the AI gateway (the only path to Groq), stop/retry/regenerate, copy,
+// timestamps, image attachment → scanner analysis, temporary chat,
+// empty-state suggestions.
+//
+// Fakes-free contract (product spec): every assistant message comes from the
+// real gateway. Any failure renders "Server problem" (or the appropriate
+// category) with a [Retry] — never a canned reply, never an endless loader.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  FileSearch, GraduationCap, KeyRound, Paperclip, RefreshCcw, Send, Shield, ShieldAlert, Square, Undo2,
+  FileSearch, Flag, GraduationCap, KeyRound, Paperclip, RefreshCcw, Send, ShieldAlert, Square,
 } from "lucide-react";
-import { createClient } from "@/lib/supabase/browser";
-import { Button, Spinner, Textarea } from "@/components/ui";
+import { createClient, supabasePublic, supabaseBrowserConfigured } from "@/lib/supabase/browser";
+import { Button, Textarea } from "@/components/ui";
 import { Markdown } from "@/components/markdown";
 import { MatrixMark } from "@/components/logo";
 import { useToast } from "@/components/toast";
-import { env } from "@/lib/env";
+import { ServerProblem } from "@/components/server-problem";
+import { classifyGatewayResponse, classifyRequestException, failureCopy, type ApiFailure } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
 
 type Message = {
@@ -25,27 +30,27 @@ type Message = {
   created_at?: string;
 };
 
+// Deadlines for the real network calls. If the gateway has not responded
+// with headers in this window we surface a timeout failure; once streaming,
+// a longer idle window without any token also becomes a timeout.
+const CONNECT_TIMEOUT_MS = 25_000;
+const STREAM_IDLE_TIMEOUT_MS = 45_000;
+
 const SUGGESTIONS = [
-  { icon: <KeyRound size={15} strokeWidth={1.5} />, label: "Check my account security", prompt: "How can I check my account security and lock things down?" },
-  { icon: <ShieldAlert size={15} strokeWidth={1.5} />, label: "Is this message phishing?", prompt: "Is this message phishing? It says I won a prize and must pay a fee to receive it." },
-  { icon: <Shield size={15} strokeWidth={1.5} />, label: "How do I secure my account?", prompt: "How do I secure my account? What should I do first?" },
-  { icon: <FileSearch size={15} strokeWidth={1.5} />, label: "Analyze this screenshot", prompt: null, href: "/scanner" },
-  { icon: <Undo2 size={15} strokeWidth={1.5} />, label: "I think I've been scammed", prompt: "I think I've been scammed. What should I do now?" },
-  { icon: <GraduationCap size={15} strokeWidth={1.5} />, label: "Teach me cybersecurity", prompt: "Teach me the basics of cybersecurity — where should I start?" },
+  { icon: <ShieldAlert size={15} strokeWidth={1.5} />, label: "Check a suspicious message", prompt: "Is this message phishing? It says I won a prize and must pay a fee to receive it." },
+  { icon: <FileSearch size={15} strokeWidth={1.5} />, label: "Analyze a screenshot", prompt: null, href: "/scanner" },
+  { icon: <KeyRound size={15} strokeWidth={1.5} />, label: "Secure my account", prompt: "How do I secure my account? What should I do first?" },
+  { icon: <GraduationCap size={15} strokeWidth={1.5} />, label: "Learn cybersecurity", prompt: "Teach me the basics of cybersecurity — where should I start?" },
+  { icon: <Flag size={15} strokeWidth={1.5} />, label: "Report a scam", prompt: null, href: "/report" },
 ];
 
-function demoReply(message: string): string {
-  const m = message.toLowerCase();
-  if (m.includes("phish") || m.includes("scam") || m.includes("prize")) {
-    return "**Risk: High**\n\n**What I noticed:** This matches a classic prize/lottery scam pattern — you never entered a contest, and the \"winner\" must pay a fee.\n\n**Why it matters:** Real prizes never ask winners to pay. Scammers use the fee to take money or card details.\n\n**What to do now:**\n1. Don't reply, don't pay, don't click any links.\n2. Tell a trusted adult.\n3. Report it to the FTC at reportfraud.ftc.gov.\n\n_⚠ Demo preview — real analysis runs when the AI gateway is deployed with GROQ_API_KEY._";
+async function parseErrorCode(res: Response): Promise<string | null> {
+  try {
+    const data = (await res.json()) as { error?: unknown };
+    return typeof data.error === "string" ? data.error : null;
+  } catch {
+    return null;
   }
-  if (m.includes("password") || m.includes("secure")) {
-    return "**Simple explanation:** Use a passphrase — 3 or 4 random words joined together, at least 12 characters.\n\n**Example:** `purple-lantern-cloud-42`\n\n**Safe practice:** Use a different passphrase for every account and turn on two-factor authentication.\n\n**Common mistake:** Reusing the same password everywhere — when one site leaks it, scammers try it on all your other accounts.\n\n_⚠ Demo preview — real analysis runs when the AI gateway is deployed with GROQ_API_KEY._";
-  }
-  if (m.includes("scammed") || m.includes("hacked") || m.includes("help")) {
-    return "I'm sorry that happened — you're not in trouble, and you're not alone.\n\n**What to do now:**\n1. Tell a trusted adult immediately.\n2. Change the affected passwords from a different device.\n3. Turn on two-factor authentication.\n4. Keep evidence (screenshots).\n5. Report it using the verified resources in the Scam Library.\n\n_⚠ Demo preview — real analysis runs when the AI gateway is deployed with GROQ_API_KEY._";
-  }
-  return "That's a great cybersecurity question.\n\n**Simple explanation:** Staying safe online is about layers: strong unique passwords, two-factor authentication, cautious clicking, and knowing how to spot social engineering.\n\n**Safe practice:** Start with your email account — give it the strongest passphrase and enable 2FA.\n\n**Common mistake:** Trusting urgent messages. When something feels rushed, pause before clicking.\n\n_⚠ Demo preview — real analysis runs when the AI gateway is deployed with GROQ_API_KEY._";
 }
 
 export function ChatClient({
@@ -66,11 +71,11 @@ export function ChatClient({
   const [convId, setConvId] = useState<string | null>(initialConvId);
   const [streaming, setStreaming] = useState(false);
   const [streamedText, setStreamedText] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<ApiFailure | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [lastUserMessage, setLastUserMessage] = useState<string | null>(null);
-  const [regenerating, setRegenerating] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -82,8 +87,29 @@ export function ChatClient({
     scrollToBottom();
   }, [messages, streamedText, streaming, scrollToBottom]);
 
-  function stop() {
+  useEffect(() => () => {
     abortRef.current?.abort();
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+  }, []);
+
+  function clearIdleTimer() {
+    if (idleTimerRef.current) {
+      clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+  }
+
+  function armIdleTimer(ms: number, controller: AbortController) {
+    clearIdleTimer();
+    idleTimerRef.current = setTimeout(() => {
+      controller.abort(new DOMException("The request timed out.", "TimeoutError"));
+    }, ms);
+  }
+
+  function stop() {
+    // Stop must actually cancel the in-flight request.
+    clearIdleTimer();
+    abortRef.current?.abort(new DOMException("Stopped by user.", "AbortError"));
     setStreaming(false);
   }
 
@@ -94,62 +120,49 @@ export function ChatClient({
   }
 
   async function streamMessage(message: string, replaceLastAssistant = false) {
-    setError(null);
+    setFailure(null);
     setNotice(null);
     setStreaming(true);
     setLastUserMessage(message);
-    setRegenerating(replaceLastAssistant);
     setStreamedText("");
 
-    const supabase = createClient();
+    if (!supabaseBrowserConfigured) {
+      setFailure({ ...failureCopy("not-configured"), detail: "The MATRIX backend is not configured on this deployment yet, so chat cannot start." });
+      setStreaming(false);
+      setStreamedText(null);
+      return;
+    }
+
     const token = await requestToken();
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
-      if (env.demoMode) {
-        const reply = demoReply(message);
-        for (let i = 0; i < reply.length; i += 3) {
-          if (controller.signal.aborted) break;
-          setStreamedText(reply.slice(0, i + 3));
-          await new Promise((r) => setTimeout(r, 12));
-        }
-        setStreamedText(reply);
-        const finalReply = reply;
-        setMessages((m) => {
-          const base = replaceLastAssistant ? m.slice(0, -1) : m;
-          return [...base, { role: "assistant", content: finalReply, created_at: new Date().toISOString() }];
-        });
-        setStreamedText(null);
-        return;
-      }
-
-      const res = await fetch(`${env.supabaseUrl}/functions/v1/ai-gateway`, {
+      armIdleTimer(CONNECT_TIMEOUT_MS, controller);
+      const res = await fetch(`${supabasePublic.url}/functions/v1/ai-gateway`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
-          apikey: env.supabaseAnonKey,
+          apikey: supabasePublic.anonKey,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ action: "chat", stream: true, conversation_id: convId, is_temporary: isTemporary, message }),
         signal: controller.signal,
       });
+      // Connected — from here the streaming idle window applies.
+      armIdleTimer(STREAM_IDLE_TIMEOUT_MS, controller);
 
       if (!res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { error?: string };
-        if (data.error === "AI_GATEWAY_NOT_CONFIGURED") {
-          setError("The AI gateway isn't configured yet. Deploy the edge functions and set GROQ_API_KEY (see the README).");
-        } else if (data.error === "RATE_LIMITED_MINUTE" || data.error === "RATE_LIMITED_DAY") {
-          setError("You've sent a lot of messages in a short time. Take a breather and try again in a minute.");
-        } else {
-          setError("We couldn't reach MATRIX AI. Please try again.");
-        }
+        clearIdleTimer();
+        setFailure(classifyGatewayResponse(res.status, await parseErrorCode(res)));
         return;
       }
 
       const contentType = res.headers.get("content-type") ?? "";
       if (!contentType.includes("text/event-stream")) {
-        const data = (await res.json()) as { reply?: string; conversation_id?: string; refused?: boolean };
+        // Non-streaming gateway answer (e.g. an on-topic refusal).
+        clearIdleTimer();
+        const data = (await res.json()) as { reply?: string; conversation_id?: string };
         if (data.reply) {
           const reply = data.reply;
           setMessages((m) => [...m, { role: "assistant", content: reply, created_at: new Date().toISOString() }]);
@@ -158,21 +171,28 @@ export function ChatClient({
             onConversationCreated?.(data.conversation_id);
             if (!isTemporary) router.replace(`/chat/${data.conversation_id}`);
           }
+          return;
         }
+        setFailure(failureCopy("server"));
         return;
       }
 
       const reader = res.body?.getReader();
-      if (!reader) throw new Error("no stream");
+      if (!reader) {
+        clearIdleTimer();
+        setFailure(failureCopy("server"));
+        return;
+      }
       const decoder = new TextDecoder();
       let buffer = "";
-      let finalReply: string = "";
+      let finalReply = "";
       let gotConversationId: string | null = null;
       let streamError: string | null = null;
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        armIdleTimer(STREAM_IDLE_TIMEOUT_MS, controller); // activity — reset idle deadline
         buffer += decoder.decode(value, { stream: true });
         const events = buffer.split("\n\n");
         buffer = events.pop() ?? "";
@@ -201,9 +221,12 @@ export function ChatClient({
           }
         }
       }
+      clearIdleTimer();
 
       if (streamError) {
-        setError("The response was interrupted. Your message is safe — try again.");
+        // The gateway reported a mid-stream failure. Everything already on
+        // screen is real output — offer a clean retry for the rest.
+        setFailure({ ...failureCopy("server"), detail: "The response was interrupted. Your message is safe — try again." });
         return;
       }
       if (gotConversationId && convId !== gotConversationId) {
@@ -211,16 +234,18 @@ export function ChatClient({
         onConversationCreated?.(gotConversationId);
         if (!isTemporary) router.replace(`/chat/${gotConversationId}`);
       }
-    } catch {
-      if (!controller.signal.aborted) {
-        setError("We couldn't reach MATRIX AI. Check your connection and try again.");
+    } catch (err) {
+      clearIdleTimer();
+      const userStopped = err instanceof DOMException && err.name === "AbortError";
+      if (userStopped) {
+        setNotice("Generation stopped. Your message is safe.");
       } else {
-        setNotice("Generation stopped. Your message is saved.");
+        setFailure(classifyRequestException(err));
       }
     } finally {
+      clearIdleTimer();
       setStreaming(false);
       setStreamedText(null);
-      setRegenerating(false);
       abortRef.current = null;
     }
   }
@@ -241,7 +266,7 @@ export function ChatClient({
 
   function retry() {
     if (!lastUserMessage || streaming) return;
-    setError(null);
+    setFailure(null);
     const hasUser = messages.some((m) => m.role === "user" && m.content === lastUserMessage);
     if (!hasUser) {
       const msg = lastUserMessage;
@@ -252,39 +277,77 @@ export function ChatClient({
 
   async function handleFile(file: File | undefined | null) {
     if (!file || streaming) return;
-    setError(null);
+    setFailure(null);
     const okTypes = ["image/png", "image/jpeg", "image/webp"];
-    if (!okTypes.includes(file.type)) return setError("Only PNG, JPEG and WebP images can be analysed.");
-    if (file.size > 8 * 1024 * 1024) return setError("File is too large (max 8 MB).");
+    if (!okTypes.includes(file.type)) {
+      setFailure({ ...failureCopy("invalid-request"), title: "Unsupported file", detail: "Only PNG, JPEG and WebP images can be analysed.", retryable: false });
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setFailure({ ...failureCopy("invalid-request"), title: "Upload failed", detail: "The image is too large (maximum 8 MB). Choose a smaller screenshot.", retryable: false });
+      return;
+    }
+    if (!supabaseBrowserConfigured) {
+      setFailure({ ...failureCopy("not-configured"), detail: "The MATRIX backend is not configured on this deployment yet, so screenshots cannot be analysed." });
+      return;
+    }
 
     setMessages((m) => [...m, { role: "user", content: `Attachment: ${file.name}`, created_at: new Date().toISOString() }]);
     setStreaming(true);
-    setStreamedText("Analysing your screenshot…");
+    setStreamedText("");
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
       const supabase = createClient();
-      if (env.demoMode) {
-        await new Promise((r) => setTimeout(r, 900));
-        const reply = "**Risk: High**\n**Confidence: 85%**\n\n**What I noticed:** Classic scam markers — urgency, a request for a one-time code, and a lookalike sender address.\n\n**What to do now:** Don't reply or click. Tell a trusted adult and report it.\n\n_⚠ Demo preview — real analysis runs when the AI gateway is deployed with GROQ_API_KEY._";
-        const final = reply;
-        setMessages((m) => [...m, { role: "assistant", content: final, created_at: new Date().toISOString() }]);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setFailure(failureCopy("auth"));
         return;
       }
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("no user");
+      const token = await requestToken();
       const ext = file.type.split("/")[1] === "jpeg" ? "jpg" : file.type.split("/")[1];
       const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
+
+      armIdleTimer(CONNECT_TIMEOUT_MS, controller);
       const { error: upErr } = await supabase.storage.from("security-screenshots").upload(path, file, { contentType: file.type });
-      if (upErr) throw new Error(upErr.message);
-      const { data, error: invErr } = await supabase.functions.invoke("ai-gateway", { body: { action: "scan", storage_path: path } });
-      if (invErr || (data as { error?: string })?.error) throw new Error("scan failed");
-      const result = data as { reply: string };
-      const reply = result.reply;
+      if (upErr) {
+        clearIdleTimer();
+        setFailure({ ...failureCopy("server"), title: "Upload failed", detail: "The screenshot could not be uploaded. Please try again." });
+        return;
+      }
+
+      const res = await fetch(`${supabasePublic.url}/functions/v1/ai-gateway`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          apikey: supabasePublic.anonKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "scan", storage_path: path }),
+        signal: controller.signal,
+      });
+      clearIdleTimer();
+
+      if (!res.ok) {
+        setFailure(classifyGatewayResponse(res.status, await parseErrorCode(res)));
+        return;
+      }
+      const data = (await res.json()) as { reply?: string; error?: string };
+      if (!data.reply || data.error) {
+        setFailure(classifyGatewayResponse(502, typeof data.error === "string" ? data.error : null));
+        return;
+      }
+      const reply = data.reply;
       setMessages((m) => [...m, { role: "assistant", content: reply, created_at: new Date().toISOString() }]);
-    } catch {
-      setError("We couldn't analyse that screenshot. Please try again.");
+    } catch (err) {
+      const userStopped = err instanceof DOMException && err.name === "AbortError";
+      if (!userStopped) setFailure(classifyRequestException(err));
     } finally {
+      clearIdleTimer();
       setStreaming(false);
       setStreamedText(null);
+      abortRef.current = null;
     }
   }
 
@@ -305,9 +368,12 @@ export function ChatClient({
         {messages.length === 0 && !streaming ? (
           <div className="flex h-full flex-col items-center justify-center text-center">
             <div className="mb-5">
+              <span className="mb-4 inline-block" aria-hidden="true">
+                <MatrixMark className="h-12 w-12 text-ink-2" />
+              </span>
               <p className="eyebrow mb-2">MATRIX</p>
               <h1 className="font-display text-[26px] font-semibold tracking-tight text-ink sm:text-3xl">
-                How can MATRIX protect you today?
+                How can MATRIX help protect you?
               </h1>
               <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-ink-2">
                 Your AI Cyber Safety Assistant. Ask about phishing, passwords, scams and privacy —
@@ -361,7 +427,7 @@ export function ChatClient({
               </div>
             ))}
 
-            {/* Streaming */}
+            {/* Streaming — "MATRIX is connecting…" until output starts, then the reply builds up live. */}
             {streaming ? (
               <div className="msg-in flex gap-3.5">
                 <span className="mt-0.5 hidden shrink-0 sm:block" aria-hidden="true">
@@ -370,31 +436,25 @@ export function ChatClient({
                 <div className="min-w-0 flex-1 border-l border-border pl-4">
                   {streamedText ? (
                     <div className="ai-reply">
+                      <p className="mb-2 text-[10.5px] font-medium uppercase tracking-[0.16em] text-ink-3">MATRIX is responding…</p>
                       <Markdown text={streamedText} />
                       <span className="ml-0.5 inline-block h-3.5 w-px animate-pulse bg-ink align-middle" aria-hidden="true" />
                     </div>
                   ) : (
-                    <div className="flex items-center gap-2 py-2 text-[13px] text-ink-3" role="status" aria-label="MATRIX is thinking">
+                    <div className="flex items-center gap-2 py-2 text-[13px] text-ink-3" role="status" aria-label="MATRIX is connecting">
                       <span className="typing-dot h-1 w-1 rounded-full bg-ink-2" />
                       <span className="typing-dot h-1 w-1 rounded-full bg-ink-2" />
                       <span className="typing-dot h-1 w-1 rounded-full bg-ink-2" />
-                      <span className="ml-1">MATRIX is thinking…</span>
+                      <span className="ml-1">MATRIX is connecting…</span>
                     </div>
                   )}
                 </div>
               </div>
             ) : null}
 
-            {/* Error + retry */}
-            {error ? (
-              <div className="card fade-in mx-auto max-w-md !rounded-lg border-danger/40 bg-danger-soft !p-4 text-center">
-                <p className="text-sm font-medium text-danger">Something went wrong.</p>
-                <p className="mt-1 text-xs leading-relaxed text-ink-2">{error}</p>
-                <div className="mt-3 flex justify-center gap-2">
-                  <Button variant="outline" onClick={retry} className="!min-h-8 !px-3 !py-1 text-xs">Retry</Button>
-                  <Button variant="ghost" onClick={() => setError(null)} className="!min-h-8 !px-3 !py-1 text-xs">Dismiss</Button>
-                </div>
-              </div>
+            {/* Honest failure card — category-aware, with [Retry]. */}
+            {failure ? (
+              <ServerProblem failure={failure} onRetry={retry} onDismiss={() => setFailure(null)} />
             ) : null}
           </>
         )}
@@ -428,7 +488,7 @@ export function ChatClient({
                 void send(e);
               }
             }}
-            placeholder={env.demoMode ? "Ask MATRIX about cybersecurity… (demo)" : "Ask MATRIX about cybersecurity…"}
+            placeholder="Ask MATRIX about cybersecurity…"
             rows={1}
             aria-label="Message MATRIX"
             disabled={streaming}

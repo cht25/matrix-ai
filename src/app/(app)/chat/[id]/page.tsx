@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { redirect, notFound } from "next/navigation";
-import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
+import { getDataClient, getCurrentUser } from "@/lib/data";
 import { ChatClient } from "@/components/chat-client";
 import { ChatHeader } from "@/components/chat-header";
 
@@ -10,8 +10,7 @@ export default async function ChatPage({ params }: { params: Promise<{ id: strin
   const { id } = await params;
   const db = await getDataClient();
   const user = await getCurrentUser(db);
-  const demo = isDemoMode();
-  if (!user && !demo) redirect("/login");
+  if (!user) redirect("/login");
 
   const { data: conv } = await db.from("conversations").select("id, title, is_temporary").eq("id", id).eq("user_id", user!.id).maybeSingle();
   if (!conv) notFound();

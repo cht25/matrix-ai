@@ -13,14 +13,13 @@ type Verification = { verification_status: string; rejection_reason: string } | 
 type Country = { id: string; name: string; consent_required: boolean; consent_min_age: number };
 
 export function OnboardingClient({
-  profile, consent, verification, countries, emailVerified, demo,
+  profile, consent, verification, countries, emailVerified,
 }: {
   profile: Profile | null;
   consent: Consent;
   verification: Verification;
   countries: Country[];
   emailVerified: boolean;
-  demo: boolean;
 }) {
   const router = useRouter();
   const [dob, setDob] = useState(profile?.date_of_birth ?? "");
@@ -121,7 +120,7 @@ export function OnboardingClient({
     { title: "Profile", done: !needsDob, body: "Set your date of birth (verified server-side), school and country." },
     { title: "Guardian consent", done: consentStatus === "approved", body: consentStatus === "pending" ? "A guardian consent is required for your country/age." : undefined },
     { title: "Age verification", done: verificationStatus === "approved" || profile?.age_verified, body: "Upload a birth certificate or ID — reviewed by a human, stored privately." },
-    { title: "Email verification", done: emailVerified || demo, body: emailVerified ? undefined : "Confirm your email address from the link we sent." },
+    { title: "Email verification", done: emailVerified, body: emailVerified ? undefined : "Confirm your email address from the link we sent." },
   ];
 
   const allDone = steps.every((s) => s.done);
@@ -205,7 +204,7 @@ export function OnboardingClient({
                   <option value="other">Other responsible adult</option>
                 </Select>
               </Field>
-              <Button type="submit" disabled={busy || demo}>{busy ? <Spinner /> : "Submit for review"}</Button>
+              <Button type="submit" disabled={busy}>{busy ? <Spinner /> : "Submit for review"}</Button>
             </form>
           </>
         )}
@@ -231,7 +230,7 @@ export function OnboardingClient({
       {/* Step 4: email */}
       <Card>
         <h2 className="font-bold text-ink">4 · Email verification</h2>
-        {emailVerified || demo ? (
+        {emailVerified ? (
           <Alert tone="success">Email verified ✓</Alert>
         ) : (
           <>

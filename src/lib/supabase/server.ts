@@ -1,19 +1,17 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { createDemoClient } from "@/lib/demo/demo-client";
-import { env, warnIfDemoFallback } from "@/lib/env";
+import { env, isConfigured, logMissingSupabaseConfig } from "@/lib/env";
+import { NotConfiguredError } from "@/lib/data";
 
 type CookieToSet = { name: string; value: string; options: CookieOptions };
 
 export async function createClient() {
-  // Never crash a render when Supabase credentials are missing/placeholders —
-  // degrade to the demo client (clearly badged sample data) instead of
-  // throwing "Your project's URL and Key are required to create a Supabase
-  // client!" in every server component. env.demoMode is also true when demo
-  // mode was requested explicitly.
-  if (env.demoMode) {
-    warnIfDemoFallback();
-    return createDemoClient() as unknown as ReturnType<typeof createServerClient>;
+  // Real backend only: when Supabase credentials are missing/placeholders,
+  // fail fast with a typed error the layout catches and renders as an honest
+  // "Server problem" configuration screen — never silently fabricate data.
+  if (!isConfigured()) {
+    logMissingSupabaseConfig();
+    throw new NotConfiguredError();
   }
 
   const cookieStore = await cookies();

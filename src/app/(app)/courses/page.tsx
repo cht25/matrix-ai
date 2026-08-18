@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
+import { getDataClient, getCurrentUser } from "@/lib/data";
 import { Card, Progress } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Courses" };
@@ -9,8 +9,7 @@ export const metadata: Metadata = { title: "Courses" };
 export default async function CoursesPage() {
   const db = await getDataClient();
   const user = await getCurrentUser(db);
-  const demo = isDemoMode();
-  if (!user && !demo) redirect("/login");
+  if (!user) redirect("/login");
 
   const { data: courses } = await db.from("courses").select("id, slug, title, description, level, duration_minutes, icon").eq("status", "published").order("sort_order");
 

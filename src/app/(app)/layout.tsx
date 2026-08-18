@@ -1,14 +1,25 @@
 import { redirect } from "next/navigation";
-import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
+import { getDataClient, getCurrentUser } from "@/lib/data";
 import { AppShell } from "@/components/app-shell";
+import { ServerProblemScreen } from "@/components/server-problem";
+import { isConfigured } from "@/lib/env";
 import type { SidebarConversation } from "@/lib/chat-utils";
 
+// Everything under (app) renders per-request with the real session and the
+// real database — never prerendered, never static, never faked.
+export const dynamic = "force-dynamic";
+
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  // No backend configured: render an honest error screen instead of loading
+  // any personal data or crashing on the Supabase client.
+  if (!isConfigured()) {
+    return <ServerProblemScreen kind="config" />;
+  }
+
   const db = await getDataClient();
   const user = await getCurrentUser(db);
-  const demo = isDemoMode();
 
-  if (!user && !demo) redirect("/login");
+  if (!user) redirect("/login");
 
   const [convRes, profileRes, adminRes] = await Promise.all([
     db.from("conversations")
@@ -20,7 +31,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       .order("updated_at", { ascending: false })
       .limit(100),
     db.from("profiles").select("full_name").eq("id", user!.id).maybeSingle(),
-    demo ? Promise.resolve({ data: true }) : db.rpc("is_admin"),
+    db.rpc("is_admin"),
   ]);
 
   const conversations = (convRes.data ?? []) as SidebarConversation[];
@@ -29,7 +40,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <AppShell
-      user={{ email: user?.email ?? "demo@matrix.local", fullName: profile?.full_name || (user?.email?.split("@")[0] ?? "User") }}
+      user={{ email: user?.email ?? "", fullName: profile?.full_name || (user?.email?.split("@")[0] ?? "User") }}
       conversations={conversations}
       isAdmin={isAdmin}
     >

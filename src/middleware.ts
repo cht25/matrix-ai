@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
-import { env, warnIfDemoFallback } from "@/lib/env";
+import { env, isConfigured, logMissingSupabaseConfig } from "@/lib/env";
 
 type CookieToSet = { name: string; value: string; options: CookieOptions };
 
@@ -9,6 +9,7 @@ const PUBLIC_PATHS = [
   "/login", "/register", "/forgot-password", "/reset-password", "/verify",
   "/docs", "/privacy", "/terms", "/support",
   "/emergency", "/certificate/verify", "/scams", "/scams/",
+  "/api/health",
 ];
 const AUTH_PATHS = ["/login", "/register", "/forgot-password", "/reset-password"];
 
@@ -23,14 +24,12 @@ function isAuthPage(path: string): boolean {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Demo mode is either explicit (NEXT_PUBLIC_DEMO_MODE=true) or an automatic
-  // fallback when Supabase credentials are missing/placeholders — without the
-  // fallback, createServerClient below would throw on EVERY request and take
-  // the whole site down ("Your project's URL and Key are required...").
-  if (env.demoMode) {
-    warnIfDemoFallback();
-    // Demo preview: /login (and friends) render so the auth experience is
-    // visible; the root page still routes the simulated user to /chat.
+  // Supabase not configured (missing/invalid/placeholder env): do not attempt
+  // any auth work — let requests through so the layouts can render an honest
+  // "Server problem — service not configured" screen. There is no demo mode;
+  // we never fabricate a session or data.
+  if (!isConfigured()) {
+    logMissingSupabaseConfig();
     return NextResponse.next();
   }
 
@@ -54,10 +53,8 @@ export async function middleware(request: NextRequest) {
       },
     );
   } catch (err) {
-    // Defensive: misconfigured (but non-empty) credentials must never take
-    // the site down. Degrade to demo pass-through for this request.
-    console.error("[MATRIX] Failed to create Supabase client in middleware — serving request without auth.", err);
-    warnIfDemoFallback();
+    // Defensive: misconfigured credentials must never take the site down.
+    console.error("[MATRIX] Failed to create Supabase client in middleware — passing request through without auth.", err);
     return NextResponse.next();
   }
 

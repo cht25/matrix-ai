@@ -9,18 +9,14 @@ services:
     plan: free
     buildCommand: npm ci && npm run build
     startCommand: npm start
-    healthCheckPath: /
+    healthCheckPath: /api/health
     envVars:
-      # Required for real data — the app falls back to demo mode without them.
-      # Fill values from https://supabase.com/dashboard/project/_/settings/api
+      # Required — the app renders honest "not configured" screens without
+      # them. Values from https://supabase.com/dashboard/project/_/settings/api
       - key: NEXT_PUBLIC_SUPABASE_URL
-        sync: false
+        value: https://bwjwktjclupjbuawjdeo.supabase.co
       - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
         sync: false
       # Canonical app URL (used for links/redirects). Set to your Render URL.
       - key: NEXT_PUBLIC_APP_URL
         sync: false
-      # Keep false in production. The app still degrades to demo mode
-      # automatically if the Supabase credentials above are missing.
-      - key: NEXT_PUBLIC_DEMO_MODE
-        value: "false"

@@ -3,8 +3,8 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/browser";
-import { AuthShell } from "@/components/auth/login-screen";
+import { createClient, supabaseBrowserConfigured } from "@/lib/supabase/browser";
+import { AuthShell, AuthUnavailable } from "@/components/auth/login-screen";
 import { Alert, Button } from "@/components/ui";
 
 function VerifyInner() {
@@ -14,6 +14,11 @@ function VerifyInner() {
   const [message, setMessage] = useState("Verifying your email…");
 
   useEffect(() => {
+    if (!supabaseBrowserConfigured) {
+      setStatus("error");
+      setMessage("Authentication is not configured on this deployment yet.");
+      return;
+    }
     const next = params.get("next") ?? "/chat";
     const tokenHash = params.get("token_hash");
     const type = params.get("type");

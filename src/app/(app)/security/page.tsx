@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
+import { getDataClient, getCurrentUser } from "@/lib/data";
 import { Badge, Card, EmptyState, Progress } from "@/components/ui";
 import { RevokeSessionButton } from "@/components/revoke-session-button";
 import { timeAgo } from "@/lib/utils";
@@ -11,8 +11,7 @@ export const metadata: Metadata = { title: "Security" };
 export default async function SecurityPage() {
   const db = await getDataClient();
   const user = await getCurrentUser(db);
-  const demo = isDemoMode();
-  if (!user && !demo) redirect("/login");
+  if (!user) redirect("/login");
 
   const [eventsRes, sessionsRes, scoreRes, profileRes, settingsRes, progressRes, certRes] = await Promise.all([
     db.from("security_events").select("id, event_type, metadata, created_at").eq("user_id", user!.id).order("created_at", { ascending: false }).limit(50),
@@ -31,7 +30,7 @@ export default async function SecurityPage() {
   const settings = settingsRes.data as { memory_enabled?: boolean; chat_history_enabled?: boolean; notifications_security_alerts?: boolean } | null;
   const lessonsDone = progressRes.data?.length ?? 0;
   const certCount = certRes.data?.length ?? 0;
-  const emailVerified = Boolean(user?.email_confirmed_at) || demo;
+  const emailVerified = Boolean(user?.email_confirmed_at);
 
   // Derived, honest sub-scores from real signals:
   const mfaEvent = [...events].find((e) => e.event_type === "mfa_enabled" || e.event_type === "mfa_disabled");
@@ -41,7 +40,7 @@ export default async function SecurityPage() {
   const bars = [
     { label: "Password", value: Math.min(100, 40 + (emailVerified ? 25 : 0) + (changedPassword ? 20 : 0) + (mfaOn ? 15 : 0)), hint: mfaOn ? "Strong passphrase + 2FA" : "Use a unique passphrase" },
     { label: "MFA", value: mfaOn ? 100 : 10, hint: mfaOn ? "Two-factor authentication on" : "Enable MFA to lock out attackers" },
-    { label: "Account protection", value: Math.min(100, 30 + (emailVerified ? 15 : 0) + (profile?.age_verified || demo ? 15 : 0) + Math.min(25, lessonsDone * 2) + Math.min(15, certCount * 5)), hint: "Verification, learning and recovery" },
+    { label: "Account protection", value: Math.min(100, 30 + (emailVerified ? 15 : 0) + (profile?.age_verified ? 15 : 0) + Math.min(25, lessonsDone * 2) + Math.min(15, certCount * 5)), hint: "Verification, learning and recovery" },
     { label: "Privacy", value: Math.min(100, 40 + (settings?.memory_enabled ? 15 : 0) + (settings?.chat_history_enabled ? 15 : 0) + (settings?.notifications_security_alerts ? 30 : 0)), hint: "Memory, history and alert controls" },
   ];
 

@@ -9,6 +9,10 @@
 // Actions:
 //   POST { action: "chat", conversation_id?, is_temporary, message }
 //   POST { action: "scan", storage_path }   (screenshot analysis)
+//   POST { action: "health" }               (unauthenticated, real Groq check)
+//
+// Failure contract: failures return error codes — the gateway NEVER stores or
+// returns a fabricated assistant reply.
 // =============================================================================
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -261,12 +265,9 @@ async function handleChat(sb: ReturnType<typeof adminClient>, user: { id: string
   // --- prompt construction -----------------------------------------------------
   const provider = createProvider();
   if (!provider) {
-    await sb.from("conversation_messages").insert({
-      conversation_id: convId, role: "assistant",
-      content: "The AI gateway is not configured yet. Please set the GROQ_API_KEY secret on this project to enable chat.",
-    });
+    // Do NOT fabricate an assistant reply — report the honest failure code.
     await logUsage(sb, user.id, "none", "chat", {}, Date.now() - started, "error");
-    return jsonResponse({ reply: "AI_GATEWAY_NOT_CONFIGURED", conversation_id: convId }, 503);
+    return jsonResponse({ error: "AI_GATEWAY_NOT_CONFIGURED" }, 503);
   }
 
   // Context: summary + recent messages + safe memory + RAG
@@ -373,10 +374,7 @@ async function handleChat(sb: ReturnType<typeof adminClient>, user: { id: string
     usage = result.usage;
   } catch {
     await logUsage(sb, user.id, MODELS.chat, "chat", {}, Date.now() - started, "error");
-    await sb.from("conversation_messages").insert({
-      conversation_id: convId, role: "assistant",
-      content: "I hit a technical hiccup. Please try again in a moment.",
-    });
+    // Do NOT fabricate an assistant reply — report the honest failure code.
     return jsonResponse({ error: "AI_GATEWAY_ERROR" }, 502);
   }
 
@@ -486,6 +484,20 @@ async function handleScan(sb: ReturnType<typeof adminClient>, user: { id: string
 }
 
 // ---------------------------------------------------------------------------
+// Health (unauthenticated, honest): reports whether the gateway can actually
+// reach the AI provider. Used by the UI status indicator and /api/health.
+// ---------------------------------------------------------------------------
+async function handleHealth() {
+  const provider = createProvider();
+  if (!provider) {
+    return jsonResponse({ status: "unconfigured" }, 503);
+  }
+  const ok = await provider.healthCheck();
+  if (!ok) return jsonResponse({ status: "unavailable" }, 503);
+  return jsonResponse({ status: "online", chat_model: MODELS.chat });
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 Deno.serve(async (req) => {
@@ -493,13 +505,16 @@ Deno.serve(async (req) => {
   if (cors) return cors;
 
   try {
+    const body = await req.json().catch(() => ({}));
+    const action = body.action;
+
+    // Health is intentionally unauthenticated (no user JWT required).
+    if (action === "health") return await handleHealth();
+
     const { user, error } = await getUser(req);
     if (error || !user) return jsonResponse({ error: "UNAUTHENTICATED" }, 401);
 
     const sb = adminClient();
-    const body = await req.json().catch(() => ({}));
-    const action = body.action;
-
     if (action === "chat") return await handleChat(sb, user, body);
     if (action === "scan") return await handleScan(sb, user, body);
     return jsonResponse({ error: "UNKNOWN_ACTION" }, 400);

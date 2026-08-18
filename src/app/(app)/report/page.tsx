@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { getDataClient, isDemoMode, getCurrentUser } from "@/lib/data";
+import { getDataClient, getCurrentUser } from "@/lib/data";
 import { ReportForm } from "@/components/report-form";
 import { Badge, Card } from "@/components/ui";
 
@@ -9,8 +9,7 @@ export const metadata: Metadata = { title: "Report a Scam" };
 export default async function ReportPage() {
   const db = await getDataClient();
   const user = await getCurrentUser(db);
-  const demo = isDemoMode();
-  if (!user && !demo) redirect("/login");
+  if (!user) redirect("/login");
 
   const [{ data: cats }, { data: resources }, { data: countries }] = await Promise.all([
     db.from("scam_categories").select("id, name").eq("status", "active").order("sort_order"),

@@ -4,7 +4,6 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/browser";
 import { Alert, Button, Card } from "@/components/ui";
-import { env } from "@/lib/env";
 
 type Memory = { id: string; memory: string; source: string; created_at: string };
 
@@ -43,11 +42,6 @@ export function PrivacyPanel({ settings, memories }: { settings: { memory_enable
     setMsg(null);
     try {
       const supabase = createClient();
-      if (env.demoMode) {
-        setMsg({ tone: "success", text: "Demo mode: a real export runs through the export-data edge function when configured." });
-        setBusy(false);
-        return;
-      }
       const { data, error } = await supabase.functions.invoke("export-data", {});
       if (error || (data as { error?: string })?.error) {
         setMsg({ tone: "danger", text: "Export failed. Make sure the export-data edge function is deployed." });
@@ -71,11 +65,6 @@ export function PrivacyPanel({ settings, memories }: { settings: { memory_enable
     const { error: signInErr } = await supabase.auth.signInWithPassword({ email: user?.email ?? "", password });
     if (signInErr) {
       setMsg({ tone: "danger", text: "Re-authentication failed — deletion cancelled." });
-      setBusy(false);
-      return;
-    }
-    if (env.demoMode) {
-      setMsg({ tone: "success", text: "Demo mode: deletion is simulated." });
       setBusy(false);
       return;
     }

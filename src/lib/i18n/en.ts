@@ -27,7 +27,6 @@ export const en = {
   "common.submit": "Submit",
   "common.search": "Search",
   "common.error": "Something went wrong. Please try again.",
-  "common.demoBadge": "Demo Mode — preview only, no real data or AI",
   "common.trustedBy": "Operated by THAMJJ13.TOP",
   "auth.welcome": "Welcome back",
   "auth.email": "Email",
