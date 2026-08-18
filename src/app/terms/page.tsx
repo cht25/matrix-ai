@@ -28,7 +28,7 @@ export default function TermsPage() {
         </div>
       </header>
       <main className="mx-auto max-w-3xl space-y-5 px-4 py-10">
-        <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Terms of Service</h1>
+        <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Terms of Service</h1>
         <p className="text-sm text-ink-3">Last updated: August 2026 · MATRIX — THAMJJ13.TOP White Hat Team</p>
         {SECTIONS.map((s) => (
           <section key={s.title} className="card p-5">

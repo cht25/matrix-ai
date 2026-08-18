@@ -17,7 +17,7 @@ export function Button({
     primary: "bg-ink text-bg hover:bg-ink-2 active:bg-ink transition-colors",
     secondary: "bg-surface-2 text-ink hover:bg-surface-3",
     ghost: "text-ink-2 hover:bg-surface-2 hover:text-ink",
-    danger: "bg-danger text-white hover:brightness-110",
+    danger: "bg-danger text-white hover:opacity-90",
     outline: "border border-border-strong bg-surface text-ink hover:border-accent hover:text-accent",
   };
   return (

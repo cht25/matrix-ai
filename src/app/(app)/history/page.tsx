@@ -28,7 +28,7 @@ export default async function HistoryPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Chat History</h1>
+          <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Chat History</h1>
           <p className="mt-1 text-ink-2">Search, archive, export or delete your saved conversations. Temporary chats never appear here.</p>
         </div>
         <Link href="/chat" className="text-sm font-semibold text-accent hover:text-accent-2">+ New chat</Link>

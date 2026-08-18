@@ -56,7 +56,7 @@ export function ScamBrowser({ categories, articles }: { categories: Category[]; 
           onClick={() => setCat("all")}
           aria-pressed={cat === "all"}
           className={cn(
-            "min-h-9 shrink-0 rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors",
+            "min-h-9 shrink-0 rounded-md border px-3.5 py-1.5 text-xs font-medium transition-colors",
             cat === "all" ? "border-accent bg-accent-soft text-accent" : "border-border-strong bg-surface text-ink-2 hover:border-accent",
           )}
         >
@@ -68,7 +68,7 @@ export function ScamBrowser({ categories, articles }: { categories: Category[]; 
             onClick={() => setCat(c.id)}
             aria-pressed={cat === c.id}
             className={cn(
-              "min-h-9 shrink-0 rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors",
+              "min-h-9 shrink-0 rounded-md border px-3.5 py-1.5 text-xs font-medium transition-colors",
               cat === c.id ? "border-accent bg-accent-soft text-accent" : "border-border-strong bg-surface text-ink-2 hover:border-accent",
             )}
           >

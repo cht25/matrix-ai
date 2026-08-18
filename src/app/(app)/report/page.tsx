@@ -23,7 +23,7 @@ export default async function ReportPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
-        <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Report a Scam</h1>
+        <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Report a Scam</h1>
         <p className="mt-1 text-ink-2">
           Three ways to report: a private <strong>platform report</strong> to MATRIX support, an
           <strong> official report</strong> to a verified government organisation, and a

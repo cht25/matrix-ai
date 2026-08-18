@@ -39,7 +39,7 @@ export default async function CoursesPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Cyber Safety Courses</h1>
+        <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Cyber Safety Courses</h1>
         <p className="mt-1 text-ink-3">Learn at your own pace. Finish a course, pass its quizzes, and earn a verifiable certificate.</p>
       </div>
 

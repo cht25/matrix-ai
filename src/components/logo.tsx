@@ -11,44 +11,54 @@ import { cn } from "@/lib/utils";
 export function MatrixMark({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 40 40" fill="none" className={className} aria-hidden="true">
-      <circle cx="20" cy="20" r="18.5" stroke="currentColor" strokeWidth="1.3" opacity="0.55" />
-      <path
-        d="M12 27 V13 L20 22 L28 13 V27"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <circle cx="20" cy="20" r="18.5" stroke="currentColor" strokeWidth="1.2" opacity="0.5" />
+      <g stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12.5 27.5 V13.5" strokeWidth="2.4" />
+        <path d="M12.5 13.5 L20 22" strokeWidth="1.1" />
+        <path d="M20 22 L27.5 13.5" strokeWidth="1.1" />
+        <path d="M27.5 13.5 V27.5" strokeWidth="2.4" />
+      </g>
     </svg>
   );
 }
 
-/** Calligraphic MATRIX wordmark — the brand signature. */
+/** Calligraphic MATRIX wordmark — the brand signature.
+ *  Hand-lettered structure: heavy downstrokes, hairline diagonals,
+ *  serif feet and a signature swash baseline. Monochrome, theme-adaptive. */
 export function MatrixWordmark({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 150 34" fill="none" className={className} aria-hidden="true">
-      <g stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-        {/* M */}
-        <path d="M2 27 V6 L11.5 20 L21 6 V27" />
-        {/* A */}
-        <path d="M29.5 27 L38 6 L46.5 27" />
-        <path d="M33.5 19.5 L42.5 19.5" />
-        {/* T */}
-        <path d="M54.5 9 L70.5 9" />
-        <path d="M62.5 9 V27" />
-        {/* R */}
-        <path d="M78 27 V6 L93 6 Q97.5 6 97.5 10 Q97.5 14.5 93 14.5 L78 14.5" />
-        <path d="M84.5 14.5 L95.5 27" />
-        {/* I */}
-        <path d="M107 6 V27" />
-        <path d="M103 6 H111" />
-        {/* X */}
-        <path d="M123 6 L143 27" />
-        <path d="M143 6 L123 27" />
+      <g stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+        {/* M — heavy stems, hairline diagonals, serif feet */}
+        <path d="M2.5 6.5 V26.5" strokeWidth="2.5" />
+        <path d="M2.5 6.5 L11.5 20" strokeWidth="1.15" />
+        <path d="M11.5 20 L20.5 6.5" strokeWidth="1.15" />
+        <path d="M20.5 6.5 V26.5" strokeWidth="2.5" />
+        <path d="M0.7 26.5 H4.3 M18.7 26.5 H22.3" strokeWidth="1.15" />
+        {/* A — hairline left, heavy right, crossbar, foot serifs */}
+        <path d="M29.3 26.5 L37.6 6.5" strokeWidth="1.15" />
+        <path d="M37.6 6.5 L45.9 26.5" strokeWidth="2.5" />
+        <path d="M32.9 20 H42.3" strokeWidth="1.05" />
+        <path d="M28.2 26.5 H30.4 M44.8 26.5 H47" strokeWidth="1.05" />
+        {/* T — hairline crossbar, heavy stem, foot serifs */}
+        <path d="M54.4 8.8 H69.8" strokeWidth="1.25" />
+        <path d="M62.1 8.8 V26.5" strokeWidth="2.5" />
+        <path d="M60.1 26.5 H64.1" strokeWidth="1.15" />
+        {/* R — heavy stem, hairline bowl, hairline leg */}
+        <path d="M77.6 26.5 V6.5" strokeWidth="2.5" />
+        <path d="M77.6 6.5 H90.9 Q95.6 6.5 95.6 10.2 Q95.6 14.3 91 14.3 H77.6" strokeWidth="1.15" />
+        <path d="M83.4 14.3 L94.8 26.5" strokeWidth="1.15" />
+        <path d="M75.8 26.5 H79.4" strokeWidth="1.15" />
+        {/* I — heavy stem, serifs */}
+        <path d="M106.4 6.5 V26.5" strokeWidth="2.4" />
+        <path d="M102.8 6.5 H110 M102.8 26.5 H110" strokeWidth="1.15" />
+        {/* X — hairline upstroke, heavy downstroke */}
+        <path d="M122.6 6.5 L141.2 26.5" strokeWidth="1.15" />
+        <path d="M141.2 6.5 L122.6 26.5" strokeWidth="2.5" />
       </g>
-      {/* Signature swash */}
-      <path d="M2 31.5 H126" stroke="currentColor" strokeWidth="1" strokeLinecap="round" opacity="0.55" />
-      <circle cx="138" cy="31.5" r="1.6" fill="currentColor" opacity="0.8" />
+      {/* Signature swash baseline + terminal dot */}
+      <path d="M2 31.5 H126" stroke="currentColor" strokeWidth="1" strokeLinecap="round" opacity="0.5" />
+      <circle cx="137.5" cy="31.5" r="1.7" fill="currentColor" opacity="0.75" />
     </svg>
   );
 }

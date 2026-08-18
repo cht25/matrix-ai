@@ -14,7 +14,7 @@ export default async function TemporaryChatPage() {
   return (
     <div className="mx-auto h-full max-w-3xl">
       <div className="mb-4">
-        <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Temporary Chat</h1>
+        <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Temporary Chat</h1>
         <p className="mt-1 text-sm text-ink-2">
           For questions you do not want saved. Nothing here enters your history, memory, summaries or
           search — and it's deleted after 24 hours.

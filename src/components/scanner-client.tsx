@@ -86,7 +86,7 @@ export function ScannerClient() {
             key={s}
             onClick={() => setSource(s)}
             aria-pressed={source === s}
-            className={`min-h-9 rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+            className={`min-h-9 rounded-md border px-3.5 py-1.5 text-xs font-medium transition-colors ${
               source === s ? "border-accent bg-accent-soft text-accent" : "border-border-strong bg-surface text-ink-2 hover:border-accent"
             }`}
           >
@@ -130,7 +130,7 @@ export function ScannerClient() {
       {result?.reply ? (
         <Card>
           <div className="mb-3 flex flex-wrap items-center gap-2">
-            <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold capitalize ${riskColor(result.risk_level ?? "unknown")}`}>
+            <span className={`rounded-md border px-2.5 py-0.5 text-xs font-medium capitalize ${riskColor(result.risk_level ?? "unknown")}`}>
               {result.risk_level ?? "unknown"} risk
             </span>
             {typeof result.confidence === "number" ? (

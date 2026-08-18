@@ -48,7 +48,7 @@ export default async function SecurityPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Security</h1>
+        <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Security</h1>
         <p className="mt-1 text-ink-2">Your account protection at a glance — computed server-side from real signals.</p>
       </div>
 
@@ -56,7 +56,7 @@ export default async function SecurityPage() {
       <Card>
         <div className="flex items-center justify-between">
           <h2 className="font-bold text-ink">Cyber Safety Score</h2>
-          <span className="text-3xl font-extrabold text-accent">{score}<span className="text-sm font-semibold text-ink-3">/100</span></span>
+          <span className="text-3xl font-display font-semibold text-accent">{score}<span className="text-sm font-semibold text-ink-3">/100</span></span>
         </div>
         <div className="mt-4 space-y-4">
           {bars.map((b) => (

@@ -71,7 +71,7 @@ export function QuizClient({
     return (
       <Card className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-extrabold text-ink">{result.passed ? " You passed!" : "Keep going — try again!"}</h2>
+          <h2 className="text-xl font-display font-semibold text-ink">{result.passed ? " You passed!" : "Keep going — try again!"}</h2>
           <Badge className={result.passed ? "border-success/30 bg-success-soft text-success" : "border-warning/30 bg-warning-soft text-warning"}>
             {result.score_percent}% (needed {passPercent}%)
           </Badge>
@@ -107,7 +107,7 @@ export function QuizClient({
   return (
     <Card className="space-y-6">
       <div>
-        <h2 className="text-xl font-extrabold text-ink">{quizTitle}</h2>
+        <h2 className="text-xl font-display font-semibold text-ink">{quizTitle}</h2>
         <p className="mt-1 text-sm text-ink-3">You need {passPercent}% to pass. Scoring happens server-side — no shortcuts! </p>
       </div>
 

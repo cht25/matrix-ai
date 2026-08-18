@@ -18,7 +18,7 @@ function DocBlockRenderer({ section }: { section: DocSection }) {
       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-accent">
         <span aria-hidden="true">{section.icon}</span> MATRIX Documentation
       </div>
-      <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-ink">{section.title}</h1>
+      <h1 className="mt-2 text-3xl font-display font-semibold tracking-tight text-ink">{section.title}</h1>
       <div className="mt-6 space-y-4">
         {section.blocks.map((b, i) => {
           switch (b.t) {
@@ -83,7 +83,7 @@ function DocSearch({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fade-in fixed inset-0 z-[80] flex items-start justify-center bg-black/60 px-4 pt-[12vh] backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Search documentation">
-      <div className="card w-full max-w-lg overflow-hidden !rounded-2xl shadow-[var(--shadow-pop)]">
+      <div className="card w-full max-w-lg overflow-hidden !rounded-lg shadow-[var(--shadow-pop)]">
         <div className="flex items-center gap-2 border-b border-border px-4">
           <span className="text-ink-3"><Search size={15} strokeWidth={1.6} /></span>
           <input
@@ -264,7 +264,7 @@ export function DocsShell({ slug, children }: { slug: string; children: React.Re
 
         {/* Mobile TOC toggle */}
         {toc.length > 0 ? (
-          <button onClick={() => setTocOpen(!tocOpen)} className="fixed bottom-4 right-4 z-30 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-lg xl:hidden">
+          <button onClick={() => setTocOpen(!tocOpen)} className="fixed bottom-4 right-4 z-30 rounded-lg bg-ink px-4 py-2.5 text-sm font-medium text-bg shadow-[var(--shadow-pop)] xl:hidden">
             {tocOpen ? "Hide contents" : "Contents"}
           </button>
         ) : null}

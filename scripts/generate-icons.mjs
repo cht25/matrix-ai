@@ -1,10 +1,4 @@
-// =============================================================================
-// MATRIX icon generation — monochrome monogram M on near-black.
-//   node scripts/generate-icons.mjs
-// Outputs to public/: favicon.ico, favicon-16x16.png, favicon-32x32.png,
-// apple-touch-icon.png, icon-192.png, icon-512.png
-// =============================================================================
-
+// MATRIX icon generation — calligraphic monogram M on near-black.
 import sharp from "sharp";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -16,9 +10,14 @@ mkdirSync(outDir, { recursive: true });
 
 const MARK = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">
-  <rect width="40" height="40" rx="8" fill="#0b0d10"/>
-  <circle cx="20" cy="20" r="14.5" fill="none" stroke="#e9ebee" stroke-width="1.1" opacity="0.5"/>
-  <path d="M14.5 27 V13 L20 21.5 L25.5 13 V27" fill="none" stroke="#e9ebee" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect width="40" height="40" rx="7" fill="#0b0d10"/>
+  <circle cx="20" cy="20" r="14.5" fill="none" stroke="#e9ebee" stroke-width="1" opacity="0.45"/>
+  <g stroke="#e9ebee" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14.5 27.5 V13.5" stroke-width="2.3"/>
+    <path d="M14.5 13.5 L20 21.5" stroke-width="1.1"/>
+    <path d="M20 21.5 L25.5 13.5" stroke-width="1.1"/>
+    <path d="M25.5 13.5 V27.5" stroke-width="2.3"/>
+  </g>
 </svg>`;
 
 const svgBuffer = Buffer.from(MARK);
@@ -31,15 +30,13 @@ async function main() {
     { name: "icon-192.png", size: 192 },
     { name: "icon-512.png", size: 512 },
   ];
-
   const pngs = {};
   for (const s of sizes) {
     const png = await sharp(svgBuffer).resize(s.size, s.size).png().toBuffer();
     pngs[s.name] = png;
     writeFileSync(join(outDir, s.name), png);
-    console.log("✓", s.name, `(${s.size}x${s.size}, ${png.length} bytes)`);
+    console.log("✓", s.name);
   }
-
   const ico16 = pngs["favicon-16x16.png"];
   const ico32 = pngs["favicon-32x32.png"];
   const header = Buffer.alloc(6);
@@ -63,10 +60,7 @@ async function main() {
   });
   const ico = Buffer.concat([header, entryBuf, ico16, ico32]);
   writeFileSync(join(outDir, "favicon.ico"), ico);
-  console.log("✓ favicon.ico", `(${ico.length} bytes)`);
+  console.log("✓ favicon.ico");
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+main().catch((e) => { console.error(e); process.exit(1); });

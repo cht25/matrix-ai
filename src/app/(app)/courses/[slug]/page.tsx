@@ -43,7 +43,7 @@ export default async function CourseDetailPage({ params }: { params: Promise<{ s
 
       <div>
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">{course.title}</h1>
+          <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">{course.title}</h1>
           {cert ? <Badge className="border-success/30 bg-success-soft text-success">✓ Certificate earned</Badge> : null}
         </div>
         <p className="mt-2 text-ink-2">{course.description}</p>

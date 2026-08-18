@@ -4,7 +4,7 @@ import Link from "next/link";
 
 export function AdminTabs({ tabs, active, codes }: { tabs: { id: string; label: string }[]; active: string; codes: Set<string> }) {
   return (
-    <nav aria-label="Admin sections" className="no-scrollbar flex gap-1 overflow-x-auto rounded-2xl border border-border bg-surface p-1">
+    <nav aria-label="Admin sections" className="no-scrollbar flex gap-1 overflow-x-auto rounded-lg border border-border bg-surface p-1">
       {tabs.map((t) => (
         <Link
           key={t.id}

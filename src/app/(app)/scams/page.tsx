@@ -19,7 +19,7 @@ export default async function ScamsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Scam Library</h1>
+        <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Scam Library</h1>
         <p className="mt-1 text-ink-2">
           Learn the patterns scammers use so you can spot them before they work. Every article is verified
           and sourced from trusted organisations.

@@ -20,7 +20,7 @@ export default async function AdminCoursesPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Courses</h1>
+      <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Courses</h1>
       <AdminNav />
       <CoursesAdmin codes={codes} courses={courseList} />
     </div>

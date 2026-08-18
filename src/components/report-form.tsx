@@ -55,7 +55,7 @@ export function ReportForm({ categories, countries }: { categories: { id: string
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 rounded-2xl border border-border bg-surface p-6 shadow-sm">
+    <form onSubmit={handleSubmit} className="space-y-4 rounded-lg border border-border bg-surface p-6 shadow-sm">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Scam type" htmlFor="category">
           <Select id="category" value={category} onChange={(e) => setCategory(e.target.value)}>

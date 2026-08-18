@@ -25,7 +25,7 @@ export default async function AdminPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Admin Panel</h1>
+        <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Admin Panel</h1>
         <p className="mt-1 text-ink-2">
           Role-based access control — every section is gated by <code className="rounded bg-surface-2 px-1">has_permission()</code> in the
           database, and every sensitive action is audited.

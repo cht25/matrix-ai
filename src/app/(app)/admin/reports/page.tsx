@@ -16,7 +16,7 @@ export default async function AdminReportsPage() {
   if (!demo && codes.size === 0) redirect("/chat");
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Scam reports</h1>
+      <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Scam reports</h1>
       <AdminNav />
       <ReportsTab codes={codes} />
     </div>

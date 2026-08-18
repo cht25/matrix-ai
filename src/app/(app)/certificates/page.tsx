@@ -25,7 +25,7 @@ export default async function CertificatesPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">My Certificates</h1>
+        <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">My Certificates</h1>
         <p className="mt-1 text-ink-2">
           Every certificate has a unique public ID. The public verification page shows only your display
           name, course, date and issuer — never your email, address or DOB.

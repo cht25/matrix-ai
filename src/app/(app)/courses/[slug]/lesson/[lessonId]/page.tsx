@@ -43,7 +43,7 @@ export default async function LessonPage({ params }: { params: Promise<{ slug: s
 
       <Card className="!p-6 sm:!p-8">
         <p className="text-xs font-semibold uppercase tracking-wide text-accent">Lesson {idx + 1} of {ordered.length}</p>
-        <h1 className="mt-1 text-2xl font-extrabold text-ink sm:text-3xl">{lesson.title}</h1>
+        <h1 className="mt-1 text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">{lesson.title}</h1>
         {lesson.summary ? <p className="mt-2 text-ink-2">{lesson.summary}</p> : null}
         <div className="mt-5 whitespace-pre-line text-[15px] leading-relaxed text-ink">{lesson.body}</div>
 

@@ -19,7 +19,7 @@ const SECTIONS = [
 export function AdminNav() {
   const pathname = usePathname();
   return (
-    <nav aria-label="Admin sections" className="no-scrollbar flex gap-1 overflow-x-auto rounded-2xl border border-border bg-surface p-1">
+    <nav aria-label="Admin sections" className="no-scrollbar flex gap-1 overflow-x-auto rounded-lg border border-border bg-surface p-1">
       {SECTIONS.map((s) => {
         const active = s.exact ? pathname === s.href : pathname.startsWith(s.href);
         return (

@@ -23,7 +23,7 @@ export default function SupportPage() {
         </div>
       </header>
       <main className="mx-auto max-w-3xl px-4 py-10">
-        <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Support</h1>
+        <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Support</h1>
         <p className="mt-2 text-ink-2">
           MATRIX support is operated by the <strong>THAMJJ13.TOP White Hat Team</strong>. For privacy reasons,
           account-specific help is only available to signed-in users — never share passwords or codes with anyone.

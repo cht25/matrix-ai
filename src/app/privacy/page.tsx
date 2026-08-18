@@ -45,13 +45,13 @@ export default function PrivacyPage() {
         </div>
       </header>
       <main className="mx-auto max-w-3xl space-y-5 px-4 py-10">
-        <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Privacy at MATRIX AI</h1>
+        <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Privacy at MATRIX AI</h1>
         <p className="text-ink-2">
           MATRIX AI is operated by <strong>THAMJJ13.TOP White Hat Team</strong> for users aged 11–17.
           Privacy is not a feature here — it is the architecture.
         </p>
         {SECTIONS.map((s) => (
-          <section key={s.title} className="rounded-2xl border border-border bg-surface p-5">
+          <section key={s.title} className="rounded-lg border border-border bg-surface p-5">
             <h2 className="font-bold text-ink">{s.title}</h2>
             <p className="mt-1.5 text-sm leading-relaxed text-ink-2">{s.body}</p>
           </section>

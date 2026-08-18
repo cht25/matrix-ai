@@ -47,17 +47,20 @@ export default async function DashboardPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="font-display text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Hi {profile?.full_name?.split(" ")[0] ?? "there"}</h1>
-          <p className="mt-1 text-ink-2">Your cyber safety snapshot.</p>
+          <p className="eyebrow mb-1.5">Security overview</p>
+          <h1 className="font-display text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
+            Hi {profile?.full_name?.split(" ")[0] ?? "there"}
+          </h1>
+          <p className="mt-1 text-sm text-ink-2">Your cyber safety snapshot.</p>
         </div>
-        <Link href="/chat"><span className="hidden sm:inline-block"><span className="inline-flex min-h-11 items-center rounded-xl bg-accent px-4 text-sm font-semibold text-white shadow-[0_4px_16px_var(--accent-glow)] hover:brightness-110">Open MATRIX AI</span></span></Link>
+        <Link href="/chat"><span className="hidden sm:inline-block"><span className="inline-flex min-h-10 items-center rounded-lg bg-ink px-4 text-sm font-medium text-bg transition-colors hover:bg-ink-2">Open MATRIX AI</span></span></Link>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="flex flex-col justify-between">
           <p className="text-sm font-medium text-ink-2">Cyber Safety Score</p>
           <div className="mt-2 flex items-end gap-2">
-            <span className={`text-4xl font-extrabold ${scoreInfo.color}`}>{score}</span>
+            <span className={`text-4xl font-display font-semibold ${scoreInfo.color}`}>{score}</span>
             <span className="mb-1 text-sm font-semibold text-ink-3">/100</span>
           </div>
           <Progress value={score} className="mt-3" />
@@ -72,12 +75,12 @@ export default async function DashboardPage() {
         </Card>
         <Card>
           <p className="text-sm font-medium text-ink-2">Lessons completed</p>
-          <p className="mt-2 text-4xl font-extrabold text-ink">{completedLessons}</p>
+          <p className="mt-2 text-4xl font-display font-semibold text-ink">{completedLessons}</p>
           <p className="mt-2 text-xs text-ink-3">Every lesson raises your score.</p>
         </Card>
         <Card>
           <p className="text-sm font-medium text-ink-2">Certificates</p>
-          <p className="mt-2 text-4xl font-extrabold text-ink">{certificates?.length ?? 0}</p>
+          <p className="mt-2 text-4xl font-display font-semibold text-ink">{certificates?.length ?? 0}</p>
           <Link href="/certificates" className="mt-2 inline-block text-xs font-semibold text-accent hover:text-accent-2">View certificates →</Link>
         </Card>
       </div>

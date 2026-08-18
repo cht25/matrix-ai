@@ -164,8 +164,8 @@ export function RegisterForm() {
           <li key={label} className="flex flex-1 flex-col items-center gap-1.5" aria-current={i === step ? "step" : undefined}>
             <span
               className={cn(
-                "grid h-7 w-7 place-items-center rounded-full border text-xs font-bold transition-colors",
-                i < step ? "border-accent bg-accent text-white" : i === step ? "border-accent bg-accent-soft text-accent" : "border-border-strong text-ink-3",
+                "grid h-6 w-6 place-items-center rounded-md border text-[11px] font-medium transition-colors",
+                i < step ? "border-ink bg-ink text-bg" : i === step ? "border-ink bg-surface-2 text-ink" : "border-border-strong text-ink-3",
               )}
             >
               {i < step ? "✓" : i + 1}

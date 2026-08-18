@@ -25,7 +25,7 @@ export default async function ScamArticlePage({ params }: { params: Promise<{ sl
     <div className="mx-auto max-w-3xl space-y-5">
       <Link href="/scams" className="text-sm font-medium text-accent hover:text-accent-2">← Back to Scam Library</Link>
       <div>
-        <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">{article.title}</h1>
+        <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">{article.title}</h1>
         <p className="mt-2 text-ink-2">{article.description}</p>
       </div>
 

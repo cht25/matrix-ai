@@ -25,7 +25,7 @@ export async function OverviewTab({ codes }: { codes: Set<string> }) {
       {stats.filter((s) => s.visible).map((s) => (
         <Card key={s.label}>
           <p className="text-sm font-medium text-ink-3">{s.label}</p>
-          <p className="mt-2 text-3xl font-extrabold text-ink">{s.value}</p>
+          <p className="mt-2 text-3xl font-display font-semibold text-ink">{s.value}</p>
         </Card>
       ))}
       {!stats.some((s) => s.visible) ? (

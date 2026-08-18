@@ -16,7 +16,7 @@ export default async function AdminVerificationPage() {
   if (!demo && codes.size === 0) redirect("/chat");
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-extrabold text-ink sm:text-3xl">Age verification</h1>
+      <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Age verification</h1>
       <AdminNav />
       <VerificationQueue codes={codes} />
     </div>
