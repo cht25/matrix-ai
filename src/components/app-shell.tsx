@@ -1,16 +1,15 @@
 "use client";
 
-// MATRIX application shell — professional security workspace.
-// Desktop: sectioned sidebar (Workspace · Intelligence · Learning · Account).
-// Mobile: top bar + slide-in drawer + bottom navigation.
-// Monochromatic icons throughout; no emoji in navigation.
+// MATRIX application shell — compact all-in-one workspace.
+// Desktop: chat/agent/private modes, searchable recent work and collapsed tools.
+// Mobile: top bar + slide-in drawer + focused bottom navigation.
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
-  Award, BookOpen, FileSearch, GraduationCap, History, LayoutGrid, Menu, MessageSquare,
-  MoreVertical, Plus, Search, Settings, Shield, ShieldAlert, User, X,
+  ChevronDown, Code2, FileSearch, GraduationCap, History, LayoutGrid, Menu,
+  MessageSquare, MoreVertical, Plus, Search, Shield, ShieldAlert, User, X,
 } from "lucide-react";
 import { rpc } from "@/lib/client/api";
 import { Logo } from "@/components/logo";
@@ -47,11 +46,13 @@ function NewChatButton({
   children,
   onNavigate,
   ariaLabel,
+  mode = "general",
 }: {
   className?: string;
   children: ReactNode;
   onNavigate?: () => void;
   ariaLabel?: string;
+  mode?: "general" | "agent";
 }) {
   const router = useRouter();
   return (
@@ -60,7 +61,7 @@ function NewChatButton({
       aria-label={ariaLabel ?? "New conversation"}
       onClick={() => {
         onNavigate?.();
-        router.push(`/chat?new=${Date.now()}`);
+        router.push(`/chat?mode=${mode}&new=${Date.now()}`);
       }}
       className={className}
     >
@@ -133,11 +134,12 @@ function HistoryList({ conversations, onNavigate }: { conversations: SidebarConv
                       href={`/chat/${c.id}`}
                       onClick={onNavigate}
                       className={cn(
-                        "min-w-0 flex-1 truncate rounded-md px-2 py-2 text-[13px] transition-colors",
+                        "flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-[13px] transition-colors",
                         pathname === `/chat/${c.id}` ? "bg-surface-2 font-medium text-ink" : "text-ink-2 hover:bg-surface-2 hover:text-ink",
                       )}
                     >
-                      {c.title}
+                      {c.mode === "agent" ? <Code2 size={12} className="shrink-0 text-accent" aria-hidden="true" /> : <MessageSquare size={12} className="shrink-0 text-ink-3" aria-hidden="true" />}
+                      <span className="truncate">{c.title}</span>
                     </Link>
                     <span className="pointer-events-none mr-1 hidden shrink-0 text-[10px] text-ink-3 lg:group-hover:inline">
                       {formatTime(c.updated_at)}
@@ -204,107 +206,71 @@ function SidebarBody({
   hideBrand?: boolean;
 }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const agentActive = pathname === "/chat" && searchParams.get("mode") === "agent";
   const { t } = useI18n();
-  const isActive = (href: string) =>
-    href === "/chat"
-      ? pathname === "/chat" || pathname.startsWith("/chat/")
-      : pathname === href || pathname.startsWith(href + "/");
-
-  const sections: { label: string; items: { href: string; label: string; icon: ReactNode; match?: string }[] }[] = [
-    {
-      label: "Workspace",
-      items: [
-        { href: "/history", label: t("nav.history"), icon: <History size={15} strokeWidth={1.6} /> },
-        { href: "/temporary-chat", label: t("nav.tempChat"), icon: <MessageSquare size={15} strokeWidth={1.6} /> },
-      ],
-    },
-    {
-      label: "Intelligence",
-      items: [
-        { href: "/scanner", label: t("nav.scanner"), icon: <FileSearch size={15} strokeWidth={1.6} /> },
-        { href: "/scams", label: t("nav.scams"), icon: <ShieldAlert size={15} strokeWidth={1.6} /> },
-        { href: "/report", label: t("nav.report"), icon: <Shield size={15} strokeWidth={1.6} /> },
-        { href: "/emergency", label: t("nav.emergency"), icon: <ShieldAlert size={15} strokeWidth={1.6} /> },
-      ],
-    },
-    {
-      label: "Learning",
-      items: [
-        { href: "/courses", label: t("nav.courses"), icon: <GraduationCap size={15} strokeWidth={1.6} /> },
-        { href: "/certificates", label: t("nav.certificates"), icon: <Award size={15} strokeWidth={1.6} /> },
-      ],
-    },
-    {
-      label: "Account",
-      items: [
-        { href: "/dashboard", label: t("nav.dashboard"), icon: <LayoutGrid size={15} strokeWidth={1.6} /> },
-        { href: "/security", label: t("nav.security"), icon: <Shield size={15} strokeWidth={1.6} /> },
-        { href: "/settings", label: t("nav.settings"), icon: <Settings size={15} strokeWidth={1.6} /> },
-        { href: "/docs", label: t("nav.docs"), icon: <BookOpen size={15} strokeWidth={1.6} /> },
-      ],
-    },
+  const tools = [
+    { href: "/scanner", label: t("nav.scanner"), icon: <FileSearch size={15} strokeWidth={1.6} />, detail: "Images & suspicious content" },
+    { href: "/scams", label: t("nav.scams"), icon: <ShieldAlert size={15} strokeWidth={1.6} />, detail: "Safety library" },
+    { href: "/courses", label: t("nav.courses"), icon: <GraduationCap size={15} strokeWidth={1.6} />, detail: "Guided learning" },
+    { href: "/report", label: t("nav.report"), icon: <Shield size={15} strokeWidth={1.6} />, detail: "Reporting assistant" },
   ];
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       {hideBrand ? null : (
         <div className="flex shrink-0 items-center justify-between gap-2 px-3 pb-3 pt-4">
-          <div className="sidebar-brand min-w-0">
-            <Logo size="md" href="/chat" />
-          </div>
+          <div className="sidebar-brand min-w-0"><Logo size="md" href="/chat" /></div>
           <AiStatus />
         </div>
       )}
+
       <div className="shrink-0 px-3 pb-3">
         <NewChatButton
           onNavigate={onNavigate}
-          className={cn(
-            "flex min-h-11 w-full items-center justify-center gap-2 rounded-md border text-[13px] font-medium transition-colors",
-            pathname === "/chat" || pathname.startsWith("/chat/")
-              ? "border-border-strong bg-surface-2 text-ink"
-              : "border-border-strong bg-surface text-ink hover:border-accent hover:text-accent",
-          )}
+          className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-ink text-[13px] font-medium text-bg transition-colors hover:bg-ink-2"
         >
-          <Plus size={14} strokeWidth={1.6} aria-hidden="true" /> {t("chat.new")}
+          <Plus size={14} strokeWidth={1.8} aria-hidden="true" /> New chat
         </NewChatButton>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3">
-        <HistoryList conversations={conversations} onNavigate={onNavigate} />
-        <nav className="mt-5 border-t border-border pt-3" aria-label="Main navigation">
-          {sections.map((section) => (
-            <div key={section.label} className="mb-3 last:mb-0">
-              <p className="eyebrow px-2 pb-1.5">{section.label}</p>
-              <ul className="space-y-px">
-                {section.items.map((item) => (
-                  <li key={item.href}>
-                    <Link
-                      href={item.href}
-                      onClick={onNavigate}
-                      className={cn(
-                        "flex min-h-10 items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors",
-                        isActive(item.href)
-                          ? "bg-surface-2 font-medium text-ink"
-                          : "text-ink-2 hover:bg-surface-2 hover:text-ink",
-                      )}
-                    >
-                      <span className="text-ink-3" aria-hidden="true">{item.icon}</span>
-                      {item.label}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-          {isAdmin ? (
-            <div className="mb-3">
-              <p className="eyebrow px-2 pb-1.5">Administration</p>
-              <Link href="/admin" onClick={onNavigate} className="flex min-h-10 items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink">
-                <span className="text-ink-3"><LayoutGrid size={15} strokeWidth={1.6} /></span>
-                {t("nav.admin")}
-              </Link>
-            </div>
-          ) : null}
+        <nav className="mt-2 grid grid-cols-3 gap-1" aria-label="Assistant modes">
+          <Link href="/chat" onClick={onNavigate} className={cn("flex min-h-10 flex-col items-center justify-center gap-0.5 rounded-lg text-[10px] font-medium hover:bg-surface-2 hover:text-ink", pathname === "/chat" && !agentActive ? "bg-surface-2 text-ink" : "text-ink-2")}>
+            <MessageSquare size={14} /> Chat
+          </Link>
+          <Link href="/chat?mode=agent" onClick={onNavigate} className={cn("flex min-h-10 flex-col items-center justify-center gap-0.5 rounded-lg text-[10px] font-medium hover:bg-surface-2", agentActive ? "bg-accent-soft text-accent" : "text-ink-2 hover:text-ink")}>
+            <Code2 size={14} /> Agent
+          </Link>
+          <Link href="/temporary-chat" onClick={onNavigate} className={cn("flex min-h-10 flex-col items-center justify-center gap-0.5 rounded-lg text-[10px] font-medium hover:bg-surface-2 hover:text-ink", pathname.startsWith("/temporary-chat") ? "bg-surface-2 text-ink" : "text-ink-2")}>
+            <History size={14} /> Private
+          </Link>
         </nav>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3">
+        <div className="mb-2 flex items-center justify-between px-1">
+          <p className="eyebrow">Recent work</p>
+          <Link href="/history" onClick={onNavigate} className="text-[10px] font-medium text-ink-3 hover:text-ink">View all</Link>
+        </div>
+        <HistoryList conversations={conversations} onNavigate={onNavigate} />
+
+        <details className="group mt-5 border-t border-border pt-3" open={conversations.length === 0}>
+          <summary className="flex min-h-9 cursor-pointer list-none items-center justify-between rounded-md px-1 text-ink-2 hover:text-ink [&::-webkit-details-marker]:hidden">
+            <span className="eyebrow">More tools</span>
+            <ChevronDown size={13} className="transition-transform group-open:rotate-180" />
+          </summary>
+          <nav className="mt-1 space-y-0.5" aria-label="More tools">
+            {tools.map((item) => (
+              <Link key={item.href} href={item.href} onClick={onNavigate} className={cn("flex min-h-11 items-center gap-2.5 rounded-lg px-2 transition-colors hover:bg-surface-2", pathname === item.href || pathname.startsWith(item.href + "/") ? "bg-surface-2 text-ink" : "text-ink-2")}>
+                <span className="text-ink-3">{item.icon}</span>
+                <span className="min-w-0"><span className="block text-[12px] font-medium">{item.label}</span><span className="block truncate text-[10px] text-ink-3">{item.detail}</span></span>
+              </Link>
+            ))}
+            <Link href="/emergency" onClick={onNavigate} className="mt-1 flex min-h-10 items-center gap-2.5 rounded-lg px-2 text-[12px] font-medium text-danger hover:bg-danger-soft"><ShieldAlert size={15} /> Emergency help</Link>
+          </nav>
+        </details>
+
+        {isAdmin ? (
+          <Link href="/admin" onClick={onNavigate} className="mt-3 flex min-h-10 items-center gap-2.5 rounded-lg border border-border px-2 text-[12px] text-ink-2 hover:bg-surface-2 hover:text-ink"><LayoutGrid size={15} /> {t("nav.admin")}</Link>
+        ) : null}
       </div>
       {footer}
     </div>
@@ -335,6 +301,8 @@ function ProfileMenu({ user, onNavigate }: { user: { email: string; fullName: st
           <button type="button" className="fixed inset-0 z-20 cursor-default" aria-hidden="true" onClick={() => setOpen(false)} />
           <div className="card fade-in absolute bottom-full left-0 z-30 mb-1 w-56 !rounded-lg !p-1.5 shadow-[var(--shadow-pop)]">
             {[
+              { label: t("nav.dashboard"), href: "/dashboard" },
+              { label: "GitHub integration", href: "/settings?tab=integrations" },
               { label: t("nav.security"), href: "/security" },
               { label: t("nav.settings"), href: "/settings" },
               { label: t("nav.docs"), href: "/docs" },
@@ -383,6 +351,8 @@ export function AppShell({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const online = useOnline();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const agentActive = pathname === "/chat" && searchParams.get("mode") === "agent";
   const { t } = useI18n();
   const immersive = isImmersivePath(pathname);
 
@@ -509,7 +479,7 @@ export function AppShell({
           <div className="mx-auto grid max-w-lg grid-cols-5">
             {[
               { href: "/chat", label: t("nav.chat"), icon: <MessageSquare size={17} strokeWidth={1.6} /> },
-              { href: "/history", label: t("nav.history"), icon: <History size={17} strokeWidth={1.6} /> },
+              { href: "/chat?mode=agent", label: "Agent", icon: <Code2 size={17} strokeWidth={1.6} /> },
               { href: "/scanner", label: t("nav.scanner"), icon: <FileSearch size={17} strokeWidth={1.6} /> },
               { href: "/courses", label: t("nav.courses"), icon: <GraduationCap size={17} strokeWidth={1.6} /> },
               { href: "/settings", label: t("nav.settings"), icon: <User size={17} strokeWidth={1.6} /> },
@@ -519,9 +489,11 @@ export function AppShell({
                 href={n.href}
                 className={cn(
                   "flex min-h-14 flex-col items-center justify-center gap-0.5 px-1 text-[10px] font-medium transition-colors",
-                  pathname === n.href || (n.href === "/chat" && pathname.startsWith("/chat/"))
-                    ? "text-ink"
-                    : "text-ink-3 hover:text-ink",
+                  n.href.includes("mode=agent")
+                    ? agentActive ? "text-accent" : "text-ink-3 hover:text-ink"
+                    : n.href === "/chat"
+                      ? (pathname === "/chat" || pathname.startsWith("/chat/")) && !agentActive ? "text-ink" : "text-ink-3 hover:text-ink"
+                      : pathname === n.href ? "text-ink" : "text-ink-3 hover:text-ink",
                 )}
               >
                 <span aria-hidden="true">{n.icon}</span>

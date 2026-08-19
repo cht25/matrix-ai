@@ -179,6 +179,6 @@ export const MODELS = {
 
 export function createProvider(): AIProvider | null {
   const key = process.env.GROQ_API_KEY;
-  if (!key) return null;
+  if (!key || key.endsWith("...")) return null;
   return new GroqProvider(key);
 }

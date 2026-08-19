@@ -21,7 +21,7 @@ export async function GET(_req: NextRequest) {
   if (!user) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
   const d = adminDb();
 
-  const [profile, convs, memories, progress, attempts, certificates, settings, analyses, reports, events] = await Promise.all([
+  const [profile, convs, memories, progress, attempts, certificates, settings, analyses, reports, events, github] = await Promise.all([
     d.collection("profiles").doc(user.uid).get(),
     d.collection("conversations").where("user_id", "==", user.uid).where("is_temporary", "==", false).get(),
     d.collection("user_memories").where("user_id", "==", user.uid).get(),
@@ -32,6 +32,7 @@ export async function GET(_req: NextRequest) {
     d.collection("security_analyses").where("user_id", "==", user.uid).get(),
     d.collection("scam_reports").where("user_id", "==", user.uid).get(),
     d.collection("security_events").where("user_id", "==", user.uid).get(),
+    d.collection("github_connections").doc(user.uid).get(),
   ]);
 
   const conversations = await Promise.all(
@@ -41,11 +42,17 @@ export async function GET(_req: NextRequest) {
         id: c.id,
         title: c.data().title,
         is_temporary: c.data().is_temporary ?? false,
+        mode: c.data().mode === "agent" ? "agent" : "general",
         summary: c.data().summary ?? "",
         archived_at: c.data().archived_at ? iso(c.data().archived_at) : null,
         created_at: iso(c.data().created_at),
         updated_at: iso(c.data().updated_at),
-        conversation_messages: messages.docs.map((m) => ({ role: m.data().role, content: m.data().content, created_at: iso(m.data().created_at) })),
+        conversation_messages: messages.docs.map((m) => ({
+          role: m.data().role,
+          content: m.data().content,
+          metadata: m.data().metadata ?? {},
+          created_at: iso(m.data().created_at),
+        })),
       };
     }),
   );
@@ -83,6 +90,9 @@ export async function GET(_req: NextRequest) {
     security_analyses: analyses.docs.map((x) => ({ analysis_type: x.data().analysis_type, risk_level: x.data().risk_level, confidence: x.data().confidence ?? 0, recommendation: x.data().recommendation ?? "", created_at: iso(x.data().created_at) })),
     scam_reports: reports.docs.map((x) => ({ category_id: x.data().category_id, platform: x.data().platform ?? "", description: x.data().description, money_lost: x.data().money_lost ?? 0, account_compromised: x.data().account_compromised ?? false, personal_information_shared: x.data().personal_information_shared ?? false, country: x.data().country ?? "", status: x.data().status, created_at: iso(x.data().created_at) })),
     security_events: events.docs.map((x) => ({ event_type: x.data().event_type, metadata: x.data().metadata ?? {}, created_at: iso(x.data().created_at) })),
+    github_connection: github.exists
+      ? { login: github.data()?.login ?? "", connected_at: iso(github.data()?.connected_at) }
+      : null,
   };
 
   await Promise.all([

@@ -18,7 +18,7 @@ const messagingSenderId = process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?
 const appId = process.env.NEXT_PUBLIC_FIREBASE_APP_ID ?? "";
 
 // Values that ship in .env.example and mean "not really configured yet".
-const PLACEHOLDERS = ["YOUR-", "your-project", "your-api-key", "your-project-id", "example.com", "replace-with"];
+const PLACEHOLDERS = ["YOUR-", "your-project", "your-api-key", "your-project-id", "example.com", "replace-with", "..."];
 
 function clean(value: string): string {
   return value.trim().replace(/^["']|["']$/g, "");
@@ -66,6 +66,13 @@ export const env = {
   serviceEmail,
   serviceKeyRaw,
   groqApiKey: process.env.GROQ_API_KEY ?? "",
+  openRouterApiKey: process.env.OPENROUTER_API_KEY ?? "",
+  github: {
+    clientId: clean(process.env.GITHUB_CLIENT_ID ?? ""),
+    clientSecret: clean(process.env.GITHUB_CLIENT_SECRET ?? ""),
+    tokenEncryptionKey: clean(process.env.GITHUB_TOKEN_ENCRYPTION_KEY ?? ""),
+    callbackUrl: clean(process.env.GITHUB_OAUTH_CALLBACK_URL ?? ""),
+  },
 } as const;
 
 export function isConfigured(): boolean {
@@ -77,9 +84,21 @@ export function isServerConfigured(): boolean {
   return isConfigured() && (hasServiceAccount || hasAdc);
 }
 
-/** True when the AI gateway has a real Groq key. */
+/** True when general chat has a real Groq key. */
 export function isAiConfigured(): boolean {
   return Boolean(env.groqApiKey) && !PLACEHOLDERS.some((p) => env.groqApiKey.includes(p));
+}
+
+/** True when coding auto-routing and Agent mode have an OpenRouter key. */
+export function isCodingAiConfigured(): boolean {
+  return Boolean(env.openRouterApiKey) && !PLACEHOLDERS.some((p) => env.openRouterApiKey.includes(p));
+}
+
+/** True when the secure GitHub OAuth connection can be used. */
+export function isGithubConfigured(): boolean {
+  const github = env.github;
+  return Boolean(github.clientId && github.clientSecret && github.tokenEncryptionKey.length >= 32) &&
+    !PLACEHOLDERS.some((p) => github.clientId.includes(p) || github.clientSecret.includes(p));
 }
 
 /** True when image uploads (Cloudinary) are configured. */

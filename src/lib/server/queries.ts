@@ -31,7 +31,7 @@ export async function getSidebarData(d: Db, uid: string) {
     isAdmin(d, uid),
   ]);
   const active = convs.docs
-    .filter((c) => c.data().deleted_at == null && c.data().archived_at == null)
+    .filter((c) => c.data().deleted_at == null && c.data().archived_at == null && (c.data().is_temporary ?? false) === false)
     .sort(descDoc("updated_at"))
     .slice(0, 100);
   return {
@@ -43,6 +43,7 @@ export async function getSidebarData(d: Db, uid: string) {
         summary: data.summary ?? "",
         updated_at: iso(data.updated_at),
         is_temporary: data.is_temporary ?? false,
+        mode: data.mode === "agent" ? "agent" : "general",
         archived_at: data.archived_at ? iso(data.archived_at) : null,
       };
     }),
@@ -95,8 +96,19 @@ export async function getConversation(d: Db, uid: string, id: string) {
   if (!conv.exists || conv.data()!.user_id !== uid) return null;
   const messages = await ref.collection("messages").get();
   return {
-    conversation: { id: conv.id, title: conv.data()!.title ?? "New conversation", is_temporary: conv.data()!.is_temporary ?? false },
-    messages: messages.docs.sort(ascDoc("created_at")).map((m) => ({ id: m.id, role: m.data().role, content: m.data().content, created_at: iso(m.data().created_at) })),
+    conversation: {
+      id: conv.id,
+      title: conv.data()!.title ?? "New conversation",
+      is_temporary: conv.data()!.is_temporary ?? false,
+      mode: conv.data()!.mode === "agent" ? "agent" as const : "general" as const,
+    },
+    messages: messages.docs.sort(ascDoc("created_at")).map((m) => ({
+      id: m.id,
+      role: m.data().role,
+      content: m.data().content,
+      created_at: iso(m.data().created_at),
+      metadata: m.data().metadata ?? {},
+    })),
   };
 }
 

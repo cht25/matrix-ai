@@ -1,10 +1,10 @@
 // =============================================================================
 // MATRIX AI — AI Gateway (Next.js route handler — Firebase port)
 //
-// The ONLY way the frontend talks to Groq. Pipeline (spec §24):
-//   Auth → Rate limit → PII detection/redaction → Cyber domain classification
-//   → Cyber safety classification → Prompt construction → RAG retrieval
-//   → Groq → Output safety validation → Store allowed response → Return
+// The ONLY way the frontend talks to an AI provider. Pipeline:
+//   Auth → rate limit → PII redaction → safety classification → prompt/RAG
+//   → automatic routing (Groq general, OpenRouter Nemotron coding/Agent)
+//   → output validation → artifact parsing → store allowed response → return
 //
 // Actions:
 //   POST { action: "chat", conversation_id?, is_temporary, message }
@@ -21,7 +21,9 @@ import { verifySession, type SessionUser } from "@/lib/firebase/session";
 import { redactPII, containsCredentials, leakedPII } from "@/lib/ai/pii";
 import { classify } from "@/lib/ai/domain";
 import { createProvider, MODELS, type AIMessage, type AIProvider } from "@/lib/ai/groq";
-import { buildSystemMessages, validateOutput, buildSummaryPrompt } from "@/lib/ai/prompts";
+import { createCodingProvider, OPENROUTER_MODELS } from "@/lib/ai/openrouter";
+import { formatAttachmentContext, isCodingRequest, parseAgentResponse, safeAgentPath, type AgentFile, type ChatMode, type TextAttachment } from "@/lib/ai/agent";
+import { buildAgentSystemMessages, buildSystemMessages, validateOutput, buildSummaryPrompt } from "@/lib/ai/prompts";
 import { validateImageUpload } from "@/lib/ai/upload-validation";
 import { ragSearch } from "@/lib/server/rpc";
 import { downloadImage } from "@/lib/server/cloudinary";
@@ -29,7 +31,7 @@ import { descDoc } from "@/lib/server/sort";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const RATE_LIMITS: Record<string, { perMinute: number; perDay: number }> = {
   chat: { perMinute: 20, perDay: 300 },
@@ -169,19 +171,35 @@ async function finalizeChat(d: Db, opts: {
   redaction: ReturnType<typeof redactPII>;
   started: number;
   model: string;
+  mode: ChatMode;
+  codingDetected: boolean;
+  files?: AgentFile[];
 }) {
-  const { provider, user, conversationId, isTemporary, message, redactedMessage, reply, history, redaction, started, model } = opts;
+  const {
+    provider, user, conversationId, isTemporary, message, redactedMessage, reply,
+    history, redaction, started, model, mode, codingDetected, files = [],
+  } = opts;
   const convRef = d.collection("conversations").doc(conversationId);
 
-  await convRef.collection("messages").add({ role: "assistant", content: reply, metadata: {}, created_at: nowTs() });
-  await convRef.set({ updated_at: nowTs() }, { merge: true });
+  await convRef.collection("messages").add({
+    role: "assistant",
+    content: reply,
+    metadata: {
+      mode,
+      model,
+      coding_detected: codingDetected,
+      ...(files.length ? { artifacts: files } : {}),
+    },
+    created_at: nowTs(),
+  });
+  await convRef.set({ updated_at: nowTs(), mode }, { merge: true });
 
   // Rolling summary for permanent chats (spec §21) — best-effort.
   if (!isTemporary) {
     const count = await countUserMessages(d, conversationId);
     if (count >= 10 && count % 10 === 0) {
       try {
-        const sum = await provider.chat({ model: MODELS.fast, messages: [{ role: "user", content: buildSummaryPrompt(history.slice(-6)) }], maxTokens: 300 });
+        const sum = await provider.chat({ model, messages: [{ role: "user", content: buildSummaryPrompt(history.slice(-6)) }], maxTokens: 300 });
         await d.collection("conversation_summaries").doc(conversationId).set({
           conversation_id: conversationId,
           summary: sum.content,
@@ -201,9 +219,9 @@ async function finalizeChat(d: Db, opts: {
     if (count % 5 === 0 && count > 0) {
       try {
         const mem = await provider.chat({
-          model: MODELS.fast,
+          model,
           messages: [
-            { role: "system", content: "Extract at most one safe, useful fact about the user relevant to cybersecurity learning (e.g. 'User is a beginner in cybersecurity.', 'User uses an Android phone.'). Return ONLY the fact, or the word NONE if nothing is worth remembering. Never output passwords, codes, IDs, emails, addresses or payment info." },
+            { role: "system", content: "Extract at most one safe, useful long-term preference or context fact that would improve future help (for example, preferred language, skill level, device, or project stack). Return ONLY the fact, or NONE if nothing is worth remembering. Never output passwords, codes, tokens, IDs, emails, addresses or payment information." },
             { role: "user", content: redactedMessage },
           ],
           maxTokens: 60,
@@ -228,18 +246,37 @@ async function finalizeChat(d: Db, opts: {
   await logUsage(d, user.uid, model, "chat", {}, Date.now() - started, "ok");
 }
 
+function normaliseTextAttachments(value: unknown): TextAttachment[] {
+  if (!Array.isArray(value)) return [];
+  const files: TextAttachment[] = [];
+  let total = 0;
+  for (const item of value.slice(0, 8)) {
+    if (!item || typeof item !== "object") continue;
+    const raw = item as Record<string, unknown>;
+    const name = typeof raw.name === "string" ? safeAgentPath(raw.name) : null;
+    const content = typeof raw.content === "string" ? raw.content : "";
+    if (!name || !content || content.length > 250_000 || total + content.length > 600_000) continue;
+    total += content.length;
+    files.push({ name, content, type: typeof raw.type === "string" ? raw.type.slice(0, 100) : undefined });
+  }
+  return files;
+}
+
 async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown>) {
   const started = Date.now();
   const message = typeof body.message === "string" ? body.message.trim() : "";
   const conversationId = typeof body.conversation_id === "string" ? body.conversation_id : null;
   const isTemporary = body.is_temporary === true;
-  const wantStream = body.stream === true;
+  const requestedMode: ChatMode = body.mode === "agent" && !isTemporary ? "agent" : "general";
+  let mode = requestedMode;
+  const attachments = normaliseTextAttachments(body.attachments);
+  const wantStream = body.stream === true && mode !== "agent";
   const regenerate = body.regenerate === true;
   const reuseUser = body.reuse_user === true || regenerate;
   const preferredLanguage: "en" | "bn" | undefined = body.language === "bn" ? "bn" : body.language === "en" ? "en" : undefined;
 
   if (!message) return json({ error: "MESSAGE_REQUIRED" }, 400);
-  if (message.length > 4000) return json({ error: "MESSAGE_TOO_LONG" }, 400);
+  if (message.length > 12_000) return json({ error: "MESSAGE_TOO_LONG" }, 400);
   if (reuseUser && !conversationId) return json({ error: "CONVERSATION_NOT_FOUND" }, 404);
 
   const rate = await checkRateLimit(d, user.uid, "chat");
@@ -253,11 +290,13 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   if (convId) {
     const conv = await d.collection("conversations").doc(convId).get();
     if (!conv.exists || conv.data()!.user_id !== user.uid) return json({ error: "CONVERSATION_NOT_FOUND" }, 404);
+    mode = conv.data()!.mode === "agent" && !isTemporary ? "agent" : "general";
   } else {
     const title = message.replace(/\s+/g, " ").slice(0, 60);
     const created = await d.collection("conversations").add({
       user_id: user.uid,
       title,
+      mode,
       is_temporary: isTemporary,
       summary: "",
       archived_at: null,
@@ -269,13 +308,18 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   }
   const convRef = d.collection("conversations").doc(convId);
 
-  // --- store the user message (original stays in the DB; PII never hits Groq) --
+  // --- store original privately; only redacted text reaches AI providers ------
   const redaction = redactPII(message);
   if (!reuseUser) {
     await convRef.collection("messages").add({
       role: "user",
       content: message,
-      metadata: { pii_redacted: !redaction.safe, detected: redaction.detected.map((x) => x.type) },
+      metadata: {
+        pii_redacted: !redaction.safe,
+        detected: redaction.detected.map((x) => x.type),
+        mode,
+        attachment_names: attachments.map((file) => file.name),
+      },
       created_at: nowTs(),
     });
   }
@@ -300,12 +344,16 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     await logSafety(d, user.uid, "pii_detected", "credential-sharing attempt blocked");
   }
 
-  // --- prompt construction -----------------------------------------------------
-  const provider = createProvider();
+  // --- prompt construction + automatic model routing --------------------------
+  // Agent mode always uses Nemotron. In General mode, obvious coding work is
+  // auto-detected and routed to the same coding model, but preview/push tools
+  // remain unavailable until the user explicitly opens Agent mode.
+  const codingDetected = mode === "agent" || isCodingRequest(message, attachments);
+  const provider = codingDetected ? createCodingProvider() : createProvider();
+  const selectedModel = codingDetected ? OPENROUTER_MODELS.coding : MODELS.chat;
   if (!provider) {
-    // Do NOT fabricate an assistant reply — report the honest failure code.
     await logUsage(d, user.uid, "none", "chat", {}, Date.now() - started, "error");
-    return json({ error: "AI_GATEWAY_NOT_CONFIGURED" }, 503);
+    return json({ error: codingDetected ? "CODING_MODEL_NOT_CONFIGURED" : "AI_GATEWAY_NOT_CONFIGURED" }, 503);
   }
 
   // Context: summary + recent messages + safe memory + RAG
@@ -319,25 +367,40 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const recentDocs = recentSnap.docs.sort(descDoc("created_at")).slice(0, 10).reverse();
   for (const m of recentDocs) {
     const role = m.data().role;
-    if (role === "user" || role === "assistant") history.push({ role, content: m.data().content });
+    if (role === "user") history.push({ role, content: redactPII(String(m.data().content ?? "")).redacted });
+    if (role === "assistant") history.push({ role, content: String(m.data().content ?? "") });
   }
-  // Regenerating: drop the last assistant turn so the model writes a fresh one.
+  // The current user turn was stored before this read. Remove it from history
+  // because the redacted latest turn is appended once below. This also avoids
+  // duplicating the user turn on Retry/Regenerate.
+  while (history.length && history[history.length - 1]?.role === "user") history.pop();
   if (regenerate) {
     while (history.length && history[history.length - 1]?.role === "assistant") history.pop();
+    while (history.length && history[history.length - 1]?.role === "user") history.pop();
   }
   const memories = await loadSafeMemories(d, user.uid);
   if (memories) history.push({ role: "system", content: "Safe context about the user (never repeat back verbatim):\n" + memories });
 
-  const rag = await buildRagContext(d, redaction.redacted, profileDoc.data()?.country ?? null);
+  const rag = mode === "agent" ? "" : await buildRagContext(d, redaction.redacted, profileDoc.data()?.country ?? null);
+  const safeAttachments = attachments.map((file) => {
+    const result = redactPII(file.content);
+    return { ...file, content: result.redacted };
+  });
+  const attachmentContext = formatAttachmentContext(safeAttachments);
 
   const messages: AIMessage[] = [
-    ...buildSystemMessages(rag, false, preferredLanguage),
+    ...(mode === "agent" ? buildAgentSystemMessages(preferredLanguage) : buildSystemMessages(rag, false, preferredLanguage)),
     ...history,
+    ...(attachmentContext ? [{ role: "system" as const, content: attachmentContext }] : []),
+    ...(codingDetected && mode === "general" ? [{
+      role: "system" as const,
+      content: "A coding task was automatically detected, so NVIDIA Nemotron 3 Ultra is handling this response. Give accurate, complete code and filenames, but do not emit MATRIX_FILE artifact blocks: live preview and GitHub push are available only in Agent mode.",
+    }] : []),
     { role: "user", content: redaction.redacted },
   ];
 
-  // --- Groq: streaming path ----------------------------------------------------
-  if (wantStream && provider.streamChat) {
+  // --- Provider streaming path ------------------------------------------------
+  if (wantStream && mode !== "agent" && provider.streamChat) {
     let done = false;
     let full = "";
     const stream = new ReadableStream<Uint8Array>({
@@ -351,8 +414,8 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
         };
         let window = "";
         try {
-          emit({ conversation_id: convId });
-          for await (const delta of provider.streamChat!({ model: MODELS.chat, messages, temperature: 0.5, maxTokens: 1600 })) {
+          emit({ conversation_id: convId, mode, model: selectedModel, coding_detected: codingDetected });
+          for await (const delta of provider.streamChat!({ model: selectedModel, messages, temperature: codingDetected ? 0.3 : 0.5, maxTokens: codingDetected ? 3200 : 1600 })) {
             // Per-delta output safety + PII leak filtering.
             const probe = (window + delta).slice(-400);
             const check = validateOutput(probe);
@@ -363,17 +426,25 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
               emit({ delta });
             }
           }
+          if (!full.trim()) throw new Error("EMPTY_AI_RESPONSE");
           done = true;
           await finalizeChat(d, {
             provider, user, conversationId: convId, isTemporary, message,
             redactedMessage: redaction.redacted, reply: full, history, redaction, started,
-            model: MODELS.chat,
+            model: selectedModel, mode, codingDetected,
           });
-          emit({ done: true, conversation_id: convId, pii_redacted: !redaction.safe });
+          emit({
+            done: true,
+            conversation_id: convId,
+            pii_redacted: !redaction.safe,
+            mode,
+            model: selectedModel,
+            coding_detected: codingDetected,
+          });
         } catch (e) {
           const msg = e instanceof Error ? e.message : "stream error";
           if (msg !== "CLIENT_DISCONNECTED") {
-            await logUsage(d, user.uid, MODELS.chat, "chat", {}, Date.now() - started, "error");
+            await logUsage(d, user.uid, selectedModel, "chat", {}, Date.now() - started, "error");
           }
           // Persist whatever actually streamed so Stop / disconnect doesn't
           // throw the reply away — the client can keep it on screen too.
@@ -382,7 +453,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
               await finalizeChat(d, {
                 provider, user, conversationId: convId, isTemporary, message,
                 redactedMessage: redaction.redacted, reply: full, history, redaction, started,
-                model: MODELS.chat,
+                model: selectedModel, mode, codingDetected,
               });
               done = true;
             } catch {
@@ -411,37 +482,59 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     });
   }
 
-  // --- Groq: non-streaming path -------------------------------------------------
-  let reply: string;
+  // --- Non-streaming path (Agent returns structured file artifacts) ------------
+  let rawReply: string;
   let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   try {
-    const result = await provider.chat({ model: MODELS.chat, messages, temperature: 0.5, maxTokens: 1600 });
-    reply = result.content;
+    const result = await provider.chat({
+      model: selectedModel,
+      messages,
+      temperature: mode === "agent" ? 0.25 : 0.5,
+      maxTokens: mode === "agent" ? 8192 : codingDetected ? 3200 : 1600,
+    });
+    rawReply = result.content;
     usage = result.usage;
+    if (!rawReply.trim()) throw new Error("EMPTY_AI_RESPONSE");
   } catch {
-    await logUsage(d, user.uid, MODELS.chat, "chat", {}, Date.now() - started, "error");
-    // Do NOT fabricate an assistant reply — report the honest failure code.
+    await logUsage(d, user.uid, selectedModel, "chat", {}, Date.now() - started, "error");
     return json({ error: "AI_GATEWAY_ERROR" }, 502);
   }
 
-  const check = validateOutput(reply);
+  let files: AgentFile[] = [];
+  const check = validateOutput(rawReply);
   if (!check.ok) {
     await logSafety(d, user.uid, "output_blocked", check.reason ?? "unknown");
-    reply = "I'm sorry — I can only provide defensive, safe guidance. Let me know what happened and I'll help you fix it.";
+    rawReply = "I'm sorry — I can only provide defensive, safe guidance. Tell me the legitimate goal and I'll help with a safe implementation.";
   }
-  const leaks = leakedPII(message, reply);
+  const leaks = leakedPII(message, rawReply);
   if (leaks.length > 0) {
     await logSafety(d, user.uid, "pii_detected", "response echoed PII");
-    for (const l of leaks) reply = reply.replaceAll(l, "[redacted]");
+    for (const l of leaks) rawReply = rawReply.replaceAll(l, "[redacted]");
+  }
+
+  let reply = rawReply.trim();
+  if (mode === "agent" && check.ok) {
+    const parsed = parseAgentResponse(rawReply);
+    reply = parsed.reply;
+    files = parsed.files;
   }
 
   await finalizeChat(d, {
     provider, user, conversationId: convId, isTemporary, message,
     redactedMessage: redaction.redacted, reply, history, redaction, started,
-    model: MODELS.chat,
+    model: selectedModel, mode, codingDetected, files,
   });
-  void usage;
-  return json({ reply, conversation_id: convId, refused: false, pii_redacted: !redaction.safe });
+  return json({
+    reply,
+    files,
+    conversation_id: convId,
+    refused: false,
+    pii_redacted: !redaction.safe,
+    mode,
+    model: selectedModel,
+    coding_detected: codingDetected,
+    usage,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -477,10 +570,12 @@ async function handleScan(d: Db, user: SessionUser, body: Record<string, unknown
 
   const dataUrl = `data:${check.mime};base64,${Buffer.from(bytes).toString("base64")}`;
 
-  const prompt =
-    `Analyse this screenshot for a teen cybersecurity education platform. The user uploaded it to ask whether it is suspicious. ` +
-    `Answer with EXACTLY these sections:\nRisk (low/medium/high/critical)\nConfidence (0-100%)\nWhat I noticed\nWhy it matters\nWhat to do now\nWhat not to do\nIf you already clicked/shared information\nReporting options\n` +
-    `Rules: never repeat personal information visible in the image (refer to it as "your details"); never invent reporting websites; if none are known, say to use the platform's verified reporting resources; be calm and non-judgmental.`;
+  const agentReference = body.purpose === "agent_reference";
+  const prompt = agentReference
+    ? `Describe this image as implementation context for a software coding agent. Identify the visible layout, hierarchy, components, spacing, colours, typography, states, text purpose and responsive clues. If it is an object rather than an interface, describe the object's relevant visible properties and what the user may want to reproduce. Be precise and concise. Never transcribe personal information, access tokens, account details or private messages; use neutral placeholders instead. Do not give cybersecurity risk advice unless the image itself is a security warning.`
+    : `Analyse this screenshot for a teen cybersecurity education platform. The user uploaded it to ask whether it is suspicious. ` +
+      `Answer with EXACTLY these sections:\nRisk (low/medium/high/critical)\nConfidence (0-100%)\nWhat I noticed\nWhy it matters\nWhat to do now\nWhat not to do\nIf you already clicked/shared information\nReporting options\n` +
+      `Rules: never repeat personal information visible in the image (refer to it as "your details"); never invent reporting websites; if none are known, say to use the platform's verified reporting resources; be calm and non-judgmental.`;
 
   let reply = "";
   let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -497,6 +592,11 @@ async function handleScan(d: Db, user: SessionUser, body: Record<string, unknown
     const msg = e instanceof Error ? e.message : "unknown";
     await logUsage(d, user.uid, MODELS.vision, "scan", {}, Date.now() - started, "error");
     return json({ error: "AI_GATEWAY_ERROR", detail: msg }, 502);
+  }
+
+  if (agentReference) {
+    await logUsage(d, user.uid, MODELS.vision, "scan", usage, Date.now() - started, "ok");
+    return json({ reply, reference: true });
   }
 
   const riskMatch = reply.match(/\b(critical|high|medium|low)\b/i);
@@ -524,14 +624,16 @@ async function handleScan(d: Db, user: SessionUser, body: Record<string, unknown
 // Health (unauthenticated, honest): reports whether the gateway can actually
 // reach the AI provider. Used by the UI status indicator and /api/health.
 // ---------------------------------------------------------------------------
-async function handleHealth() {
-  const provider = createProvider();
-  if (!provider) {
-    return json({ status: "unconfigured" }, 503);
-  }
+async function handleHealth(mode: ChatMode = "general") {
+  const provider = mode === "agent" ? createCodingProvider() : createProvider();
+  if (!provider) return json({ status: "unconfigured", mode }, 503);
   const ok = await provider.healthCheck();
-  if (!ok) return json({ status: "unavailable" }, 503);
-  return json({ status: "online", chat_model: MODELS.chat });
+  if (!ok) return json({ status: "unavailable", mode }, 503);
+  return json({
+    status: "online",
+    mode,
+    chat_model: mode === "agent" ? OPENROUTER_MODELS.coding : MODELS.chat,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -543,7 +645,7 @@ export async function POST(req: NextRequest) {
     const action = body.action;
 
     // Health is intentionally unauthenticated (no user JWT required).
-    if (action === "health") return await handleHealth();
+    if (action === "health") return await handleHealth(body.mode === "agent" ? "agent" : "general");
 
     const user = await getUser(req);
     if (!user) return json({ error: "UNAUTHENTICATED" }, 401);

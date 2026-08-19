@@ -9,9 +9,10 @@
 // misconfiguration) is reported even when the Admin SDK is also unset.
 
 import { NextResponse } from "next/server";
-import { isConfigured, isAiConfigured, isCloudinaryConfigured } from "@/lib/env";
+import { isConfigured, isAiConfigured, isCloudinaryConfigured, isCodingAiConfigured } from "@/lib/env";
 import { adminConfigured } from "@/lib/firebase/admin";
 import { createProvider } from "@/lib/ai/groq";
+import { createCodingProvider } from "@/lib/ai/openrouter";
 import { ping as pingCloudinary } from "@/lib/server/cloudinary";
 import { checkWebFirebaseConfig } from "@/lib/server/identitytoolkit";
 
@@ -35,6 +36,7 @@ export async function GET() {
         ...webConfigFields,
         cloudinary: isCloudinaryConfigured() ? "unknown" : "not-configured",
         ai: isAiConfigured() ? "unknown" : "not-configured",
+        codingAi: isCodingAiConfigured() ? "unknown" : "not-configured",
         checkedAt,
       },
       { status: 503 },
@@ -62,6 +64,12 @@ export async function GET() {
     ai = provider && (await provider.healthCheck()) ? "online" : "unavailable";
   }
 
+  let codingAi: "online" | "unavailable" | "unknown" | "not-configured" = "not-configured";
+  if (isCodingAiConfigured()) {
+    const provider = createCodingProvider();
+    codingAi = provider && (await provider.healthCheck()) ? "online" : "unavailable";
+  }
+
   const ok = firebase === "reachable";
-  return NextResponse.json({ ok, firebase, cloudinary, ai, checkedAt }, { status: ok ? 200 : 503 });
+  return NextResponse.json({ ok, firebase, cloudinary, ai, codingAi, checkedAt }, { status: ok ? 200 : 503 });
 }

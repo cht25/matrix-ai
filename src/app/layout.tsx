@@ -18,11 +18,11 @@ import { BRAND_ICON_URL, BRAND_WORDMARK_URL } from "@/lib/brand";
 
 export const metadata: Metadata = {
   title: {
-    default: "MATRIX — AI Cyber Safety Platform",
+    default: "MATRIX — All-in-one AI Assistant & Coding Agent",
     template: "%s · MATRIX",
   },
   description:
-    "MATRIX is an AI Cyber Safety Platform for ages 11–17: cybersecurity chat, screenshot scanner, scam detection, courses and certificates. Operated by THAMJJ13.TOP White Hat Team.",
+    "MATRIX is an all-in-one AI assistant for writing, learning, planning, research, digital safety and coding, with an Agent workspace, live preview and review-before-push GitHub integration.",
   applicationName: "MATRIX",
   icons: {
     icon: [
@@ -35,17 +35,17 @@ export const metadata: Metadata = {
   },
   manifest: "/site.webmanifest",
   openGraph: {
-    title: "MATRIX — AI Cyber Safety Platform",
+    title: "MATRIX — All-in-one AI Assistant & Coding Agent",
     description:
-      "AI Cyber Safety Platform for ages 11–17. Cybersecurity chat, screenshot scanner, scam detection, courses and certificates.",
+      "Chat, create, learn and build in one workspace—with file-aware help, live preview and explicit GitHub push from Agent mode.",
     type: "website",
     siteName: "MATRIX",
-    images: [{ url: BRAND_WORDMARK_URL, alt: "MATRIX — AI Cyber Safety Platform" }],
+    images: [{ url: BRAND_WORDMARK_URL, alt: "MATRIX — AI Assistant & Coding Agent" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "MATRIX — AI Cyber Safety Platform",
-    description: "AI Cyber Safety Platform for ages 11–17.",
+    title: "MATRIX — All-in-one AI Assistant & Coding Agent",
+    description: "Chat, create, learn and build in one secure workspace.",
     images: [BRAND_WORDMARK_URL],
   },
 };

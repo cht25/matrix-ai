@@ -6,6 +6,7 @@ export type SidebarConversation = {
   summary: string;
   updated_at: string;
   is_temporary: boolean;
+  mode: "general" | "agent";
   archived_at: string | null;
 };
 
