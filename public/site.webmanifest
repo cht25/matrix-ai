@@ -1,0 +1,13 @@
+{
+  "name": "MATRIX — AI Cyber Safety Platform",
+  "short_name": "MATRIX",
+  "description": "AI Cyber Safety Platform for ages 11–17. Operated by THAMJJ13.TOP White Hat Team.",
+  "start_url": "/chat",
+  "display": "standalone",
+  "background_color": "#04060b",
+  "theme_color": "#04060b",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

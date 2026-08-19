@@ -2,16 +2,43 @@
   "name": "matrix-ai",
   "version": "1.0.0",
   "private": true,
+  "description": "MATRIX AI — AI Cyber Safety & Cybersecurity Education Platform for ages 11–17. Operated by THAMJJ13.TOP White Hat Team. Built on Firebase (Auth, Firestore, Storage) + Next.js.",
   "scripts": {
-    "dev": "next dev -H 0.0.0.0 -p 3000",
+    "dev": "next dev",
     "build": "next build",
-    "start": "next start -H 0.0.0.0 -p 3000"
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "seed": "node scripts/seed.mjs",
+    "seed:dry-run": "node scripts/seed.mjs --dry-run",
+    "set-admin": "node scripts/set-admin.mjs",
+    "emulators": "firebase emulators:start --only auth,firestore,storage",
+    "deploy": "firebase deploy --only firestore:rules,firestore:indexes,storage"
   },
   "dependencies": {
-    "next": "^14.2.5",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "lucide-react": "^0.441.0",
-    "uuid": "^10.0.0"
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/manrope": "^5.3.0",
+    "cloudinary": "^2.10.0",
+    "firebase": "^12.17.1",
+    "firebase-admin": "^14.2.0",
+    "lucide-react": "^0.525.0",
+    "next": "^15.3.3",
+    "qrcode": "^1.5.4",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.8",
+    "@types/node": "^22.15.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "firebase-tools": "^15.27.0",
+    "sharp": "^0.35.3",
+    "tailwindcss": "^4.1.8",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.4"
   }
 }
