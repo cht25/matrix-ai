@@ -5,8 +5,8 @@
 MATRIX AI is a production-ready, teen-first cybersecurity education platform: an AI chat assistant,
 screenshot scanner, scam library, reporting assistant, emergency help mode, 7 courses with quizzes and
 verifiable certificates, a security dashboard, and a full RBAC admin panel — all protected by
-**Firebase (Auth + Firestore security rules + Cloud Storage rules)**, with **Groq** behind a secure
-server-side AI gateway.
+**Firebase (Auth + Firestore) with Cloudinary for private image storage**, with **Groq** behind a
+secure server-side AI gateway.
 
 > Previously branded "THAMJJ13.TOP Cyber Safety AI" — rebranded to **MATRIX AI** (developer: THAMJJ13.TOP).
 >
@@ -44,8 +44,8 @@ server-side AI gateway.
 | Design | **MATRIX visual identity**: monochromatic (deep black · charcoal · off-white) with restrained steel-blue accent; editorial Inter + Manrope typography; custom calligraphic vector wordmark; monochrome lucide iconography; animated cinematic background (fine grids, sparse network topology, reduced-motion aware) |
 | Database | **Cloud Firestore** (single source of truth — no other database) |
 | Auth | **Firebase Auth** (email/password, Google, Facebook, TOTP MFA) with server-verified **session cookies** for SSR |
-| Storage | **Cloud Storage for Firebase** (private folders + owner-only rules) |
-| Authorization | Firestore/Storage **security rules** + a server-side RPC layer (`src/lib/server/rpc.ts`) that ports every Postgres `SECURITY DEFINER` function |
+| Storage | **Cloudinary** (free tier) — server-signed uploads, private (authenticated) assets only |
+| Authorization | Firestore **security rules** + a server-side RPC layer (`src/lib/server/rpc.ts`) that ports every Postgres `SECURITY DEFINER` function |
 | Backend/API | Next.js route handlers (Node runtime, Admin SDK) |
 | AI | **Groq** (`llama-3.3-70b-versatile` chat, `llama-3.2-11b-vision-preview` scanning) behind the AI Gateway (`/api/ai`), **streaming responses** |
 | i18n | English + Bangla dictionaries (architecture ready for more) |
@@ -61,7 +61,8 @@ The Firebase **service account key** and `GROQ_API_KEY` exist **only server-side
 Browser
   ├─ Firebase JS SDK ── sign-in (password / Google / Facebook / TOTP MFA)
   │      └─ idToken → POST /api/auth/session → httpOnly `__session` cookie (5 d)
-  ├─ Cloud Storage uploads ── screenshots & ID docs (owner-only, image-only, ≤8 MB by rules)
+  ├─ /api/upload-signature → signed Cloudinary grant → direct upload
+  │      (private screenshots & ID docs — owner-folder-bound, image-only, ≤8 MB)
   └─ fetch /api/ai (chat + scan, SSE streaming)   ← session-cookie authenticated
                      │
 Next.js server (any Node host / Firebase App Hosting)
@@ -71,13 +72,17 @@ Next.js server (any Node host / Firebase App Hosting)
   │                      (ownership checks, validation, RBAC, audit, security events)
   ├─ /api/ai            AI gateway: rate limit → PII redaction → domain/safety
   │                      classification → RAG retrieval → Groq → output validation
+  ├─ /api/upload-signature  one-shot signed Cloudinary upload grants
   ├─ /api/account/*     data export (GDPR-style) + self-service deletion w/ re-auth
   └─ /api/auth/session  session-cookie minting + user provisioning
                      │
 Firebase (Admin SDK bypasses rules ONLY server-side)
   ├─ Auth               users, MFA factors, custom claims (admin)
-  ├─ Firestore          30+ collections (see data model)
-  └─ Storage            security-screenshots/, identity-documents/
+  └─ Firestore          30+ collections (see data model)
+
+Cloudinary (free tier)
+  └─ Private images     security-screenshots/{uid}/…, identity-documents/{uid}/…
+                        (authenticated assets — bytes only via server-signed URLs)
 ```
 
 Key invariants (unchanged from the Supabase edition):
@@ -99,20 +104,21 @@ src/
     api/ai/                AI gateway (chat, scan, health) — SSE streaming
     api/rpc/               typed server mutations (the RPC layer port)
     api/auth/session/      session cookie mint/refresh/clear
+    api/upload-signature/  one-shot signed Cloudinary upload grants
     api/account/           export + delete (with password re-auth)
     api/health/            honest service health for uptime checks
   components/              app shell, chat, scanner, courses, admin panel, settings…
   lib/
-    firebase/              client SDK, Admin SDK, session-cookie helpers
+    firebase/              client SDK (Auth/Firestore), Admin SDK, session cookies
     server/                rpc.ts (Postgres function ports) + queries.ts (page reads)
     ai/                    groq provider, PII redaction, domain classifier, prompts,
                            upload validation (shared with tests)
+    server/cloudinary.ts   signed upload grants, private downloads, user asset wipe
     client/api.ts          browser helper: rpc(), mintSessionCookie(), uploads
     data.ts, env.ts        server data core + centralised env
   middleware.ts            edge routing guard
 firestore.rules            security rules (RLS port)
 firestore.indexes.json     composite indexes
-storage.rules              storage rules (bucket-policy port)
 scripts/seed.mjs           seeds Firestore from seed/0007_seed.sql
 scripts/set-admin.mjs      promote a user to an admin role (+ custom claim)
 seed/0007_seed.sql         seed source of truth (original SQL seed)
@@ -136,8 +142,11 @@ firebase.json              deploy config (rules, indexes, hosting, emulators)
    - Templates → customize the verification/reset emails if you like (they carry the
      `/verify` and `/reset-password` handlers automatically).
 4. **Firestore Database** → Create database → **Production mode** → pick a region.
-5. **Storage** → Get started (this creates the default bucket
-   `YOUR-PROJECT.firebasestorage.app`).
+5. **Cloudinary** (free account — replaces Firebase Storage, which now requires
+   the paid plan): create an account at [cloudinary.com](https://cloudinary.com),
+   copy the **Cloud name**, **API key** and **API secret** from
+   Dashboard → Settings → API keys. Nothing else to enable — uploads are signed
+   by this app and stored as private assets.
 6. **Service account** (Project settings → Service accounts → *Generate new private key*):
    take `client_email` and `private_key` from the JSON → `FIREBASE_CLIENT_EMAIL` /
    `FIREBASE_PRIVATE_KEY` env vars (keep the `\n` escapes on hosts like Render/Vercel).
@@ -145,7 +154,7 @@ firebase.json              deploy config (rules, indexes, hosting, emulators)
    Credentials are used automatically.
 7. **Deploy rules + indexes:**
    ```bash
-   npm run deploy          # firestore rules + indexes + storage rules
+   npm run deploy          # firestore rules + indexes
    ```
 8. **Seed the content** (countries, scam library, 7 courses, admin RBAC):
    ```bash
@@ -165,12 +174,12 @@ npm run seed                 # seed Firestore
 npm run dev                  # http://localhost:3000
 ```
 
-Optional — run everything against local emulators (no cloud project needed):
+Optional — run Firebase against local emulators (no cloud project needed;
+Cloudinary still needs real credentials for uploads):
 ```bash
-npm run emulators            # auth :9099, firestore :8080, storage :9199, UI :4000
+npm run emulators            # auth :9099, firestore :8080, UI :4000
 # in another shell, with the emulator env set:
 FIRESTORE_EMULATOR_HOST=localhost:8080 FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 \
-FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199 \
 NEXT_PUBLIC_FIREBASE_API_KEY=demo NEXT_PUBLIC_FIREBASE_PROJECT_ID=demo-matrix-ai \
 npm run seed && npm run dev
 ```
@@ -212,7 +221,7 @@ Whichever you choose, remember to:
 | `NEXT_PUBLIC_APP_URL` | client + server | canonical URL for links/emails |
 | `FIREBASE_CLIENT_EMAIL` | server only | Admin SDK service account |
 | `FIREBASE_PRIVATE_KEY` | server only | Admin SDK private key |
-| `FIREBASE_STORAGE_BUCKET` | server only | Storage bucket (optional; derived if omitted) |
+| `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | server only | Private image storage (screenshots, ID docs) |
 | `GROQ_API_KEY` | server only | AI gateway → Groq |
 
 ## Firestore data model
@@ -262,7 +271,12 @@ can actually reach Groq — used by the UI status dot and `/api/health`.
 - **Rules as the outer wall**: browsers can read only their own documents and
   public content; every client write is denied; `quiz_answers`, `audit_logs`,
   `admin_access_grants`, `ai_safety_events`, `certificate_verification` are
-  server-only. Storage rules enforce owner-folder + image-type + ≤8 MB uploads.
+  server-only.
+- **Private image storage (Cloudinary)**: uploads require a server-signed
+  grant that pins the exact folder (`…/{uid}/`) and public_id; assets are
+  stored as *authenticated* (not public) and their bytes are only reachable
+  through server-signed URLs; the scan endpoint re-validates magic bytes,
+  type and dimensions; account deletion wipes the user's folders.
 - **Sensitive profile columns** (`date_of_birth`, `age_verified*`) change only via
   `complete_profile` / `review_identity_verification` — never direct writes.
 - **Privileged admin access** to user conversations requires a reason, a
@@ -302,7 +316,7 @@ npm run typecheck
 - [ ] Service account key set **only** as server env (never `NEXT_PUBLIC_*`)
 - [ ] `npm run seed` + `npm run set-admin` run exactly once
 - [ ] `GET /api/health` wired to an uptime monitor
-- [ ] Backup policy enabled (Firestore → scheduled exports; Storage → bucket backups)
+- [ ] Backup policy enabled (Firestore → scheduled exports; Cloudinary → account backups)
 
 ## Fakes-free behavior & health
 
@@ -324,7 +338,7 @@ ready for more locales. The AI answers in the user's language.
 | Postgres RLS (67 policies) | `firestore.rules` (client reads only) + server-side ownership checks |
 | `SECURITY DEFINER` RPCs (complete_profile, submit_quiz_attempt, issue_certificate, security_score, rag_search, admin_*…) | `src/lib/server/rpc.ts`, invoked via `/api/rpc` |
 | Edge functions (`ai-gateway`, `export-data`, `delete-account`, `auth-events`) | `/api/ai`, `/api/account/export`, `/api/account/delete`, provisioning inside `/api/auth/session` |
-| Storage buckets (`security-screenshots`, `identity-documents`) | Storage folders under the same names + `storage.rules` |
+| Storage buckets (`security-screenshots`, `identity-documents`) | Cloudinary folders under the same names + signed uploads of private assets |
 | `quiz_options_public` view | options embedded on `quiz_questions` without the correct flag; answers in server-only `quiz_answers` |
 | `promote-admin.sql` | `npm run set-admin` |
 | `db reset / db push` | `npm run seed` (idempotent merge) |

@@ -5,8 +5,11 @@
 //
 // Firebase split:
 //   NEXT_PUBLIC_FIREBASE_*  → client SDK config (public by design)
-//   FIREBASE_PROJECT_ID / FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY /
-//   FIREBASE_STORAGE_BUCKET → server-side Admin SDK (service account)
+//   FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY → server-side Admin SDK
+//     (service account)
+// Images live on Cloudinary (free tier) instead of Firebase Storage (paid):
+//   CLOUDINARY_CLOUD_NAME / CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET —
+//   uploads are server-signed and stored as private (authenticated) assets.
 
 const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY ?? "";
 const authDomain = process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? "";
@@ -44,7 +47,11 @@ export const env = {
     appId,
   },
   appUrl: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
-  storageBucket: clean(process.env.FIREBASE_STORAGE_BUCKET ?? (projectId ? `${projectId}.firebasestorage.app` : "")),
+  cloudinary: {
+    cloudName: clean(process.env.CLOUDINARY_CLOUD_NAME ?? ""),
+    apiKey: clean(process.env.CLOUDINARY_API_KEY ?? ""),
+    apiSecret: clean(process.env.CLOUDINARY_API_SECRET ?? ""),
+  },
   serviceEmail,
   serviceKeyRaw,
   groqApiKey: process.env.GROQ_API_KEY ?? "",
@@ -62,6 +69,12 @@ export function isServerConfigured(): boolean {
 /** True when the AI gateway has a real Groq key. */
 export function isAiConfigured(): boolean {
   return Boolean(env.groqApiKey) && !PLACEHOLDERS.some((p) => env.groqApiKey.includes(p));
+}
+
+/** True when image uploads (Cloudinary) are configured. */
+export function isCloudinaryConfigured(): boolean {
+  const c = env.cloudinary;
+  return Boolean(c.cloudName && c.apiKey && c.apiSecret) && !PLACEHOLDERS.some((p) => c.cloudName.includes(p) || c.apiSecret.includes(p));
 }
 
 export function serviceAccount(): { projectId: string; clientEmail: string; privateKey: string } | undefined {

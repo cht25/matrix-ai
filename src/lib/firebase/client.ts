@@ -1,6 +1,6 @@
 "use client";
 
-// Browser-side Firebase client (Auth + Firestore + Storage).
+// Browser-side Firebase client (Auth + Firestore).
 //
 // NEXT_PUBLIC_* values are inlined by the bundler at build time, so
 // `firebaseBrowserConfigured` is a compile-time-known constant per deploy.
@@ -18,7 +18,6 @@
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
 import { getAuth, type Auth } from "firebase/auth";
 import { getFirestore, type Firestore } from "firebase/firestore";
-import { getStorage, type FirebaseStorage } from "firebase/storage";
 import { env, isConfigured } from "@/lib/env";
 
 export const firebaseBrowserConfigured = isConfigured();
@@ -29,8 +28,6 @@ function app(): FirebaseApp {
 
 let cachedAuth: Auth | null = null;
 let cachedDb: Firestore | null = null;
-let cachedStorage: FirebaseStorage | null = null;
-
 export function fbAuth(): Auth {
   if (!cachedAuth) cachedAuth = getAuth(app());
   return cachedAuth;
@@ -41,10 +38,6 @@ export function fbDb(): Firestore {
   return cachedDb;
 }
 
-export function fbStorage(): FirebaseStorage {
-  if (!cachedStorage) cachedStorage = getStorage(app(), env.storageBucket || undefined);
-  return cachedStorage;
-}
 
 export const FIREBASE_NOT_CONFIGURED_MESSAGE =
   "FIREBASE_NOT_CONFIGURED: NEXT_PUBLIC_FIREBASE_API_KEY / NEXT_PUBLIC_FIREBASE_PROJECT_ID are missing or invalid. " +

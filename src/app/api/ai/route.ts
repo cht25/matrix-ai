@@ -16,7 +16,7 @@
 // =============================================================================
 
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb, adminAuth, adminBucket, nowTs, toTs } from "@/lib/firebase/admin";
+import { adminDb, adminAuth, nowTs, toTs } from "@/lib/firebase/admin";
 import { verifySession, type SessionUser } from "@/lib/firebase/session";
 import { redactPII, containsCredentials, leakedPII } from "@/lib/ai/pii";
 import { classify } from "@/lib/ai/domain";
@@ -24,6 +24,7 @@ import { createProvider, MODELS, type AIMessage, type AIProvider } from "@/lib/a
 import { buildSystemMessages, validateOutput, buildSummaryPrompt } from "@/lib/ai/prompts";
 import { validateImageUpload } from "@/lib/ai/upload-validation";
 import { ragSearch } from "@/lib/server/rpc";
+import { downloadImage } from "@/lib/server/cloudinary";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -414,8 +415,8 @@ async function handleScan(d: Db, user: SessionUser, body: Record<string, unknown
   const storagePath = typeof body.storage_path === "string" ? body.storage_path.trim() : "";
   if (!storagePath) return json({ error: "STORAGE_PATH_REQUIRED" }, 400);
 
-  // Ownership: files must live in the user's own folder.
-  if (!storagePath.startsWith(`${user.uid}/`)) {
+  // Ownership: files must live in the user's own Cloudinary folder.
+  if (!storagePath.startsWith(`security-screenshots/${user.uid}/`)) {
     await logSafety(d, user.uid, "safety_refusal", "storage path ownership violation");
     return json({ error: "STORAGE_OWNERSHIP_VIOLATION" }, 403);
   }
@@ -423,7 +424,8 @@ async function handleScan(d: Db, user: SessionUser, body: Record<string, unknown
   const rate = await checkRateLimit(d, user.uid, "scan");
   if (!rate.ok) return json({ error: rate.message }, 429);
 
-  const [fileBuffer] = await adminBucket().file(`security-screenshots/${storagePath}`).download().catch(() => [null]);
+  // Private (authenticated) asset — bytes only via a server-signed URL.
+  const fileBuffer = await downloadImage(storagePath);
   if (!fileBuffer) return json({ error: "FILE_NOT_FOUND" }, 404);
   const bytes = new Uint8Array(fileBuffer);
 

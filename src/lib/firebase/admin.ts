@@ -13,8 +13,6 @@ import "server-only";
 import { App, getApps, initializeApp, cert } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
-import { getStorage } from "firebase-admin/storage";
-import type { Storage } from "firebase-admin/storage";
 import { env, isConfigured, isServerConfigured, logMissingFirebaseConfig, serviceAccount } from "@/lib/env";
 import { NotConfiguredError } from "@/lib/data";
 
@@ -29,15 +27,10 @@ function getApp(): App {
   }
   const sa = serviceAccount();
   if (sa) {
-    cachedApp = initializeApp({
-      credential: cert(sa),
-      storageBucket: env.storageBucket || undefined,
-    });
+    cachedApp = initializeApp({ credential: cert(sa) });
   } else {
-    // ADC (App Hosting / Cloud Run / emulator). Storage bucket optional.
-    cachedApp = initializeApp({
-      storageBucket: env.storageBucket || undefined,
-    });
+    // ADC (App Hosting / Cloud Run / emulator).
+    cachedApp = initializeApp({});
   }
   return cachedApp;
 }
@@ -63,16 +56,6 @@ export function adminDb() {
   return getFirestore(ensure());
 }
 
-type AdminBucket = ReturnType<Storage["bucket"]>;
-let cachedBucket: AdminBucket | null = null;
-
-export function adminBucket(): AdminBucket {
-  if (!cachedBucket) {
-    const storage = getStorage(ensure());
-    cachedBucket = storage.bucket(env.storageBucket || undefined);
-  }
-  return cachedBucket;
-}
 
 // ---------------------------------------------------------------------------
 // Firestore helpers (Timestamps everywhere; ISO strings at the edges)

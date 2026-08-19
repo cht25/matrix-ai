@@ -1,11 +1,12 @@
 "use client";
 
-// Client-side helpers for the Firebase-backed MATRIX backend.
-// All mutations go through /api/rpc (server-verified, audited); uploads go to
-// Cloud Storage under the signed-in user's own folder (enforced by rules).
+// Client-side helpers for the Firebase + Cloudinary-backed MATRIX backend.
+// All mutations go through /api/rpc (server-verified, audited). Image uploads
+// go DIRECTLY to Cloudinary using a server-signed grant (folder + public_id +
+// timestamp are baked into the signature), and are stored as private
+// ("authenticated") assets — mirroring the old private-bucket model.
 
-import { fbAuth, fbStorage } from "@/lib/firebase/client";
-import { ref, uploadBytes } from "firebase/storage";
+import { fbAuth } from "@/lib/firebase/client";
 
 export class RpcCallError extends Error {
   constructor(readonly code: string, readonly status: number) {
@@ -55,21 +56,60 @@ export async function signOutEverywhere(): Promise<void> {
   await signOut(fbAuth()).catch(() => {});
 }
 
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
+
 /**
- * Upload an image to a private storage folder owned by the current user.
- * Returns the storage path (`{uid}/{filename}`) to send to the server.
+ * Upload an image to the user's private Cloudinary folder.
+ * Returns the storage path (`{folder}/{uid}/{public_id}.{ext}`) to send to
+ * the server — the same contract the Supabase/Firebase-Storage versions used.
  */
-export async function uploadOwnedFile(folder: "security-screenshots" | "identity-documents", file: File | Blob, filename?: string): Promise<string> {
+export async function uploadOwnedFile(
+  folder: "security-screenshots" | "identity-documents",
+  file: File | Blob,
+  filename?: string,
+): Promise<string> {
   const user = fbAuth().currentUser;
   if (!user) throw new RpcCallError("UNAUTHENTICATED", 401);
-  const safeName = (filename ?? (file instanceof File ? file.name : `upload-${Date.now()}`))
-    .replace(/[^a-zA-Z0-9._-]/g, "_")
-    .slice(-80);
-  const path = `${user.uid}/${Date.now()}-${safeName}`;
-  const storageRef = ref(fbStorage(), `${folder}/${path}`);
-  await uploadBytes(storageRef, file, {
-    contentType: file instanceof File ? file.type : "application/octet-stream",
-    cacheControl: "private, max-age=0",
+
+  // Client-side gate (same limits the old storage rules enforced). The server
+  // re-validates magic bytes when it analyses the file.
+  if (file.size <= 0 || file.size > MAX_IMAGE_BYTES) throw new RpcCallError("FILE_TOO_LARGE", 400);
+  const mime = file instanceof File ? file.type : "";
+  if (mime && !ALLOWED_IMAGE_TYPES.includes(mime)) throw new RpcCallError("UNSUPPORTED_TYPE", 400);
+
+  const name = filename ?? (file instanceof File ? file.name : `upload-${Date.now()}`);
+  const grantRes = await fetch("/api/upload-signature", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify({ kind: folder === "identity-documents" ? "identity" : "screenshot", filename: name }),
   });
-  return path;
+  const grant = (await grantRes.json().catch(() => ({}))) as {
+    uploadUrl: string;
+    apiKey: string;
+    timestamp: number;
+    folder: string;
+    publicId: string;
+    signature: string;
+    error?: string;
+  };
+  if (!grantRes.ok || !grant.signature) throw new RpcCallError(grant.error ?? "SIGNATURE_FAILED", grantRes.status);
+
+  const form = new FormData();
+  form.append("file", file);
+  form.append("api_key", grant.apiKey);
+  form.append("timestamp", String(grant.timestamp));
+  form.append("folder", grant.folder);
+  form.append("public_id", grant.publicId);
+  form.append("signature", grant.signature);
+  form.append("type", "authenticated");
+
+  const upload = await fetch(grant.uploadUrl, { method: "POST", body: form });
+  const uploaded = (await upload.json().catch(() => ({}))) as { public_id?: string; format?: string; error?: { message?: string } };
+  if (!upload.ok || !uploaded.public_id) {
+    throw new RpcCallError("UPLOAD_FAILED", upload.status);
+  }
+  // Storage path contract: folder-prefixed public_id + extension.
+  return `${uploaded.public_id}.${uploaded.format ?? "jpg"}`;
 }

@@ -67,7 +67,7 @@ const ACTIONS: Record<string, Handler> = {
   submit_identity_verification: (d, u, b) =>
     rpc.submitIdentityVerification(d, u, {
       verification_type: z.enum(["birth_certificate", "passport", "national_id", "external_provider"]).parse(b.verification_type),
-      verification_reference: z.string().startsWith(u.uid + "/").parse(b.verification_reference),
+      verification_reference: z.string().startsWith(`identity-documents/${u.uid}/`).parse(b.verification_reference),
     }),
 
   // --- security events & sessions ----------------------------------------------

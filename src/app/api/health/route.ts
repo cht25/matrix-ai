@@ -1,13 +1,14 @@
 // GET /api/health — honest, machine-readable service health for operators and
 // uptime checks. No secrets are returned; every probe is a live network call.
 //
-//   200 { ok: true,  firebase: "reachable", ai: "online"|"unavailable"|"unknown", checkedAt }
+//   200 { ok: true,  firebase: "reachable", cloudinary: "reachable", ai: "online"|"unavailable"|"unknown", checkedAt }
 //   503 { ok: false, firebase: "not-configured"|"unreachable", … }
 
 import { NextResponse } from "next/server";
-import { isConfigured, isAiConfigured } from "@/lib/env";
+import { isConfigured, isAiConfigured, isCloudinaryConfigured } from "@/lib/env";
 import { adminConfigured } from "@/lib/firebase/admin";
 import { createProvider } from "@/lib/ai/groq";
+import { ping as pingCloudinary } from "@/lib/server/cloudinary";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,7 +18,13 @@ export async function GET() {
 
   if (!isConfigured() || !adminConfigured()) {
     return NextResponse.json(
-      { ok: false, firebase: "not-configured", ai: isAiConfigured() ? "unknown" : "not-configured", checkedAt },
+      {
+        ok: false,
+        firebase: "not-configured",
+        cloudinary: isCloudinaryConfigured() ? "unknown" : "not-configured",
+        ai: isAiConfigured() ? "unknown" : "not-configured",
+        checkedAt,
+      },
       { status: 503 },
     );
   }
@@ -32,6 +39,11 @@ export async function GET() {
     firebase = "unreachable";
   }
 
+  let cloudinary: "reachable" | "unreachable" | "unknown" = "unknown";
+  if (isCloudinaryConfigured()) {
+    cloudinary = (await pingCloudinary()) ? "reachable" : "unreachable";
+  }
+
   let ai: "online" | "unavailable" | "unknown" = "unknown";
   if (isAiConfigured()) {
     const provider = createProvider();
@@ -39,5 +51,5 @@ export async function GET() {
   }
 
   const ok = firebase === "reachable";
-  return NextResponse.json({ ok, firebase, ai, checkedAt }, { status: ok ? 200 : 503 });
+  return NextResponse.json({ ok, firebase, cloudinary, ai, checkedAt }, { status: ok ? 200 : 503 });
 }

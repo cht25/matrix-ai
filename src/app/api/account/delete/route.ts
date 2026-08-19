@@ -6,15 +6,16 @@
 // scam_articles, not in user reports).
 
 import { NextRequest, NextResponse } from "next/server";
-import { adminAuth, adminDb, adminBucket } from "@/lib/firebase/admin";
+import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import { getSessionUser } from "@/lib/firebase/session";
 import { nowTs } from "@/lib/firebase/admin";
-import { env, isAiConfigured } from "@/lib/env";
+import { env } from "@/lib/env";
+import { deleteUserAssets } from "@/lib/server/cloudinary";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const PRIVATE_FOLDERS = ["security-screenshots", "identity-documents", "chat-attachments", "exports", "avatars"];
+
 
 async function deleteQuery(collection: FirebaseFirestore.CollectionReference, field: string, value: string, limit = 500) {
   let deleted = 0;
@@ -51,21 +52,13 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "REAUTH_UNAVAILABLE" }, { status: 503 });
   }
-  void isAiConfigured;
 
   const d = adminDb();
   const uid = user.uid;
 
-  // 1. Remove private storage objects owned by the user.
-  try {
-    const bucket = adminBucket();
-    for (const folder of PRIVATE_FOLDERS) {
-      const [files] = await bucket.getFiles({ prefix: `${folder}/${uid}/`, maxResults: 500 });
-      if (files.length) await Promise.all(files.map((f) => f.delete({ ignoreNotFound: true })));
-    }
-  } catch {
-    /* storage failures must not block account deletion */
-  }
+  // 1. Remove private Cloudinary assets owned by the user (screenshots + ID
+  //    documents). Failures must not block account deletion.
+  await deleteUserAssets(uid).catch(() => {});
 
   // 2. Delete user-owned documents (conversations cascade their messages).
   const convs = await d.collection("conversations").where("user_id", "==", uid).limit(500).get();

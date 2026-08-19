@@ -202,7 +202,8 @@ export async function submitIdentityVerification(
 ) {
   const allowed = ["birth_certificate", "passport", "national_id", "external_provider"];
   if (!allowed.includes(p.verification_type)) throw new RpcError("TYPE_INVALID");
-  if (!p.verification_reference.startsWith(`${user.uid}/`)) throw new RpcError("STORAGE_OWNERSHIP_VIOLATION");
+  // Ownership: the document must live in the user's own Cloudinary folder.
+  if (!p.verification_reference.startsWith(`identity-documents/${user.uid}/`)) throw new RpcError("STORAGE_OWNERSHIP_VIOLATION");
   await d.collection("identity_verifications").add({
     user_id: user.uid,
     verification_type: p.verification_type,

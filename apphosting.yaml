@@ -2,6 +2,8 @@
 # Requires the Blaze plan. Alternative: `firebase deploy` uses the hosting +
 # frameworksBackend config in firebase.json; the app also runs anywhere Node
 # runs (Render/Vercel/Docker) with the same environment variables.
+# Note: Firebase Storage is deliberately NOT used — images live on Cloudinary
+# (free tier) via server-signed uploads of private assets.
 runConfig:
   minInstances: 0
   maxInstances: 10
@@ -30,8 +32,13 @@ env:
   - variable: FIREBASE_PRIVATE_KEY
     availability: [RUNTIME]
     secret: FIREBASE_PRIVATE_KEY
-  - variable: FIREBASE_STORAGE_BUCKET
+  - variable: CLOUDINARY_CLOUD_NAME
+    availability: [BUILD, RUNTIME]
+  - variable: CLOUDINARY_API_KEY
+    availability: [BUILD, RUNTIME]
+  - variable: CLOUDINARY_API_SECRET
     availability: [RUNTIME]
+    secret: CLOUDINARY_API_SECRET
   - variable: GROQ_API_KEY
     availability: [RUNTIME]
     secret: GROQ_API_KEY
