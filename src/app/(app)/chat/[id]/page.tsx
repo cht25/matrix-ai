@@ -16,7 +16,7 @@ export default async function ChatPage({ params }: { params: Promise<{ id: strin
   if (data.conversation.is_temporary) redirect("/temporary-chat");
 
   return (
-    <div className="mx-auto h-full max-w-3xl">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-1 flex-col">
       <ChatHeader conversationId={id} initialTitle={data.conversation.title} />
       <ChatClient
         initialMessages={data.messages as { role: "user" | "assistant"; content: string }[]}

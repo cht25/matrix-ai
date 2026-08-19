@@ -48,7 +48,7 @@ secure server-side AI gateway.
 | Storage | **Cloudinary** (free tier) — server-signed uploads, private (authenticated) assets only |
 | Authorization | Firestore **security rules** + a server-side RPC layer (`src/lib/server/rpc.ts`) that ports every Postgres `SECURITY DEFINER` function |
 | Backend/API | Next.js route handlers (Node runtime, Admin SDK) |
-| AI | **Groq** (`llama-3.3-70b-versatile` chat, `llama-3.2-11b-vision-preview` scanning) behind the AI Gateway (`/api/ai`), **streaming responses** |
+| AI | **Groq** (`openai/gpt-oss-120b` chat, `qwen/qwen3.6-27b` vision, `openai/gpt-oss-20b` fast) behind the AI Gateway (`/api/ai`), **streaming responses** |
 | i18n | English + Bangla dictionaries (architecture ready for more) |
 | Tests | Vitest (AI pipeline, PII, classification, file validation, age rules, env config) |
 

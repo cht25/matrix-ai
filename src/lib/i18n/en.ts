@@ -14,6 +14,7 @@ export const en = {
   "nav.history": "History",
   "nav.security": "Security",
   "nav.settings": "Settings",
+  "nav.docs": "Documentation",
   "nav.admin": "Admin",
   "nav.logout": "Sign out",
   "nav.signIn": "Sign in",

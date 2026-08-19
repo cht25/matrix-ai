@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { MoreVertical } from "lucide-react";
+import { MoreVertical, Pencil } from "lucide-react";
 import { rpc } from "@/lib/client/api";
 import { Input } from "@/components/ui";
 
@@ -42,35 +42,36 @@ export function ChatHeader({ conversationId, initialTitle }: { conversationId: s
   }
 
   return (
-    <div className="mb-3 flex items-center justify-between gap-3">
+    <div className="mb-2 flex shrink-0 items-center justify-between gap-2 pt-3 sm:pt-4">
       {editing ? (
-        <div className="flex w-full max-w-sm items-center gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <Input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Conversation title" autoFocus className="!py-2" />
-          <button onClick={() => void save()} className="min-h-10 rounded-lg bg-ink px-3.5 text-sm font-medium text-bg transition-colors hover:bg-ink-2 hover:opacity-90">Save</button>
-          <button onClick={() => { setTitle(initialTitle); setEditing(false); }} className="min-h-11 rounded-xl px-3 text-sm font-semibold text-ink-2 hover:bg-surface-2">Cancel</button>
+          <button type="button" onClick={() => void save()} className="min-h-11 shrink-0 rounded-lg bg-ink px-3.5 text-sm font-medium text-bg transition-colors hover:bg-ink-2">Save</button>
+          <button type="button" onClick={() => { setTitle(initialTitle); setEditing(false); }} className="min-h-11 shrink-0 rounded-lg px-3 text-sm font-semibold text-ink-2 hover:bg-surface-2">Cancel</button>
         </div>
       ) : (
-        <button onClick={() => setEditing(true)} className="group flex min-h-11 items-center gap-2 text-left" aria-label="Rename conversation">
-          <h1 className="max-w-[65vw] truncate text-lg font-bold text-ink group-hover:text-accent">{title}</h1>
-          <span className="text-[11px] text-ink-3 opacity-0 transition-opacity group-hover:opacity-100">Rename</span>
+        <button type="button" onClick={() => setEditing(true)} className="group flex min-h-11 min-w-0 items-center gap-2 text-left" aria-label="Rename conversation">
+          <h1 className="truncate text-base font-bold text-ink group-hover:text-accent sm:text-lg">{title}</h1>
+          <Pencil size={13} strokeWidth={1.7} className="shrink-0 text-ink-3" aria-hidden="true" />
         </button>
       )}
       <div className="relative shrink-0">
         <button
+          type="button"
           onClick={() => setMenu(!menu)}
           aria-label="Conversation actions"
           aria-expanded={menu}
-          className="grid h-10 w-10 place-items-center rounded-md text-ink-2 transition-colors hover:bg-surface-2"
+          className="grid h-11 w-11 place-items-center rounded-md text-ink-2 transition-colors hover:bg-surface-2"
         >
           <MoreVertical size={16} strokeWidth={1.6} />
         </button>
         {menu ? (
           <>
-            <button className="fixed inset-0 z-20 cursor-default" aria-hidden="true" onClick={() => setMenu(false)} />
+            <button type="button" className="fixed inset-0 z-20 cursor-default" aria-hidden="true" onClick={() => setMenu(false)} />
             <div className="card fade-in absolute right-0 z-30 mt-1 w-44 !rounded-xl !p-1 shadow-[var(--shadow-pop)]">
-              <button onClick={() => { setMenu(false); void exportJson(); }} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-ink hover:bg-surface-2">Export JSON</button>
-              <button onClick={() => { setMenu(false); void archive(); }} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-ink hover:bg-surface-2">Archive</button>
-              <button onClick={() => { setMenu(false); void remove(); }} className="block w-full rounded-lg px-3 py-2 text-left text-sm text-danger hover:bg-danger-soft">Delete</button>
+              <button type="button" onClick={() => { setMenu(false); void exportJson(); }} className="block w-full rounded-lg px-3 py-2.5 text-left text-sm text-ink hover:bg-surface-2">Export JSON</button>
+              <button type="button" onClick={() => { setMenu(false); void archive(); }} className="block w-full rounded-lg px-3 py-2.5 text-left text-sm text-ink hover:bg-surface-2">Archive</button>
+              <button type="button" onClick={() => { setMenu(false); void remove(); }} className="block w-full rounded-lg px-3 py-2.5 text-left text-sm text-danger hover:bg-danger-soft">Delete</button>
             </div>
           </>
         ) : null}
