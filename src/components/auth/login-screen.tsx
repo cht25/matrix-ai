@@ -62,7 +62,8 @@ export function AuthShell({ children, title, subtitle }: { children: React.React
         </div>
       ) : null}
       <div className="w-full max-w-sm">{children}</div>
-      <p className="mt-10 text-[11px] uppercase tracking-[0.18em] text-ink-3">
+      <hr className="swash-rule mt-10 w-40" />
+      <p className="mt-4 text-[11px] uppercase tracking-[0.18em] text-ink-3">
         For ages 11–17 · THAMJJ13.TOP White Hat Team
       </p>
     </div>

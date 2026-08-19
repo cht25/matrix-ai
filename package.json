@@ -17,8 +17,10 @@
     "deploy": "firebase deploy --only firestore:rules,firestore:indexes,storage"
   },
   "dependencies": {
+    "@fontsource/cormorant-garamond": "^5.3.0",
     "@fontsource/inter": "^5.3.0",
     "@fontsource/manrope": "^5.3.0",
+    "@fontsource/tangerine": "^5.3.0",
     "cloudinary": "^2.10.0",
     "firebase": "^12.17.1",
     "firebase-admin": "^14.2.0",

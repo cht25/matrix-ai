@@ -18,7 +18,7 @@ import { firebaseBrowserConfigured, waitForAuthUser } from "@/lib/firebase/clien
 import { uploadOwnedFile } from "@/lib/client/api";
 import { Button, Textarea } from "@/components/ui";
 import { Markdown } from "@/components/markdown";
-import { MatrixMark } from "@/components/logo";
+import { MatrixMark, MatrixWordmark } from "@/components/logo";
 import { useToast } from "@/components/toast";
 import { ServerProblem } from "@/components/server-problem";
 import { classifyGatewayResponse, classifyRequestException, failureCopy, type ApiFailure } from "@/lib/api-errors";
@@ -421,10 +421,10 @@ export function ChatClient({
         {messages.length === 0 && !streaming ? (
           <div className="flex min-h-full flex-col items-center justify-center px-1 py-6 text-center">
             <div className="mb-5">
-              <span className="mb-4 inline-block" aria-hidden="true">
-                <MatrixMark className="h-12 w-12 text-ink-2" />
+              <span className="mb-3 inline-block" aria-hidden="true">
+                <MatrixWordmark className="h-14 w-56 sm:h-16 sm:w-64" />
               </span>
-              <p className="eyebrow mb-2">MATRIX</p>
+              <p className="eyebrow flourish mb-2">AI Cyber Safety</p>
               <h1 className="font-display text-[22px] font-semibold tracking-tight text-ink sm:text-3xl">
                 {t("chat.title")}
               </h1>

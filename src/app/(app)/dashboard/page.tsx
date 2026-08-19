@@ -38,7 +38,7 @@ export default async function DashboardPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="eyebrow mb-1.5">Security overview</p>
+          <p className="eyebrow flourish mb-1.5">Security overview</p>
           <h1 className="font-display text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
             Hi {profile?.full_name?.split(" ")[0] ?? "there"}
           </h1>

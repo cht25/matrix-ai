@@ -4,10 +4,17 @@ import "@fontsource/inter/500.css";
 import "@fontsource/inter/600.css";
 import "@fontsource/manrope/500.css";
 import "@fontsource/manrope/600.css";
+import "@fontsource/cormorant-garamond/400.css";
+import "@fontsource/cormorant-garamond/500.css";
+import "@fontsource/cormorant-garamond/600.css";
+import "@fontsource/cormorant-garamond/700.css";
+import "@fontsource/tangerine/400.css";
+import "@fontsource/tangerine/700.css";
 import "./globals.css";
 import { ThemeProvider } from "@/lib/theme";
 import { LocaleProvider } from "@/lib/i18n/client";
 import { CyberBackground } from "@/components/cyber-background";
+import { BRAND_ICON_URL, BRAND_WORDMARK_URL } from "@/lib/brand";
 
 export const metadata: Metadata = {
   title: {
@@ -19,11 +26,12 @@ export const metadata: Metadata = {
   applicationName: "MATRIX",
   icons: {
     icon: [
-      { url: "/favicon.ico", sizes: "any" },
-      { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
-      { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
+      { url: BRAND_ICON_URL, type: "image/png" },
+      { url: BRAND_ICON_URL, sizes: "32x32", type: "image/png" },
+      { url: BRAND_ICON_URL, sizes: "192x192", type: "image/png" },
     ],
-    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+    shortcut: [{ url: BRAND_ICON_URL, type: "image/png" }],
+    apple: [{ url: BRAND_ICON_URL, sizes: "180x180", type: "image/png" }],
   },
   manifest: "/site.webmanifest",
   openGraph: {
@@ -32,6 +40,13 @@ export const metadata: Metadata = {
       "AI Cyber Safety Platform for ages 11–17. Cybersecurity chat, screenshot scanner, scam detection, courses and certificates.",
     type: "website",
     siteName: "MATRIX",
+    images: [{ url: BRAND_WORDMARK_URL, alt: "MATRIX — AI Cyber Safety Platform" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "MATRIX — AI Cyber Safety Platform",
+    description: "AI Cyber Safety Platform for ages 11–17.",
+    images: [BRAND_WORDMARK_URL],
   },
 };
 
@@ -41,8 +56,8 @@ export const viewport: Viewport = {
   maximumScale: 5,
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#050608" },
-    { media: "(prefers-color-scheme: light)", color: "#f4f5f7" },
+    { media: "(prefers-color-scheme: dark)", color: "#000104" },
+    { media: "(prefers-color-scheme: light)", color: "#f3f5fb" },
   ],
 };
 
@@ -52,6 +67,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" data-theme="dark" suppressHydrationWarning>
       <head>
+        <link rel="preconnect" href="https://res.cloudinary.com" crossOrigin="" />
+        <link rel="icon" type="image/png" href={BRAND_ICON_URL} />
+        <link rel="apple-touch-icon" href={BRAND_ICON_URL} />
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body>

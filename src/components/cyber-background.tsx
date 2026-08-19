@@ -62,10 +62,10 @@ export function CyberBackground() {
       const dark = document.documentElement.getAttribute("data-theme") !== "light";
       ctx.clearRect(0, 0, w, h);
 
-      const grid = dark ? "rgba(226,230,238,0.035)" : "rgba(16,19,23,0.035)";
-      const line = dark ? "rgba(147,165,190,0.075)" : "rgba(60,74,96,0.08)";
-      const node = dark ? "rgba(147,165,190,0.3)" : "rgba(60,74,96,0.3)";
-      const glyph = dark ? "rgba(226,230,238,0.14)" : "rgba(16,19,23,0.12)";
+      const grid = dark ? "rgba(120,165,255,0.045)" : "rgba(10,30,80,0.04)";
+      const line = dark ? "rgba(63,128,255,0.11)" : "rgba(18,68,214,0.1)";
+      const node = dark ? "rgba(91,155,255,0.38)" : "rgba(18,68,214,0.32)";
+      const glyph = dark ? "rgba(138,182,255,0.16)" : "rgba(10,30,80,0.13)";
 
       // Fine geometric grid
       const step = 72;
