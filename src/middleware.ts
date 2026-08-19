@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE } from "@/lib/firebase/session-shared";
+import { internalLocation, isAuthPage, isPublic } from "@/lib/routing";
 
 // Edge-runtime routing guard.
 //
@@ -8,23 +9,12 @@ import { SESSION_COOKIE } from "@/lib/firebase/session-shared";
 // middleware only performs an UNVERIFIED presence/expiry decode of the
 // cookie payload for routing UX — every server component and API route
 // re-verifies the signature with the Admin SDK before trusting anything.
-
-// Public routes (never require authentication).
-const PUBLIC_PATHS = [
-  "/login", "/register", "/forgot-password", "/reset-password", "/verify",
-  "/docs", "/privacy", "/terms", "/support",
-  "/emergency", "/certificate/verify", "/scams", "/scams/",
-  "/api/health", "/api/ai",
-];
-const AUTH_PATHS = ["/login", "/register", "/forgot-password", "/reset-password"];
-
-function isPublic(path: string): boolean {
-  return PUBLIC_PATHS.some((p) => path === p || path.startsWith(p));
-}
-
-function isAuthPage(path: string): boolean {
-  return AUTH_PATHS.some((p) => path === p || path.startsWith(p + "/"));
-}
+//
+// Redirects are always *relative* (`Location: /login?...`). Absolute
+// redirects built from `request.url` inherit whatever Host the proxy
+// forwarded (Render primary domain, Cloudflare apex rewrite, …). If that
+// host is not bound to this service the browser lands on a plain-text
+// "Not Found" — which is Render's default, not this app's 404 page.
 
 type JwtPayload = { exp?: number; role?: string; email_verified?: boolean };
 
@@ -40,6 +30,14 @@ function decodePayload(jwt: string): JwtPayload | null {
   }
 }
 
+/** 307 with a same-origin relative Location — never rewrite the hostname. */
+function bounce(pathname: string, search?: Record<string, string>): NextResponse {
+  return new NextResponse(null, {
+    status: 307,
+    headers: { Location: internalLocation(pathname, search) },
+  });
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const cookie = request.cookies.get(SESSION_COOKIE)?.value;
@@ -48,19 +46,17 @@ export async function middleware(request: NextRequest) {
 
   // Signed in with a live session cookie → auth pages bounce to the app.
   if (valid && isAuthPage(pathname)) {
-    return NextResponse.redirect(new URL("/chat", request.url));
+    return bounce("/chat");
   }
 
   if (!valid && !isPublic(pathname)) {
-    const url = new URL("/login", request.url);
-    url.searchParams.set("next", pathname);
-    return NextResponse.redirect(url);
+    return bounce("/login", { next: pathname });
   }
 
   // Admin routes need an admin role. Unverified here (UX only) — the admin
   // layout re-checks authoritatively with the Admin SDK.
   if (valid && pathname.startsWith("/admin") && !payload?.role) {
-    return NextResponse.redirect(new URL("/chat", request.url));
+    return bounce("/chat");
   }
 
   return NextResponse.next();

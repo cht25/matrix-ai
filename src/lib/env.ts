@@ -55,6 +55,8 @@ export const env = {
     messagingSenderId,
     appId,
   },
+  // Links / emails only. Middleware never redirects here — pointing this at an
+  // unbound apex (e.g. https://thamjj13.top) must not bounce the custom domain.
   appUrl: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
   cloudinary: {
     cloudName: clean(process.env.CLOUDINARY_CLOUD_NAME ?? ""),
