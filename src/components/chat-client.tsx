@@ -72,7 +72,14 @@ export function ChatClient({
 }) {
   const router = useRouter();
   const toast = useToast();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const suggestions = locale === "bn" ? [
+    { icon: <ShieldAlert size={15} strokeWidth={1.5} />, label: "সন্দেহজনক মেসেজ যাচাই করুন", prompt: "এই মেসেজটি কি ফিশিং? এখানে বলা হয়েছে আমি পুরস্কার জিতেছি এবং পেতে আগে টাকা দিতে হবে।", href: undefined },
+    { icon: <FileSearch size={15} strokeWidth={1.5} />, label: "স্ক্রিনশট বিশ্লেষণ করুন", prompt: null, href: "/scanner" },
+    { icon: <KeyRound size={15} strokeWidth={1.5} />, label: "অ্যাকাউন্ট নিরাপদ করুন", prompt: "আমার অ্যাকাউন্ট নিরাপদ করতে প্রথমে কী কী করা উচিত?", href: undefined },
+    { icon: <GraduationCap size={15} strokeWidth={1.5} />, label: "কম্পিউটার ও সাইবার শিখুন", prompt: "কম্পিউটার ও সাইবার নিরাপত্তার মৌলিক বিষয় সহজভাবে শেখান।", href: undefined },
+    { icon: <Flag size={15} strokeWidth={1.5} />, label: "স্ক্যাম রিপোর্ট করুন", prompt: null, href: "/report" },
+  ] : SUGGESTIONS;
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [input, setInput] = useState("");
   const [convId, setConvId] = useState<string | null>(initialConvId);
@@ -202,6 +209,7 @@ export function ChatClient({
           conversation_id: convIdRef.current,
           is_temporary: isTemporary,
           message,
+          language: locale,
           regenerate: opts.regenerate === true,
           reuse_user: opts.reuseUser === true || opts.regenerate === true,
         }),
@@ -424,17 +432,18 @@ export function ChatClient({
               <span className="mb-3 inline-block" aria-hidden="true">
                 <MatrixWordmark className="h-14 w-56 sm:h-16 sm:w-64" />
               </span>
-              <p className="eyebrow flourish mb-2">AI Cyber Safety</p>
+              <p className="eyebrow flourish mb-2">{locale === "bn" ? "ডিজিটাল সহায়তা ও সাইবার সচেতনতা" : "Digital help & cyber awareness"}</p>
               <h1 className="font-display text-[22px] font-semibold tracking-tight text-ink sm:text-3xl">
                 {t("chat.title")}
               </h1>
               <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-ink-2">
-                Your AI Cyber Safety Assistant. Ask about phishing, passwords, scams and privacy —
-                cybersecurity questions only, without judgment.
+                {locale === "bn"
+                  ? "বাংলা, Banglish বা English-এ কম্পিউটার, মোবাইল, অ্যাপ, ইন্টারনেট, আইটি, গোপনীয়তা, স্ক্যাম ও সাইবার নিরাপত্তা নিয়ে যেকোনো প্রশ্ন করুন।"
+                  : "Ask in English, Bangla or Banglish about computers, phones, apps, the internet, IT, privacy, scams and cybersecurity."}
               </p>
             </div>
             <div className="grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
-              {SUGGESTIONS.map((s) => (
+              {suggestions.map((s) => (
                 <button
                   key={s.label}
                   type="button"

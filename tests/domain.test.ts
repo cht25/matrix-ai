@@ -9,15 +9,17 @@ describe("Cyber domain classification (spec §22)", () => {
     expect(r.topic).toBe("phishing_scams");
   });
 
-  it("refuses off-topic questions with the standard refusal", () => {
-    const r = classify("Can you help me with my math homework? 2+2?");
-    expect(r.on_topic).toBe(false);
-    expect(r.refusal).toContain("I can only help with cybersecurity");
+  it("does not block harmless questions that do not match a keyword", () => {
+    const r = classify("Can you help me understand this homework question?");
+    expect(r.on_topic).toBe(true);
+    expect(r.topic).toBe("general_help");
+    expect(r.refusal).toBeNull();
   });
 
-  it("refuses harmless-but-unrelated content", () => {
-    const r = classify("Write me a poem about the ocean");
-    expect(r.on_topic).toBe(false);
+  it("recognises digital-life and Bangla questions", () => {
+    expect(classify("Why is my laptop running slowly?").topic).toBe("device_security");
+    expect(classify("আমার মোবাইল খুব স্লো, কী করব?").topic).toBe("device_security");
+    expect(classify("এই মেসেজটা কি স্ক্যাম?").topic).toBe("phishing_scams");
   });
 });
 
@@ -61,7 +63,8 @@ describe("Greetings and follow-ups", () => {
     expect(classify("what should I do?").on_topic).toBe(true);
   });
 
-  it("still refuses unrelated homework", () => {
-    expect(classify("Can you help me with my math homework? 2+2?").on_topic).toBe(false);
+  it("understands Bangla and Banglish greetings", () => {
+    expect(classify("হ্যালো").on_topic).toBe(true);
+    expect(classify("kivabe").on_topic).toBe(true);
   });
 });
