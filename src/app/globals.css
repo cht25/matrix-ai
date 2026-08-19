@@ -398,6 +398,76 @@ body::before {
    only the ink and the electric-blue swashes remain, then add a soft bloom.
    ============================================================================= */
 
+/* Glass chrome — lets the cinematic blue void show through so the
+   calligraphic logo (black canvas + electric swashes) can blend cleanly. */
+.app-glass {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(22, 64, 180, 0.34) 0%,
+      rgba(8, 22, 64, 0.22) 36%,
+      rgba(0, 8, 28, 0.16) 100%
+    );
+  backdrop-filter: blur(18px) saturate(1.35);
+  -webkit-backdrop-filter: blur(18px) saturate(1.35);
+}
+.app-sidebar {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(22, 64, 180, 0.34) 0%,
+      rgba(8, 22, 64, 0.22) 36%,
+      rgba(0, 8, 28, 0.16) 100%
+    );
+  backdrop-filter: blur(18px) saturate(1.35);
+  -webkit-backdrop-filter: blur(18px) saturate(1.35);
+  border-right: 1px solid rgba(120, 165, 255, 0.2);
+  box-shadow: inset -1px 0 0 rgba(91, 155, 255, 0.08);
+}
+[data-theme="light"] .app-glass,
+[data-theme="light"] .app-sidebar {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(226, 234, 255, 0.72) 0%,
+      rgba(243, 245, 251, 0.58) 100%
+    );
+  box-shadow: none;
+}
+[data-theme="light"] .app-sidebar {
+  border-right-color: var(--border);
+}
+
+/* True-black plate matching the hosted logo canvas so mix-blend-mode: screen
+   knocks out the PNG ground and leaves only the glowing lettering. */
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  isolation: isolate;
+  border-radius: 12px;
+  padding: 0.3rem 0.55rem 0.3rem 0.3rem;
+  background:
+    radial-gradient(120% 160% at 12% 50%, rgba(31, 107, 255, 0.42), transparent 58%),
+    #000104;
+  box-shadow:
+    0 0 0 1px rgba(91, 155, 255, 0.22),
+    0 0 22px rgba(31, 107, 255, 0.28);
+}
+[data-theme="light"] .sidebar-brand {
+  background:
+    radial-gradient(120% 160% at 12% 50%, rgba(31, 107, 255, 0.14), transparent 58%),
+    #070b18;
+}
+
+/* On the void plate, screen-blend the raster so only ink + blue swashes remain. */
+.sidebar-brand .brand-mark-img,
+.sidebar-brand .brand-wordmark-img {
+  mix-blend-mode: screen;
+  filter: saturate(1.35) contrast(1.18) brightness(1.22)
+    drop-shadow(0 0 10px rgba(63, 128, 255, 0.4));
+}
+
 .brand-mark,
 .brand-wordmark {
   display: inline-flex;

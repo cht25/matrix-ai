@@ -248,8 +248,10 @@ function SidebarBody({
   return (
     <div className="flex h-full min-h-0 flex-col">
       {hideBrand ? null : (
-        <div className="flex shrink-0 items-center justify-between gap-2 px-4 pb-3 pt-5">
-          <Logo size="sm" href="/chat" />
+        <div className="flex shrink-0 items-center justify-between gap-2 px-3 pb-3 pt-4">
+          <div className="sidebar-brand min-w-0">
+            <Logo size="md" href="/chat" />
+          </div>
           <AiStatus />
         </div>
       )}
@@ -400,7 +402,7 @@ export function AppShell({
   return (
     <ToastProvider>
       <div className="min-h-dvh lg:flex">
-        <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 border-r border-border bg-surface/85 backdrop-blur-xl lg:block">
+        <aside className="app-sidebar fixed inset-y-0 left-0 z-40 hidden w-64 lg:block">
           <SidebarBody
             conversations={conversations}
             isAdmin={isAdmin}
@@ -416,9 +418,11 @@ export function AppShell({
               aria-label="Close menu"
               onClick={() => setDrawerOpen(false)}
             />
-            <aside className="drawer-in fixed inset-y-0 left-0 z-50 flex w-[min(88vw,20rem)] flex-col border-r border-border bg-surface pt-[env(safe-area-inset-top)] lg:hidden">
-              <div className="flex shrink-0 items-center justify-between px-4 pb-2 pt-3">
-                <Logo size="sm" href="/chat" />
+            <aside className="app-sidebar drawer-in fixed inset-y-0 left-0 z-50 flex w-[min(88vw,20rem)] flex-col pt-[env(safe-area-inset-top)] lg:hidden">
+              <div className="flex shrink-0 items-center justify-between px-3 pb-2 pt-3">
+                <div className="sidebar-brand min-w-0">
+                  <Logo size="md" href="/chat" />
+                </div>
                 <button type="button" onClick={() => setDrawerOpen(false)} aria-label="Close menu" className="grid h-11 w-11 place-items-center rounded-md text-ink-2 hover:bg-surface-2">
                   <X size={16} strokeWidth={1.6} />
                 </button>
@@ -436,7 +440,7 @@ export function AppShell({
           </>
         ) : null}
 
-        <header className="sticky top-0 z-30 flex h-[calc(3.5rem+env(safe-area-inset-top))] items-end border-b border-border bg-surface/85 backdrop-blur-xl lg:hidden">
+        <header className="app-glass sticky top-0 z-30 flex h-[calc(3.5rem+env(safe-area-inset-top))] items-end border-b border-border lg:hidden">
           <div className="flex h-14 w-full items-center justify-between gap-2 px-2">
           <div className="flex min-w-0 items-center gap-0.5">
             <button
@@ -447,7 +451,9 @@ export function AppShell({
             >
               <Menu size={18} strokeWidth={1.6} />
             </button>
-            <Logo size="sm" href="/chat" />
+            <div className="sidebar-brand">
+              <Logo size="sm" href="/chat" />
+            </div>
             <AiStatus className="hidden sm:inline-flex" />
           </div>
           <div className="flex items-center gap-0.5">

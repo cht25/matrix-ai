@@ -40,8 +40,8 @@ export function Logo({
   showWordmark?: boolean;
   className?: string;
 }) {
-  const dims = { sm: "h-7 w-7", md: "h-8 w-8", lg: "h-11 w-11" };
-  const word = { sm: "h-5 w-[4.6rem]", md: "h-6 w-[5.4rem]", lg: "h-9 w-[8rem]" };
+  const dims = { sm: "h-8 w-8", md: "h-10 w-10", lg: "h-12 w-12" };
+  const word = { sm: "h-7 w-[6.4rem]", md: "h-8 w-[7.6rem]", lg: "h-10 w-[9.5rem]" };
   return (
     <Link href={href} className={cn("group inline-flex items-center gap-2.5", className)} aria-label="MATRIX home">
       <MatrixMark className={cn(dims[size], "shrink-0")} />
