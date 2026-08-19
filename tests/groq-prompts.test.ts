@@ -68,6 +68,14 @@ describe("Prompt construction (spec §24, §60)", () => {
     expect(msgs[1].content).toContain("Prize scams");
   });
 
+  it("includes broad digital help and Bangla response guidance", () => {
+    const msgs = buildSystemMessages("", false, "bn");
+    expect(msgs[0].content).toContain("computers, mobile phones");
+    expect(msgs[0].content).toContain("Banglish");
+    expect(msgs[0].content).toContain("interface language is Bangla");
+    expect(msgs[0].content).not.toContain("cybersecurity questions only");
+  });
+
   it("summary prompt strips personal data instruction", () => {
     const prompt = buildSummaryPrompt([{ role: "user", content: "hi" }]);
     expect(prompt).toContain("Do not include personal data");

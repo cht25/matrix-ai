@@ -19,7 +19,7 @@ const SECTIONS = [
   },
   {
     title: "AI and PII redaction",
-    body: "Before your message reaches the AI, a PII redaction service removes emails, phone numbers, codes, passwords, addresses and ID-like data. The AI never sees them and is instructed never to ask for them. Harmful or off-topic requests are refused without contacting the AI at all.",
+    body: "Before your message reaches the AI, a PII redaction service removes emails, phone numbers, codes, passwords, addresses and ID-like data. The AI never sees them and is instructed never to ask for them. Normal questions—including Bangla and Banglish—are passed through; only clearly harmful operational cyber requests are stopped and redirected to safer help.",
   },
   {
     title: "Temporary chats",

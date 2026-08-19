@@ -19,7 +19,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb, adminAuth, nowTs } from "@/lib/firebase/admin";
 import { verifySession, type SessionUser } from "@/lib/firebase/session";
 import { redactPII, containsCredentials, leakedPII } from "@/lib/ai/pii";
-import { classify, isGreetingOrFollowup } from "@/lib/ai/domain";
+import { classify } from "@/lib/ai/domain";
 import { createProvider, MODELS, type AIMessage, type AIProvider } from "@/lib/ai/groq";
 import { buildSystemMessages, validateOutput, buildSummaryPrompt } from "@/lib/ai/prompts";
 import { validateImageUpload } from "@/lib/ai/upload-validation";
@@ -236,6 +236,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const wantStream = body.stream === true;
   const regenerate = body.regenerate === true;
   const reuseUser = body.reuse_user === true || regenerate;
+  const preferredLanguage: "en" | "bn" | undefined = body.language === "bn" ? "bn" : body.language === "en" ? "en" : undefined;
 
   if (!message) return json({ error: "MESSAGE_REQUIRED" }, 400);
   if (message.length > 4000) return json({ error: "MESSAGE_TOO_LONG" }, 400);
@@ -279,26 +280,18 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     });
   }
 
-  // --- classification (no LLM call needed for refusals) ------------------------
+  // --- classification ----------------------------------------------------------
+  // Normal and unknown-language questions are never blocked. Classification is
+  // used for topic-aware retrieval and clearly harmful operational requests only.
   const classification = classify(redaction.redacted);
-  // Existing threads: allow short follow-ups / greetings that would otherwise
-  // look off-topic ("ok", "what next?") so the chat doesn't break mid-flow.
-  if (!classification.on_topic && (conversationId || isGreetingOrFollowup(message))) {
-    classification.on_topic = true;
-    classification.topic = classification.topic ?? "cyber_education";
-    classification.refusal = null;
-  }
-  if (!classification.on_topic) {
-    await logSafety(d, user.uid, "off_topic", "off-topic request refused");
-    await logUsage(d, user.uid, "none", "chat", {}, Date.now() - started, "refused");
-    await convRef.collection("messages").add({ role: "assistant", content: classification.refusal!, metadata: {}, created_at: nowTs() });
-    return json({ reply: classification.refusal, conversation_id: convId, refused: true, reason: "off_topic" });
-  }
   if (classification.harmful) {
     await logSafety(d, user.uid, "harmful_request", classification.harmful_category ?? "harmful");
     await logUsage(d, user.uid, "none", "chat", {}, Date.now() - started, "refused");
-    await convRef.collection("messages").add({ role: "assistant", content: classification.refusal!, metadata: {}, created_at: nowTs() });
-    return json({ reply: classification.refusal, conversation_id: convId, refused: true, reason: "harmful" });
+    const refusal = preferredLanguage === "bn" || /[\u0980-\u09ff]/.test(message)
+      ? "কারও ক্ষতি করা বা অনুমতি ছাড়া অন্যের সিস্টেমে ঢোকার নির্দেশনা আমি দিতে পারি না। তবে একই বিষয় নিরাপদভাবে শেখা, নিজের ডিভাইস বা অ্যাকাউন্ট রক্ষা করা, সমস্যা থেকে পুনরুদ্ধার করা, অথবা বৈধ ল্যাবে অনুশীলনে আমি সাহায্য করতে পারি।"
+      : classification.refusal!;
+    await convRef.collection("messages").add({ role: "assistant", content: refusal, metadata: {}, created_at: nowTs() });
+    return json({ reply: refusal, conversation_id: convId, refused: true, reason: "harmful" });
   }
   if (redaction.detected.some((x) => x.type === "otp" || x.type === "password")) {
     await logSafety(d, user.uid, "pii_detected", redaction.detected.map((x) => x.type).join(","));
@@ -338,7 +331,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const rag = await buildRagContext(d, redaction.redacted, profileDoc.data()?.country ?? null);
 
   const messages: AIMessage[] = [
-    ...buildSystemMessages(rag, false),
+    ...buildSystemMessages(rag, false, preferredLanguage),
     ...history,
     { role: "user", content: redaction.redacted },
   ];

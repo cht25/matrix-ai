@@ -49,7 +49,7 @@ export const en = {
   "dashboard.score": "Cyber Safety Score",
   "dashboard.recommendations": "Security recommendations",
   "chat.title": "Ask MATRIX AI",
-  "chat.placeholder": "Ask about phishing, passwords, scams, privacy…",
+  "chat.placeholder": "Ask about computers, phones, apps, IT or online safety…",
   "chat.tempNotice": "Temporary Chat — This conversation will not be saved to your account or memory.",
   "chat.send": "Send",
   "chat.new": "New chat",
