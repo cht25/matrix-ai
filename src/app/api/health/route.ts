@@ -1,14 +1,19 @@
 // GET /api/health — honest, machine-readable service health for operators and
 // uptime checks. No secrets are returned; every probe is a live network call.
 //
-//   200 { ok: true,  firebase: "reachable", cloudinary: "reachable", ai: "online"|"unavailable"|"unknown", checkedAt }
-//   503 { ok: false, firebase: "not-configured"|"unreachable", … }
+//   200 { ok: true,  firebase: "reachable", webConfig: "valid", cloudinary: "reachable", ai: "online"|"unavailable"|"unknown", checkedAt }
+//   503 { ok: false, firebase: "not-configured"|"unreachable", webConfig: "invalid-key"|"project-mismatch"|…, … }
+//
+// `webConfig` independently probes the public web API key against Identity
+// Toolkit, so a bad NEXT_PUBLIC_FIREBASE_API_KEY (the classic Render
+// misconfiguration) is reported even when the Admin SDK is also unset.
 
 import { NextResponse } from "next/server";
 import { isConfigured, isAiConfigured, isCloudinaryConfigured } from "@/lib/env";
 import { adminConfigured } from "@/lib/firebase/admin";
 import { createProvider } from "@/lib/ai/groq";
 import { ping as pingCloudinary } from "@/lib/server/cloudinary";
+import { checkWebFirebaseConfig } from "@/lib/server/identitytoolkit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,11 +21,18 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const checkedAt = new Date().toISOString();
 
+  const webConfig = await checkWebFirebaseConfig();
+  const webConfigFields = {
+    webConfig: webConfig.status,
+    ...(webConfig.reportedProjectId ? { webConfigProject: webConfig.reportedProjectId } : {}),
+  };
+
   if (!isConfigured() || !adminConfigured()) {
     return NextResponse.json(
       {
         ok: false,
         firebase: "not-configured",
+        ...webConfigFields,
         cloudinary: isCloudinaryConfigured() ? "unknown" : "not-configured",
         ai: isAiConfigured() ? "unknown" : "not-configured",
         checkedAt,
