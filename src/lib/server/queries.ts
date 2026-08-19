@@ -6,6 +6,14 @@ import "server-only";
 import { Db } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
 import { isAdmin, securityScore } from "@/lib/server/rpc";
+import { ascDoc, descDoc } from "@/lib/server/sort";
+
+// IMPORTANT: queries in this module deliberately use equality-only Firestore
+// filters; ordering / null-filtering / limiting happen in memory (see
+// @/lib/server/sort). Equality-only queries never require a composite index,
+// so the app works on a fresh Firebase project before any index deployment —
+// a missing composite index used to take every page down with a
+// FAILED_PRECONDITION 500 at render time.
 
 const iso = (v: unknown): string => {
   const ts = v as { toDate?: () => Date } | null | undefined;
@@ -18,18 +26,16 @@ const iso = (v: unknown): string => {
 // ---------------------------------------------------------------------------
 export async function getSidebarData(d: Db, uid: string) {
   const [convs, profile, admin] = await Promise.all([
-    d.collection("conversations")
-      .where("user_id", "==", uid)
-      .where("deleted_at", "==", null)
-      .where("archived_at", "==", null)
-      .orderBy("updated_at", "desc")
-      .limit(100)
-      .get(),
+    d.collection("conversations").where("user_id", "==", uid).get(),
     d.collection("profiles").doc(uid).get(),
     isAdmin(d, uid),
   ]);
+  const active = convs.docs
+    .filter((c) => c.data().deleted_at == null && c.data().archived_at == null)
+    .sort(descDoc("updated_at"))
+    .slice(0, 100);
   return {
-    conversations: convs.docs.map((c) => {
+    conversations: active.map((c) => {
       const data = c.data();
       return {
         id: c.id,
@@ -49,15 +55,18 @@ export async function getSidebarData(d: Db, uid: string) {
 // Dashboard
 // ---------------------------------------------------------------------------
 export async function getDashboardData(d: Db, user: SessionUser) {
-  const [score, profile, progress, certs, events, analyses, settings] = await Promise.all([
+  const [score, profile, progress, certsAll, eventsAll, analysesAll, settings] = await Promise.all([
     securityScore(d, user),
     d.collection("profiles").doc(user.uid).get(),
     d.collection("course_progress").where("user_id", "==", user.uid).where("status", "==", "completed").get(),
-    d.collection("certificates").where("user_id", "==", user.uid).orderBy("issued_at", "desc").limit(5).get(),
-    d.collection("security_events").where("user_id", "==", user.uid).orderBy("created_at", "desc").limit(5).get(),
-    d.collection("security_analyses").where("user_id", "==", user.uid).orderBy("created_at", "desc").limit(3).get(),
+    d.collection("certificates").where("user_id", "==", user.uid).get(),
+    d.collection("security_events").where("user_id", "==", user.uid).get(),
+    d.collection("security_analyses").where("user_id", "==", user.uid).get(),
     d.collection("user_security_settings").doc(user.uid).get(),
   ]);
+  const certs = certsAll.docs.sort(descDoc("issued_at")).slice(0, 5);
+  const events = eventsAll.docs.sort(descDoc("created_at")).slice(0, 5);
+  const analyses = analysesAll.docs.sort(descDoc("created_at")).slice(0, 3);
   return {
     securityScore: score,
     profile: profile.exists
@@ -70,9 +79,9 @@ export async function getDashboardData(d: Db, user: SessionUser) {
         }
       : null,
     completedLessons: progress.docs.map((p) => ({ status: p.data().status as string })),
-    certificates: certs.docs.map((c) => ({ id: c.id, certificate_id: c.data().certificate_id as string, issued_at: iso(c.data().issued_at) })),
-    securityEvents: events.docs.map((e) => ({ event_type: e.data().event_type as string, created_at: iso(e.data().created_at) })),
-    analyses: analyses.docs.map((a) => ({ risk_level: a.data().risk_level as string, created_at: iso(a.data().created_at) })),
+    certificates: certs.map((c) => ({ id: c.id, certificate_id: c.data().certificate_id as string, issued_at: iso(c.data().issued_at) })),
+    securityEvents: events.map((e) => ({ event_type: e.data().event_type as string, created_at: iso(e.data().created_at) })),
+    analyses: analyses.map((a) => ({ risk_level: a.data().risk_level as string, created_at: iso(a.data().created_at) })),
     alertsEnabled: settings.data()?.notifications_security_alerts ?? true,
   };
 }
@@ -92,15 +101,12 @@ export async function getConversation(d: Db, uid: string, id: string) {
 }
 
 export async function getHistory(d: Db, uid: string) {
-  const convs = await d
-    .collection("conversations")
-    .where("user_id", "==", uid)
-    .where("is_temporary", "==", false)
-    .where("deleted_at", "==", null)
-    .orderBy("updated_at", "desc")
-    .limit(200)
-    .get();
-  return convs.docs.map((c) => {
+  const convs = await d.collection("conversations").where("user_id", "==", uid).get();
+  return convs.docs
+    .filter((c) => (c.data().is_temporary ?? false) === false && c.data().deleted_at == null)
+    .sort(descDoc("updated_at"))
+    .slice(0, 200)
+    .map((c) => {
     const data = c.data();
     return {
       id: c.id,
@@ -118,19 +124,19 @@ export async function getHistory(d: Db, uid: string) {
 // ---------------------------------------------------------------------------
 export async function getCoursesOverview(d: Db, uid: string) {
   const [courses, modules, lessons, progress, certs] = await Promise.all([
-    d.collection("courses").where("status", "==", "published").orderBy("sort_order", "asc").get(),
+    d.collection("courses").where("status", "==", "published").get(),
     d.collection("course_modules").get(),
-    d.collection("lessons").orderBy("sort_order", "asc").get(),
+    d.collection("lessons").get(),
     d.collection("course_progress").where("user_id", "==", uid).get(),
     d.collection("certificates").where("user_id", "==", uid).get(),
   ]);
   return {
-    courses: courses.docs.map((c) => ({
+    courses: courses.docs.sort(ascDoc("sort_order")).map((c) => ({
       id: c.id, slug: c.data().slug, title: c.data().title, description: c.data().description ?? "",
       level: c.data().level ?? "beginner", duration_minutes: c.data().duration_minutes ?? 30, icon: c.data().icon ?? "book",
     })),
     modules: modules.docs.map((m) => ({ id: m.id, course_id: m.data().course_id, title: m.data().title })),
-    lessons: lessons.docs.map((l) => ({ id: l.id, module_id: l.data().module_id, title: l.data().title, sort_order: l.data().sort_order ?? 0 })),
+    lessons: lessons.docs.sort(ascDoc("sort_order")).map((l) => ({ id: l.id, module_id: l.data().module_id, title: l.data().title, sort_order: l.data().sort_order ?? 0 })),
     progress: progress.docs.map((p) => ({ lesson_id: p.data().lesson_id, status: p.data().status })),
     certificates: certs.docs.map((c) => ({ course_id: c.data().course_id, certificate_id: c.data().certificate_id })),
   };
@@ -158,17 +164,18 @@ export async function getCourseDetail(d: Db, uid: string, slug: string) {
   if (!course) return null;
   const courseId = course.id;
   const [modules, lessons, quizzes, progress, attempts, cert] = await Promise.all([
-    d.collection("course_modules").where("course_id", "==", courseId).orderBy("sort_order", "asc").get(),
+    d.collection("course_modules").where("course_id", "==", courseId).get(),
     d.collection("lessons").orderBy("sort_order", "asc").get(),
     d.collection("quizzes").orderBy("sort_order", "asc").get(),
     d.collection("course_progress").where("user_id", "==", uid).get(),
     d.collection("quiz_attempts").where("user_id", "==", uid).get(),
     d.collection("certificates").doc(`${uid}_${courseId}`).get(),
   ]);
-  const moduleIds = new Set(modules.docs.map((m) => m.id));
+  const sortedModules = modules.docs.sort(ascDoc("sort_order"));
+  const moduleIds = new Set(sortedModules.map((m) => m.id));
   return {
     course,
-    modules: modules.docs.map((m) => ({ id: m.id, title: m.data().title, description: m.data().description ?? "", sort_order: m.data().sort_order ?? 0 })),
+    modules: sortedModules.map((m) => ({ id: m.id, title: m.data().title, description: m.data().description ?? "", sort_order: m.data().sort_order ?? 0 })),
     lessons: lessons.docs.filter((l) => moduleIds.has(l.data().module_id)).map((l) => ({ id: l.id, module_id: l.data().module_id, title: l.data().title, summary: l.data().summary ?? "", sort_order: l.data().sort_order ?? 0 })),
     quizzes: quizzes.docs.filter((q) => moduleIds.has(q.data().module_id)).map((q) => ({ id: q.id, module_id: q.data().module_id, title: q.data().title, pass_percent: q.data().pass_percent ?? 60, sort_order: q.data().sort_order ?? 0 })),
     progress: progress.docs.map((p) => ({ lesson_id: p.data().lesson_id, status: p.data().status })),
@@ -182,7 +189,7 @@ export async function getLessonPage(d: Db, uid: string, slug: string, lessonId: 
   if (!course) return null;
   const [lesson, modules, lessons, progress] = await Promise.all([
     d.collection("lessons").doc(lessonId).get(),
-    d.collection("course_modules").where("course_id", "==", course.id as string).orderBy("sort_order", "asc").get(),
+    d.collection("course_modules").where("course_id", "==", course.id as string).get(),
     d.collection("lessons").orderBy("sort_order", "asc").get(),
     d.collection("course_progress").doc(`${uid}_${lessonId}`).get(),
   ]);
@@ -190,7 +197,7 @@ export async function getLessonPage(d: Db, uid: string, slug: string, lessonId: 
   return {
     lesson: { id: lesson.id, module_id: String(lesson.data()!.module_id ?? ""), title: String(lesson.data()!.title ?? ""), summary: String(lesson.data()!.summary ?? ""), body: String(lesson.data()!.body ?? ""), sort_order: Number(lesson.data()!.sort_order ?? 0) },
     course: { id: course.id, slug: course.slug, title: course.title },
-    modules: modules.docs.map((m) => ({ id: m.id, course_id: m.data().course_id, sort_order: m.data().sort_order ?? 0 })),
+    modules: modules.docs.sort(ascDoc("sort_order")).map((m) => ({ id: m.id, course_id: m.data().course_id, sort_order: m.data().sort_order ?? 0 })),
     lessons: lessons.docs.map((l) => ({ id: l.id, module_id: l.data().module_id, title: l.data().title, sort_order: l.data().sort_order ?? 0 })),
     progress: progress.exists ? { status: progress.data()!.status as string } : null,
   };
@@ -201,13 +208,14 @@ export async function getQuizPage(d: Db, slug: string, quizId: string) {
   if (!course) return null;
   const quiz = await d.collection("quizzes").doc(quizId).get();
   if (!quiz.exists) return null;
-  const questions = await d.collection("quiz_questions").where("quiz_id", "==", quizId).orderBy("sort_order", "asc").get();
+  const questions = await d.collection("quiz_questions").where("quiz_id", "==", quizId).get();
+  const sortedQuestions = questions.docs.sort(ascDoc("sort_order"));
   // Options are stored on the question WITHOUT the correct flag; correct
   // answers live in the server-only quiz_answers collection.
   return {
     quiz: { id: quiz.id, title: String(quiz.data()!.title ?? ""), pass_percent: quiz.data()!.pass_percent ?? 60 },
     course: { id: course.id, slug: course.slug, title: course.title },
-    questions: questions.docs.flatMap((q) =>
+    questions: sortedQuestions.flatMap((q) =>
       ((q.data().options ?? []) as { id: string; option_text: string }[]).map((o) => ({
         id: o.id,
         question_id: q.id,
@@ -216,17 +224,17 @@ export async function getQuizPage(d: Db, slug: string, quizId: string) {
         explanation: q.data().explanation ?? "",
       })),
     ),
-    questionList: questions.docs.map((q) => ({ id: q.id, question: q.data().question, explanation: q.data().explanation ?? "" })),
+    questionList: sortedQuestions.map((q) => ({ id: q.id, question: q.data().question, explanation: q.data().explanation ?? "" })),
   };
 }
 
 export async function getCertificatesPage(d: Db, uid: string) {
   const [certs, courses] = await Promise.all([
-    d.collection("certificates").where("user_id", "==", uid).orderBy("issued_at", "desc").get(),
+    d.collection("certificates").where("user_id", "==", uid).get(),
     d.collection("courses").get(),
   ]);
   return {
-    certificates: certs.docs.map((c) => ({
+    certificates: certs.docs.sort(descDoc("issued_at")).map((c) => ({
       id: c.id, certificate_id: c.data().certificate_id, course_id: c.data().course_id,
       issued_at: iso(c.data().issued_at), verification_status: c.data().verification_status ?? "valid",
     })),
@@ -241,10 +249,10 @@ export async function getOnboardingData(d: Db, uid: string) {
   const [profile, consent, verifications, countries] = await Promise.all([
     d.collection("profiles").doc(uid).get(),
     d.collection("guardian_consents").doc(uid).get(),
-    d.collection("identity_verifications").where("user_id", "==", uid).orderBy("created_at", "desc").limit(1).get(),
+    d.collection("identity_verifications").where("user_id", "==", uid).get(),
     d.collection("countries").orderBy("name", "asc").get(),
   ]);
-  const v = verifications.docs[0];
+  const v = verifications.docs.sort(descDoc("created_at"))[0];
   return {
     profile: profile.exists
       ? {
@@ -263,7 +271,7 @@ export async function getSettingsData(d: Db, uid: string) {
   const [profile, settings, memories, countries] = await Promise.all([
     d.collection("profiles").doc(uid).get(),
     d.collection("user_security_settings").doc(uid).get(),
-    d.collection("user_memories").where("user_id", "==", uid).orderBy("created_at", "desc").get(),
+    d.collection("user_memories").where("user_id", "==", uid).get(),
     d.collection("countries").orderBy("name", "asc").get(),
   ]);
   const p = profile.data();
@@ -284,24 +292,26 @@ export async function getSettingsData(d: Db, uid: string) {
           deletion_requested_at: s.deletion_requested_at ? iso(s.deletion_requested_at) : null,
         }
       : null,
-    memories: memories.docs.map((m) => ({ id: m.id, memory: m.data().memory, source: m.data().source ?? "ai", created_at: iso(m.data().created_at) })),
+    memories: memories.docs.sort(descDoc("created_at")).map((m) => ({ id: m.id, memory: m.data().memory, source: m.data().source ?? "ai", created_at: iso(m.data().created_at) })),
     countries: countries.docs.map((c) => ({ id: c.id, name: c.data().name })),
   };
 }
 
 export async function getSecurityPageData(d: Db, user: SessionUser) {
-  const [events, sessions, score, profile, settings, progress, certs] = await Promise.all([
-    d.collection("security_events").where("user_id", "==", user.uid).orderBy("created_at", "desc").limit(50).get(),
-    d.collection("user_sessions").where("user_id", "==", user.uid).orderBy("last_seen_at", "desc").limit(20).get(),
+  const [eventsAll, sessionsAll, score, profile, settings, progress, certs] = await Promise.all([
+    d.collection("security_events").where("user_id", "==", user.uid).get(),
+    d.collection("user_sessions").where("user_id", "==", user.uid).get(),
     securityScore(d, user),
     d.collection("profiles").doc(user.uid).get(),
     d.collection("user_security_settings").doc(user.uid).get(),
     d.collection("course_progress").where("user_id", "==", user.uid).where("status", "==", "completed").get(),
     d.collection("certificates").where("user_id", "==", user.uid).get(),
   ]);
+  const events = eventsAll.docs.sort(descDoc("created_at")).slice(0, 50);
+  const sessions = sessionsAll.docs.sort(descDoc("last_seen_at")).slice(0, 20);
   return {
-    events: events.docs.map((e) => ({ id: e.id, event_type: e.data().event_type, metadata: e.data().metadata ?? {}, created_at: iso(e.data().created_at) })),
-    sessions: sessions.docs.map((s) => ({ id: s.id, device_name: s.data().device_name ?? "", last_seen_at: iso(s.data().last_seen_at), revoked_at: s.data().revoked_at ? iso(s.data().revoked_at) : null })),
+    events: events.map((e) => ({ id: e.id, event_type: e.data().event_type, metadata: e.data().metadata ?? {}, created_at: iso(e.data().created_at) })),
+    sessions: sessions.map((s) => ({ id: s.id, device_name: s.data().device_name ?? "", last_seen_at: iso(s.data().last_seen_at), revoked_at: s.data().revoked_at ? iso(s.data().revoked_at) : null })),
     score,
     ageVerified: profile.data()?.age_verified ?? false,
     settings: {
@@ -319,12 +329,12 @@ export async function getSecurityPageData(d: Db, user: SessionUser) {
 // ---------------------------------------------------------------------------
 export async function getScamsData(d: Db) {
   const [categories, articles] = await Promise.all([
-    d.collection("scam_categories").where("status", "==", "active").orderBy("sort_order", "asc").get(),
-    d.collection("scam_articles").where("status", "==", "active").orderBy("title", "asc").get(),
+    d.collection("scam_categories").where("status", "==", "active").get(),
+    d.collection("scam_articles").where("status", "==", "active").get(),
   ]);
   return {
-    categories: categories.docs.map((c) => ({ id: c.id, slug: c.data().slug, name: c.data().name, description: c.data().description ?? "", icon: c.data().icon ?? "shield" })),
-    articles: articles.docs.map((a) => ({ id: a.id, category_id: String(a.data().category_id ?? ""), title: String(a.data().title ?? ""), slug: String(a.data().slug ?? ""), description: String(a.data().description ?? ""), source_name: String(a.data().source_name ?? ""), last_verified: a.data().last_verified ? iso(a.data().last_verified) : "" })),
+    categories: categories.docs.sort(ascDoc("sort_order")).map((c) => ({ id: c.id, slug: c.data().slug, name: c.data().name, description: c.data().description ?? "", icon: c.data().icon ?? "shield" })),
+    articles: articles.docs.sort(ascDoc("title")).map((a) => ({ id: a.id, category_id: String(a.data().category_id ?? ""), title: String(a.data().title ?? ""), slug: String(a.data().slug ?? ""), description: String(a.data().description ?? ""), source_name: String(a.data().source_name ?? ""), last_verified: a.data().last_verified ? iso(a.data().last_verified) : "" })),
   };
 }
 
@@ -336,20 +346,23 @@ export async function getScamArticle(d: Db, slug: string) {
 
 export async function getReportPageData(d: Db) {
   const [categories, resources, countries] = await Promise.all([
-    d.collection("scam_categories").where("status", "==", "active").orderBy("sort_order", "asc").get(),
-    d.collection("reporting_resources").where("status", "==", "active").orderBy("organization", "asc").get(),
+    d.collection("scam_categories").where("status", "==", "active").get(),
+    d.collection("reporting_resources").where("status", "==", "active").get(),
     d.collection("countries").orderBy("name", "asc").get(),
   ]);
   return {
-    categories: categories.docs.map((c) => ({ id: c.id, name: c.data().name })),
-    resources: resources.docs.map((r) => ({ organization: r.data().organization, official_url: r.data().official_url, phone: r.data().phone ?? "", description: r.data().description ?? "", country_id: r.data().country_id, last_verified: iso(r.data().last_verified) })),
+    categories: categories.docs.sort(ascDoc("sort_order")).map((c) => ({ id: c.id, name: c.data().name })),
+    resources: resources.docs.sort(ascDoc("organization")).map((r) => ({ organization: r.data().organization, official_url: r.data().official_url, phone: r.data().phone ?? "", description: r.data().description ?? "", country_id: r.data().country_id, last_verified: iso(r.data().last_verified) })),
     countries: countries.docs.map((c) => ({ id: c.id, name: c.data().name })),
   };
 }
 
 export async function getScannerData(d: Db, uid: string) {
-  const analyses = await d.collection("security_analyses").where("user_id", "==", uid).orderBy("created_at", "desc").limit(10).get();
-  return analyses.docs.map((a) => ({ id: a.id, risk_level: a.data().risk_level, confidence: a.data().confidence ?? 0, recommendation: a.data().recommendation ?? "", created_at: iso(a.data().created_at) }));
+  const analyses = await d.collection("security_analyses").where("user_id", "==", uid).get();
+  return analyses.docs
+    .sort(descDoc("created_at"))
+    .slice(0, 10)
+    .map((a) => ({ id: a.id, risk_level: a.data().risk_level, confidence: a.data().confidence ?? 0, recommendation: a.data().recommendation ?? "", created_at: iso(a.data().created_at) }));
 }
 
 // ---------------------------------------------------------------------------

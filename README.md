@@ -153,10 +153,14 @@ firebase.json              deploy config (rules, indexes, hosting, emulators)
    `FIREBASE_PRIVATE_KEY` env vars (keep the `\n` escapes on hosts like Render/Vercel).
    On Firebase App Hosting / Cloud Run / GCE you can skip this — Application Default
    Credentials are used automatically.
-7. **Deploy rules + indexes:**
+7. **Deploy rules (+ optional indexes):**
    ```bash
-   npm run deploy          # firestore rules + indexes
+   npm run deploy          # firestore rules (+ the performance indexes)
    ```
+   The app itself never requires composite indexes (all reads use
+   equality-only filters with in-memory ordering), so this step only deploys
+   the **security rules** — the indexes in `firestore.indexes.json` are an
+   optional performance extra for large datasets.
 8. **Seed the content** (countries, scam library, 7 courses, admin RBAC):
    ```bash
    npm run seed
@@ -207,7 +211,9 @@ firebase deploy                              # app + rules + indexes in one shot
 
 Whichever you choose, remember to:
 - add your domain to Firebase Auth → Settings → Authorized domains,
-- run `npm run deploy` once so rules/indexes exist in the Firebase project.
+- run `npm run deploy` once so the Firestore security rules exist in the
+  Firebase project (composite indexes are optional — see
+  [Troubleshooting deployments](#troubleshooting-deployments)).
 
 ---
 
@@ -325,6 +331,36 @@ If Firebase env vars are missing/invalid, the app renders honest
 "Server problem — service not configured" screens and `/api/health` returns
 `503 {"ok":false,"firebase":"not-configured",...}`. With credentials present it
 performs live checks (Firestore read + Groq reachability) — never a cached lie.
+
+## Troubleshooting deployments
+
+**Every app page (`/chat`, `/dashboard`, …) returns 500 right after a
+successful login.** Symptom in the browser console: *"An error occurred in the
+Server Components render"* and the host logs show a Firestore error such as
+`9 FAILED_PRECONDITION: The query requires an index` or `7 PERMISSION_DENIED`
+/`5 NOT_FOUND`.
+
+- **Cause:** server-rendered pages failed while loading sidebar/dashboard data
+  from Firestore. Queries that mixed filters with `orderBy` required Firestore
+  **composite indexes**, which don't exist until somebody runs
+  `firebase deploy --only firestore:indexes` for the project — a fresh project
+  therefore crashed every page after sign-in (sign-in itself was unaffected
+  because it absorbs Firestore provisioning failures).
+- **Fix (shipped):** all reads now use equality-only Firestore filters (which
+  never need composite indexes) and order/filter/limit in memory; the app
+  layout additionally falls back to an empty sidebar — with the full error in
+  the server logs — instead of 500-ing every page. The real fix is observable
+  in your host logs as `[MATRIX] Sidebar data failed to load …`.
+- **Still recommended:** deploy the security rules once
+  (`npm run deploy`). Composite indexes from `firestore.indexes.json` remain
+  available as an optional performance optimization for large datasets
+  (`firebase deploy --only firestore:indexes`), but nothing breaks without
+  them.
+
+**`/api/health` shows `firebase: "unreachable"`.** The service account can mint
+sessions but cannot reach Firestore: create the database (Firestore → Create
+database → Production mode) and keep `FIREBASE_PRIVATE_KEY` pasted with `\\n`
+escapes exactly as shown in `.env.example`.
 
 ## Internationalization
 

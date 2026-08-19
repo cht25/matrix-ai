@@ -20,7 +20,17 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const { conversations, profileName, isAdmin } = await getSidebarData(db(), user.uid);
+  // The sidebar must never 500 every page: any Firestore failure here is
+  // logged server-side with full detail and the shell renders with an empty
+  // conversation list instead (fail-closed: admin nav hidden on error).
+  let sidebar: Awaited<ReturnType<typeof getSidebarData>>;
+  try {
+    sidebar = await getSidebarData(db(), user.uid);
+  } catch (err) {
+    console.error(`[MATRIX] Sidebar data failed to load for uid ${user.uid} — rendering the shell without it.`, err);
+    sidebar = { conversations: [], profileName: "", isAdmin: false };
+  }
+  const { conversations, profileName, isAdmin } = sidebar;
 
   return (
     <AppShell
