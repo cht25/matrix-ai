@@ -12,6 +12,7 @@ import { getSessionUser, type SessionUser } from "@/lib/firebase/session";
 import { RpcError } from "@/lib/server/rpc";
 import * as rpc from "@/lib/server/rpc";
 import { nowTs } from "@/lib/firebase/admin";
+import { ascDoc } from "@/lib/server/sort";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -264,14 +265,14 @@ const ACTIONS: Record<string, Handler> = {
 
   admin_pending_verifications: async (d, u) => {
     if (!(await rpc.hasPermission(d, u.uid, "verification.review"))) throw new RpcError("PERMISSION_DENIED", 403);
-    const snap = await d.collection("identity_verifications").where("verification_status", "==", "pending_review").orderBy("created_at", "asc").get();
-    return snap.docs.map((v) => ({ id: v.id, user_id: v.data().user_id, verification_type: v.data().verification_type, verification_reference: v.data().verification_reference ?? "", created_at: v.data().created_at?.toDate?.().toISOString() ?? "" }));
+    const snap = await d.collection("identity_verifications").where("verification_status", "==", "pending_review").get();
+    return snap.docs.sort(ascDoc("created_at")).map((v) => ({ id: v.id, user_id: v.data().user_id, verification_type: v.data().verification_type, verification_reference: v.data().verification_reference ?? "", created_at: v.data().created_at?.toDate?.().toISOString() ?? "" }));
   },
 
   admin_pending_consents: async (d, u) => {
     if (!(await rpc.hasPermission(d, u.uid, "consent.review"))) throw new RpcError("PERMISSION_DENIED", 403);
-    const snap = await d.collection("guardian_consents").where("status", "==", "pending").orderBy("created_at", "asc").get();
-    return snap.docs.map((c) => ({ id: c.id, user_id: c.id, status: c.data().status, consent_method: c.data().consent_method ?? "", guardian_name: c.data().guardian_name ?? "", guardian_email: c.data().guardian_email ?? "", created_at: c.data().created_at?.toDate?.().toISOString() ?? "" }));
+    const snap = await d.collection("guardian_consents").where("status", "==", "pending").get();
+    return snap.docs.sort(ascDoc("created_at")).map((c) => ({ id: c.id, user_id: c.id, status: c.data().status, consent_method: c.data().consent_method ?? "", guardian_name: c.data().guardian_name ?? "", guardian_email: c.data().guardian_email ?? "", created_at: c.data().created_at?.toDate?.().toISOString() ?? "" }));
   },
 
   admin_articles: async (d, u) => {

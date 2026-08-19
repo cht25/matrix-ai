@@ -10,6 +10,7 @@ import "server-only";
 import crypto from "node:crypto";
 import { Db, nowTs, toTs } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
+import { descDoc } from "@/lib/server/sort";
 
 // ---------------------------------------------------------------------------
 // Errors (mirror the SQL exception codes)
@@ -462,14 +463,12 @@ async function activeGrant(d: Db, grantId: string) {
 export async function adminListConversations(d: Db, requester: SessionUser, grantId: string) {
   if (!(await hasPermission(d, requester.uid, "privacy.access"))) throw new RpcError("PERMISSION_DENIED", 403);
   const grant = await activeGrant(d, grantId);
-  const snap = await d
-    .collection("conversations")
-    .where("user_id", "==", grant.target_user_id)
-    .where("deleted_at", "==", null)
-    .orderBy("updated_at", "desc")
-    .limit(100)
-    .get();
-  return snap.docs.map((c) => ({
+  const snap = await d.collection("conversations").where("user_id", "==", grant.target_user_id).get();
+  return snap.docs
+    .filter((c) => c.data().deleted_at == null)
+    .sort(descDoc("updated_at"))
+    .slice(0, 100)
+    .map((c) => ({
     id: c.id,
     title: c.data().title ?? "",
     created_at: c.data().created_at?.toDate?.().toISOString() ?? "",
@@ -535,7 +534,9 @@ export async function submitQuizAttempt(d: Db, user: SessionUser, quizId: string
     const attempts = await d.collection("quiz_attempts").where("user_id", "==", user.uid).where("quiz_id", "==", quizId).get();
     if (attempts.size >= maxAttempts) throw new RpcError("ATTEMPT_LIMIT_REACHED", 429);
   }
-  const questions = await d.collection("quiz_questions").where("quiz_id", "==", quizId).orderBy("sort_order", "asc").get();
+  // Equality-only fetch (no composite index required); the original query
+  // ordered by sort_order but only empty/size are consumed below.
+  const questions = await d.collection("quiz_questions").where("quiz_id", "==", quizId).get();
   if (questions.empty) throw new RpcError("QUIZ_EMPTY");
   const total = questions.size;
 
