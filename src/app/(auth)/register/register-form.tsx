@@ -5,7 +5,7 @@
 //   4 Email verification → 5 Profile → 6 Complete
 // Sensitive identity data is never sent to the AI.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   createUserWithEmailAndPassword,
@@ -80,7 +80,7 @@ export function RegisterForm() {
       // The DOB is validated server-side later (complete_profile); it is
       // stored in the Firestore profile, never sent to the AI.
       await sendEmailVerification(cred.user, { url: `${window.location.origin}/verify?next=/onboarding` });
-      await mintSessionCookie().catch(() => {}); // provision profile docs + SSR cookie
+      await mintSessionCookie();
       setBusy(false);
       go(2);
     } catch (err) {

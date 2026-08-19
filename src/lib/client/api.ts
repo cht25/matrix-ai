@@ -35,8 +35,9 @@ export async function rpc<T = unknown>(action: string, args: Record<string, unkn
  */
 export async function mintSessionCookie(): Promise<void> {
   const user = fbAuth().currentUser;
-  if (!user) return;
-  const idToken = await user.getIdToken();
+  if (!user) throw new RpcCallError("UNAUTHENTICATED", 401);
+  // Force-refresh so the server never sees a stale token after OAuth.
+  const idToken = await user.getIdToken(true);
   const res = await fetch("/api/auth/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

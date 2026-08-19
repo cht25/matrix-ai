@@ -38,10 +38,19 @@ const serviceKeyRaw = clean(process.env.FIREBASE_PRIVATE_KEY ?? "");
 const hasServiceAccount = Boolean(serviceEmail) && !PLACEHOLDERS.some((p) => serviceEmail.includes(p)) && serviceKeyRaw.includes("PRIVATE KEY");
 const hasAdc = Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS) || process.env.FIREBASE_AUTH_EMULATOR_HOST != null;
 
+// Popup/redirect OAuth must use a Firebase-hosted authDomain
+// (*.firebaseapp.com / *.web.app). A custom host like Render is not a valid
+// auth handler and triggers “domain is not authorized for OAuth”.
+const resolvedAuthDomain = (() => {
+  const raw = clean(authDomain);
+  if (raw.endsWith(".firebaseapp.com") || raw.endsWith(".web.app")) return raw;
+  return projectId ? `${projectId}.firebaseapp.com` : raw;
+})();
+
 export const env = {
   firebasePublic: {
     apiKey,
-    authDomain: authDomain || (projectId ? `${projectId}.firebaseapp.com` : ""),
+    authDomain: resolvedAuthDomain,
     projectId,
     messagingSenderId,
     appId,

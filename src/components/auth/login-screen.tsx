@@ -4,7 +4,7 @@
 // Calligraphic brand lockup as the primary identity; restrained inputs;
 // black sign-in button; OAuth as secondary actions.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -12,8 +12,11 @@ import {
   GoogleAuthProvider,
   FacebookAuthProvider,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   getMultiFactorResolver,
   type MultiFactorResolver,
+  type AuthProvider,
 } from "firebase/auth";
 import { TotpMultiFactorGenerator } from "firebase/auth";
 import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
@@ -74,14 +77,22 @@ export function Divider() {
   );
 }
 
-export function OAuthButtons({ onGoogle, onFacebook }: { onGoogle: () => void; onFacebook: () => void }) {
+export function OAuthButtons({ onGoogle, onFacebook }: { onGoogle: () => void | Promise<void>; onFacebook: () => void | Promise<void> }) {
   const [busy, setBusy] = useState<"google" | "facebook" | null>(null);
+  async function run(which: "google" | "facebook", fn: () => void | Promise<void>) {
+    setBusy(which);
+    try {
+      await fn();
+    } finally {
+      setBusy(null);
+    }
+  }
   return (
     <div className="grid grid-cols-2 gap-2.5">
       <button
         type="button"
         disabled={busy !== null}
-        onClick={() => { setBusy("google"); onGoogle(); }}
+        onClick={() => { void run("google", onGoogle); }}
         className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border-strong bg-surface px-3 text-[13px] font-medium text-ink transition-colors hover:border-accent hover:text-accent disabled:opacity-60"
       >
         {busy === "google" ? <Spinner /> : <GoogleIcon />} Google
@@ -89,7 +100,7 @@ export function OAuthButtons({ onGoogle, onFacebook }: { onGoogle: () => void; o
       <button
         type="button"
         disabled={busy !== null}
-        onClick={() => { setBusy("facebook"); onFacebook(); }}
+        onClick={() => { void run("facebook", onFacebook); }}
         className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border-strong bg-surface px-3 text-[13px] font-medium text-ink transition-colors hover:border-accent hover:text-accent disabled:opacity-60"
       >
         {busy === "facebook" ? <Spinner /> : <FacebookIcon />} Facebook
@@ -129,17 +140,31 @@ export function LoginForm() {
   const [mfaCode, setMfaCode] = useState("");
 
   async function finishSignIn() {
-    // Provision profile docs + mint the httpOnly SSR session cookie, then log
-    // the security event (best-effort) and enter the app.
-    try {
-      await mintSessionCookie();
-      await rpc("record_security_event", { event_type: "login", metadata: {} }).catch(() => {});
-    } catch {
-      /* cookie best-effort — client session still valid */
-    }
+    await mintSessionCookie();
+    await rpc("record_security_event", { event_type: "login", metadata: {} }).catch(() => {});
     router.push(next);
     router.refresh();
   }
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cred = await getRedirectResult(fbAuth());
+        if (cancelled || !cred) return;
+        setBusy(true);
+        await finishSignIn();
+      } catch (err) {
+        if (cancelled) return;
+        setError(describeAuthError(err, "We couldn't finish Google / Facebook sign-in. Please try again."));
+        setBusy(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -151,6 +176,11 @@ export function LoginForm() {
       await finishSignIn();
     } catch (err) {
       const code = (err as { code?: string }).code ?? "";
+      if (code === "SESSION_MINT_FAILED" || (err as { status?: number }).status === 500) {
+        setError("Signed in with Firebase, but the server could not create your session. Check FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY on the host and retry.");
+        setBusy(false);
+        return;
+      }
       if (code === "auth/multi-factor-auth-required") {
         const resolver = getMultiFactorResolver(fbAuth(), err as never);
         if (resolver.hints.some((h) => h.factorId === "totp")) {
@@ -163,7 +193,7 @@ export function LoginForm() {
         return;
       }
       const invalid = ["auth/invalid-credential", "auth/wrong-password", "auth/user-not-found", "auth/invalid-login-credentials"];
-      setError(invalid.includes(code) ? "Incorrect email or password." : "We couldn't sign you in. Please try again.");
+      setError(invalid.includes(code) ? "Incorrect email or password." : describeAuthError(err, "We couldn't sign you in. Please try again."));
       setBusy(false);
     }
   }

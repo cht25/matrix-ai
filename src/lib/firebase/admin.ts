@@ -12,7 +12,7 @@
 import "server-only";
 import { App, getApps, initializeApp, cert } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { env, isConfigured, isServerConfigured, logMissingFirebaseConfig, serviceAccount } from "@/lib/env";
 import { NotConfiguredError } from "@/lib/data";
 
@@ -63,18 +63,18 @@ export function adminDb() {
 
 export type Db = ReturnType<typeof adminDb>;
 
-export function nowTs(): FirebaseFirestore.Timestamp {
-  return FirebaseFirestore.Timestamp.now();
+export function nowTs(): Timestamp {
+  return Timestamp.now();
 }
 
-export function iso(ts: FirebaseFirestore.Timestamp | Date | undefined | null): string {
+export function iso(ts: Timestamp | Date | undefined | null): string {
   if (!ts) return "";
   return (ts instanceof Date ? ts : ts.toDate()).toISOString();
 }
 
-export function toTs(value: string | Date | FirebaseFirestore.Timestamp | undefined | null): FirebaseFirestore.Timestamp {
+export function toTs(value: string | Date | Timestamp | undefined | null): Timestamp {
   if (!value) return nowTs();
-  if (typeof value === "string") return FirebaseFirestore.Timestamp.fromDate(new Date(value));
-  if (value instanceof Date) return FirebaseFirestore.Timestamp.fromDate(value);
+  if (typeof value === "string") return Timestamp.fromDate(new Date(value));
+  if (value instanceof Date) return Timestamp.fromDate(value);
   return value;
 }
