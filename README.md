@@ -31,8 +31,9 @@ secure server-side AI gateway.
 12. [Testing](#testing)
 13. [Production security checklist](#production-security-checklist)
 14. [Fakes-free behavior & health](#fakes-free-behavior--health)
-15. [Internationalization](#internationalization)
-16. [Migration notes (Supabase → Firebase)](#migration-notes-supabase--firebase)
+15. [Troubleshooting deployments](#troubleshooting-deployments)
+16. [Internationalization](#internationalization)
+17. [Migration notes (Supabase → Firebase)](#migration-notes-supabase--firebase)
 
 ---
 

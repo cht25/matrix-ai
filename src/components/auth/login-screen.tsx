@@ -17,6 +17,7 @@ import {
 } from "firebase/auth";
 import { TotpMultiFactorGenerator } from "firebase/auth";
 import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
+import { describeAuthError } from "@/lib/firebase/auth-errors";
 import { mintSessionCookie, rpc } from "@/lib/client/api";
 import { BrandLockup } from "@/components/logo";
 import { Alert, Button, Field, Input, Spinner } from "@/components/ui";

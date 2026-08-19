@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { sendPasswordResetEmail } from "firebase/auth";
 import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
+import { describeAuthError } from "@/lib/firebase/auth-errors";
 import { AuthShell, AuthUnavailable } from "@/components/auth/login-screen";
 import { Alert, Button, Field, Input, Spinner } from "@/components/ui";
 

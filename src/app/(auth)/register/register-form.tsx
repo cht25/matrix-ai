@@ -14,6 +14,7 @@ import {
   reload,
 } from "firebase/auth";
 import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
+import { describeAuthError } from "@/lib/firebase/auth-errors";
 import { mintSessionCookie, rpc, uploadOwnedFile } from "@/lib/client/api";
 import { isValidEmail, validateAgeForRegistration, cn } from "@/lib/utils";
 import { Check, Upload } from "lucide-react";
@@ -88,7 +89,7 @@ export function RegisterForm() {
       if (code === "auth/email-already-in-use") return setError("An account with this email already exists. Try signing in.");
       if (code === "auth/weak-password") return setError("Password must be at least 8 characters.");
       if (code === "auth/operation-not-allowed") return setError("Email sign-up is not enabled in Firebase yet (Authentication → Sign-in method).");
-      return setError("We couldn't create your account. Please try again.");
+      return setError(describeAuthError(err, "We couldn't create your account. Please try again."));
     }
   }
 

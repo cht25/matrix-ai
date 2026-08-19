@@ -68,6 +68,11 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   // API routes handle their own authentication (JSON 401s) — the middleware
-  // only guards page routing.
-  matcher: ["/((?!api/|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)"],
+  // only guards page routing. Static assets in public/ must be excluded or
+  // the browser gets a login-page redirect instead of the file: the manifest
+  // fetch follows redirects, so /site.webmanifest → /login produced
+  // "Manifest: Line 1, column 1, Syntax error" on logged-out sessions.
+  matcher: [
+    "/((?!api/|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|webmanifest|json|txt|xml|woff2?)$).*)",
+  ],
 };

@@ -9,6 +9,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { confirmPasswordReset, signInWithEmailAndPassword, verifyPasswordResetCode } from "firebase/auth";
 import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
+import { describeAuthError } from "@/lib/firebase/auth-errors";
 import { mintSessionCookie, rpc } from "@/lib/client/api";
 import { AuthShell, AuthUnavailable } from "@/components/auth/login-screen";
 import { Alert, Button, Field, Input, Spinner } from "@/components/ui";
