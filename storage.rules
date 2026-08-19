@@ -1,0 +1,46 @@
+rules_version = '2';
+
+// =============================================================================
+// MATRIX AI — Cloud Storage security rules (port of the Supabase bucket
+// policies). Files live in the user's own folder; identity documents and
+// security screenshots are private (owner + admins only). Retention and
+// deletion run server-side.
+// =============================================================================
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function adminClaim() {
+      return signedIn() && request.auth.token.admin == true;
+    }
+
+    function validImage() {
+      return request.resource.size > 0
+        && request.resource.size < 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/(png|jpeg|webp)');
+    }
+
+    // Screenshot scanner uploads — owner-only, image-only, ≤ 8 MB.
+    match /security-screenshots/{uid}/{file} {
+      allow read: if signedIn() && request.auth.uid == uid || adminClaim();
+      allow create, update: if signedIn() && request.auth.uid == uid && validImage();
+      allow delete: if false; // server-side retention only
+    }
+
+    // Age-verification documents — owner writes, owner + admin reads.
+    match /identity-documents/{uid}/{file} {
+      allow read: if signedIn() && request.auth.uid == uid || adminClaim();
+      allow create: if signedIn() && request.auth.uid == uid && validImage();
+      allow update, delete: if false; // re-submit creates a new file server-tracked
+    }
+
+    // Everything else (exports, attachments, avatars) is server-managed.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
