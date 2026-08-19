@@ -24,7 +24,11 @@ services:
         sync: false
       - key: NEXT_PUBLIC_FIREBASE_APP_ID
         sync: false
-      # Canonical app URL (used for links/redirects). Set to your Render URL.
+      # Canonical app URL (links / emails only — middleware never redirects
+      # here). Must be a hostname that is actually attached to THIS service
+      # (the Cloudflare subdomain, or *.onrender.com). Do not set the apex
+      # (https://thamjj13.top) unless that host is also added under
+      # Render → Custom Domains, or visitors will see a plain-text Not Found.
       - key: NEXT_PUBLIC_APP_URL
         sync: false
       # Server-only Admin SDK + AI gateway secrets.

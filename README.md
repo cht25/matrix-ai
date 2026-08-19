@@ -225,7 +225,7 @@ Whichever you choose, remember to:
 | `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | client | Firebase web config |
 | `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | client + server | Firebase project id |
 | `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` / `..._APP_ID` | client | Firebase web config |
-| `NEXT_PUBLIC_APP_URL` | client + server | canonical URL for links/emails |
+| `NEXT_PUBLIC_APP_URL` | client + server | canonical URL for links/emails (not used as a redirect target). Must be a host that is actually attached to the Render service |
 | `FIREBASE_CLIENT_EMAIL` | server only | Admin SDK service account |
 | `FIREBASE_PRIVATE_KEY` | server only | Admin SDK private key |
 | `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | server only | Private image storage (screenshots, ID docs) |
@@ -361,6 +361,45 @@ Server Components render"* and the host logs show a Firestore error such as
 sessions but cannot reach Firestore: create the database (Firestore → Create
 database → Production mode) and keep `FIREBASE_PRIVATE_KEY` pasted with `\\n`
 escapes exactly as shown in `.env.example`.
+
+
+**Custom subdomain (Cloudflare + Render) redirects to `https://thamjj13.top`
+and the browser shows a plain-text `Not Found`.** This is **not** a missing
+`/login` route and it is **not** an SPA catch-all problem.
+
+- This app is Next.js App Router. `GET /login` is a real page
+  (`src/app/(auth)/login/page.tsx`). The branded 404 (`src/app/not-found.tsx`)
+  says **"Page not found"** in HTML. A bare `Not Found` body is Render's
+  default response when the `Host` header is not attached to this service.
+- `src/middleware.ts` used to 307 unauthenticated visitors from `/` (and
+  every other non-public path) to `/login` with an **absolute**
+  `Location` built from `request.url`. Behind Cloudflare / Render that URL
+  can inherit a different host — typically the apex you set as
+  `NEXT_PUBLIC_APP_URL` or as Render's *primary* custom domain. If
+  `thamjj13.top` is not itself added to the Render service (only the
+  subdomain is), the apex returns plain-text `Not Found`.
+- **Fix in this repo:** `/` is now public (the homepage already renders the
+  login screen) and middleware redirects are **relative** (`Location: /login?next=…`)
+  so they cannot change host.
+- **Fix on the host:**
+  1. Render → your service → Custom Domains: add **exactly** the hostname
+     you visit (the subdomain). Do not mark an unbound apex as the
+     primary domain / "redirect to".
+  2. Cloudflare: DNS CNAME for the subdomain → `*.onrender.com`, proxy
+     orange-cloud is fine. SSL/TLS mode **Full (strict)**. Remove any
+     Redirect / Page Rule that sends `*.thamjj13.top` to the apex unless
+     the apex is also attached to this same Render service.
+  3. Set `NEXT_PUBLIC_APP_URL` to the hostname that actually reaches
+     Render (e.g. `https://app.thamjj13.top`), then redeploy so the
+     value is baked into the client bundle.
+  4. Firebase Auth → Settings → Authorized domains: add that same host.
+  5. Confirm `GET https://<your-subdomain>/api/health` and
+     `GET https://<your-subdomain>/login` both hit this app.
+
+**Do not add an Express-style `app.get('*')` / Next rewrite to `/`.** This
+is not a static SPA. A catch-all rewrite would shadow `/login`, `/chat`,
+and every API route. Unknown paths already fall through to
+`src/app/not-found.tsx`.
 
 ## Internationalization
 
