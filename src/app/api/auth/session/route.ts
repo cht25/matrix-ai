@@ -30,14 +30,18 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const d = adminDb();
-    await ensureUserDocuments(adminAuth(), d, decoded.uid, decoded.email ?? null);
+    // Mint the cookie first so a Firestore hiccup cannot block sign-in.
     const cookie = await createSessionCookie(idToken);
+    try {
+      await ensureUserDocuments(adminAuth(), adminDb(), decoded.uid, decoded.email ?? null);
+    } catch (provisionErr) {
+      console.error("[MATRIX] ensureUserDocuments failed", provisionErr);
+    }
     const res = NextResponse.json({ ok: true, uid: decoded.uid });
     res.cookies.set(SESSION_COOKIE, cookie, sessionCookieOptions());
     return res;
-  } catch {
-    // Valid token but our side failed (Firestore/provisioning).
+  } catch (err) {
+    console.error("[MATRIX] session cookie mint failed", err);
     return NextResponse.json({ error: "INTERNAL" }, { status: 500 });
   }
 }
