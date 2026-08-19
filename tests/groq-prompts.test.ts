@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GroqProvider } from "../supabase/functions/_shared/groq";
-import { buildSystemMessages, validateOutput, buildSummaryPrompt } from "../supabase/functions/_shared/prompts";
+import { GroqProvider } from "../src/lib/ai/groq";
+import { buildSystemMessages, validateOutput, buildSummaryPrompt } from "../src/lib/ai/prompts";
 
 const originalFetch = globalThis.fetch;
 

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/browser";
+import { rpc, signOutEverywhere } from "@/lib/client/api";
 import { Alert, Button, Card } from "@/components/ui";
 
 type Memory = { id: string; memory: string; source: string; created_at: string };
@@ -15,25 +15,18 @@ export function PrivacyPanel({ settings, memories }: { settings: { memory_enable
   const [busy, setBusy] = useState(false);
 
   async function toggle(update: { memory_enabled?: boolean; chat_history_enabled?: boolean }) {
-    const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    const { error } = await supabase.from("user_security_settings").update(update).eq("user_id", user.id);
-    if (!error) router.refresh();
+    await rpc("settings_update", update).catch(() => {});
+    router.refresh();
   }
 
   async function deleteMemory(id: string) {
-    const supabase = createClient();
-    await supabase.from("user_memories").delete().eq("id", id);
+    await rpc("memory_delete", { id }).catch(() => {});
     router.refresh();
   }
 
   async function clearAllMemories() {
     if (!confirm("Clear all saved memories? This can't be undone.")) return;
-    const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    await supabase.from("user_memories").delete().eq("user_id", user.id);
+    await rpc("memory_delete", { all: true }).catch(() => {});
     router.refresh();
   }
 
@@ -41,15 +34,21 @@ export function PrivacyPanel({ settings, memories }: { settings: { memory_enable
     setBusy(true);
     setMsg(null);
     try {
-      const supabase = createClient();
-      const { data, error } = await supabase.functions.invoke("export-data", {});
-      if (error || (data as { error?: string })?.error) {
-        setMsg({ tone: "danger", text: "Export failed. Make sure the export-data edge function is deployed." });
+      // Direct JSON download from /api/account/export (the server logs a
+      // security event + notification for the export).
+      const res = await fetch("/api/account/export", { credentials: "same-origin" });
+      if (!res.ok) {
+        setMsg({ tone: "danger", text: "Export failed. Please try again." });
         return;
       }
-      const { url } = data as { url: string };
-      window.open(url, "_blank", "noopener,noreferrer");
-      setMsg({ tone: "success", text: "Your export is downloading. The link expires in 7 days." });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `matrix-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setMsg({ tone: "success", text: "Your export is downloading." });
     } finally {
       setBusy(false);
     }
@@ -60,21 +59,28 @@ export function PrivacyPanel({ settings, memories }: { settings: { memory_enable
     const password = prompt("Re-authenticate: enter your password to confirm deletion.");
     if (!password) return;
     setBusy(true);
-    const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    const { error: signInErr } = await supabase.auth.signInWithPassword({ email: user?.email ?? "", password });
-    if (signInErr) {
-      setMsg({ tone: "danger", text: "Re-authentication failed — deletion cancelled." });
+    try {
+      const res = await fetch("/api/account/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ confirm: "DELETE", password }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setMsg({
+          tone: "danger",
+          text: body.error === "REAUTH_FAILED" ? "Re-authentication failed — deletion cancelled." : "Deletion failed. Please contact support.",
+        });
+        setBusy(false);
+        return;
+      }
+    } catch {
+      setMsg({ tone: "danger", text: "Deletion failed. Please contact support." });
       setBusy(false);
       return;
     }
-    const { data, error } = await supabase.functions.invoke("delete-account", { body: { confirm: "DELETE" } });
-    setBusy(false);
-    if (error || (data as { error?: string })?.error) {
-      setMsg({ tone: "danger", text: "Deletion failed. Please contact support." });
-      return;
-    }
-    await supabase.auth.signOut();
+    await signOutEverywhere().catch(() => {});
     window.location.href = "/";
   }
 

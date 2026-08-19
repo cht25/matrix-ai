@@ -1,21 +1,21 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { getDataClient, getCurrentUser } from "@/lib/data";
+import { db, getCurrentUser } from "@/lib/data";
+import { getAdminPermissions } from "@/lib/server/queries";
 import { AdminNav } from "@/components/admin/admin-nav";
 import { CoursesAdmin } from "@/components/admin/courses-admin";
 
 export const metadata: Metadata = { title: "Admin · Courses" };
 
 export default async function AdminCoursesPage() {
-  const db = await getDataClient();
-  const user = await getCurrentUser(db);
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
-  const { data: perms } = await db.from("admin_permissions").select("code");
-  const codes = new Set<string>((perms?.data ?? perms ?? []).map((p: { code: string }) => p.code));
+  const codes = new Set<string>(await getAdminPermissions(db(), user.uid));
   if (codes.size === 0) redirect("/chat");
 
-  const { data: courses } = await db.from("courses").select("id, slug, title, level, status, sort_order").order("sort_order");
-  const courseList = (courses?.data ?? courses ?? []) as { id: string; slug: string; title: string; level: string; status: string; sort_order: number }[];
+  const d = db();
+  const courseDocs = await d.collection("courses").orderBy("sort_order", "asc").get();
+  const courseList = courseDocs.docs.map((c) => ({ id: c.id, slug: c.data().slug, title: c.data().title, level: c.data().level ?? "beginner", status: c.data().status ?? "published", sort_order: c.data().sort_order ?? 0 }));
 
   return (
     <div className="space-y-6">

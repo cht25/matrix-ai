@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { getDataClient } from "@/lib/data";
+import { db } from "@/lib/data";
+import { verifyCertificateLookup } from "@/lib/server/rpc";
 import { MatrixMark, MatrixWordmark } from "@/components/logo";
 import { ServerProblemScreen } from "@/components/server-problem";
 import { isConfigured } from "@/lib/env";
@@ -24,11 +25,13 @@ export default async function CertificateVerifyPage({ params }: { params: Promis
   if (!isConfigured()) {
     return <ServerProblemScreen kind="config" />;
   }
-  const db = await getDataClient();
-  const { data, error } = await db.rpc("verify_certificate_lookup", { p_certificate_id: id });
-  const result = (data ?? null) as VerifyResult | null;
-
-  if (error || !result) notFound();
+  let result: VerifyResult | null = null;
+  try {
+    result = (await verifyCertificateLookup(db(), id)) as VerifyResult;
+  } catch {
+    result = null;
+  }
+  if (!result) notFound();
 
   return (
     <div className="min-h-dvh">

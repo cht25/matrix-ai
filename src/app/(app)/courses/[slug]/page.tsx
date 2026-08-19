@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { getDataClient, getCurrentUser } from "@/lib/data";
+import { db, getCurrentUser } from "@/lib/data";
+import { getCourseDetail } from "@/lib/server/queries";
 import { Badge, Card, Progress } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
@@ -9,27 +10,19 @@ export const metadata: Metadata = { title: "Course" };
 
 export default async function CourseDetailPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const db = await getDataClient();
-  const user = await getCurrentUser(db);
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const { data: course } = await db.from("courses").select("*").eq("slug", slug).eq("status", "published").maybeSingle();
-  if (!course) notFound();
+  const data = await getCourseDetail(db(), user.uid, slug);
+  if (!data) notFound();
+  const course = data.course;
+  const cert = data.certificate;
 
-  const [{ data: modules }, { data: lessons }, { data: quizzes }, { data: progress }, { data: attempts }, { data: cert }] = await Promise.all([
-    db.from("course_modules").select("id, title, description, sort_order").eq("course_id", course.id).order("sort_order"),
-    db.from("lessons").select("id, module_id, title, summary, sort_order").order("sort_order"),
-    db.from("quizzes").select("id, module_id, title, pass_percent, sort_order").order("sort_order"),
-    db.from("course_progress").select("lesson_id, status").eq("user_id", user!.id),
-    db.from("quiz_attempts").select("quiz_id, passed, score_percent").eq("user_id", user!.id),
-    db.from("certificates").select("certificate_id, issued_at").eq("user_id", user!.id).eq("course_id", course.id).maybeSingle(),
-  ]);
-
-  const modList = (modules?.data ?? modules ?? []) as { id: string; title: string; description: string; sort_order: number }[];
-  const lessonList = (lessons?.data ?? lessons ?? []) as { id: string; module_id: string; title: string; summary: string }[];
-  const quizList = (quizzes?.data ?? quizzes ?? []) as { id: string; module_id: string; title: string; pass_percent: number }[];
-  const progList = (progress?.data ?? progress ?? []) as { lesson_id: string; status: string }[];
-  const attList = (attempts?.data ?? attempts ?? []) as { quiz_id: string; passed: boolean; score_percent: number }[];
+  const modList = data.modules;
+  const lessonList = data.lessons;
+  const quizList = data.quizzes;
+  const progList = data.progress;
+  const attList = data.attempts;
   const done = new Set(progList.filter((p) => p.status === "completed").map((p) => p.lesson_id));
   const passedQuizzes = new Set(attList.filter((a) => a.passed).map((a) => a.quiz_id));
 

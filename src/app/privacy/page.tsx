@@ -7,7 +7,7 @@ export const metadata: Metadata = { title: "Privacy" };
 const SECTIONS = [
   {
     title: "What we store",
-    body: "Your profile (name, date of birth for age verification, school, country), conversations, memories, course progress, quiz results, certificates, security events, scam reports and notification preferences. All stored in Supabase PostgreSQL — the single source of truth.",
+    body: "Your profile (name, date of birth for age verification, school, country), conversations, memories, course progress, quiz results, certificates, security events, scam reports and notification preferences. All stored in Google Cloud Firestore (Firebase) — the single source of truth.",
   },
   {
     title: "What we never store",

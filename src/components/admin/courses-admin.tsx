@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { createClient } from "@/lib/supabase/browser";
+import { rpc, RpcCallError } from "@/lib/client/api";
 import { Alert, Badge, Button, Card, Spinner } from "@/components/ui";
 
 type Course = { id: string; slug: string; title: string; level: string; status: string; sort_order: number };
@@ -13,13 +13,12 @@ export function CoursesAdmin({ codes, courses }: { codes: Set<string>; courses: 
   async function toggle(c: Course) {
     setBusy(c.id);
     const next = c.status === "published" ? "draft" : "published";
-    const supabase = createClient();
-    const { error } = await supabase.from("courses").update({ status: next }).eq("id", c.id);
-    if (error) {
-      setMsg(error.message);
-    } else {
-      await supabase.rpc("log_audit", { p_action: "course_status_changed", p_target_type: "courses", p_target_id: c.id, p_reason: `→ ${next}` });
+    try {
+      await rpc("course_status", { id: c.id, status: next });
+      await rpc("log_audit", { action: "course_status_changed", target_type: "courses", target_id: c.id, reason: `→ ${next}` }).catch(() => {});
       setMsg(`"${c.title}" is now ${next}. Audit logged.`);
+    } catch (err) {
+      setMsg(err instanceof RpcCallError ? err.code : "UPDATE_FAILED");
     }
     setBusy(null);
     window.location.reload();

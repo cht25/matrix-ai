@@ -7,14 +7,24 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { createClient, supabaseBrowserConfigured } from "@/lib/supabase/browser";
+import {
+  signInWithEmailAndPassword,
+  GoogleAuthProvider,
+  FacebookAuthProvider,
+  signInWithPopup,
+  getMultiFactorResolver,
+  type MultiFactorResolver,
+} from "firebase/auth";
+import { TotpMultiFactorGenerator } from "firebase/auth";
+import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
+import { mintSessionCookie, rpc } from "@/lib/client/api";
 import { BrandLockup } from "@/components/logo";
 import { Alert, Button, Field, Input, Spinner } from "@/components/ui";
 import { ThemeToggle } from "@/lib/theme";
 import { ServerProblem } from "@/components/server-problem";
 import { failureCopy } from "@/lib/api-errors";
 
-/** Rendered (instead of any auth form) when the deployment has no Supabase
+/** Rendered (instead of any auth form) when the deployment has no Firebase
  *  configuration — authentication honestly cannot work, so we say so. */
 export function AuthUnavailable() {
   return (
@@ -22,7 +32,7 @@ export function AuthUnavailable() {
       failure={{
         ...failureCopy("not-configured"),
         detail:
-          "MATRIX is not connected to its backend services yet, so authentication is unavailable. The administrator must set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY and redeploy.",
+          "MATRIX is not connected to its backend services yet, so authentication is unavailable. The administrator must set the NEXT_PUBLIC_FIREBASE_* variables and redeploy.",
       }}
     />
   );
@@ -114,35 +124,47 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [mfa, setMfa] = useState<{ factorId: string; challengeId: string } | null>(null);
+  const [mfa, setMfa] = useState<MultiFactorResolver | null>(null);
   const [mfaCode, setMfaCode] = useState("");
 
-  async function handleLogin(e: React.FormEvent) {
-    e.preventDefault();
-    if (!supabaseBrowserConfigured) return;
-    setError(null);
-    setBusy(true);
-    const supabase = createClient();
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      setError(error.message === "Invalid login credentials" ? "Incorrect email or password." : "We couldn't sign you in. Please try again.");
-      setBusy(false);
-      return;
-    }
-    if (!data.session && data.user?.factors?.length) {
-      const factorId = data.user.factors[0].id;
-      const { data: cd, error: ce } = await supabase.auth.mfa.challenge({ factorId });
-      if (ce || !cd) {
-        setError("Could not start two-factor verification.");
-        setBusy(false);
-        return;
-      }
-      setMfa({ factorId, challengeId: cd.id });
-      setBusy(false);
-      return;
+  async function finishSignIn() {
+    // Provision profile docs + mint the httpOnly SSR session cookie, then log
+    // the security event (best-effort) and enter the app.
+    try {
+      await mintSessionCookie();
+      await rpc("record_security_event", { event_type: "login", metadata: {} }).catch(() => {});
+    } catch {
+      /* cookie best-effort — client session still valid */
     }
     router.push(next);
     router.refresh();
+  }
+
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault();
+    if (!firebaseBrowserConfigured) return;
+    setError(null);
+    setBusy(true);
+    try {
+      await signInWithEmailAndPassword(fbAuth(), email, password);
+      await finishSignIn();
+    } catch (err) {
+      const code = (err as { code?: string }).code ?? "";
+      if (code === "auth/multi-factor-auth-required") {
+        const resolver = getMultiFactorResolver(fbAuth(), err as never);
+        if (resolver.hints.some((h) => h.factorId === "totp")) {
+          setMfa(resolver);
+          setBusy(false);
+          return;
+        }
+        setError("This account uses a sign-in method that isn't available here.");
+        setBusy(false);
+        return;
+      }
+      const invalid = ["auth/invalid-credential", "auth/wrong-password", "auth/user-not-found", "auth/invalid-login-credentials"];
+      setError(invalid.includes(code) ? "Incorrect email or password." : "We couldn't sign you in. Please try again.");
+      setBusy(false);
+    }
   }
 
   async function handleMfa(e: React.FormEvent) {
@@ -150,23 +172,37 @@ export function LoginForm() {
     if (!mfa) return;
     setError(null);
     setBusy(true);
-    const supabase = createClient();
-    const { data, error } = await supabase.auth.mfa.verify({ factorId: mfa.factorId, challengeId: mfa.challengeId, code: mfaCode });
-    if (error || !data) {
+    try {
+      const hint = mfa.hints.find((h) => h.factorId === "totp");
+      if (!hint) throw new Error("no totp factor");
+      const assertion = await TotpMultiFactorGenerator.assertionForSignIn(hint.uid, mfaCode.trim());
+      await mfa.resolveSignIn(assertion);
+      await finishSignIn();
+    } catch {
       setError("That verification code didn't work. Please try again.");
       setBusy(false);
-      return;
     }
-    router.push(next);
-    router.refresh();
   }
 
-  function oauth(provider: "google" | "facebook") {
-    const supabase = createClient();
-    supabase.auth.signInWithOAuth({ provider, options: { redirectTo: `${window.location.origin}/verify?next=${next}` } });
+  async function oauth(provider: "google" | "facebook") {
+    const auth = fbAuth();
+    const providerObj = provider === "google" ? new GoogleAuthProvider() : new FacebookAuthProvider();
+    try {
+      await signInWithPopup(auth, providerObj);
+      await finishSignIn();
+    } catch (err) {
+      const code = (err as { code?: string }).code ?? "";
+      if (code === "auth/popup-blocked" || code === "auth/operation-not-supported-in-this-environment") {
+        const { signInWithRedirect } = await import("firebase/auth");
+        await signInWithRedirect(auth, providerObj).catch(() => {});
+        return;
+      }
+      if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") return;
+      setError("Sign-in with " + provider + " failed. Try email instead.");
+    }
   }
 
-  if (!supabaseBrowserConfigured) {
+  if (!firebaseBrowserConfigured) {
     return <AuthUnavailable />;
   }
 

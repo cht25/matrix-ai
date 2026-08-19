@@ -1,29 +1,24 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getDataClient, getCurrentUser } from "@/lib/data";
+import { db, getCurrentUser } from "@/lib/data";
+import { getCoursesOverview } from "@/lib/server/queries";
 import { Card, Progress } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Courses" };
 
 export default async function CoursesPage() {
-  const db = await getDataClient();
-  const user = await getCurrentUser(db);
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const { data: courses } = await db.from("courses").select("id, slug, title, description, level, duration_minutes, icon").eq("status", "published").order("sort_order");
-
   // Per-course completion: lessons total vs completed.
-  const { data: modules } = await db.from("course_modules").select("id, course_id, title");
-  const { data: lessons } = await db.from("lessons").select("id, module_id, title, sort_order").order("sort_order");
-  const { data: progress } = await db.from("course_progress").select("lesson_id, status").eq("user_id", user!.id);
-  const { data: certs } = await db.from("certificates").select("course_id, certificate_id").eq("user_id", user!.id);
+  const overview = await getCoursesOverview(db(), user.uid);
 
-  const courseList = (courses?.data ?? courses ?? []) as { id: string; slug: string; title: string; description: string; level: string; duration_minutes: number; icon: string }[];
-  const moduleList = (modules?.data ?? modules ?? []) as { id: string; course_id: string; title: string }[];
-  const lessonList = (lessons?.data ?? lessons ?? []) as { id: string; module_id: string; title: string }[];
-  const progressList = (progress?.data ?? progress ?? []) as { lesson_id: string; status: string }[];
-  const certList = (certs?.data ?? certs ?? []) as { course_id: string; certificate_id: string }[];
+  const courseList = overview.courses;
+  const moduleList = overview.modules;
+  const lessonList = overview.lessons;
+  const progressList = overview.progress;
+  const certList = overview.certificates;
   const doneLessons = new Set(progressList.filter((p) => p.status === "completed").map((p) => p.lesson_id));
 
   const stats = courseList.map((c) => {

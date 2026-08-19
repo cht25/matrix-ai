@@ -1,27 +1,18 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getDataClient, getCurrentUser } from "@/lib/data";
+import { db, getCurrentUser } from "@/lib/data";
+import { getHistory } from "@/lib/server/queries";
 import { EmptyState } from "@/components/ui";
 import { HistorySearch } from "@/components/history-search";
 
 export const metadata: Metadata = { title: "History" };
 
 export default async function HistoryPage() {
-  const db = await getDataClient();
-  const user = await getCurrentUser(db);
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const { data } = await db
-    .from("conversations")
-    .select("id, title, summary, created_at, updated_at, archived_at")
-    .eq("user_id", user!.id)
-    .neq("is_temporary", true)
-    .is("deleted_at", null)
-    .order("updated_at", { ascending: false })
-    .limit(200);
-
-  const conversations = (data ?? []) as { id: string; title: string; summary: string; created_at: string; updated_at: string; archived_at: string | null }[];
+  const conversations = await getHistory(db(), user.uid);
 
   return (
     <div className="space-y-6">

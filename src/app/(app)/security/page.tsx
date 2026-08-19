@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getDataClient, getCurrentUser } from "@/lib/data";
+import { db, getCurrentUser } from "@/lib/data";
+import { getSecurityPageData } from "@/lib/server/queries";
 import { Badge, Card, EmptyState, Progress } from "@/components/ui";
 import { RevokeSessionButton } from "@/components/revoke-session-button";
 import { timeAgo } from "@/lib/utils";
@@ -9,28 +10,18 @@ import { timeAgo } from "@/lib/utils";
 export const metadata: Metadata = { title: "Security" };
 
 export default async function SecurityPage() {
-  const db = await getDataClient();
-  const user = await getCurrentUser(db);
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const [eventsRes, sessionsRes, scoreRes, profileRes, settingsRes, progressRes, certRes] = await Promise.all([
-    db.from("security_events").select("id, event_type, metadata, created_at").eq("user_id", user!.id).order("created_at", { ascending: false }).limit(50),
-    db.from("user_sessions").select("id, device_name, last_seen_at, revoked_at").eq("user_id", user!.id).order("last_seen_at", { ascending: false }).limit(20),
-    db.rpc("security_score"),
-    db.from("profiles").select("age_verified").eq("id", user!.id).maybeSingle(),
-    db.from("user_security_settings").select("memory_enabled, chat_history_enabled, notifications_security_alerts").eq("user_id", user!.id).maybeSingle(),
-    db.from("course_progress").select("status").eq("user_id", user!.id).eq("status", "completed"),
-    db.from("certificates").select("id").eq("user_id", user!.id),
-  ]);
-
-  const events = (eventsRes.data ?? []) as { id: string; event_type: string; metadata: Record<string, unknown>; created_at: string }[];
-  const sessions = (sessionsRes.data ?? []) as { id: string; device_name: string; last_seen_at: string; revoked_at: string | null }[];
-  const score = typeof scoreRes.data === "number" ? scoreRes.data : 0;
-  const profile = profileRes.data as { age_verified?: boolean } | null;
-  const settings = settingsRes.data as { memory_enabled?: boolean; chat_history_enabled?: boolean; notifications_security_alerts?: boolean } | null;
-  const lessonsDone = progressRes.data?.length ?? 0;
-  const certCount = certRes.data?.length ?? 0;
-  const emailVerified = Boolean(user?.email_confirmed_at);
+  const data = await getSecurityPageData(db(), user);
+  const events = data.events;
+  const sessions = data.sessions;
+  const score = data.score;
+  const profile = { age_verified: data.ageVerified };
+  const settings = data.settings;
+  const lessonsDone = data.completedCount;
+  const certCount = data.certificateCount;
+  const emailVerified = user.emailVerified;
 
   // Derived, honest sub-scores from real signals:
   const mfaEvent = [...events].find((e) => e.event_type === "mfa_enabled" || e.event_type === "mfa_disabled");

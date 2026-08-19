@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/browser";
+import { rpc, RpcCallError } from "@/lib/client/api";
 import { Alert, Button, Field, Input, Select, Textarea } from "@/components/ui";
 
 export function ReportForm({ categories, countries }: { categories: { id: string; name: string }[]; countries: { id: string; name: string }[] }) {
@@ -24,23 +24,22 @@ export function ReportForm({ categories, countries }: { categories: { id: string
     if (description.trim().length < 20) return setError("Please describe what happened in at least a few sentences.");
     setError(null);
     setBusy(true);
-    const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { setError("Not signed in."); setBusy(false); return; }
-
-    const { error: insErr } = await supabase.from("scam_reports").insert({
-      user_id: user.id,
-      category_id: category || null,
-      platform: platform.trim(),
-      description: description.trim(),
-      money_lost: parseFloat(moneyLost) || 0,
-      account_compromised: accountCompromised,
-      personal_information_shared: infoShared,
-      evidence_available: evidence,
-      country,
-    });
+    try {
+      await rpc("report_submit", {
+        category_id: category || null,
+        platform: platform.trim(),
+        description: description.trim(),
+        money_lost: parseFloat(moneyLost) || 0,
+        account_compromised: accountCompromised,
+        personal_information_shared: infoShared,
+        evidence_available: evidence,
+        country,
+      });
+    } catch (err) {
+      setBusy(false);
+      return setError(err instanceof RpcCallError ? err.code : "Report failed. Please try again.");
+    }
     setBusy(false);
-    if (insErr) return setError(insErr.message);
     setDone(true);
   }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/browser";
+import { rpc, RpcCallError } from "@/lib/client/api";
 import { Alert, Badge, Button, Card, Input, Spinner, Textarea } from "@/components/ui";
 import { formatDate } from "@/lib/utils";
 
@@ -16,28 +16,23 @@ export function VerificationQueue({ codes }: { codes: Set<string> }) {
   const [msg, setMsg] = useState<string | null>(null);
 
   async function load() {
-    const supabase = createClient();
-    const { data } = await supabase
-      .from("identity_verifications")
-      .select("id, user_id, verification_type, verification_status, verification_reference, created_at")
-      .eq("verification_status", "pending_review")
-      .order("created_at", { ascending: true });
-    setItems((data ?? []) as VerificationItem[]);
+    try {
+      const data = await rpc<VerificationItem[]>("admin_pending_verifications");
+      setItems(data ?? []);
+    } catch {
+      setItems([]);
+    }
   }
 
   useEffect(() => { if (codes.has("verification.review")) void load(); }, [codes]);
 
   async function review(id: string, approve: boolean) {
-    const supabase = createClient();
-    const { error } = await supabase.rpc("review_identity_verification", {
-      p_verification_id: id,
-      p_approve: approve,
-      p_reason: reason[id] ?? "",
-    });
-    if (error) setMsg(error.message);
-    else {
+    try {
+      await rpc("review_identity_verification", { verification_id: id, approve, reason: reason[id] ?? "" });
       setMsg(approve ? "Approved — the user's age_verified flag was set server-side." : "Rejected with reason.");
       void load();
+    } catch (err) {
+      setMsg(err instanceof RpcCallError ? err.code : "REVIEW_FAILED");
     }
   }
 
@@ -88,26 +83,24 @@ export function ConsentQueue({ codes }: { codes: Set<string> }) {
   const [msg, setMsg] = useState<string | null>(null);
 
   async function load() {
-    const supabase = createClient();
-    const { data } = await supabase
-      .from("guardian_consents")
-      .select("id, user_id, status, consent_method, guardian_name, guardian_email, created_at")
-      .eq("status", "pending")
-      .order("created_at", { ascending: true });
-    setItems((data ?? []) as ConsentItem[]);
+    try {
+      const data = await rpc<ConsentItem[]>("admin_pending_consents");
+      setItems(data ?? []);
+    } catch {
+      setItems([]);
+    }
   }
 
   useEffect(() => { if (codes.has("consent.review")) void load(); }, [codes]);
 
   async function review(userId: string, approve: boolean) {
-    const supabase = createClient();
-    const { error } = await supabase.rpc("review_guardian_consent", {
-      p_user_id: userId,
-      p_approve: approve,
-      p_reason: "admin review",
-    });
-    if (error) setMsg(error.message);
-    else { setMsg(approve ? "Consent approved." : "Consent revoked."); void load(); }
+    try {
+      await rpc("review_guardian_consent", { user_id: userId, approve, reason: "admin review" });
+      setMsg(approve ? "Consent approved." : "Consent revoked.");
+      void load();
+    } catch (err) {
+      setMsg(err instanceof RpcCallError ? err.code : "REVIEW_FAILED");
+    }
   }
 
   if (!codes.has("consent.review")) {

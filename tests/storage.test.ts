@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sniffMime, readDimensions, validateImageUpload } from "../supabase/functions/_shared/storage";
+import { sniffMime, readDimensions, validateImageUpload } from "../src/lib/ai/upload-validation";
 
 // Tiny valid PNG (1x1 red pixel).
 const PNG = Uint8Array.from([

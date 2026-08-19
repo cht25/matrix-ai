@@ -1,19 +1,16 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { getDataClient, getCurrentUser } from "@/lib/data";
+import { db, getCurrentUser } from "@/lib/data";
+import { getScamsData } from "@/lib/server/queries";
 import { ScamBrowser } from "@/components/scam-browser";
 
 export const metadata: Metadata = { title: "Scam Library" };
 
 export default async function ScamsPage() {
-  const db = await getDataClient();
-  const user = await getCurrentUser(db);
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const [cats, articles] = await Promise.all([
-    db.from("scam_categories").select("id, slug, name, description, icon").eq("status", "active").order("sort_order"),
-    db.from("scam_articles").select("id, category_id, title, slug, description, source_name, last_verified").eq("status", "active").order("title"),
-  ]);
+  const { categories: cats, articles } = await getScamsData(db());
 
   return (
     <div className="space-y-6">
@@ -25,8 +22,8 @@ export default async function ScamsPage() {
         </p>
       </div>
       <ScamBrowser
-        categories={(cats.data ?? []) as { id: string; slug: string; name: string; description: string; icon: string }[]}
-        articles={(articles.data ?? []) as { id: string; category_id: string; title: string; slug: string; description: string; source_name: string; last_verified: string }[]}
+        categories={cats}
+        articles={articles}
       />
     </div>
   );

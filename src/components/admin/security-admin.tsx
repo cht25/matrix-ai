@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/browser";
+import { rpc, RpcCallError } from "@/lib/client/api";
 import { Badge, Card, Spinner } from "@/components/ui";
 import { timeAgo } from "@/lib/utils";
 
@@ -14,13 +14,12 @@ export function SecurityAdmin({ codes }: { codes: Set<string> }) {
 
   useEffect(() => {
     if (!codes.has("security.view")) return;
-    const supabase = createClient();
     Promise.all([
-      supabase.from("security_events").select("id, user_id, event_type, created_at").order("created_at", { ascending: false }).limit(50),
-      supabase.from("user_sessions").select("id, user_id, device_name, last_seen_at, revoked_at").order("last_seen_at", { ascending: false }).limit(50),
+      rpc<Event[]>("admin_security_events").catch(() => [] as Event[]),
+      rpc<Session[]>("admin_sessions").catch(() => [] as Session[]),
     ]).then(([e, s]) => {
-      setEvents((e.data ?? []) as Event[]);
-      setSessions((s.data ?? []) as Session[]);
+      setEvents(e ?? []);
+      setSessions(s ?? []);
     });
   }, [codes]);
 

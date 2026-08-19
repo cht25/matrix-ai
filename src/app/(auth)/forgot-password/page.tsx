@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { createClient, supabaseBrowserConfigured } from "@/lib/supabase/browser";
+import { sendPasswordResetEmail } from "firebase/auth";
+import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
 import { AuthShell, AuthUnavailable } from "@/components/auth/login-screen";
 import { Alert, Button, Field, Input, Spinner } from "@/components/ui";
 
@@ -16,16 +17,17 @@ export default function ForgotPasswordPage() {
     e.preventDefault();
     setError(null);
     setBusy(true);
-    const supabase = createClient();
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`,
-    });
+    try {
+      await sendPasswordResetEmail(fbAuth(), email, { url: `${window.location.origin}/reset-password` });
+    } catch {
+      setBusy(false);
+      return setError("We couldn't send a reset link. Please try again.");
+    }
     setBusy(false);
-    if (error) return setError("We couldn't send a reset link. Please try again.");
     setSent(true);
   }
 
-  if (!supabaseBrowserConfigured) {
+  if (!firebaseBrowserConfigured) {
     return (
       <AuthShell title="Reset password">
         <AuthUnavailable />

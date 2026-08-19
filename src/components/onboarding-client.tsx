@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/browser";
+import { sendEmailVerification } from "firebase/auth";
+import { fbAuth } from "@/lib/firebase/client";
+import { rpc, RpcCallError, uploadOwnedFile } from "@/lib/client/api";
 import { calculateAge } from "@/lib/utils";
 import { Check, Circle, Upload } from "lucide-react";
 import { Alert, Button, Card, Field, Input, Select, Spinner } from "@/components/ui";
@@ -42,25 +44,28 @@ export function OnboardingClient({
     e.preventDefault();
     setMsg(null);
     setBusy(true);
-    const supabase = createClient();
-    const { data, error } = await supabase.rpc("complete_profile", {
-      p_dob: dob || null,
-      p_school_name: school,
-      p_class_grade: grade,
-      p_country: country,
-    });
-    setBusy(false);
-    if (error) {
+    let result: { consent_status?: string; age?: number } | undefined;
+    try {
+      result = await rpc<{ consent_status?: string; age?: number }>("complete_profile", {
+        dob: dob || null,
+        full_name: profile?.full_name ?? "",
+        school_name: school,
+        class_grade: grade,
+        country,
+      });
+    } catch (err) {
+      setBusy(false);
+      const code = err instanceof RpcCallError ? err.code : "SAVE_FAILED";
       const map: Record<string, string> = {
         DOB_MISSING: "Please enter your date of birth.",
         DOB_FUTURE: "Your date of birth can't be in the future.",
         DOB_TOO_YOUNG: "MATRIX AI is for users aged 11 and up.",
         DOB_TOO_OLD: "MATRIX AI is for users aged 17 and under.",
       };
-      setMsg({ tone: "danger", text: map[error.message] ?? error.message });
+      setMsg({ tone: "danger", text: map[code] ?? code });
       return;
     }
-    const result = data as { consent_status?: string; age?: number };
+    setBusy(false);
     if (result.age !== undefined && (result.age < 11 || result.age > 17)) {
       setMsg({ tone: "danger", text: `MATRIX AI is for users aged 11–17. (Age entered: ${result.age})` });
       return;
@@ -73,14 +78,17 @@ export function OnboardingClient({
     e.preventDefault();
     setMsg(null);
     setBusy(true);
-    const supabase = createClient();
-    const { error } = await supabase.rpc("submit_guardian_consent", {
-      p_guardian_name: guardianName,
-      p_guardian_email: guardianEmail,
-      p_relationship: relationship,
-    });
+    try {
+      await rpc("submit_guardian_consent", {
+        guardian_name: guardianName,
+        guardian_email: guardianEmail,
+        relationship,
+      });
+    } catch (err) {
+      setBusy(false);
+      return setMsg({ tone: "danger", text: err instanceof RpcCallError ? err.code : "Submission failed." });
+    }
     setBusy(false);
-    if (error) return setMsg({ tone: "danger", text: error.message });
     setMsg({ tone: "success", text: "Guardian consent submitted. A security team member will review it — you'll get a notification." });
     router.refresh();
   }
@@ -91,19 +99,12 @@ export function OnboardingClient({
     setMsg(null);
     setBusy(true);
     try {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not signed in");
-      const ext = file.type === "image/png" ? "png" : "jpg";
-      const path = `${user.id}/birth-certificate-${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage.from("identity-documents").upload(path, file, { contentType: file.type });
-      if (upErr) throw new Error(upErr.message);
-      const { error: insErr } = await supabase.from("identity_verifications").insert({
-        user_id: user.id,
+      if (!fbAuth().currentUser) throw new Error("Not signed in");
+      const path = await uploadOwnedFile("identity-documents", file);
+      await rpc("submit_identity_verification", {
         verification_type: "birth_certificate",
         verification_reference: path,
       });
-      if (insErr) throw new Error(insErr.message);
       setMsg({
         tone: "success",
         text: "Document uploaded securely. The raw document number is never stored in the database, sent to the AI, or logged — a security team member will review it.",
@@ -263,10 +264,9 @@ function IdentityUpload({ onUpload, busy }: { onUpload: (e: React.ChangeEvent<HT
 function ResendEmail() {
   const [sent, setSent] = useState(false);
   async function resend() {
-    const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = fbAuth().currentUser;
     if (!user?.email) return;
-    await supabase.auth.resend({ type: "signup", email: user.email, options: { emailRedirectTo: `${window.location.origin}/verify?next=/onboarding` } });
+    await sendEmailVerification(user, { url: `${window.location.origin}/verify?next=/onboarding` }).catch(() => {});
     setSent(true);
   }
   return sent ? <p className="mt-2 text-sm font-medium text-success">Resent ✓ check your inbox.</p> : (

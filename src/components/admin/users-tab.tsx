@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/browser";
+import { rpc, RpcCallError } from "@/lib/client/api";
 import { Badge, Card, Spinner } from "@/components/ui";
 import { formatDate } from "@/lib/utils";
 
@@ -16,11 +16,9 @@ export function UsersTab({ codes }: { codes: Set<string> }) {
 
   useEffect(() => {
     if (!codes.has("users.view")) return;
-    const supabase = createClient();
-    supabase.rpc("admin_list_users").then(({ data, error }) => {
-      if (error) setError(error.message);
-      else setUsers((data ?? []) as AdminUser[]);
-    });
+    rpc<AdminUser[]>("admin_list_users")
+      .then((data) => setUsers(data ?? []))
+      .catch((err) => setError(err instanceof RpcCallError ? err.code : "LOAD_FAILED"));
   }, [codes]);
 
   if (!codes.has("users.view")) {

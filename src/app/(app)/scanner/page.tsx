@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { getDataClient, getCurrentUser } from "@/lib/data";
+import { db, getCurrentUser } from "@/lib/data";
+import { getScannerData } from "@/lib/server/queries";
 import { ScannerClient } from "@/components/scanner-client";
 import { Card } from "@/components/ui";
 import { riskColor } from "@/lib/utils";
@@ -8,18 +9,10 @@ import { riskColor } from "@/lib/utils";
 export const metadata: Metadata = { title: "Screenshot Scanner" };
 
 export default async function ScannerPage() {
-  const db = await getDataClient();
-  const user = await getCurrentUser(db);
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const { data: analyses } = await db
-    .from("security_analyses")
-    .select("id, risk_level, confidence, recommendation, created_at")
-    .eq("user_id", user!.id)
-    .order("created_at", { ascending: false })
-    .limit(10);
-
-  const list = (analyses ?? []) as { id: string; risk_level: string; confidence: number; recommendation: string; created_at: string }[];
+  const list = await getScannerData(db(), user.uid);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/browser";
+import { rpc } from "@/lib/client/api";
 import { Alert, Button, Card, Field, Input, Select, Spinner } from "@/components/ui";
 
 type Profile = { full_name: string; email: string; phone: string; school_name: string; class_grade: string; country: string; date_of_birth: string };
@@ -21,13 +21,13 @@ export function AccountForm({ profile, countries }: { profile: Profile | null; c
     e.preventDefault();
     setBusy(true);
     setMsg(null);
-    const supabase = createClient();
-    const { error } = await supabase
-      .from("profiles")
-      .update({ full_name: fullName.trim(), phone: phone.trim(), school_name: school.trim(), class_grade: grade.trim(), country })
-      .eq("id", (await supabase.auth.getUser()).data.user?.id);
+    try {
+      await rpc("profile_update", { full_name: fullName.trim(), phone: phone.trim(), school_name: school.trim(), class_grade: grade.trim(), country });
+    } catch (err) {
+      setBusy(false);
+      return setMsg({ tone: "danger", text: err instanceof Error && err.message ? err.message : "Could not save. Please try again." });
+    }
     setBusy(false);
-    if (error) return setMsg({ tone: "danger", text: error.message });
     setMsg({ tone: "success", text: "Saved. Note: date of birth and age verification can only be changed through verification — never directly." });
     router.refresh();
   }

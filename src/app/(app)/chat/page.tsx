@@ -1,13 +1,11 @@
-import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { getDataClient, getCurrentUser } from "@/lib/data";
+import { getCurrentUser } from "@/lib/data";
 import { ChatClient } from "@/components/chat-client";
 
-export const metadata: Metadata = { title: "Chat" };
+export const metadata = { title: "Chat" } as const;
 
 export default async function ChatHomePage() {
-  const db = await getDataClient();
-  const user = await getCurrentUser(db);
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
 
   return (

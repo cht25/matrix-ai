@@ -12,7 +12,7 @@ import {
   Award, BookOpen, FileSearch, GraduationCap, History, LayoutGrid, Menu, MessageSquare,
   Plus, Search, Settings, Shield, ShieldAlert, User, X,
 } from "lucide-react";
-import { createClient } from "@/lib/supabase/browser";
+import { rpc } from "@/lib/client/api";
 import { Logo } from "@/components/logo";
 import { AiStatus } from "@/components/ai-status";
 import { ThemeToggle } from "@/lib/theme";
@@ -87,20 +87,17 @@ function HistoryList({ conversations, onNavigate }: { conversations: SidebarConv
   const groupKeys = (Object.keys(groups) as (keyof typeof groups)[]).filter((k) => groups[k].length > 0);
 
   async function rename(id: string) {
-    const supabase = createClient();
-    await supabase.from("conversations").update({ title: renameValue.trim() || "Untitled" }).eq("id", id);
+    await rpc("conversation_update", { id, title: renameValue.trim() || "Untitled" }).catch(() => {});
     setRenaming(null);
     router.refresh();
   }
   async function archive(id: string) {
-    const supabase = createClient();
-    await supabase.from("conversations").update({ archived_at: new Date().toISOString() }).eq("id", id);
+    await rpc("conversation_update", { id, archive: true }).catch(() => {});
     router.refresh();
   }
   async function remove(id: string) {
     if (!confirm("Delete this conversation? This can't be undone.")) return;
-    const supabase = createClient();
-    await supabase.from("conversations").update({ deleted_at: new Date().toISOString() }).eq("id", id);
+    await rpc("conversation_update", { id, delete: true }).catch(() => {});
     router.refresh();
   }
 

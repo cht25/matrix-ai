@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/browser";
+import { rpc, RpcCallError } from "@/lib/client/api";
 import { Alert, Badge, Button, Card, Select, Spinner, Textarea } from "@/components/ui";
 import { formatDate } from "@/lib/utils";
 
@@ -18,30 +18,31 @@ export function ReportsTab({ codes }: { codes: Set<string> }) {
   const [msg, setMsg] = useState<string | null>(null);
 
   async function load() {
-    const supabase = createClient();
-    const { data } = await supabase
-      .from("scam_reports")
-      .select("id, platform, description, money_lost, account_compromised, personal_information_shared, country, status, created_at, admin_notes")
-      .order("created_at", { ascending: false })
-      .limit(50);
-    setItems((data ?? []) as Report[]);
-    const s: Record<string, string> = {};
-    const n: Record<string, string> = {};
-    for (const r of (data ?? []) as Report[]) { s[r.id] = r.status; n[r.id] = r.admin_notes; }
-    setStatuses(s); setNotes(n);
+    try {
+      const data = await rpc<Report[]>("admin_reports");
+      setItems(data ?? []);
+      const s: Record<string, string> = {};
+      const n: Record<string, string> = {};
+      for (const r of data ?? []) { s[r.id] = r.status; n[r.id] = r.admin_notes; }
+      setStatuses(s); setNotes(n);
+    } catch {
+      setItems([]);
+    }
   }
 
   useEffect(() => { if (codes.has("reports.view")) void load(); }, [codes]);
 
   async function update(id: string) {
-    const supabase = createClient();
-    const { error } = await supabase.from("scam_reports").update({ status: statuses[id], admin_notes: notes[id] }).eq("id", id);
-    if (error) { setMsg(error.message); return; }
-    await supabase.rpc("log_audit", {
-      p_action: "report_status_updated", p_target_type: "scam_reports", p_target_id: id,
-      p_reason: `status → ${statuses[id]}`,
-    });
-    setMsg("Report updated and audited.");
+    try {
+      await rpc("report_status", { id, status: statuses[id], admin_notes: notes[id] ?? "" });
+      await rpc("log_audit", {
+        action: "report_status_updated", target_type: "scam_reports", target_id: id,
+        reason: `status → ${statuses[id]}`,
+      }).catch(() => {});
+      setMsg("Report updated and audited.");
+    } catch (err) {
+      setMsg(err instanceof RpcCallError ? err.code : "UPDATE_FAILED");
+    }
   }
 
   if (!codes.has("reports.view")) {
@@ -86,17 +87,13 @@ export function ReportsTab({ codes }: { codes: Set<string> }) {
 }
 
 export function AiSafetyTab({ codes }: { codes: Set<string> }) {
-  const [items, setItems] = useState<{ id: number; event_type: string; detail: string; created_at: string }[] | null>(null);
+  const [items, setItems] = useState<{ id: string; event_type: string; detail: string; created_at: string }[] | null>(null);
 
   useEffect(() => {
     if (!codes.has("ai.view")) return;
-    const supabase = createClient();
-    supabase
-      .from("ai_safety_events")
-      .select("id, event_type, detail, created_at")
-      .order("created_at", { ascending: false })
-      .limit(50)
-      .then(({ data }) => setItems((data ?? []) as typeof items));
+    rpc<{ id: string; event_type: string; detail: string; created_at: string }[]>("admin_safety_events")
+      .then((data) => setItems((data ?? []) as typeof items))
+      .catch(() => setItems([]));
   }, [codes]);
 
   if (!codes.has("ai.view")) {
@@ -131,17 +128,13 @@ export function AiSafetyTab({ codes }: { codes: Set<string> }) {
 }
 
 export function AuditTab({ codes }: { codes: Set<string> }) {
-  const [items, setItems] = useState<{ id: number; actor_id: string; action: string; target_type: string; target_id: string; reason: string; created_at: string }[] | null>(null);
+  const [items, setItems] = useState<{ id: string; actor_id: string; action: string; target_type: string; target_id: string; reason: string; created_at: string }[] | null>(null);
 
   useEffect(() => {
     if (!codes.has("audit.view")) return;
-    const supabase = createClient();
-    supabase
-      .from("audit_logs")
-      .select("id, actor_id, action, target_type, target_id, reason, created_at")
-      .order("created_at", { ascending: false })
-      .limit(100)
-      .then(({ data }) => setItems((data ?? []) as typeof items));
+    rpc<{ id: string; actor_id: string; action: string; target_type: string; target_id: string; reason: string; created_at: string }[]>("admin_audit_logs")
+      .then((data) => setItems((data ?? []) as typeof items))
+      .catch(() => setItems([]));
   }, [codes]);
 
   if (!codes.has("audit.view")) {

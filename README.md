@@ -5,10 +5,13 @@
 MATRIX AI is a production-ready, teen-first cybersecurity education platform: an AI chat assistant,
 screenshot scanner, scam library, reporting assistant, emergency help mode, 7 courses with quizzes and
 verifiable certificates, a security dashboard, and a full RBAC admin panel — all protected by
-**Supabase PostgreSQL + Row Level Security + private storage**, with **Groq** behind a secure
-server-side AI gateway.
+**Firebase (Auth + Firestore) with Cloudinary for private image storage**, with **Groq** behind a
+secure server-side AI gateway.
 
 > Previously branded "THAMJJ13.TOP Cyber Safety AI" — rebranded to **MATRIX AI** (developer: THAMJJ13.TOP).
+>
+> **v2 (this branch): the backend migrated from Supabase to Firebase.** See
+> [Migration notes](#migration-notes-supabase--firebase) for the full mapping.
 
 ---
 
@@ -17,11 +20,11 @@ server-side AI gateway.
 1. [Stack](#stack)
 2. [Architecture](#architecture)
 3. [Repository layout](#repository-layout)
-4. [Quick start (local)](#quick-start-local)
-5. [Deploy to production](#deploy-to-production)
-6. [Environment variables](#environment-variables)
-7. [Edge Functions](#edge-functions)
-8. [Database](#database)
+4. [Firebase setup (new project → prod)](#firebase-setup-new-project--prod)
+5. [Quick start (local)](#quick-start-local)
+6. [Deploy to production](#deploy-to-production)
+7. [Environment variables](#environment-variables)
+8. [Firestore data model](#firestore-data-model)
 9. [AI pipeline](#ai-pipeline)
 10. [Security model](#security-model)
 11. [Admin roles & permissions](#admin-roles--permissions)
@@ -29,6 +32,7 @@ server-side AI gateway.
 13. [Production security checklist](#production-security-checklist)
 14. [Fakes-free behavior & health](#fakes-free-behavior--health)
 15. [Internationalization](#internationalization)
+16. [Migration notes (Supabase → Firebase)](#migration-notes-supabase--firebase)
 
 ---
 
@@ -38,407 +42,312 @@ server-side AI gateway.
 |---|---|
 | Frontend | Next.js 15 (App Router), React 19, TypeScript, Tailwind CSS 4 |
 | Design | **MATRIX visual identity**: monochromatic (deep black · charcoal · off-white) with restrained steel-blue accent; editorial Inter + Manrope typography; custom calligraphic vector wordmark; monochrome lucide iconography; animated cinematic background (fine grids, sparse network topology, reduced-motion aware) |
-| Database | **Supabase PostgreSQL** (single source of truth — no other database) |
-| Auth | Supabase Auth (email/password, Google, Facebook, MFA/TOTP) |
-| Storage | Supabase Storage (private buckets + signed URLs) |
-| Authorization | PostgreSQL Row Level Security (RLS) + role-based admin access |
-| Backend/API | Supabase Edge Functions (Deno) |
-| AI | **Groq** (`llama-3.3-70b-versatile` chat, `llama-3.2-11b-vision-preview` scanning) behind the AI Gateway, **streaming responses** |
+| Database | **Cloud Firestore** (single source of truth — no other database) |
+| Auth | **Firebase Auth** (email/password, Google, Facebook, TOTP MFA) with server-verified **session cookies** for SSR |
+| Storage | **Cloudinary** (free tier) — server-signed uploads, private (authenticated) assets only |
+| Authorization | Firestore **security rules** + a server-side RPC layer (`src/lib/server/rpc.ts`) that ports every Postgres `SECURITY DEFINER` function |
+| Backend/API | Next.js route handlers (Node runtime, Admin SDK) |
+| AI | **Groq** (`llama-3.3-70b-versatile` chat, `llama-3.2-11b-vision-preview` scanning) behind the AI Gateway (`/api/ai`), **streaming responses** |
 | i18n | English + Bangla dictionaries (architecture ready for more) |
-| Tests | Vitest (AI pipeline, PII, classification, file validation, age rules) + SQL RLS test suite |
+| Tests | Vitest (AI pipeline, PII, classification, file validation, age rules, env config) |
 
-The `service_role` key and `GROQ_API_KEY` exist **only server-side** (edge functions / server env) and are never exposed to the browser.
+The Firebase **service account key** and `GROQ_API_KEY` exist **only server-side** (API routes / server env) and are never exposed to the browser.
 
-## Product experience
-
-```
-Open MATRIX  →  Login (root / shows the login screen for guests)
-                    ↓
-            Onboarding / verification (multi-step: basic → DOB → age
-            verification → email → profile)
-                    ↓
-            MATRIX AI chat (streaming, temporary chat, screenshot
-            attachments, empty-state suggestion cards)
-                    ↓
-            Scanner · Scam Library · Report · Emergency · Courses ·
-            Certificates · Security dashboard · Settings · Docs
-```
-
-- `/` shows the professional login experience for unauthenticated users and routes authenticated users straight to `/chat` (no landing page).
-- Chat has a desktop sidebar (logo, new chat, search, grouped history — Today / Yesterday / Previous 7 days / Older, with rename/archive/delete) and a mobile drawer + bottom navigation bar.
-- AI responses **stream progressively** with stop / retry / regenerate, markdown, code blocks with copy buttons, timestamps, and image attachments that run the screenshot scanner.
-- `/docs` is a full documentation system: sticky sidebar, Ctrl+K search, reading progress, breadcrumbs, table of contents, prev/next navigation, callouts and code blocks.
-- Admin panel lives at `/admin` with sub-routes: `/admin/users`, `/admin/verification`, `/admin/consents`, `/admin/reports`, `/admin/courses`, `/admin/scams`, `/admin/security`, `/admin/audit-logs`.
-
-### Visual identity (design override)
-
-- **Logo** — custom calligraphic vector MATRIX wordmark (editorial letterforms + signature swash) with a monogram M mark; used on login, sidebar, docs, certificate and footer; monochrome, theme-adaptive.
-- **Typography** — Inter for UI, Manrope for display moments (bundled locally via Fontsource); the wordmark is the only calligraphic element.
-- **Color** — near-monochrome: `#050608` deep black, `#0b0d10` surfaces, `#e9ebee` ink, restrained steel-blue `#93a5be` accent. No bright gradients, no neon, no rainbow.
-- **Background** — fine geometric grid, sparse network nodes, thin data paths, faint technical glyphs; extremely subtle, mobile-reduced, static under `prefers-reduced-motion`.
-- **Chat** — editorial layout: AI replies are typographic (hairline rule, no bubbles); user messages are understated bordered notes; large centered composer with attachment and send controls.
-- **Icons** — monochromatic lucide icon set; no emoji in navigation or UI chrome (content copy may carry typographic marks only).
-- **Certificate** — bordered certificate document with corner accents, the calligraphic wordmark, and public-safe fields only.
-- Regenerate favicons anytime with `node scripts/generate-icons.mjs`.
+---
 
 ## Architecture
 
 ```
-                         USER
-                           │
-                           ▼
-                    Web / Mobile UI  (Next.js)
-                           │
-              ┌────────────┼────────────┐
-              ▼            ▼            ▼
-      Supabase Auth   PostgreSQL    Supabase Storage
-      (email/OAuth/     (RLS)       (private buckets,
-         MFA)                           signed URLs)
-              │            │            │
-              └────────────┼────────────┘
-                           ▼
-                  Supabase Edge Functions
-                    (AI Gateway)
-                           │
-                           ▼
-                         Groq
+Browser
+  ├─ Firebase JS SDK ── sign-in (password / Google / Facebook / TOTP MFA)
+  │      └─ idToken → POST /api/auth/session → httpOnly `__session` cookie (5 d)
+  ├─ /api/upload-signature → signed Cloudinary grant → direct upload
+  │      (private screenshots & ID docs — owner-folder-bound, image-only, ≤8 MB)
+  └─ fetch /api/ai (chat + scan, SSE streaming)   ← session-cookie authenticated
+                     │
+Next.js server (any Node host / Firebase App Hosting)
+  ├─ middleware.ts      edge routing only (unverified cookie presence check)
+  ├─ Server components  Admin SDK + `src/lib/server/queries.ts` (scoped by verified uid)
+  ├─ /api/rpc           ALL mutations — ports of the Postgres RPC layer
+  │                      (ownership checks, validation, RBAC, audit, security events)
+  ├─ /api/ai            AI gateway: rate limit → PII redaction → domain/safety
+  │                      classification → RAG retrieval → Groq → output validation
+  ├─ /api/upload-signature  one-shot signed Cloudinary upload grants
+  ├─ /api/account/*     data export (GDPR-style) + self-service deletion w/ re-auth
+  └─ /api/auth/session  session-cookie minting + user provisioning
+                     │
+Firebase (Admin SDK bypasses rules ONLY server-side)
+  ├─ Auth               users, MFA factors, custom claims (admin)
+  └─ Firestore          30+ collections (see data model)
+
+Cloudinary (free tier)
+  └─ Private images     security-screenshots/{uid}/…, identity-documents/{uid}/…
+                        (authenticated assets — bytes only via server-signed URLs)
 ```
 
-The frontend **never calls Groq directly** — it calls the `ai-gateway` edge function with the user's JWT.
+Key invariants (unchanged from the Supabase edition):
+
+- **Every write goes through the server.** Browser Firestore rules deny all writes; `quiz_answers`,
+  `audit_logs`, `ai_*` collections are not even client-readable. Clients can never fake a quiz score,
+  an assistant message, or an audit entry.
+- **The AI gateway is the only path to Groq.** PII is redacted before anything leaves the server;
+  refusals never spend a model call; failures return honest error codes — never a fabricated reply.
+- **No demo mode.** Missing configuration renders honest error screens, never fake data.
+
+---
 
 ## Repository layout
 
 ```
-├── src/                          # Next.js app
-│   ├── app/
-│   │   ├── page.tsx              # landing page
-│   │   ├── (auth)/               # login, register, forgot/reset password
-│   │   ├── (app)/                # dashboard, chat, scanner, courses, settings, admin…
-│   │   ├── verify/               # email verification / OAuth callback
-│   │   ├── emergency/            # "I Need Help Now" (public)
-│   │   ├── certificate/verify/[id]/  # public certificate verification
-│   │   └── privacy/              # privacy page
-│   ├── components/               # UI kit + feature components
-│   ├── lib/
-│   │   ├── supabase/             # browser + server clients
-│   │   ├── api-errors.ts         # user-safe failure taxonomy (Server problem / Retry)
-│   │   ├── i18n/                 # en + bn dictionaries
-│   │   └── utils.ts              # age validation etc.
-│   └── middleware.ts             # route protection + admin RBAC gate
-├── supabase/
-│   ├── config.toml
-│   ├── migrations/               # 0001–0007: schema, functions, RLS, seed data
-│   ├── functions/                # edge functions
-│   │   ├── ai-gateway/           # chat + screenshot analysis (full pipeline)
-│   │   ├── export-data/          # GDPR-style data export
-│   │   ├── delete-account/       # server-side account deletion workflow
-│   │   └── auth-events/          # auth webhooks → security events & sessions
-│   └── tests/rls.test.sql        # RLS/constraint test suite
-├── tests/                        # Vitest suite (AI, PII, age, storage)
-└── scripts/promote-admin.sql     # how to grant admin roles
+src/
+  app/                     Next.js App Router (pages + API routes)
+    api/ai/                AI gateway (chat, scan, health) — SSE streaming
+    api/rpc/               typed server mutations (the RPC layer port)
+    api/auth/session/      session cookie mint/refresh/clear
+    api/upload-signature/  one-shot signed Cloudinary upload grants
+    api/account/           export + delete (with password re-auth)
+    api/health/            honest service health for uptime checks
+  components/              app shell, chat, scanner, courses, admin panel, settings…
+  lib/
+    firebase/              client SDK (Auth/Firestore), Admin SDK, session cookies
+    server/                rpc.ts (Postgres function ports) + queries.ts (page reads)
+    ai/                    groq provider, PII redaction, domain classifier, prompts,
+                           upload validation (shared with tests)
+    server/cloudinary.ts   signed upload grants, private downloads, user asset wipe
+    client/api.ts          browser helper: rpc(), mintSessionCookie(), uploads
+    data.ts, env.ts        server data core + centralised env
+  middleware.ts            edge routing guard
+firestore.rules            security rules (RLS port)
+firestore.indexes.json     composite indexes
+scripts/seed.mjs           seeds Firestore from seed/0007_seed.sql
+scripts/set-admin.mjs      promote a user to an admin role (+ custom claim)
+seed/0007_seed.sql         seed source of truth (original SQL seed)
+apphosting.yaml            Firebase App Hosting backend config
+firebase.json              deploy config (rules, indexes, hosting, emulators)
 ```
+
+---
+
+## Firebase setup (new project → prod)
+
+1. **Create the project** at [console.firebase.google.com](https://console.firebase.google.com)
+   (Analytics optional). Note the **project id**.
+2. **Register a Web app** (Project settings → Your apps → `</>`) and copy the config values —
+   they become the `NEXT_PUBLIC_FIREBASE_*` env vars.
+3. **Authentication** → Get started → enable:
+   - **Email/Password** (leave "Email link" off),
+   - **Google** and/or **Facebook** (for the OAuth buttons),
+   - **Multi-factor authentication → TOTP** (for 2FA), and add your domain under
+     **Authorized domains** (localhost is already there; add your deploy domain later).
+   - Templates → customize the verification/reset emails if you like (they carry the
+     `/verify` and `/reset-password` handlers automatically).
+4. **Firestore Database** → Create database → **Production mode** → pick a region.
+5. **Cloudinary** (free account — replaces Firebase Storage, which now requires
+   the paid plan): create an account at [cloudinary.com](https://cloudinary.com),
+   copy the **Cloud name**, **API key** and **API secret** from
+   Dashboard → Settings → API keys. Nothing else to enable — uploads are signed
+   by this app and stored as private assets.
+6. **Service account** (Project settings → Service accounts → *Generate new private key*):
+   take `client_email` and `private_key` from the JSON → `FIREBASE_CLIENT_EMAIL` /
+   `FIREBASE_PRIVATE_KEY` env vars (keep the `\n` escapes on hosts like Render/Vercel).
+   On Firebase App Hosting / Cloud Run / GCE you can skip this — Application Default
+   Credentials are used automatically.
+7. **Deploy rules + indexes:**
+   ```bash
+   npm run deploy          # firestore rules + indexes
+   ```
+8. **Seed the content** (countries, scam library, 7 courses, admin RBAC):
+   ```bash
+   npm run seed
+   ```
+9. **Make yourself an admin** (after signing up once in the app):
+   ```bash
+   npm run set-admin you@example.com super_admin
+   ```
 
 ## Quick start (local)
 
 ```bash
-# 1. Install
 npm install
+cp .env.example .env.local   # fill in the Firebase values from the setup above
+npm run seed                 # seed Firestore
+npm run dev                  # http://localhost:3000
+```
 
-# 2. Start Supabase locally (needs Docker + Supabase CLI)
-supabase start          # applies migrations + seed automatically
-
-# 3. Configure env
-cp .env.example .env.local
-# fill NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY from `supabase status`
-
-# 4. Set the Groq key for the AI gateway
-supabase secrets set GROQ_API_KEY=gsk_...
-supabase functions serve ai-gateway --env-file .env.local
-
-# 5. Run the app
-npm run dev
+Optional — run Firebase against local emulators (no cloud project needed;
+Cloudinary still needs real credentials for uploads):
+```bash
+npm run emulators            # auth :9099, firestore :8080, UI :4000
+# in another shell, with the emulator env set:
+FIRESTORE_EMULATOR_HOST=localhost:8080 FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 \
+NEXT_PUBLIC_FIREBASE_API_KEY=demo NEXT_PUBLIC_FIREBASE_PROJECT_ID=demo-matrix-ai \
+npm run seed && npm run dev
 ```
 
 ## Deploy to production
 
-Nothing in MATRIX runs on mock data — these steps are **mandatory**, not optional. You need the
-Supabase CLI and your dashboard access (never paste real secrets into a chat or commit them).
-
+**Option A — Firebase App Hosting (recommended, fully on Firebase):**
+requires the Blaze plan (a card on file; the free tier still covers this app comfortably).
 ```bash
-# 0. Log in and link THIS project (ref: bwjwktjclupjbuawjdeo)
-supabase login                      # browser-based personal access token flow
-supabase link --project-ref bwjwktjclupjbuawjdeo
-
-# 1. Database schema + RLS + seed data
-supabase db push
-
-# 2. AI gateway secrets (set as edge secrets — never exposed to the browser)
-supabase secrets set GROQ_API_KEY=gsk_...                 # https://console.groq.com/keys
-supabase secrets set SUPABASE_WEBHOOK_SECRET=$(openssl rand -hex 32)
-
-# 3. Edge functions (the only path to Groq)
-supabase functions deploy ai-gateway export-data delete-account auth-events --no-verify-jwt
-
-# 4. Web app environment (Render → your service → Environment; triggers rebuild)
-#    NEXT_PUBLIC_SUPABASE_URL = https://bwjwktjclupjbuawjdeo.supabase.co
-#    NEXT_PUBLIC_SUPABASE_ANON_KEY = <anon public key from the API settings page>
-
-# 5. Auth webhook (optional but recommended): Dashboard → Auth → Webhooks →
-#   "New webhook" → events user.signed_in / user.signed_out / user.updated /
-#   user.password_recovery_requested / user.password_updated / user.identity_created
-#   URL: https://bwjwktjclupjbuawjdeo.supabase.co/functions/v1/auth-events
-#   secret: the SUPABASE_WEBHOOK_SECRET you set
-
-# Frontend
-npm run build && npm run start   # or deploy to Render/your host
+npm i -g firebase-tools
+firebase login
+firebase experiments:enable webframeworks   # for `hosting.source` in firebase.json
+firebase use --add                           # pick your project
+firebase deploy                              # app + rules + indexes in one shot
 ```
+(Or create a backend in the console with **App Hosting** and connect the repo —
+`apphosting.yaml` configures runtime + env/secrets.)
 
-**Verify it is all real afterwards:**
+**Option B — any Node host (Render, Railway, Fly, Docker…):**
+`npm ci && npm run build && npm start` with the env vars from `.env.example`
+(`render.yaml` is provided for Render). Health check: `GET /api/health`.
 
-```bash
-curl -s https://<your-host>/api/health
-# {"ok":true,"supabase":"reachable","ai":"online","checkedAt":"…"}
-```
+**Option C — Vercel:** import the repo, set the same env vars, deploy.
 
-Enable email confirmations, restrict Auth redirect URLs (add your Render URL), and configure
-Google/Facebook OAuth providers in the Supabase dashboard — OAuth buttons show "Authentication
-failed" style errors (not silent breakage) until the providers are configured. Configure SMTP for
-branded emails (verification, reset, alerts).
+Whichever you choose, remember to:
+- add your domain to Firebase Auth → Settings → Authorized domains,
+- run `npm run deploy` once so rules/indexes exist in the Firebase project.
 
-### Deploy to Render
-
-The repo ships a `render.yaml` blueprint (Node web service, `npm ci && npm run build`, `npm start`).
-Whether you created the service from the blueprint or manually, the service **must** have these
-environment variables (Render dashboard → your service → **Environment**), or the app has no
-backend to talk to:
-
-| Render env var | Value |
-|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | project URL — this deployment: `https://bwjwktjclupjbuawjdeo.supabase.co` |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | the project's `anon` `public` key |
-
-Both values come from **Supabase dashboard → Project Settings → Data API / API keys**
-(`https://supabase.com/dashboard/project/bwjwktjclupjbuawjdeo/settings/api`). Saving env vars on
-Render triggers a fresh build and deploy — required anyway, because `NEXT_PUBLIC_*` variables are
-inlined into the bundle at build time.
-
-> **Safety net:** a deployment built *without* these variables no longer crashes — it renders an
-> honest **"Server problem — service not configured"** screen (no fake data, no demo content, a
-> one-line actionable log). Symptom to look for in logs:
-> `Your project's URL and Key are required to create a Supabase client!` means the environment
-> variables are missing — set them and redeploy.
-
-### Promote your first admin
-
-```sql
--- find your id, then run scripts/promote-admin.sql
-select id, email from auth.users where email = 'you@example.com';
-```
+---
 
 ## Environment variables
 
-See `.env.example`. Summary:
-
 | Variable | Where | Purpose |
 |---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | frontend | Supabase client |
-| `NEXT_PUBLIC_APP_URL` | frontend | canonical URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | server-only | admin API access (edge functions use their own injected copy) |
-| `GROQ_API_KEY` | server-only (edge secret) | AI gateway |
-| `SUPABASE_WEBHOOK_SECRET` | server-only (edge secret) | auth webhook signature verification |
-| `SMTP_*` | server-only | custom transactional email |
+| `NEXT_PUBLIC_FIREBASE_API_KEY` | client + server | Firebase web config (public by design) |
+| `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | client | Firebase web config |
+| `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | client + server | Firebase project id |
+| `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` / `..._APP_ID` | client | Firebase web config |
+| `NEXT_PUBLIC_APP_URL` | client + server | canonical URL for links/emails |
+| `FIREBASE_CLIENT_EMAIL` | server only | Admin SDK service account |
+| `FIREBASE_PRIVATE_KEY` | server only | Admin SDK private key |
+| `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | server only | Private image storage (screenshots, ID docs) |
+| `GROQ_API_KEY` | server only | AI gateway → Groq |
 
-**Never** expose `SUPABASE_SERVICE_ROLE_KEY`, `GROQ_API_KEY`, SMTP or OAuth secrets to client code.
+## Firestore data model
 
-## Edge Functions
+Snake_case collections mirror the original tables. Timestamps are Firestore
+`Timestamp`s; date-of-birth is an ISO `YYYY-MM-DD` string.
 
-### `ai-gateway` — the only way the frontend reaches Groq
-`POST { action: "chat" | "scan" }` with the user JWT.
+| Area | Collections |
+|---|---|
+| Identity | `profiles/{uid}`, `user_security_settings/{uid}`, `guardian_consents/{uid}`, `identity_verifications`, `countries/{ISO-2}` |
+| Chat | `conversations` + `conversations/{id}/messages`, `conversation_summaries/{conversationId}`, `user_memories`, `attachments`, `security_analyses` |
+| Learning | `courses`, `course_modules`, `lessons`, `quizzes`, `quiz_questions` (options embedded **without** the correct flag), `quiz_answers` (server-only correct answers), `quiz_attempts`, `course_progress/{uid}_{lessonId}`, `certificates/{uid}_{courseId}`, `certificate_verification` |
+| Scam library | `scam_categories`, `scam_articles`, `scam_reports`, `reporting_resources`, `document_chunks` (RAG knowledge) |
+| Security | `notifications`, `security_events`, `user_sessions` |
+| Admin | `admin_roles`, `admin_permissions`, `admin_role_permissions/{role}__{perm}`, `admin_role_assignments/{uid}`, `admin_access_grants`, `audit_logs` |
+| AI ops | `ai_usage_logs` (rate limits + usage), `ai_safety_events` |
 
-- **chat** — full pipeline (see below), conversation management, rolling summaries for long chats,
-  safe memory extraction, PII redaction, refusals without LLM calls, rate limiting
-  (20/min, 300/day per user), usage + safety logging.
-- **scan** — validates the uploaded screenshot (magic bytes, size, dimensions — executables and
-  mismatched MIME types are rejected), re-checks ownership of the storage path, analyzes with the
-  vision model, stores the result in `security_analyses`.
-
-### `export-data` — JSON export of the user's own data (safe fields only), stored in the private
-`exports` bucket with a 7-day signed URL; logs a `data_exported` security event.
-
-### `delete-account` — server-side deletion workflow: removes private storage objects, deletes all
-user-owned rows (conversations cascade to messages/summaries), audits, then `admin.deleteUser`
-(which cascades to `auth.users` → `profiles`). Requires `confirm: "DELETE"` after client-side
-re-authentication.
-
-### `auth-events` — verifies the Supabase Auth webhook signature (legacy header or HMAC-SHA256),
-maps events (`user.signed_in` → `login`, `user.signed_out` → `logout`, password events, identity
-events) into `security_events` + `user_sessions`, and sends login-alert notifications.
-
-## Database
-
-All changes are migration-based (`supabase/migrations/0001–0007`):
-
-- `0001` — profiles, identity_verifications, guardian_consents, user_security_settings,
-  oauth_profiles, countries
-- `0002` — conversations, messages, summaries, user_memories, attachments, security_analyses
-- `0003` — scam_categories, scam_articles, scam_reports, reporting_resources, document_chunks (RAG)
-- `0004` — courses, modules, lessons, quizzes, questions, options, attempts, progress, certificates,
-  certificate_verification
-- `0005` — notifications, security_events, user_sessions, admin RBAC, audit_logs, ai_usage_logs,
-  ai_safety_events, admin_access_grants
-- `0006` — **functions, triggers, grants, and every RLS policy**
-- `0007` — seed data (20 countries, admin roles/permissions, 10 scam categories, 10 verified scam
-  articles, 16 verified reporting resources, 10 RAG knowledge chunks, **7 courses · 21 modules ·
-  42 lessons · 21 quizzes · 63 questions**)
-
-Highlights:
-
-- `handle_new_user()` trigger validates DOB **server-side** at signup — `11 ≤ age ≤ 17` or signup fails.
-- `age_verified` / `date_of_birth` are write-protected: only SECURITY DEFINER functions
-  (`complete_profile`, `review_identity_verification`) can change them.
-- `quiz_options` are not exposed to learners — a public view strips `is_correct`; scoring happens in
-  `submit_quiz_attempt()` in the database, so clients can never fake scores.
-- `issue_certificate()` checks eligibility in SQL and issues unique `MATRIX-YYYY-XXXXXXXX` IDs;
-  `verify_certificate_lookup()` is anon-callable and returns only public-safe fields.
-- Temporary chats are hard-deleted after 24h by `expire_stale()` (scheduled via pg_cron when available).
-- RAG uses PostgreSQL full-text search over `document_chunks` + scam articles + lessons + reporting
-  resources (`rag_search`), with a trust model (`trusted_official` / `trusted_internal` /
-  `review_required` / `user_generated`) — only trusted sources feed the AI.
+Quiz options deliberately ship without `is_correct` (the port of the old
+`quiz_options_public` view); grading happens server-side in `/api/rpc` using
+`quiz_answers` — scores can never be faked client-side.
 
 ## AI pipeline
 
+`/api/ai` (port of the `ai-gateway` edge function, spec §24):
+
 ```
-User Request
-    ↓
-Authentication (JWT)
-    ↓
-Rate limit (DB-backed: 20/min chat, 5/min scans)
-    ↓
-PII detection & redaction  (emails, phones, OTPs, passwords, cards,
-                            JWTs, government IDs, addresses…)
-    ↓
-Cyber domain classification   → off-topic: refuse (no LLM call)
-    ↓
-Cyber safety classification   → harmful: refuse + redirect (no LLM call)
-    ↓
-Prompt construction (system prompt + summary + recent messages +
-                     safe memory + RAG context + verified reporting resources)
-    ↓
-Groq (llama-3.3-70b-versatile)
-    ↓
-Output safety validation + PII-leak check
-    ↓
-Store allowed response → return
+Auth → Rate limit (ai_usage_logs: 20/min · 300/day chat; 5/min · 50/day scan)
+     → PII detection/redaction (never sent to Groq)
+     → Domain classification (cyber-only) + safety classification
+     → Prompt construction (system + rolling summary + last 8 messages + safe memories)
+     → RAG retrieval (document_chunks + scam articles + lessons + reporting resources)
+     → Groq (chat / vision) — streaming with per-delta output validation + PII-leak filter
+     → Store allowed response → usage/safety logs
 ```
 
-The refusal path for off-topic/harmful requests **never contacts Groq**, so the guardrails are cheap
-and deterministic; the system prompt is an additional layer, never the only one.
+`POST { action: "health" }` is unauthenticated and reports whether the gateway
+can actually reach Groq — used by the UI status dot and `/api/health`.
 
 ## Security model
 
-- **RLS on every user-owned table** — `auth.uid() = user_id` policies; admins never get blanket
-  access to conversations (see below).
-- **Admin RBAC** — `admin_roles` × `admin_permissions` (`has_permission()` SECURITY DEFINER); no
-  `is_admin` boolean flags as the only mechanism. Roles: `super_admin`, `security_admin`,
-  `content_admin`, `support_admin`, `auditor`.
-- **Privileged data access** — admins request a **time-limited grant** (`request_admin_access`,
-  reason required, 1h–7d); `admin_list_conversations` / `admin_view_conversation` enforce the grant
-  and write an audit entry. Conversations are never visible by default.
-- **Storage** — private buckets (`chat-attachments`, `security-screenshots`,
-  `identity-documents`, `certificates`, `exports`); per-user folder isolation enforced by path
-  checks in the edge function + storage policies; signed URLs with short expiry; avatars are
-  public-read only.
-- **Secrets** — passwords/OTPs/tokens are never stored in app tables (they live in `auth.users`
-  hashed form only); birth certificate numbers are never stored — only a verification reference
-  and outcome; `user_memory_guard` trigger blocks storing secret-like text in memories.
-- **PII before AI** — `_shared/pii.ts` redacts personal data before any Groq call; the model is
-  instructed to never request or echo secrets; responses are scanned for leaked PII and redacted.
-- **Audit** — sensitive admin actions write `audit_logs`; AI usage/safety events log only safe
-  metadata (never raw prompts).
-- **Account deletion** — re-authenticate → confirm → server-side workflow → storage cleanup →
-  `admin.deleteUser`. Data export exists with 7-day expiry.
+- **Session cookies**: the browser signs in with the Firebase client SDK, then the
+  ID token is exchanged for a signed httpOnly `__session` cookie (5 days) —
+  server components and every API route verify it with the Admin SDK.
+- **Server-side authorization**: `src/lib/server/rpc.ts` re-checks ownership,
+  RBAC permissions, audit logging and security events on every mutation —
+  the direct port of the old `SECURITY DEFINER` functions.
+- **Rules as the outer wall**: browsers can read only their own documents and
+  public content; every client write is denied; `quiz_answers`, `audit_logs`,
+  `admin_access_grants`, `ai_safety_events`, `certificate_verification` are
+  server-only.
+- **Private image storage (Cloudinary)**: uploads require a server-signed
+  grant that pins the exact folder (`…/{uid}/`) and public_id; assets are
+  stored as *authenticated* (not public) and their bytes are only reachable
+  through server-signed URLs; the scan endpoint re-validates magic bytes,
+  type and dimensions; account deletion wipes the user's folders.
+- **Sensitive profile columns** (`date_of_birth`, `age_verified*`) change only via
+  `complete_profile` / `review_identity_verification` — never direct writes.
+- **Privileged admin access** to user conversations requires a reason, a
+  time-limited grant (1–168 h) and an audit entry (`request_admin_access`).
+- **Account deletion** requires password re-authentication, then removes storage,
+  Firestore data, an audit row, and the Auth user.
 
 ## Admin roles & permissions
 
-| Permission | Super | Security | Content | Support | Auditor |
-|---|---|---|---|---|---|
-| `admin.manage` | ✅ | | | | |
-| `users.view` | ✅ | ✅ | | ✅ | |
-| `users.view_pii` | ✅ | ✅ | | | |
-| `verification.review` | ✅ | ✅ | | | |
-| `consent.review` | ✅ | ✅ | | ✅ | |
-| `content.manage` | ✅ | | ✅ | | |
-| `reports.view` | ✅ | ✅ | ✅ | ✅ | |
-| `security.view` | ✅ | ✅ | | | ✅ |
-| `ai.view` | ✅ | ✅ | | | ✅ |
-| `learning.view` | ✅ | | ✅ | | |
-| `certificates.view` | ✅ | ✅ | ✅ | | ✅ |
-| `audit.view` | ✅ | ✅ | | | ✅ |
-| `privacy.access` | ✅ | ✅ | | | |
-| `system.settings` | ✅ | | | | |
+Seeded by `npm run seed` (see `seed/0007_seed.sql`):
 
-Assign roles with `scripts/promote-admin.sql`.
+| Role | Highlights |
+|---|---|
+| `super_admin` | everything |
+| `security_admin` | verification/consent review, security events, reports, AI logs, privacy access |
+| `content_admin` | scam library, courses, resources |
+| `support_admin` | user lookups, report triage, consent review |
+| `auditor` | read-only audit + AI-safety access |
+
+Promote/demote with `npm run set-admin <email> [role|none]`. The Firestore
+assignment applies immediately; the `admin` custom claim (used by rules +
+middleware) activates on the user's next sign-in/token refresh.
 
 ## Testing
 
 ```bash
-npm test                 # 40 Vitest tests: PII redaction, domain/safety classification,
-                         # Groq provider (mocked), prompt/output validation, file validation,
-                         # age rules (10→reject, 11→ok, 17→ok, 18→reject, future→reject)
-npx tsc --noEmit         # typecheck
+npm test         # vitest: AI pipeline, PII redaction, domain/safety classification,
+                 #        file validation, age rules, API failure taxonomy, env config
+npm run typecheck
 ```
-
-Database tests (`supabase/tests/rls.test.sql`) cover RLS access, age validation, constraints,
-SECURITY DEFINER function exposure and profile-column protection. Run them with
-`supabase db test` (or psql) against a local instance.
 
 ## Production security checklist
 
-- [ ] RLS enabled on every user-owned table (verified by `supabase/tests/rls.test.sql`)
-- [ ] `service_role` key never exposed (server-only)
-- [ ] Storage policies tested; private buckets verified; signed URLs short-lived
-- [ ] Auth redirect URLs restricted; email confirmations enabled; OAuth providers configured securely
-- [ ] SECURITY DEFINER functions audited; `search_path` set on every one
-- [ ] `GROQ_API_KEY` / webhook secret set as edge secrets, not client env
-- [ ] Backups enabled (Supabase project settings)
-- [ ] Auth webhook configured → login alerts + security events
-- [ ] SMTP configured with safe templates (no secrets in emails)
-- [ ] `/api/health` returns 200 and the in-app indicator shows "AI Online"
+- [ ] Firestore + Storage deployed from this repo (`npm run deploy`)
+- [ ] Auth providers enabled; unnecessary ones disabled; MFA (TOTP) on
+- [ ] Deploy domain added to Auth → Authorized domains
+- [ ] Service account key set **only** as server env (never `NEXT_PUBLIC_*`)
+- [ ] `npm run seed` + `npm run set-admin` run exactly once
+- [ ] `GET /api/health` wired to an uptime monitor
+- [ ] Backup policy enabled (Firestore → scheduled exports; Cloudinary → account backups)
 
 ## Fakes-free behavior & health
 
-MATRIX has **no demo mode and no mock layer**. Every chat reply is a real Groq completion via the
-`ai-gateway` edge function; every table read/write hits the real PostgreSQL database through RLS;
-authentication is real Supabase Auth (email/password, Google, Facebook, MFA/TOTP, password reset,
-email verification).
-
-When something is wrong, MATRIX says so instead of pretending:
-
-| Situation | What the user sees |
-|---|---|
-| Groq down / invalid key / gateway error | **Server problem** — "MATRIX could not connect to the AI service right now. Please try again in a moment." + `[Retry]` |
-| No response / offline / DNS failure | **Server problem** (network category) + `[Retry]` |
-| Connect takes > 25 s or stream idles > 45 s | **Server problem** (timeout category) + `[Retry]` |
-| 429 from the gateway | **Slow down** (rate limit) + `[Retry]` |
-| Session expired / 401–403 | **Authentication failed** + `[Sign in]` |
-| `GROQ_API_KEY` secret missing on the project | **Server problem** — "AI service is not configured on the server" |
-| Supabase env vars missing on the web host | Full-screen **"Server problem — service not configured"** (no data is fabricated) |
-
-Health is checked for real, never assumed:
-
-- `GET /api/health` — live JSON status (`supabase: reachable?`, `ai: online?` via a real Groq probe). 503 when anything is down; safe for Render's health check and uptime monitors.
-- `POST {supabase-url}/functions/v1/ai-gateway { action: "health" }` — unauthenticated; performs an actual Groq API call with a 5 s deadline and returns `online` / `unavailable` / `unconfigured`.
-- The app shell shows **● AI Online / ● AI Unavailable** (polls every 45 s + on window refocus; click to re-check immediately).
-
-Secrets (`GROQ_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, SMTP, OAuth) exist only as Supabase edge
-secrets / server env — never in client code, never in this repository.
+If Firebase env vars are missing/invalid, the app renders honest
+"Server problem — service not configured" screens and `/api/health` returns
+`503 {"ok":false,"firebase":"not-configured",...}`. With credentials present it
+performs live checks (Firestore read + Groq reachability) — never a cached lie.
 
 ## Internationalization
 
-`src/lib/i18n/` contains English and Bangla dictionaries with a tiny `t()` helper; the architecture
-supports adding more locales without touching page code. Course/lesson content lives in the database
-(already schema-ready for per-language content via `document_chunks.language`).
+English + Bangla dictionaries (`src/lib/i18n`) ship today; the architecture is
+ready for more locales. The AI answers in the user's language.
 
----
+## Migration notes (Supabase → Firebase)
 
-© MATRIX AI — **THAMJJ13.TOP White Hat Team**. If you are in danger, tell a trusted adult.
+| Supabase | Firebase |
+|---|---|
+| Auth (email/password, OAuth, MFA, reset emails) | Firebase Auth + TOTP MFA + session cookies |
+| Postgres RLS (67 policies) | `firestore.rules` (client reads only) + server-side ownership checks |
+| `SECURITY DEFINER` RPCs (complete_profile, submit_quiz_attempt, issue_certificate, security_score, rag_search, admin_*…) | `src/lib/server/rpc.ts`, invoked via `/api/rpc` |
+| Edge functions (`ai-gateway`, `export-data`, `delete-account`, `auth-events`) | `/api/ai`, `/api/account/export`, `/api/account/delete`, provisioning inside `/api/auth/session` |
+| Storage buckets (`security-screenshots`, `identity-documents`) | Cloudinary folders under the same names + signed uploads of private assets |
+| `quiz_options_public` view | options embedded on `quiz_questions` without the correct flag; answers in server-only `quiz_answers` |
+| `promote-admin.sql` | `npm run set-admin` |
+| `db reset / db push` | `npm run seed` (idempotent merge) |
+
+**Seed fix included:** the original SQL join silently dropped 41 of 42 lessons
+(the lesson title sat in the module-title column). The Firestore seed rebuilds
+the intended mapping — every module gets its 2 lessons (title + summary now both
+preserved), so courses contain their full 6 lessons each.
+
+**Migrating existing data:** Supabase data can be exported table-by-table to
+JSON and imported into the collections above (IDs may be kept as-is; point the
+owner fields at Firebase Auth uids — see `scripts/seed.mjs` for the write pattern).

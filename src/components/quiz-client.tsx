@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/browser";
+import { rpc, RpcCallError } from "@/lib/client/api";
 import { Alert, Badge, Button, Card } from "@/components/ui";
 
 type Question = { id: string; question: string; explanation: string };
@@ -42,28 +42,31 @@ export function QuizClient({
     if (!allAnswered) return;
     setBusy(true);
     setError(null);
-    const supabase = createClient();
+    // Scores are computed server-side (/api/rpc → submit_quiz_attempt) —
+    // clients can never fake a result.
     const payload = questions.map((q) => ({ question_id: q.id, option_id: answers[q.id] }));
-    const { data, error } = await supabase.rpc("submit_quiz_attempt", { p_quiz_id: quizId, p_answers: payload });
-    setBusy(false);
-    if (error) {
-      setError(error.message === "ATTEMPT_LIMIT_REACHED" ? "You've used all attempts for this quiz." : error.message);
-      return;
+    try {
+      const data = await rpc<typeof result>("submit_quiz_attempt", { quiz_id: quizId, answers: payload });
+      setResult(data);
+    } catch (err) {
+      const code = err instanceof RpcCallError ? err.code : "SUBMIT_FAILED";
+      setError(code === "ATTEMPT_LIMIT_REACHED" ? "You've used all attempts for this quiz." : code);
+    } finally {
+      setBusy(false);
     }
-    setResult(data as typeof result);
   }
 
   async function issueCertificate() {
     setBusy(true);
-    const supabase = createClient();
-    const { data, error } = await supabase.rpc("issue_certificate", { p_course_id: courseId });
-    setBusy(false);
-    if (error) {
-      setError("Certificate not available yet: " + error.message.replace("NOT_ELIGIBLE: ", ""));
-      return;
+    try {
+      await rpc("issue_certificate", { course_id: courseId });
+      router.push("/certificate");
+      router.refresh();
+    } catch (err) {
+      const code = err instanceof RpcCallError ? err.code : "ISSUE_FAILED";
+      setError("Certificate not available yet: " + code.replace("NOT_ELIGIBLE: ", ""));
+      setBusy(false);
     }
-    router.push("/certificate");
-    router.refresh();
   }
 
   if (result) {

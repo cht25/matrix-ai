@@ -1,32 +1,25 @@
-import type { Metadata } from "next";
 import { redirect, notFound } from "next/navigation";
-import { getDataClient, getCurrentUser } from "@/lib/data";
+import { db, getCurrentUser } from "@/lib/data";
+import { getConversation } from "@/lib/server/queries";
 import { ChatClient } from "@/components/chat-client";
 import { ChatHeader } from "@/components/chat-header";
 
-export const metadata: Metadata = { title: "Chat" };
+export const metadata = { title: "Chat" } as const;
 
 export default async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const db = await getDataClient();
-  const user = await getCurrentUser(db);
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const { data: conv } = await db.from("conversations").select("id, title, is_temporary").eq("id", id).eq("user_id", user!.id).maybeSingle();
-  if (!conv) notFound();
-  if (conv.is_temporary) redirect("/temporary-chat");
-
-  const { data: messages } = await db
-    .from("conversation_messages")
-    .select("id, role, content, created_at")
-    .eq("conversation_id", id)
-    .order("created_at", { ascending: true });
+  const data = await getConversation(db(), user.uid, id);
+  if (!data) notFound();
+  if (data.conversation.is_temporary) redirect("/temporary-chat");
 
   return (
     <div className="mx-auto h-full max-w-3xl">
-      <ChatHeader conversationId={id} initialTitle={conv.title} />
+      <ChatHeader conversationId={id} initialTitle={data.conversation.title} />
       <ChatClient
-        initialMessages={(messages ?? []) as { role: "user" | "assistant"; content: string }[]}
+        initialMessages={data.messages as { role: "user" | "assistant"; content: string }[]}
         conversationId={id}
         isTemporary={false}
       />

@@ -1,21 +1,16 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { getDataClient, getCurrentUser } from "@/lib/data";
+import { db, getCurrentUser } from "@/lib/data";
+import { getOnboardingData } from "@/lib/server/queries";
 import { OnboardingClient } from "@/components/onboarding-client";
 
 export const metadata: Metadata = { title: "Onboarding" };
 
 export default async function OnboardingPage() {
-  const db = await getDataClient();
-  const user = await getCurrentUser(db);
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const [{ data: profile }, { data: consent }, { data: verification }, { data: countries }] = await Promise.all([
-    db.from("profiles").select("id, full_name, date_of_birth, age_verified, school_name, class_grade, country").eq("id", user!.id).maybeSingle(),
-    db.from("guardian_consents").select("status, consent_method, guardian_name, guardian_email").eq("user_id", user!.id).maybeSingle(),
-    db.from("identity_verifications").select("verification_status, verification_type, created_at, rejection_reason").eq("user_id", user!.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
-    db.from("countries").select("id, name, consent_required, consent_min_age").order("name"),
-  ]);
+  const { profile, consent, verification, countries } = await getOnboardingData(db(), user.uid);
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -27,11 +22,11 @@ export default async function OnboardingPage() {
         </p>
       </div>
       <OnboardingClient
-        profile={(profile?.data ?? profile) as { full_name: string; date_of_birth: string | null; age_verified: boolean; school_name: string; class_grade: string; country: string } | null}
-        consent={(consent?.data ?? consent) as { status: string; consent_method: string } | null}
-        verification={(verification?.data ?? verification) as { verification_status: string; rejection_reason: string } | null}
-        countries={(countries?.data ?? countries ?? []) as { id: string; name: string; consent_required: boolean; consent_min_age: number }[]}
-        emailVerified={Boolean(user?.email_confirmed_at)}
+        profile={profile}
+        consent={consent}
+        verification={verification}
+        countries={countries}
+        emailVerified={user.emailVerified}
       />
     </div>
   );

@@ -10,7 +10,7 @@ import { Button } from "@/components/ui";
 import { MatrixMark } from "@/components/logo";
 
 const CONFIG_DETAIL =
-  "MATRIX is not connected to its backend services yet. The administrator must set the Supabase environment variables (NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY) and redeploy before sign-in, chat and data can work.";
+  "MATRIX is not connected to its backend services yet. The administrator must set the Firebase environment variables (NEXT_PUBLIC_FIREBASE_API_KEY, NEXT_PUBLIC_FIREBASE_PROJECT_ID and the Admin service account) and redeploy before sign-in, chat and data can work.";
 
 /** Inline card used inside flows (chat, scanner, forms). */
 export function ServerProblem({
@@ -56,7 +56,7 @@ export function ServerProblem({
 }
 
 /** Full-screen variant for when an entire section cannot work (e.g. the
- *  deployment has no Supabase configuration at all). `onRetry` overrides the
+ *  deployment has no Firebase configuration at all). `onRetry` overrides the
  *  default router.refresh() (error boundaries pass their reset function). */
 export function ServerProblemScreen({ kind, onRetry }: { kind: "config" | "server"; onRetry?: () => void }) {
   const router = useRouter();

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/browser";
+import { rpc, RpcCallError } from "@/lib/client/api";
 import { Alert, Badge, Button, Card, Input, Select, Spinner, Textarea } from "@/components/ui";
 import { formatDate } from "@/lib/utils";
 
@@ -19,24 +19,30 @@ export function ContentTab({ codes }: { codes: Set<string> }) {
   const [msg, setMsg] = useState<string | null>(null);
 
   async function load() {
-    const supabase = createClient();
-    const [{ data: a }, { data: c }] = await Promise.all([
-      supabase.from("scam_articles").select("id, title, slug, category_id, status, last_verified, source_name").order("title"),
-      supabase.from("scam_categories").select("id, name").eq("status", "active"),
-    ]);
-    setArticles((a ?? []) as Article[]);
-    setCategories((c ?? []) as Category[]);
+    try {
+      const [a, c] = await Promise.all([
+        rpc<Article[]>("admin_articles"),
+        rpc<Category[]>("admin_categories"),
+      ]);
+      setArticles(a ?? []);
+      setCategories(c ?? []);
+    } catch {
+      setArticles([]);
+      setCategories([]);
+    }
   }
 
   useEffect(() => { if (canManage) void load(); }, [canManage]);
 
   async function toggleStatus(article: Article) {
-    const supabase = createClient();
     const next = article.status === "active" ? "inactive" : "active";
-    const { error } = await supabase.from("scam_articles").update({ status: next, last_verified: new Date().toISOString() }).eq("id", article.id);
-    if (error) { setMsg(error.message); return; }
-    await supabase.rpc("log_audit", { p_action: "scam_article_status_changed", p_target_type: "scam_articles", p_target_id: article.id, p_reason: `→ ${next}` });
-    setMsg(`"${article.title}" is now ${next}. Audit logged.`);
+    try {
+      await rpc("article_status", { id: article.id, status: next });
+      await rpc("log_audit", { action: "scam_article_status_changed", target_type: "scam_articles", target_id: article.id, reason: `→ ${next}` }).catch(() => {});
+      setMsg(`"${article.title}" is now ${next}. Audit logged.`);
+    } catch (err) {
+      setMsg(err instanceof RpcCallError ? err.code : "UPDATE_FAILED");
+    }
     void load();
   }
 
@@ -86,7 +92,7 @@ export function ContentTab({ codes }: { codes: Set<string> }) {
       </Card>
       <Card className="!p-4 text-sm text-ink-3">
         Course, lesson and quiz content is managed through the same content.manage permission via the
-        database (or the Supabase Studio content editor). Editing UI for those lives in the database-backed
+        database (or the Firebase console). Editing UI for those lives in the database-backed
         admin API — see the README for the migration workflow.
       </Card>
     </div>
@@ -107,9 +113,12 @@ export function GrantsTab({ codes }: { codes: Set<string> }) {
   const [conversationView, setConversationView] = useState<{ role: string; content: string }[] | null>(null);
 
   async function load() {
-    const supabase = createClient();
-    const { data } = await supabase.from("admin_access_grants").select("id, target_user_id, scope, reason, status, expires_at, created_at").order("created_at", { ascending: false }).limit(20);
-    setGrants((data ?? []) as Grant[]);
+    try {
+      const data = await rpc<Grant[]>("admin_grants");
+      setGrants(data ?? []);
+    } catch {
+      setGrants([]);
+    }
   }
 
   useEffect(() => { if (canAccess) void load(); }, [canAccess]);
@@ -119,27 +128,37 @@ export function GrantsTab({ codes }: { codes: Set<string> }) {
       setMsg("Enter a target user id and a reason (at least 10 characters) — both are required.");
       return;
     }
-    const supabase = createClient();
-    const { data, error } = await supabase.rpc("request_admin_access", {
-      p_target_user_id: targetUser.trim(),
-      p_scope: "conversations",
-      p_reason: reason.trim(),
-      p_duration_hours: parseInt(duration, 10),
-    });
-    if (error) { setMsg(error.message); return; }
-    setMsg(`Grant created (${data}). Listing the user's conversations…`);
-    setActiveGrant(String(data));
-    const { data: convs } = await supabase.rpc("admin_list_conversations", { p_grant_id: String(data) });
-    setConvList((convs ?? []) as typeof convList);
+    let grantId: string;
+    try {
+      grantId = await rpc<string>("request_admin_access", {
+        target_user_id: targetUser.trim(),
+        scope: "conversations",
+        reason: reason.trim(),
+        duration_hours: parseInt(duration, 10),
+      });
+    } catch (err) {
+      setMsg(err instanceof RpcCallError ? err.code : "REQUEST_FAILED");
+      return;
+    }
+    setMsg(`Grant created (${grantId}). Listing the user's conversations…`);
+    setActiveGrant(String(grantId));
+    try {
+      const convs = await rpc<{ id: string; title: string; updated_at: string; is_temporary: boolean }[]>("admin_list_conversations", { grant_id: String(grantId) });
+      setConvList(convs ?? []);
+    } catch {
+      setConvList([]);
+    }
     setGrants(null);
     void load();
   }
 
   async function viewConversation(grantId: string, conversationId: string) {
-    const supabase = createClient();
-    const { data, error } = await supabase.rpc("admin_view_conversation", { p_grant_id: grantId, p_conversation_id: conversationId });
-    if (error) { setMsg(error.message); return; }
-    setConversationView((data ?? []) as { role: string; content: string }[]);
+    try {
+      const data = await rpc<{ role: string; content: string }[]>("admin_view_conversation", { grant_id: grantId, conversation_id: conversationId });
+      setConversationView(data ?? []);
+    } catch (err) {
+      setMsg(err instanceof RpcCallError ? err.code : "VIEW_FAILED");
+    }
   }
 
   if (!canAccess) {

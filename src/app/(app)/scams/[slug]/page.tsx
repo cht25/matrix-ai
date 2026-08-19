@@ -1,18 +1,18 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { getDataClient, getCurrentUser } from "@/lib/data";
+import { db, getCurrentUser } from "@/lib/data";
+import { getScamArticle } from "@/lib/server/queries";
 import { Button, Card } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Scam article" };
 
 export default async function ScamArticlePage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const db = await getDataClient();
-  const user = await getCurrentUser(db);
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const { data } = await db.from("scam_articles").select("*").eq("slug", slug).eq("status", "active").maybeSingle();
+  const data = await getScamArticle(db(), slug);
   const article = data as {
     title: string; description: string; warning_signs: string; prevention: string;
     response_steps: string; reporting_guidance: string; source_name: string; source_url: string;

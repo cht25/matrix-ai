@@ -1,23 +1,19 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { getDataClient, getCurrentUser } from "@/lib/data";
+import { db, getCurrentUser } from "@/lib/data";
+import { getReportPageData } from "@/lib/server/queries";
 import { ReportForm } from "@/components/report-form";
 import { Badge, Card } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Report a Scam" };
 
 export default async function ReportPage() {
-  const db = await getDataClient();
-  const user = await getCurrentUser(db);
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const [{ data: cats }, { data: resources }, { data: countries }] = await Promise.all([
-    db.from("scam_categories").select("id, name").eq("status", "active").order("sort_order"),
-    db.from("reporting_resources").select("organization, official_url, phone, description, country_id, last_verified").eq("status", "active").order("organization"),
-    db.from("countries").select("id, name").order("name"),
-  ]);
+  const { categories: cats, resources, countries } = await getReportPageData(db());
 
-  const resourceList = (resources?.data ?? resources ?? []) as { organization: string; official_url: string; phone: string; description: string; country_id: string; last_verified: string }[];
+  const resourceList = resources;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -38,7 +34,7 @@ export default async function ReportPage() {
           <span className="text-sm text-ink-3">Private — only you and the support team can see it</span>
         </div>
         <div className="mt-4">
-          <ReportForm categories={(cats.data ?? []) as { id: string; name: string }[]} countries={(countries.data ?? []) as { id: string; name: string }[]} />
+          <ReportForm categories={cats} countries={countries} />
         </div>
       </Card>
 

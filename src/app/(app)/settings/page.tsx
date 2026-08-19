@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { getDataClient, getCurrentUser } from "@/lib/data";
+import { db, getCurrentUser } from "@/lib/data";
+import { getSettingsData } from "@/lib/server/queries";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { AccountForm } from "@/components/settings/account-form";
 import { PrivacyPanel } from "@/components/settings/privacy-panel";
@@ -13,16 +14,10 @@ export const metadata: Metadata = { title: "Settings" };
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const { tab = "account" } = await searchParams;
-  const db = await getDataClient();
-  const user = await getCurrentUser(db);
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const [{ data: profile }, { data: settings }, { data: memories }, { data: countries }] = await Promise.all([
-    db.from("profiles").select("id, full_name, email, phone, school_name, class_grade, country, date_of_birth").eq("id", user!.id).maybeSingle(),
-    db.from("user_security_settings").select("*").eq("user_id", user!.id).maybeSingle(),
-    db.from("user_memories").select("id, memory, source, created_at").eq("user_id", user!.id).order("created_at", { ascending: false }),
-    db.from("countries").select("id, name").order("name"),
-  ]);
+  const { profile, settings, memories, countries } = await getSettingsData(db(), user.uid);
 
   const tabs = [
     { id: "account", label: "Account" },
@@ -43,21 +38,15 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       <SettingsTabs tabs={tabs} active={tab} />
 
       {tab === "account" && (
-        <AccountForm
-          profile={(profile?.data ?? profile) as { full_name: string; email: string; phone: string; school_name: string; class_grade: string; country: string; date_of_birth: string } | null}
-          countries={(countries?.data ?? countries ?? []) as { id: string; name: string }[]}
-        />
+        <AccountForm profile={profile} countries={countries} />
       )}
       {tab === "privacy" && (
-        <PrivacyPanel
-          settings={(settings?.data ?? settings) as { memory_enabled: boolean; chat_history_enabled: boolean } | null}
-          memories={(memories?.data ?? memories ?? []) as { id: string; memory: string; source: string; created_at: string }[]}
-        />
+        <PrivacyPanel settings={settings} memories={memories} />
       )}
       {tab === "security" && <SecurityPanel />}
       {tab === "appearance" && <AppearancePanel />}
       {tab === "notifications" && (
-        <NotificationsForm settings={(settings?.data ?? settings) as { notifications_email: boolean; notifications_push: boolean; notifications_security_alerts: boolean } | null} />
+        <NotificationsForm settings={settings} />
       )}
       {tab === "language" && <LanguagePanel />}
     </div>

@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getDataClient, getCurrentUser } from "@/lib/data";
+import { db, getCurrentUser } from "@/lib/data";
+import { getDashboardData } from "@/lib/server/queries";
 import { Badge, Card, EmptyState, Progress } from "@/components/ui";
 import { formatDate, scoreLabel, timeAgo } from "@/lib/utils";
 
@@ -10,31 +11,22 @@ export const metadata: Metadata = { title: "Security overview" };
 type Recommendation = { text: string; href: string; cta: string };
 
 export default async function DashboardPage() {
-  const db = await getDataClient();
-  const user = await getCurrentUser(db);
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const [scoreRes, profileRes, progressRes, certRes, eventsRes, analysesRes, settingsRes] = await Promise.all([
-    db.rpc("security_score"),
-    db.from("profiles").select("id, full_name, age_verified, email, created_at").eq("id", user!.id).maybeSingle(),
-    db.from("course_progress").select("status").eq("user_id", user!.id).eq("status", "completed"),
-    db.from("certificates").select("id, certificate_id, issued_at").eq("user_id", user!.id).limit(5),
-    db.from("security_events").select("event_type, created_at").eq("user_id", user!.id).order("created_at", { ascending: false }).limit(5),
-    db.from("security_analyses").select("risk_level, created_at").eq("user_id", user!.id).order("created_at", { ascending: false }).limit(3),
-    db.from("user_security_settings").select("notifications_security_alerts").eq("user_id", user!.id).maybeSingle(),
-  ]);
-
-  const score = typeof scoreRes.data === "number" ? scoreRes.data : 0;
-  const profile = profileRes.data as { full_name?: string; age_verified?: boolean } | null;
-  const completedLessons = progressRes.data?.length ?? 0;
-  const certificates = certRes.data as { id: string; certificate_id: string; issued_at: string }[] | null;
-  const events = eventsRes.data as { event_type: string; created_at: string }[] | null;
-  const analyses = analysesRes.data as { risk_level: string; created_at: string }[] | null;
-  const settings = settingsRes.data as { notifications_security_alerts?: boolean } | null;
+  const data = await getDashboardData(db(), user);
+  const score = data.securityScore;
+  const profile = data.profile as { full_name?: string; age_verified?: boolean } | null;
+  const completedLessons = data.completedLessons.length;
+  const certificates = data.certificates;
+  const events = data.securityEvents;
+  const analyses = data.analyses;
+  const settings = { notifications_security_alerts: data.alertsEnabled };
+  const emailConfirmed = user.emailVerified;
   const scoreInfo = scoreLabel(score);
 
   const recommendations: Recommendation[] = [];
-  if (user && !user.email_confirmed_at) recommendations.push({ text: "Verify your email address to strengthen your account.", href: "/settings?tab=account", cta: "Verify email" });
+  if (!emailConfirmed) recommendations.push({ text: "Verify your email address to strengthen your account.", href: "/settings?tab=account", cta: "Verify email" });
   if (profile && !profile.age_verified) recommendations.push({ text: "Complete identity (age) verification to unlock everything.", href: "/onboarding", cta: "Verify identity" });
   if (completedLessons === 0) recommendations.push({ text: "Start a course — the fastest way to raise your score.", href: "/courses", cta: "Browse courses" });
   if (!certificates || certificates.length === 0) recommendations.push({ text: "Finish a course and pass its quiz to earn a certificate.", href: "/courses", cta: "Get certified" });
@@ -68,7 +60,7 @@ export default async function DashboardPage() {
         <Card>
           <p className="text-sm font-medium text-ink-2">Email verification</p>
           <div className="mt-2">
-            {user?.email_confirmed_at ? <Badge className="border-success/30 bg-success-soft text-success">Verified ✓</Badge> : <Badge className="border-warning/30 bg-warning-soft text-warning">Not verified</Badge>}
+            {emailConfirmed ? <Badge className="border-success/30 bg-success-soft text-success">Verified ✓</Badge> : <Badge className="border-warning/30 bg-warning-soft text-warning">Not verified</Badge>}
           </div>
           <p className="mt-3 text-xs text-ink-3">Age verified: {profile?.age_verified ? "✓" : "pending"}</p>
         </Card>

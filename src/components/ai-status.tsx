@@ -6,7 +6,7 @@
 // and clicking the indicator retries the check immediately.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { supabasePublic, supabaseBrowserConfigured } from "@/lib/supabase/browser";
+import { firebaseBrowserConfigured } from "@/lib/firebase/client";
 import { cn } from "@/lib/utils";
 
 const POLL_MS = 45_000;
@@ -22,20 +22,20 @@ const LABEL: Record<AiState, string> = {
 };
 
 export function AiStatus({ className }: { className?: string }) {
-  const [state, setState] = useState<AiState>(supabaseBrowserConfigured ? "checking" : "not-configured");
+  const [state, setState] = useState<AiState>(firebaseBrowserConfigured ? "checking" : "not-configured");
   const inFlight = useRef(false);
 
   const check = useCallback(async () => {
-    if (!supabaseBrowserConfigured) {
+    if (!firebaseBrowserConfigured) {
       setState("not-configured");
       return;
     }
     if (inFlight.current) return;
     inFlight.current = true;
     try {
-      const res = await fetch(`${supabasePublic.url}/functions/v1/ai-gateway`, {
+      const res = await fetch("/api/ai", {
         method: "POST",
-        headers: { apikey: supabasePublic.anonKey, "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "health" }),
         signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
       });

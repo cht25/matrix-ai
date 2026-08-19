@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classify } from "../supabase/functions/_shared/domain";
+import { classify } from "../src/lib/ai/domain";
 
 describe("Cyber domain classification (spec §22)", () => {
   it("accepts cybersecurity questions", () => {

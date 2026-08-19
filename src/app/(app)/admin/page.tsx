@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { getDataClient, getCurrentUser } from "@/lib/data";
+import { db, getCurrentUser } from "@/lib/data";
+import { getAdminPermissions } from "@/lib/server/queries";
 import { AdminNav } from "@/components/admin/admin-nav";
 import { OverviewTab } from "@/components/admin/overview-tab";
 import { Card } from "@/components/ui";
@@ -8,14 +9,11 @@ import { Card } from "@/components/ui";
 export const metadata: Metadata = { title: "Admin" };
 
 async function getPerms() {
-  const db = await getDataClient();
-  const { data: perms } = await db.from("admin_permissions").select("code");
-  return new Set<string>((perms?.data ?? perms ?? []).map((p: { code: string }) => p.code));
+  return new Set<string>(await getAdminPermissions(db(), (await getCurrentUser())?.uid ?? ""));
 }
 
 export default async function AdminPage() {
-  const db = await getDataClient();
-  const user = await getCurrentUser(db);
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
 
   const codes = await getPerms();

@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getDataClient, getCurrentUser } from "@/lib/data";
+import { db, getCurrentUser } from "@/lib/data";
+import { getCertificatesPage } from "@/lib/server/queries";
 import { Award } from "lucide-react";
 import { Badge, Card, EmptyState } from "@/components/ui";
 import { formatDate } from "@/lib/utils";
@@ -9,17 +10,13 @@ import { formatDate } from "@/lib/utils";
 export const metadata: Metadata = { title: "Certificates" };
 
 export default async function CertificatesPage() {
-  const db = await getDataClient();
-  const user = await getCurrentUser(db);
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const [{ data: certs }, { data: courses }] = await Promise.all([
-    db.from("certificates").select("id, certificate_id, course_id, issued_at, verification_status").eq("user_id", user!.id).order("issued_at", { ascending: false }),
-    db.from("courses").select("id, title, slug"),
-  ]);
+  const { certificates, courses } = await getCertificatesPage(db(), user.uid);
 
-  const certList = (certs?.data ?? certs ?? []) as { id: string; certificate_id: string; course_id: string; issued_at: string; verification_status: string }[];
-  const courseMap = new Map((courses?.data ?? courses ?? []).map((c: { id: string; title: string }) => [c.id, c.title]));
+  const certList = certificates;
+  const courseMap = new Map(courses.map((c) => [c.id, c.title]));
 
   return (
     <div className="space-y-6">

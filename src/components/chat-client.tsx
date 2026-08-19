@@ -14,7 +14,8 @@ import { useRouter } from "next/navigation";
 import {
   FileSearch, Flag, GraduationCap, KeyRound, Paperclip, RefreshCcw, Send, ShieldAlert, Square,
 } from "lucide-react";
-import { createClient, supabasePublic, supabaseBrowserConfigured } from "@/lib/supabase/browser";
+import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
+import { uploadOwnedFile } from "@/lib/client/api";
 import { Button, Textarea } from "@/components/ui";
 import { Markdown } from "@/components/markdown";
 import { MatrixMark } from "@/components/logo";
@@ -114,9 +115,11 @@ export function ChatClient({
   }
 
   async function requestToken(): Promise<string | null> {
-    const supabase = createClient();
-    const { data } = await supabase.auth.getSession();
-    return data.session?.access_token ?? null;
+    // The AI gateway (/api/ai) is a same-origin route — the httpOnly session
+    // cookie authenticates it. Ensure it is fresh (re-mint if missing).
+    const user = fbAuth().currentUser;
+    if (!user) return null;
+    return "session-cookie";
   }
 
   async function streamMessage(message: string, replaceLastAssistant = false) {
@@ -126,7 +129,7 @@ export function ChatClient({
     setLastUserMessage(message);
     setStreamedText("");
 
-    if (!supabaseBrowserConfigured) {
+    if (!firebaseBrowserConfigured) {
       setFailure({ ...failureCopy("not-configured"), detail: "The MATRIX backend is not configured on this deployment yet, so chat cannot start." });
       setStreaming(false);
       setStreamedText(null);
@@ -134,18 +137,21 @@ export function ChatClient({
     }
 
     const token = await requestToken();
+    if (!token) {
+      setFailure(failureCopy("auth"));
+      setStreaming(false);
+      setStreamedText(null);
+      return;
+    }
     const controller = new AbortController();
     abortRef.current = controller;
 
     try {
       armIdleTimer(CONNECT_TIMEOUT_MS, controller);
-      const res = await fetch(`${supabasePublic.url}/functions/v1/ai-gateway`, {
+      const res = await fetch("/api/ai", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          apikey: supabasePublic.anonKey,
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify({ action: "chat", stream: true, conversation_id: convId, is_temporary: isTemporary, message }),
         signal: controller.signal,
       });
@@ -287,7 +293,7 @@ export function ChatClient({
       setFailure({ ...failureCopy("invalid-request"), title: "Upload failed", detail: "The image is too large (maximum 8 MB). Choose a smaller screenshot.", retryable: false });
       return;
     }
-    if (!supabaseBrowserConfigured) {
+    if (!firebaseBrowserConfigured) {
       setFailure({ ...failureCopy("not-configured"), detail: "The MATRIX backend is not configured on this deployment yet, so screenshots cannot be analysed." });
       return;
     }
@@ -299,31 +305,23 @@ export function ChatClient({
     abortRef.current = controller;
 
     try {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
+      if (!fbAuth().currentUser) {
         setFailure(failureCopy("auth"));
         return;
       }
-      const token = await requestToken();
-      const ext = file.type.split("/")[1] === "jpeg" ? "jpg" : file.type.split("/")[1];
-      const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
 
       armIdleTimer(CONNECT_TIMEOUT_MS, controller);
-      const { error: upErr } = await supabase.storage.from("security-screenshots").upload(path, file, { contentType: file.type });
-      if (upErr) {
+      const path = await uploadOwnedFile("security-screenshots", file);
+      if (!path) {
         clearIdleTimer();
         setFailure({ ...failureCopy("server"), title: "Upload failed", detail: "The screenshot could not be uploaded. Please try again." });
         return;
       }
 
-      const res = await fetch(`${supabasePublic.url}/functions/v1/ai-gateway`, {
+      const res = await fetch("/api/ai", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          apikey: supabasePublic.anonKey,
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify({ action: "scan", storage_path: path }),
         signal: controller.signal,
       });

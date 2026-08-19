@@ -1,44 +1,54 @@
-// Data-client factory. Real Supabase server client only — RLS enforces
-// authorization in PostgreSQL; all authorization happens in the database.
-// There is no demo client: when Supabase is not configured this throws a
-// typed NotConfiguredError so pages/layouts can render an honest
-// configuration-error screen instead of pretending to load data.
+// Server-side data access core (Firebase).
+//
+// Firestore + Admin SDK replace Postgres + RLS. All authorization happens in
+// this server layer (the port of the old RLS/RPC contract): every query is
+// scoped by the verified session-cookie uid, and privileged operations go
+// through the RPC ports in src/lib/server/rpc.ts. The browser Firestore
+// client is read-only by security rules, so clients can never bypass this.
+//
+// There is no demo mode: when Firebase is not configured this throws a typed
+// NotConfiguredError so pages/layouts render an honest configuration screen
+// instead of pretending to load data.
 
 import "server-only";
-import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
-import { isConfigured, logMissingSupabaseConfig } from "@/lib/env";
+import { getSessionUser, type SessionUser } from "@/lib/firebase/session";
+import { isConfigured, logMissingFirebaseConfig } from "@/lib/env";
+import { adminDb, adminConfigured } from "@/lib/firebase/admin";
 
 export class NotConfiguredError extends Error {
-  readonly code = "SUPABASE_NOT_CONFIGURED" as const;
+  readonly code = "FIREBASE_NOT_CONFIGURED" as const;
   constructor() {
-    super("Supabase client configuration is missing (NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY).");
+    super("Firebase configuration is missing (NEXT_PUBLIC_FIREBASE_API_KEY / NEXT_PUBLIC_FIREBASE_PROJECT_ID / service account).");
     this.name = "NotConfiguredError";
   }
 }
 
 export function isNotConfiguredError(err: unknown): err is NotConfiguredError {
-  return err instanceof NotConfiguredError || (typeof err === "object" && err !== null && (err as { code?: string }).code === "SUPABASE_NOT_CONFIGURED");
+  return err instanceof NotConfiguredError || (typeof err === "object" && err !== null && (err as { code?: string }).code === "FIREBASE_NOT_CONFIGURED");
 }
 
-// Structural data-client surface used by pages. This is the Supabase server
-// client (RLS enforces authorization).
-export type DataClient = {
-  auth: {
-    getUser(): Promise<{ data: { user: { id: string; email?: string; email_confirmed_at?: string | null } | null }; error: unknown }>;
-  };
-  from(table: string): any;
-  rpc(fn: string, args?: Record<string, unknown>): Promise<{ data: any; error: any }>;
-};
+/** Verified session user for server components, or null when signed out. */
+export async function getCurrentUser(): Promise<SessionUser | null> {
+  return getSessionUser();
+}
 
-export async function getDataClient(): Promise<DataClient> {
+/** Session user or throw NotConfiguredError (pages render the config screen). */
+export async function requireUser(): Promise<SessionUser> {
   if (!isConfigured()) {
-    logMissingSupabaseConfig();
+    logMissingFirebaseConfig();
     throw new NotConfiguredError();
   }
-  return (await createSupabaseServerClient()) as unknown as DataClient;
+  const user = await getSessionUser();
+  if (!user) throw new NotConfiguredError(); // middleware normally prevents this
+  return user;
 }
 
-export async function getCurrentUser(db: DataClient) {
-  const { data } = await db.auth.getUser();
-  return data.user;
+export function db() {
+  if (!adminConfigured()) {
+    logMissingFirebaseConfig();
+    throw new NotConfiguredError();
+  }
+  return adminDb();
 }
+
+export type { SessionUser };

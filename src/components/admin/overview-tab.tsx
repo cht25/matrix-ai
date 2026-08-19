@@ -1,23 +1,34 @@
-import { getDataClient } from "@/lib/data";
+import { db, getCurrentUser } from "@/lib/data";
+import { adminListUsers } from "@/lib/server/rpc";
 import { Card } from "@/components/ui";
 
 export async function OverviewTab({ codes }: { codes: Set<string> }) {
-  const db = await getDataClient();
+  const d = db();
+  const sessionUser = await getCurrentUser();
+  const user = { uid: sessionUser?.uid ?? "", email: sessionUser?.email ?? null, emailVerified: sessionUser?.emailVerified ?? false };
 
   const [users, reports, pendingVerification, pendingConsents, safetyEvents] = await Promise.all([
-    codes.has("users.view") ? db.rpc("admin_list_users") : Promise.resolve({ data: null, error: null }),
-    codes.has("reports.view") ? db.from("scam_reports").select("id, status").eq("status", "submitted") : Promise.resolve({ data: null, error: null }),
-    codes.has("verification.review") ? db.from("identity_verifications").select("id").eq("verification_status", "pending_review") : Promise.resolve({ data: null, error: null }),
-    codes.has("consent.review") ? db.from("guardian_consents").select("id").eq("status", "pending") : Promise.resolve({ data: null, error: null }),
-    codes.has("ai.view") ? db.from("ai_safety_events").select("id").order("created_at", { ascending: false }).limit(50) : Promise.resolve({ data: null, error: null }),
+    codes.has("users.view") ? adminListUsers(d, user).catch(() => []) : [],
+    codes.has("reports.view")
+      ? d.collection("scam_reports").where("status", "==", "submitted").get().then((s) => s.docs).catch(() => [])
+      : [],
+    codes.has("verification.review")
+      ? d.collection("identity_verifications").where("verification_status", "==", "pending_review").get().then((s) => s.docs).catch(() => [])
+      : [],
+    codes.has("consent.review")
+      ? d.collection("guardian_consents").where("status", "==", "pending").get().then((s) => s.docs).catch(() => [])
+      : [],
+    codes.has("ai.view")
+      ? d.collection("ai_safety_events").orderBy("created_at", "desc").limit(50).get().then((s) => s.docs).catch(() => [])
+      : [],
   ]);
 
   const stats = [
-    { label: "Registered users", value: (users?.data ?? []).length, visible: codes.has("users.view") },
-    { label: "New scam reports", value: (reports?.data ?? []).length, visible: codes.has("reports.view") },
-    { label: "Pending age verifications", value: (pendingVerification?.data ?? []).length, visible: codes.has("verification.review") },
-    { label: "Pending consents", value: (pendingConsents?.data ?? []).length, visible: codes.has("consent.review") },
-    { label: "AI safety events (last 50)", value: (safetyEvents?.data ?? []).length, visible: codes.has("ai.view") },
+    { label: "Registered users", value: users.length, visible: codes.has("users.view") },
+    { label: "New scam reports", value: reports.length, visible: codes.has("reports.view") },
+    { label: "Pending age verifications", value: pendingVerification.length, visible: codes.has("verification.review") },
+    { label: "Pending consents", value: pendingConsents.length, visible: codes.has("consent.review") },
+    { label: "AI safety events (last 50)", value: safetyEvents.length, visible: codes.has("ai.view") },
   ];
 
   return (

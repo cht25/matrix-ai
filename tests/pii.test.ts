@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { redactPII, containsCredentials, leakedPII } from "../supabase/functions/_shared/pii";
+import { redactPII, containsCredentials, leakedPII } from "../src/lib/ai/pii";
 
 describe("PII redaction (spec §16)", () => {
   it("redacts emails", () => {

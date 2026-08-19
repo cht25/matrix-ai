@@ -69,7 +69,7 @@ export const DOC_SECTIONS: DocSection[] = [
     title: "Account",
     icon: "👤",
     blocks: [
-      { t: "p", text: "Your account is made of two parts: your sign-in identity (email/password/OAuth, managed by Supabase Auth) and your MATRIX profile (name, school, country, and settings)." },
+      { t: "p", text: "Your account is made of two parts: your sign-in identity (email/password/OAuth, managed by Firebase Auth) and your MATRIX profile (name, school, country, and settings)." },
       { t: "h2", text: "What you can change" },
       { t: "ul", items: [
         "Full name, phone, school and grade — in Settings → Account.",
@@ -300,7 +300,7 @@ export const DOC_SECTIONS: DocSection[] = [
       ]},
       { t: "h2", text: "What we never store" },
       { t: "ul", items: [
-        "Passwords, OTPs, or authentication tokens (they live only in Supabase Auth's hashed store).",
+        "Passwords, OTPs, or authentication tokens (they live only in Firebase Auth's hashed store).",
         "Raw identity document numbers — only a verification reference and outcome.",
         "Payment information.",
       ]},
@@ -340,7 +340,7 @@ export const DOC_SECTIONS: DocSection[] = [
       { t: "h2", text: "Why do I need to verify my age?" },
       { t: "p", text: "MATRIX is designed for teens. Age verification keeps the community age-appropriate and meets child-safety requirements. The document is stored privately and reviewed by a human; the number itself is never stored or sent to the AI." },
       { t: "h2", text: "Does MATRIX see my passwords?" },
-      { t: "p", text: "No. Passwords are stored only as hashes by Supabase Auth, and the PII redaction layer strips anything password-like before it could reach the AI." },
+      { t: "p", text: "No. Passwords are stored only as hashes by Firebase Auth, and the PII redaction layer strips anything password-like before it could reach the AI." },
       { t: "h2", text: "What if the AI refuses my question?" },
       { t: "p", text: "MATRIX only answers cybersecurity-related questions and refuses harmful requests. If you think a refusal was wrong, ask in a different way or contact support." },
       { t: "h2", text: "Can I delete everything?" },

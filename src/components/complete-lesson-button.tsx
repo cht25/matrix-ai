@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/browser";
+import { rpc } from "@/lib/client/api";
 import { Button } from "@/components/ui";
 
 export function CompleteLessonButton({
@@ -21,8 +21,7 @@ export function CompleteLessonButton({
 
   async function complete() {
     setBusy(true);
-    const supabase = createClient();
-    await supabase.rpc("update_course_progress", { p_lesson_id: lessonId, p_status: "completed" });
+    await rpc("update_course_progress", { lesson_id: lessonId, status: "completed" }).catch(() => {});
     router.refresh();
     if (nextHref) {
       router.push(nextHref);

@@ -8,7 +8,8 @@
 // cards with [Retry] — never a fabricated finding.
 
 import { useRef, useState } from "react";
-import { createClient, supabasePublic, supabaseBrowserConfigured } from "@/lib/supabase/browser";
+import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
+import { uploadOwnedFile } from "@/lib/client/api";
 import { ImageIcon } from "lucide-react";
 import { Button, Card, Spinner } from "@/components/ui";
 import { Markdown } from "@/components/markdown";
@@ -49,7 +50,7 @@ export function ScannerClient() {
       setFailure({ ...failureCopy("invalid-request"), title: "Upload failed", detail: "This file looks too small to be a real screenshot.", retryable: false });
       return;
     }
-    if (!supabaseBrowserConfigured) {
+    if (!firebaseBrowserConfigured) {
       setFailure({ ...failureCopy("not-configured"), detail: "The MATRIX backend is not configured on this deployment yet, so screenshots cannot be analysed." });
       return;
     }
@@ -58,29 +59,20 @@ export function ScannerClient() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(new DOMException("Scan timed out.", "TimeoutError")), SCAN_TIMEOUT_MS);
     try {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
+      if (!fbAuth().currentUser) {
         setFailure(failureCopy("auth"));
         return;
       }
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
-      const ext = file.type.split("/")[1] === "jpeg" ? "jpg" : file.type.split("/")[1];
-      const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
-      const { error: upErr } = await supabase.storage.from("security-screenshots").upload(path, file, { contentType: file.type });
-      if (upErr) {
+      const path = await uploadOwnedFile("security-screenshots", file);
+      if (!path) {
         setFailure({ ...failureCopy("server"), title: "Upload failed", detail: "The screenshot could not be uploaded. Please try again." });
         return;
       }
 
-      const res = await fetch(`${supabasePublic.url}/functions/v1/ai-gateway`, {
+      const res = await fetch("/api/ai", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          apikey: supabasePublic.anonKey,
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify({ action: "scan", storage_path: path }),
         signal: controller.signal,
       });

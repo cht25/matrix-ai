@@ -1,9 +1,16 @@
 "use client";
 
+// Firebase email-action handler: verifies email links
+// (?mode=verifyEmail&oobCode=…) and completes OAuth redirects. When the
+// verification succeeds we (re)mint the SSR session cookie so server
+// components immediately see emailVerified=true.
+
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { createClient, supabaseBrowserConfigured } from "@/lib/supabase/browser";
+import { applyActionCode, getRedirectResult, reload } from "firebase/auth";
+import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
+import { mintSessionCookie } from "@/lib/client/api";
 import { AuthShell, AuthUnavailable } from "@/components/auth/login-screen";
 import { Alert, Button } from "@/components/ui";
 
@@ -14,33 +21,35 @@ function VerifyInner() {
   const [message, setMessage] = useState("Verifying your email…");
 
   useEffect(() => {
-    if (!supabaseBrowserConfigured) {
+    if (!firebaseBrowserConfigured) {
       setStatus("error");
       setMessage("Authentication is not configured on this deployment yet.");
       return;
     }
     const next = params.get("next") ?? "/chat";
-    const tokenHash = params.get("token_hash");
-    const type = params.get("type");
-    const code = params.get("code");
-    const supabase = createClient();
+    const mode = params.get("mode");
+    const oobCode = params.get("oobCode");
+    const auth = fbAuth();
 
     async function verify() {
       try {
-        if (tokenHash && type) {
-          const { error } = await supabase.auth.verifyOtp({ type: type as never, token_hash: tokenHash });
-          if (error) throw error;
-        } else if (code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(code);
-          if (error) throw error;
+        if (mode === "verifyEmail" && oobCode) {
+          await applyActionCode(auth, oobCode);
+          if (auth.currentUser) await reload(auth.currentUser).catch(() => {});
+        } else if (mode === "resetPassword" && oobCode) {
+          window.location.replace(`/reset-password?mode=resetPassword&oobCode=${encodeURIComponent(oobCode)}`);
+          return;
         } else {
-          const { data } = await supabase.auth.getSession();
-          if (!data.session) {
+          // OAuth redirect completion (or an already-signed-in visitor).
+          await getRedirectResult(auth).catch(() => {});
+          const user = auth.currentUser;
+          if (!user) {
             setStatus("error");
             setMessage("No verification link found. Check the link from your email, or sign in.");
             return;
           }
         }
+        await mintSessionCookie().catch(() => {});
         setStatus("done");
         setMessage("Your email is verified. Welcome to MATRIX!");
         setTimeout(() => router.push(next), 1100);

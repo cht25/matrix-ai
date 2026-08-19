@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/browser";
+import { rpc } from "@/lib/client/api";
 import { Alert, Button, Card } from "@/components/ui";
 
 type Settings = { notifications_email: boolean; notifications_push: boolean; notifications_security_alerts: boolean };
@@ -34,14 +34,11 @@ export function NotificationsForm({ settings }: { settings: Settings | null }) {
   const [msg, setMsg] = useState<string | null>(null);
 
   async function save() {
-    const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    const { error } = await supabase
-      .from("user_security_settings")
-      .update({ notifications_email: email, notifications_push: push, notifications_security_alerts: alerts })
-      .eq("user_id", user.id);
-    if (error) return setMsg(error.message);
+    try {
+      await rpc("settings_update", { notifications_email: email, notifications_push: push, notifications_security_alerts: alerts });
+    } catch {
+      return setMsg("Could not save. Please try again.");
+    }
     setMsg("Notification preferences saved.");
     router.refresh();
   }

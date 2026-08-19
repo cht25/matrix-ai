@@ -7,12 +7,19 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/browser";
+import {
+  createUserWithEmailAndPassword,
+  updateProfile,
+  sendEmailVerification,
+  reload,
+} from "firebase/auth";
+import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
+import { mintSessionCookie, rpc, uploadOwnedFile } from "@/lib/client/api";
 import { isValidEmail, validateAgeForRegistration, cn } from "@/lib/utils";
 import { Check, Upload } from "lucide-react";
 import { Alert, Button, Field, Input, Select, Spinner } from "@/components/ui";
 import { AuthFooterLink, AuthShell, AuthUnavailable, Divider, OAuthButtons } from "@/components/auth/login-screen";
-import { supabaseBrowserConfigured } from "@/lib/supabase/browser";
+
 
 const STEPS = ["Basic", "Date of birth", "Age verification", "Email", "Profile", "Complete"];
 
@@ -36,8 +43,6 @@ export function RegisterForm() {
   const [school, setSchool] = useState("");
   const [grade, setGrade] = useState("");
   const [country, setCountry] = useState("US");
-
-  const supabase = () => createClient();
 
   function go(n: number) {
     setError(null);
@@ -67,18 +72,24 @@ export function RegisterForm() {
       return setError(reasons[check.reason]);
     }
     setBusy(true);
-    const { data, error } = await supabase().auth.signUp({
-      email,
-      password,
-      options: {
-        data: { full_name: fullName.trim(), dob },
-        emailRedirectTo: `${window.location.origin}/verify?next=/onboarding`,
-      },
-    });
-    setBusy(false);
-    if (error) return setError("We couldn't create your account. Please try again.");
-    if (!data.user) return setError("We couldn't create your account. Please try again.");
-    go(2);
+    try {
+      const auth = fbAuth();
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      if (fullName.trim()) await updateProfile(cred.user, { displayName: fullName.trim() });
+      // The DOB is validated server-side later (complete_profile); it is
+      // stored in the Firestore profile, never sent to the AI.
+      await sendEmailVerification(cred.user, { url: `${window.location.origin}/verify?next=/onboarding` });
+      await mintSessionCookie().catch(() => {}); // provision profile docs + SSR cookie
+      setBusy(false);
+      go(2);
+    } catch (err) {
+      setBusy(false);
+      const code = (err as { code?: string }).code ?? "";
+      if (code === "auth/email-already-in-use") return setError("An account with this email already exists. Try signing in.");
+      if (code === "auth/weak-password") return setError("Password must be at least 8 characters.");
+      if (code === "auth/operation-not-allowed") return setError("Email sign-up is not enabled in Firebase yet (Authentication → Sign-in method).");
+      return setError("We couldn't create your account. Please try again.");
+    }
   }
 
   async function uploadIdentity(e: React.ChangeEvent<HTMLInputElement>) {
@@ -87,19 +98,12 @@ export function RegisterForm() {
     setError(null);
     setBusy(true);
     try {
-      const sb = supabase();
-      const { data: { user } } = await sb.auth.getUser();
-      if (!user) throw new Error("Not signed in");
-      const ext = file.type === "image/png" ? "png" : "jpg";
-      const path = `${user.id}/birth-certificate-${Date.now()}.${ext}`;
-      const { error: upErr } = await sb.storage.from("identity-documents").upload(path, file, { contentType: file.type });
-      if (upErr) throw new Error("Upload failed. Please try again.");
-      const { error: insErr } = await sb.from("identity_verifications").insert({
-        user_id: user.id,
+      if (!fbAuth().currentUser) throw new Error("Not signed in");
+      const path = await uploadOwnedFile("identity-documents", file);
+      await rpc("submit_identity_verification", {
         verification_type: "birth_certificate",
         verification_reference: path,
       });
-      if (insErr) throw new Error("Could not submit your document. Please try again.");
       setInfo("Document uploaded securely — it's stored privately and never sent to the AI. The security team will review it.");
     } catch (e2) {
       setError(e2 instanceof Error ? e2.message : "Upload failed. Please try again.");
@@ -110,16 +114,19 @@ export function RegisterForm() {
 
   async function checkEmailVerified() {
     setBusy(true);
-    const { data } = await supabase().auth.getUser();
-    setEmailVerified(Boolean(data.user?.email_confirmed_at));
+    const user = fbAuth().currentUser;
+    if (user) {
+      await reload(user).catch(() => {});
+      setEmailVerified(user.emailVerified);
+    }
     setBusy(false);
   }
 
   async function resendEmail() {
     setBusy(true);
-    const { data: { user } } = await supabase().auth.getUser();
-    if (user?.email) {
-      await supabase().auth.resend({ type: "signup", email: user.email, options: { emailRedirectTo: `${window.location.origin}/verify?next=/onboarding` } });
+    const user = fbAuth().currentUser;
+    if (user) {
+      await sendEmailVerification(user, { url: `${window.location.origin}/verify?next=/onboarding` }).catch(() => {});
     }
     setResent(true);
     setBusy(false);
@@ -129,35 +136,51 @@ export function RegisterForm() {
     e.preventDefault();
     setError(null);
     setBusy(true);
-    const { data, error } = await supabase().rpc("complete_profile", {
-      p_dob: dob || null,
-      p_school_name: school,
-      p_class_grade: grade,
-      p_country: country,
-    });
-    setBusy(false);
-    if (error) {
+    let result: { age?: number } | undefined;
+    try {
+      result = await rpc<{ age?: number }>("complete_profile", {
+        dob: dob || null,
+        full_name: fullName.trim(),
+        school_name: school,
+        class_grade: grade,
+        country,
+      });
+    } catch (err) {
+      setBusy(false);
+      const message = (err as { code?: string }).code ?? "";
       const map: Record<string, string> = {
         DOB_MISSING: "Please enter your date of birth.",
         DOB_FUTURE: "Your date of birth can't be in the future.",
         DOB_TOO_YOUNG: "MATRIX is for users aged 11 and up.",
         DOB_TOO_OLD: "MATRIX is for users aged 17 and under.",
       };
-      return setError(map[error.message] ?? "We couldn't save your profile. Please try again.");
+      return setError(map[message] ?? "We couldn't save your profile. Please try again.");
     }
-    const result = data as { age?: number };
-    if (result.age !== undefined && (result.age < 11 || result.age > 17)) {
+    setBusy(false);
+    if (result?.age !== undefined && (result.age < 11 || result.age > 17)) {
       return setError(`MATRIX is for users aged 11–17. (Age entered: ${result.age})`);
     }
     go(5);
   }
 
-  function oauth(provider: "google" | "facebook") {
-    const sb = supabase();
-    sb.auth.signInWithOAuth({ provider, options: { redirectTo: `${window.location.origin}/verify?next=/onboarding` } });
+  async function oauth(provider: "google" | "facebook") {
+    const { GoogleAuthProvider, FacebookAuthProvider, signInWithPopup, signInWithRedirect } = await import("firebase/auth");
+    const providerObj = provider === "google" ? new GoogleAuthProvider() : new FacebookAuthProvider();
+    try {
+      await signInWithPopup(fbAuth(), providerObj);
+      await mintSessionCookie().catch(() => {});
+      window.location.href = "/onboarding";
+    } catch (err) {
+      const code = (err as { code?: string }).code ?? "";
+      if (code === "auth/popup-blocked" || code === "auth/operation-not-supported-in-this-environment") {
+        await signInWithRedirect(fbAuth(), providerObj).catch(() => {});
+        return;
+      }
+      setError("Sign-in with " + provider + " failed. Try email instead.");
+    }
   }
 
-  if (!supabaseBrowserConfigured) {
+  if (!firebaseBrowserConfigured) {
     return <AuthUnavailable />;
   }
 

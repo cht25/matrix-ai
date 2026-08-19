@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { MoreVertical } from "lucide-react";
-import { createClient } from "@/lib/supabase/browser";
+import { rpc } from "@/lib/client/api";
 import { Input } from "@/components/ui";
 
 export function ChatHeader({ conversationId, initialTitle }: { conversationId: string; initialTitle: string }) {
@@ -13,19 +13,13 @@ export function ChatHeader({ conversationId, initialTitle }: { conversationId: s
   const [menu, setMenu] = useState(false);
 
   async function save() {
-    const supabase = createClient();
-    await supabase.from("conversations").update({ title: title.trim() || initialTitle }).eq("id", conversationId);
+    await rpc("conversation_update", { id: conversationId, title: title.trim() || initialTitle }).catch(() => {});
     setEditing(false);
     router.refresh();
   }
 
   async function exportJson() {
-    const supabase = createClient();
-    const { data: messages } = await supabase
-      .from("conversation_messages")
-      .select("role, content, created_at")
-      .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: true });
+    const messages = await rpc<{ role: string; content: string; created_at: string }[]>("conversation_messages", { conversation_id: conversationId }).catch(() => []);
     const blob = new Blob([JSON.stringify({ conversation_id: conversationId, exported_at: new Date().toISOString(), messages }, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -35,16 +29,14 @@ export function ChatHeader({ conversationId, initialTitle }: { conversationId: s
   }
 
   async function archive() {
-    const supabase = createClient();
-    await supabase.from("conversations").update({ archived_at: new Date().toISOString() }).eq("id", conversationId);
+    await rpc("conversation_update", { id: conversationId, archive: true }).catch(() => {});
     router.push("/chat");
     router.refresh();
   }
 
   async function remove() {
     if (!confirm("Delete this conversation? This can't be undone.")) return;
-    const supabase = createClient();
-    await supabase.from("conversations").update({ deleted_at: new Date().toISOString() }).eq("id", conversationId);
+    await rpc("conversation_update", { id: conversationId, delete: true }).catch(() => {});
     router.push("/chat");
     router.refresh();
   }

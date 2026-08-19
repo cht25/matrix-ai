@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { getDataClient, getCurrentUser } from "@/lib/data";
+import { db, getCurrentUser } from "@/lib/data";
+import { getLessonPage } from "@/lib/server/queries";
 import { CompleteLessonButton } from "@/components/complete-lesson-button";
 import { Card } from "@/components/ui";
 
@@ -9,25 +10,17 @@ export const metadata: Metadata = { title: "Lesson" };
 
 export default async function LessonPage({ params }: { params: Promise<{ slug: string; lessonId: string }> }) {
   const { slug, lessonId } = await params;
-  const db = await getDataClient();
-  const user = await getCurrentUser(db);
+  const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const { data: lesson } = await db.from("lessons").select("id, module_id, title, summary, body, sort_order").eq("id", lessonId).maybeSingle();
-  if (!lesson) notFound();
+  const data = await getLessonPage(db(), user.uid, slug, lessonId);
+  if (!data) notFound();
+  const lesson = data.lesson;
+  const course = data.course;
 
-  const course = await db.from("courses").select("id, slug, title").eq("slug", slug).eq("status", "published").maybeSingle();
-  if (!course.data) notFound();
-
-  const [{ data: modules }, { data: lessons }, { data: progress }] = await Promise.all([
-    db.from("course_modules").select("id, course_id, sort_order").eq("course_id", course.data.id).order("sort_order"),
-    db.from("lessons").select("id, module_id, title, sort_order").order("sort_order"),
-    db.from("course_progress").select("status").eq("user_id", user!.id).eq("lesson_id", lessonId).maybeSingle(),
-  ]);
-
-  const modList = (modules?.data ?? modules ?? []) as { id: string; course_id: string }[];
-  const lessonList = (lessons?.data ?? lessons ?? []) as { id: string; module_id: string; title: string }[];
-  const isCompleted = progress?.data?.status === "completed" || progress?.status === "completed";
+  const modList = data.modules;
+  const lessonList = data.lessons;
+  const isCompleted = data.progress?.status === "completed";
 
   // Order: lessons of this course, in module/lesson order.
   const ordered = lessonList.filter((l) => modList.some((m) => m.id === l.module_id));
@@ -38,7 +31,7 @@ export default async function LessonPage({ params }: { params: Promise<{ slug: s
 
   return (
     <div className="mx-auto max-w-3xl space-y-5">
-      <Link href={`/courses/${slug}`} className="text-sm font-medium text-accent hover:text-accent-2">← {course.data.title}</Link>
+      <Link href={`/courses/${slug}`} className="text-sm font-medium text-accent hover:text-accent-2">← {course.title}</Link>
 
       <Card className="!p-6 sm:!p-8">
         <p className="text-xs font-semibold uppercase tracking-wide text-accent">Lesson {idx + 1} of {ordered.length}</p>

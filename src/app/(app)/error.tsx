@@ -12,14 +12,14 @@ export default function AppError({ error, reset }: { error: Error & { digest?: s
     // Full detail stays in server/client logs only. A missing backend
     // configuration is expected on misconfigured deployments — the config
     // warning is already logged once at startup; don't spam per request.
-    if ((error as { code?: string }).code !== "SUPABASE_NOT_CONFIGURED") {
+    if ((error as { code?: string }).code !== "FIREBASE_NOT_CONFIGURED") {
       console.error("[MATRIX] Route error boundary caught an error.", error);
     }
   }, [error]);
 
   return (
     <div className="min-h-[100dvh]">
-      <ServerProblemScreen kind={(error as { code?: string }).code === "SUPABASE_NOT_CONFIGURED" ? "config" : "server"} onRetry={reset} />
+      <ServerProblemScreen kind={(error as { code?: string }).code === "FIREBASE_NOT_CONFIGURED" ? "config" : "server"} onRetry={reset} />
     </div>
   );
 }

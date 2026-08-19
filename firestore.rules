@@ -1,0 +1,192 @@
+rules_version = '2';
+
+// =============================================================================
+// MATRIX AI — Firestore security rules (port of the Postgres RLS policies).
+//
+// Model: every WRITE goes through Next.js API routes / server components using
+// the Firebase Admin SDK, which re-checks auth, ownership, validation, audit
+// and RBAC in code (src/lib/server/rpc.ts) — the browser can never write.
+// READS mirror the old RLS: users read their own rows, admins (custom claim
+// `admin: true`, set by scripts/set-admin.mjs) can read everything, and public
+// content (countries, active scam library) is world-readable.
+// =============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function adminClaim() {
+      return signedIn() && request.auth.token.admin == true;
+    }
+
+    // --- Identity -------------------------------------------------------------
+    match /profiles/{uid} {
+      allow read: if isOwner(uid) || adminClaim();
+      allow write: if false; // complete_profile / profile_update run server-side
+    }
+
+    match /user_security_settings/{uid} {
+      allow read: if isOwner(uid) || adminClaim();
+      allow write: if false;
+    }
+
+    match /guardian_consents/{uid} {
+      allow read: if isOwner(uid) || adminClaim();
+      allow write: if false;
+    }
+
+    match /identity_verifications/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false; // docs go to Storage; rows are inserted server-side
+    }
+
+    match /oauth_profiles/{id} {
+      allow read, write: if false; // providers live in Firebase Auth
+    }
+
+    // --- Chat -----------------------------------------------------------------
+    match /conversations/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false; // the AI gateway (server) is the only writer
+      match /messages/{mid} {
+        allow read: if get(/databases/$(database)/documents/conversations/$(id)).data.user_id == request.auth.uid
+                    || adminClaim();
+        allow write: if false; // role guards: clients may never write messages
+      }
+    }
+
+    match /conversation_summaries/{cid} {
+      allow read: if get(/databases/$(database)/documents/conversations/$(cid)).data.user_id == request.auth.uid
+                  || adminClaim();
+      allow write: if false;
+    }
+
+    match /user_memories/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false; // memory_delete / AI extraction run server-side
+    }
+
+    match /attachments/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false;
+    }
+
+    match /security_analyses/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false;
+    }
+
+    // --- Learning -------------------------------------------------------------
+    match /courses/{id} {
+      allow read: if resource.data.status == 'published' || adminClaim();
+      allow write: if false;
+    }
+    match /course_modules/{id} {
+      allow read: if true; // module titles are public once a course is published
+      allow write: if false;
+    }
+    match /lessons/{id} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /quizzes/{id} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /quiz_questions/{id} {
+      // Stored WITHOUT the correct flag (public-safe, like quiz_options_public).
+      allow read: if true;
+      allow write: if false;
+    }
+    match /quiz_answers/{id} {
+      // Server-only: correct answers + explanations. Grading happens in /api/rpc.
+      allow read, write: if false;
+    }
+    match /quiz_attempts/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false; // scores computed server-side — never client
+    }
+    match /course_progress/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false;
+    }
+    match /certificates/{id} {
+      // Public verification goes through the server route; owners read their own.
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false;
+    }
+    match /certificate_verification/{id} {
+      allow read, write: if false; // verification log — server only
+    }
+
+    // --- Scam library & reports ------------------------------------------------
+    match /scam_categories/{id} {
+      allow read: if resource.data.status == 'active' || adminClaim();
+      allow write: if false;
+    }
+    match /scam_articles/{id} {
+      allow read: if resource.data.status == 'active' || adminClaim();
+      allow write: if false;
+    }
+    match /scam_reports/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false;
+    }
+    match /reporting_resources/{id} {
+      allow read: if resource.data.status == 'active' || adminClaim();
+      allow write: if false;
+    }
+    match /document_chunks/{id} {
+      allow read: if resource.data.trust_level in ['trusted_official', 'trusted_internal'];
+      allow write: if false;
+    }
+
+    // --- Countries --------------------------------------------------------------
+    match /countries/{id} {
+      allow read: if true; // consent requirements are public
+      allow write: if false;
+    }
+
+    // --- Notifications / events / sessions ---------------------------------------
+    match /notifications/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false;
+    }
+    match /security_events/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false;
+    }
+    match /user_sessions/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false;
+    }
+
+    // --- Admin RBAC / audit / AI logs ----------------------------------------------
+    match /admin_roles/{id}          { allow read: if adminClaim(); allow write: if false; }
+    match /admin_permissions/{id}    { allow read: if adminClaim(); allow write: if false; }
+    match /admin_role_permissions/{id} { allow read: if adminClaim(); allow write: if false; }
+    match /admin_role_assignments/{uid} {
+      allow read: if isOwner(uid) || adminClaim();
+      allow write: if false; // scripts/set-admin.mjs only
+    }
+    match /admin_access_grants/{id}  { allow read, write: if false; }
+    match /audit_logs/{id}           { allow read, write: if false; }
+    match /ai_usage_logs/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false;
+    }
+    match /ai_safety_events/{id}     { allow read, write: if false; }
+
+    // --- Default deny --------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

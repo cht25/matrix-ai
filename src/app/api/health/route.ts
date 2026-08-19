@@ -1,52 +1,55 @@
 // GET /api/health — honest, machine-readable service health for operators and
 // uptime checks. No secrets are returned; every probe is a live network call.
 //
-//   200 { ok: true,  supabase: "reachable",          ai: "online" | "unavailable" | "unknown", checkedAt }
-//   503 { ok: false, supabase: "not-configured", … } — deployment lacks env vars
-//   503 { ok: false, supabase: "unreachable", … }    — project URL/key wrong or project paused/down
+//   200 { ok: true,  firebase: "reachable", cloudinary: "reachable", ai: "online"|"unavailable"|"unknown", checkedAt }
+//   503 { ok: false, firebase: "not-configured"|"unreachable", … }
 
 import { NextResponse } from "next/server";
-import { env, isConfigured } from "@/lib/env";
+import { isConfigured, isAiConfigured, isCloudinaryConfigured } from "@/lib/env";
+import { adminConfigured } from "@/lib/firebase/admin";
+import { createProvider } from "@/lib/ai/groq";
+import { ping as pingCloudinary } from "@/lib/server/cloudinary";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const checkedAt = new Date().toISOString();
 
-  if (!isConfigured()) {
+  if (!isConfigured() || !adminConfigured()) {
     return NextResponse.json(
-      { ok: false, supabase: "not-configured", ai: "not-configured", checkedAt },
+      {
+        ok: false,
+        firebase: "not-configured",
+        cloudinary: isCloudinaryConfigured() ? "unknown" : "not-configured",
+        ai: isAiConfigured() ? "unknown" : "not-configured",
+        checkedAt,
+      },
       { status: 503 },
     );
   }
 
-  let supabase: "reachable" | "unreachable" = "unreachable";
+  let firebase: "reachable" | "unreachable" = "unreachable";
   try {
-    const res = await fetch(`${env.supabaseUrl}/auth/v1/health`, {
-      headers: { apikey: env.supabaseAnonKey },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (res.ok) supabase = "reachable";
+    const { adminDb } = await import("@/lib/firebase/admin");
+    // Minimal live read (also proves the service account works).
+    await adminDb().collection("countries").limit(1).get();
+    firebase = "reachable";
   } catch {
-    supabase = "unreachable";
+    firebase = "unreachable";
+  }
+
+  let cloudinary: "reachable" | "unreachable" | "unknown" = "unknown";
+  if (isCloudinaryConfigured()) {
+    cloudinary = (await pingCloudinary()) ? "reachable" : "unreachable";
   }
 
   let ai: "online" | "unavailable" | "unknown" = "unknown";
-  if (supabase === "reachable") {
-    try {
-      const res = await fetch(`${env.supabaseUrl}/functions/v1/ai-gateway`, {
-        method: "POST",
-        headers: { apikey: env.supabaseAnonKey, "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "health" }),
-        signal: AbortSignal.timeout(8000),
-      });
-      const data = (await res.json().catch(() => ({}))) as { status?: string };
-      ai = res.ok && data.status === "online" ? "online" : "unavailable";
-    } catch {
-      ai = "unavailable";
-    }
+  if (isAiConfigured()) {
+    const provider = createProvider();
+    ai = provider && (await provider.healthCheck()) ? "online" : "unavailable";
   }
 
-  const ok = supabase === "reachable";
-  return NextResponse.json({ ok, supabase, ai, checkedAt }, { status: ok ? 200 : 503 });
+  const ok = firebase === "reachable";
+  return NextResponse.json({ ok, firebase, cloudinary, ai, checkedAt }, { status: ok ? 200 : 503 });
 }
