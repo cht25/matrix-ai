@@ -4,14 +4,15 @@ import { ChatClient } from "@/components/chat-client";
 
 export const metadata = { title: "Chat" } as const;
 
-export default async function ChatHomePage({ searchParams }: { searchParams: Promise<{ new?: string }> }) {
+export default async function ChatHomePage({ searchParams }: { searchParams: Promise<{ new?: string; mode?: string }> }) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
-  const { new: fresh } = await searchParams;
+  const { new: fresh, mode: requestedMode } = await searchParams;
+  const mode = requestedMode === "agent" ? "agent" as const : "general" as const;
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-1 flex-col">
-      <ChatClient key={fresh ?? "home"} initialMessages={[]} conversationId={null} isTemporary={false} />
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-4xl flex-1 flex-col">
+      <ChatClient key={`${fresh ?? "home"}-${mode}`} initialMessages={[]} conversationId={null} isTemporary={false} initialMode={mode} />
     </div>
   );
 }

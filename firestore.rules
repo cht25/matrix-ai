@@ -51,6 +51,12 @@ service cloud.firestore {
       allow read, write: if false; // providers live in Firebase Auth
     }
 
+    match /github_connections/{uid} {
+      // Contains an encrypted OAuth token. Status and mutations are available
+      // only through authenticated server routes; browser Firestore gets none.
+      allow read, write: if false;
+    }
+
     // --- Chat -----------------------------------------------------------------
     match /conversations/{id} {
       allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();

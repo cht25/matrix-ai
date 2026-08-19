@@ -42,3 +42,18 @@ env:
   - variable: GROQ_API_KEY
     availability: [RUNTIME]
     secret: GROQ_API_KEY
+  - variable: OPENROUTER_API_KEY
+    availability: [RUNTIME]
+    secret: OPENROUTER_API_KEY
+  - variable: OPENROUTER_CODING_MODEL
+    availability: [RUNTIME]
+  - variable: GITHUB_CLIENT_ID
+    availability: [RUNTIME]
+  - variable: GITHUB_CLIENT_SECRET
+    availability: [RUNTIME]
+    secret: GITHUB_CLIENT_SECRET
+  - variable: GITHUB_TOKEN_ENCRYPTION_KEY
+    availability: [RUNTIME]
+    secret: GITHUB_TOKEN_ENCRYPTION_KEY
+  - variable: GITHUB_OAUTH_CALLBACK_URL
+    availability: [RUNTIME]

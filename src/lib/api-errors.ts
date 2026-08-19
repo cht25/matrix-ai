@@ -72,6 +72,7 @@ export function failureCopy(kind: ApiFailureKind): ApiFailure {
 // Server error codes returned by the AI gateway edge function.
 const CODE_TO_KIND: Record<string, ApiFailureKind> = {
   AI_GATEWAY_NOT_CONFIGURED: "not-configured",
+  CODING_MODEL_NOT_CONFIGURED: "not-configured",
   AI_GATEWAY_ERROR: "server",
   STREAM_FAILED: "server",
   RATE_LIMITED_MINUTE: "rate-limit",

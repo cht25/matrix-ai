@@ -82,6 +82,7 @@ describe("getSidebarData — composite-index-free (production 500 regression)", 
     const docs = [
       convDoc("deleted", { user_id: "u1", title: "x", deleted_at: ts("2026-01-01T00:00:00Z"), archived_at: null, updated_at: ts("2026-08-01T00:00:00Z") }),
       convDoc("archived", { user_id: "u1", title: "y", deleted_at: null, archived_at: ts("2026-01-01T00:00:00Z"), updated_at: ts("2026-08-02T00:00:00Z") }),
+      convDoc("temporary", { user_id: "u1", title: "private", is_temporary: true, deleted_at: null, archived_at: null, updated_at: ts("2026-08-03T00:00:00Z") }),
       convDoc("old", { user_id: "u1", title: "old", deleted_at: null, archived_at: null, updated_at: ts("2026-01-01T00:00:00Z") }),
       convDoc("new", { user_id: "u1", title: "new", deleted_at: null, archived_at: null, updated_at: ts("2026-07-01T00:00:00Z") }),
       convDoc("mid", { user_id: "u1", title: "mid", deleted_at: null, archived_at: null, updated_at: ts("2026-05-01T00:00:00Z") }),

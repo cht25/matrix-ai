@@ -1,12 +1,18 @@
-# MATRIX AI — AI Cyber Safety & Cybersecurity Education Platform
+# MATRIX AI — All-in-one AI Assistant & Coding Agent
 
-**For users aged 11–17 · Operated by THAMJJ13.TOP White Hat Team**
+**Chat · create · learn · build · preview · push with approval**
 
-MATRIX AI is a production-ready, teen-first cybersecurity education platform: an AI chat assistant,
-screenshot scanner, scam library, reporting assistant, emergency help mode, 7 courses with quizzes and
-verifiable certificates, a security dashboard, and a full RBAC admin panel — all protected by
-**Firebase (Auth + Firestore) with Cloudinary for private image storage**, with **Groq** behind a
-secure server-side AI gateway.
+MATRIX AI is a production-ready, multilingual workspace that combines a broadly useful assistant with
+cyber-safety tools, learning, and a dedicated software Agent. General Chat helps with writing, study,
+planning, research, technology and safe digital life. Obvious coding requests are automatically routed
+to **NVIDIA Nemotron 3 Ultra through OpenRouter**. Explicit Agent mode adds text/code attachments,
+reviewable file artifacts, a sandboxed static live preview, and encrypted GitHub OAuth with
+review-before-push atomic commits. Existing screenshot scanning, scam reporting, courses, certificates,
+security dashboard and RBAC administration remain available.
+
+The platform uses **Firebase (Auth + Firestore)**, **Cloudinary** for private images, **Groq** for general
+chat/vision and **OpenRouter** for the coding model. Provider keys and GitHub OAuth tokens never reach
+the browser or an AI prompt.
 
 > Previously branded "THAMJJ13.TOP Cyber Safety AI" — rebranded to **MATRIX AI** (developer: THAMJJ13.TOP).
 >
@@ -48,11 +54,11 @@ secure server-side AI gateway.
 | Storage | **Cloudinary** (free tier) — server-signed uploads, private (authenticated) assets only |
 | Authorization | Firestore **security rules** + a server-side RPC layer (`src/lib/server/rpc.ts`) that ports every Postgres `SECURITY DEFINER` function |
 | Backend/API | Next.js route handlers (Node runtime, Admin SDK) |
-| AI | **Groq** (`openai/gpt-oss-120b` chat, `qwen/qwen3.6-27b` vision, `openai/gpt-oss-20b` fast) behind the AI Gateway (`/api/ai`), **streaming responses** |
+| AI | **Groq** for general chat/vision + **OpenRouter NVIDIA Nemotron 3 Ultra** (`nvidia/nemotron-3-ultra-550b-a55b`) for auto-detected coding and Agent mode; both behind `/api/ai` |
 | i18n | English + Bangla dictionaries (architecture ready for more) |
 | Tests | Vitest (AI pipeline, PII, classification, file validation, age rules, env config) |
 
-The Firebase **service account key** and `GROQ_API_KEY` exist **only server-side** (API routes / server env) and are never exposed to the browser.
+The Firebase service account, AI provider keys, GitHub OAuth secret and encrypted GitHub access tokens exist **only server-side** and are never exposed to the browser.
 
 ---
 
@@ -72,7 +78,7 @@ Next.js server (any Node host / Firebase App Hosting)
   ├─ /api/rpc           ALL mutations — ports of the Postgres RPC layer
   │                      (ownership checks, validation, RBAC, audit, security events)
   ├─ /api/ai            AI gateway: rate limit → PII redaction → domain/safety
-  │                      classification → RAG retrieval → Groq → output validation
+  │                      classification → RAG → Groq or OpenRouter → validation
   ├─ /api/upload-signature  one-shot signed Cloudinary upload grants
   ├─ /api/account/*     data export (GDPR-style) + self-service deletion w/ re-auth
   └─ /api/auth/session  session-cookie minting + user provisioning
@@ -91,8 +97,11 @@ Key invariants (unchanged from the Supabase edition):
 - **Every write goes through the server.** Browser Firestore rules deny all writes; `quiz_answers`,
   `audit_logs`, `ai_*` collections are not even client-readable. Clients can never fake a quiz score,
   an assistant message, or an audit entry.
-- **The AI gateway is the only path to Groq.** PII is redacted before anything leaves the server;
-  refusals never spend a model call; failures return honest error codes — never a fabricated reply.
+- **The AI gateway is the only path to Groq or OpenRouter.** PII is redacted before anything leaves the server;
+  coding is auto-routed to Nemotron; failures return honest error codes — never a fabricated reply.
+- **GitHub never auto-pushes.** Agent output becomes a reviewable file set; the user chooses a repository,
+  branch and commit message, confirms review, and then one atomic commit is created. OAuth tokens are
+  AES-256-GCM encrypted at rest and never sent to an AI provider.
 - **No demo mode.** Missing configuration renders honest error screens, never fake data.
 
 ---
@@ -112,8 +121,9 @@ src/
   lib/
     firebase/              client SDK (Auth/Firestore), Admin SDK, session cookies
     server/                rpc.ts (Postgres function ports) + queries.ts (page reads)
-    ai/                    groq provider, PII redaction, domain classifier, prompts,
-                           upload validation (shared with tests)
+    ai/                    Groq + OpenRouter providers, coding detection, Agent
+                           artifact parser, PII redaction, safety prompts, uploads
+    server/github.ts       encrypted OAuth token store + atomic Git push
     server/cloudinary.ts   signed upload grants, private downloads, user asset wipe
     client/api.ts          browser helper: rpc(), mintSessionCookie(), uploads
     data.ts, env.ts        server data core + centralised env
@@ -229,7 +239,12 @@ Whichever you choose, remember to:
 | `FIREBASE_CLIENT_EMAIL` | server only | Admin SDK service account |
 | `FIREBASE_PRIVATE_KEY` | server only | Admin SDK private key |
 | `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | server only | Private image storage (screenshots, ID docs) |
-| `GROQ_API_KEY` | server only | AI gateway → Groq |
+| `GROQ_API_KEY` | server only | General chat + vision gateway → Groq |
+| `OPENROUTER_API_KEY` | server only | Coding auto-routing + Agent → OpenRouter |
+| `OPENROUTER_CODING_MODEL` | server only | Optional coding-model override; defaults to NVIDIA Nemotron 3 Ultra |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | server only | GitHub OAuth App for Agent-mode repository access |
+| `GITHUB_TOKEN_ENCRYPTION_KEY` | server only | Encrypts GitHub tokens at rest (32+ random characters) |
+| `GITHUB_OAUTH_CALLBACK_URL` | server only | Exact OAuth callback (`https://host/api/github/callback`) |
 
 ## Firestore data model
 
@@ -242,7 +257,7 @@ Snake_case collections mirror the original tables. Timestamps are Firestore
 | Chat | `conversations` + `conversations/{id}/messages`, `conversation_summaries/{conversationId}`, `user_memories`, `attachments`, `security_analyses` |
 | Learning | `courses`, `course_modules`, `lessons`, `quizzes`, `quiz_questions` (options embedded **without** the correct flag), `quiz_answers` (server-only correct answers), `quiz_attempts`, `course_progress/{uid}_{lessonId}`, `certificates/{uid}_{courseId}`, `certificate_verification` |
 | Scam library | `scam_categories`, `scam_articles`, `scam_reports`, `reporting_resources`, `document_chunks` (RAG knowledge) |
-| Security | `notifications`, `security_events`, `user_sessions` |
+| Security & integrations | `notifications`, `security_events`, `user_sessions`, server-only `github_connections` (encrypted token) |
 | Admin | `admin_roles`, `admin_permissions`, `admin_role_permissions/{role}__{perm}`, `admin_role_assignments/{uid}`, `admin_access_grants`, `audit_logs` |
 | AI ops | `ai_usage_logs` (rate limits + usage), `ai_safety_events` |
 
@@ -256,16 +271,16 @@ Quiz options deliberately ship without `is_correct` (the port of the old
 
 ```
 Auth → Rate limit (ai_usage_logs: 20/min · 300/day chat; 5/min · 50/day scan)
-     → PII detection/redaction (never sent to Groq)
-     → Domain classification (cyber-only) + safety classification
+     → PII detection/redaction (never sent to an AI provider)
+     → Broad task/coding detection + cyber-safety classification
      → Prompt construction (system + rolling summary + last 8 messages + safe memories)
      → RAG retrieval (document_chunks + scam articles + lessons + reporting resources)
-     → Groq (chat / vision) — streaming with per-delta output validation + PII-leak filter
+     → Groq (general/vision) or OpenRouter Nemotron (coding/Agent)
+     → streaming or structured Agent artifacts + output validation + PII-leak filter
      → Store allowed response → usage/safety logs
 ```
 
-`POST { action: "health" }` is unauthenticated and reports whether the gateway
-can actually reach Groq — used by the UI status dot and `/api/health`.
+`POST { action: "health", mode?: "agent" }` is unauthenticated and performs a real reachability check for the selected provider. `/api/health` reports general and coding AI separately.
 
 ## Security model
 
@@ -330,7 +345,7 @@ npm run typecheck
 If Firebase env vars are missing/invalid, the app renders honest
 "Server problem — service not configured" screens and `/api/health` returns
 `503 {"ok":false,"firebase":"not-configured",...}`. With credentials present it
-performs live checks (Firestore read + Groq reachability) — never a cached lie.
+performs live checks (Firestore, Cloudinary, Groq and OpenRouter reachability) — never a cached lie.
 
 ## Troubleshooting deployments
 
