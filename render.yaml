@@ -1,0 +1,42 @@
+# Render blueprint for MATRIX AI (Next.js web service, Firebase backend).
+# If you already created the service manually you can ignore this file — just
+# make sure the same env vars below are set in Dashboard → your service →
+# Environment. See "Deploy" in README.md (Firebase App Hosting is the
+# first-class option; Render works identically with these variables).
+services:
+  - type: web
+    name: matrix-ai
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      # Required — the app renders honest "not configured" screens without
+      # them. Values from Firebase console → Project settings.
+      - key: NEXT_PUBLIC_FIREBASE_API_KEY
+        sync: false
+      - key: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+        sync: false
+      - key: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+        sync: false
+      - key: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+        sync: false
+      - key: NEXT_PUBLIC_FIREBASE_APP_ID
+        sync: false
+      # Canonical app URL (used for links/redirects). Set to your Render URL.
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false
+      # Server-only Admin SDK + AI gateway secrets.
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
