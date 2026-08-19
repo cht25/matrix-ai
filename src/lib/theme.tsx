@@ -81,7 +81,7 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
       onClick={() => setTheme(next)}
       aria-label={`Theme: ${LABELS[theme]}. Switch to ${LABELS[next]}.`}
       title={`Theme: ${LABELS[theme]} — click to switch to ${LABELS[next]}`}
-      className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border bg-surface px-3 text-sm font-medium text-ink-2 transition-colors hover:border-border-strong hover:text-ink"
+      className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-border bg-surface px-3 text-sm font-medium text-ink-2 transition-colors hover:border-border-strong hover:text-ink"
     >
       <Icon size={15} strokeWidth={1.75} aria-hidden="true" />
       {!compact ? LABELS[theme] : null}

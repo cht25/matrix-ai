@@ -36,7 +36,7 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="eyebrow mb-1.5">Security overview</p>
           <h1 className="font-display text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
@@ -44,7 +44,9 @@ export default async function DashboardPage() {
           </h1>
           <p className="mt-1 text-sm text-ink-2">Your cyber safety snapshot.</p>
         </div>
-        <Link href="/chat"><span className="hidden sm:inline-block"><span className="inline-flex min-h-10 items-center rounded-lg bg-ink px-4 text-sm font-medium text-bg transition-colors hover:bg-ink-2">Open MATRIX AI</span></span></Link>
+        <Link href="/chat" className="inline-flex min-h-11 shrink-0 items-center rounded-lg bg-ink px-3.5 text-sm font-medium text-bg transition-colors hover:bg-ink-2 sm:px-4">
+          Open MATRIX AI
+        </Link>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

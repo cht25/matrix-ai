@@ -14,14 +14,15 @@ export type Classification = {
 
 // Allowed topics (defensive cybersecurity education only).
 const DOMAIN_KEYWORDS: { topic: string; words: string[] }[] = [
-  { topic: "phishing_scams", words: ["phish", "scam", "fraud", "fake email", "fake shop", "lottery", "prize", "spam"] },
-  { topic: "account_security", words: ["password", "passphrase", "2fa", "two-factor", "mfa", "account", "login", "hacked", "hijack", "otp", "code"] },
+  { topic: "phishing_scams", words: ["phish", "scam", "fraud", "fake email", "fake shop", "lottery", "prize", "spam", "suspicious", "strange message", "weird message"] },
+  { topic: "account_security", words: ["password", "passphrase", "2fa", "two-factor", "mfa", "account", "login", "hacked", "hijack", "otp", "code", "secure my", "lock down"] },
   { topic: "privacy", words: ["privacy", "private", "tracker", "cookie", "digital footprint", "data", "overshare", "personal information"] },
-  { topic: "device_security", words: ["virus", "malware", "ransomware", "update", "device", "app", "download", "backup", "wifi", "wi-fi", "phone"] },
+  { topic: "device_security", words: ["virus", "malware", "ransomware", "update", "device", "app", "download", "backup", "wifi", "wi-fi", "phone", "screenshot"] },
   { topic: "social_media", words: ["social media", "instagram", "tiktok", "snapchat", "facebook", "whatsapp", "discord", "profile", "bully", "cyberbully"] },
-  { topic: "cyber_education", words: ["hacking", "hacker", "ethical", "white hat", "ctf", "tryhackme", "bug bounty", "cybersecurity", "security", "defend", "learn", "course", "quiz"] },
-  { topic: "incident_response", words: ["hacked", "scammed", "lost money", "clicked", "shared my", "emergency", "what do i do", "account taken over"] },
+  { topic: "cyber_education", words: ["hacking", "hacker", "ethical", "white hat", "ctf", "tryhackme", "bug bounty", "cybersecurity", "security", "defend", "learn", "course", "quiz", "cyber", "online safety", "stay safe"] },
+  { topic: "incident_response", words: ["hacked", "scammed", "lost money", "clicked", "shared my", "emergency", "what do i do", "account taken over", "protect me", "protect my"] },
   { topic: "reporting", words: ["report", "reporting", "ftc", "police", "action fraud", "scamwatch", "authority"] },
+  { topic: "links_messages", words: ["qr code", "qr-code", "sms", "text message", "inbox", "this link", "this email", "this message", "is this real", "is this fake"] },
 ];
 
 // Harmful categories that must be refused and redirected to defensive help.
@@ -63,6 +64,13 @@ const HARMFUL_REDIRECTS: Record<string, string> = {
   exploitation: "If a game or school account was compromised, I can help you report it and secure it.",
 };
 
+/** Short greetings / follow-ups so the assistant can start or continue a safety chat. */
+export function isGreetingOrFollowup(input: string): boolean {
+  const t = input.trim();
+  if (!t || t.length > 80) return false;
+  return /^(hi+|hii+|hello|hey+|yo|sup|hiya|thanks|thank you|thx|ok|okay|k|yes|yeah|yep|no|nope|please|help|help me|what\??|why\??|how\??|continue|go on|more|and then\??|what next\??|what should i do\??|ok thanks)[\s!.?]*$/i.test(t);
+}
+
 export function classify(input: string): Classification {
   const text = input.toLowerCase();
 
@@ -77,6 +85,10 @@ export function classify(input: string): Classification {
         refusal: HARMFUL_REFUSAL_PREFIX + (HARMFUL_REDIRECTS[h.category] ?? "I can point you to safe, defensive alternatives."),
       };
     }
+  }
+
+  if (isGreetingOrFollowup(input)) {
+    return { on_topic: true, topic: "cyber_education", harmful: false, harmful_category: null, refusal: null };
   }
 
   for (const d of DOMAIN_KEYWORDS) {

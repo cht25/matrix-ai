@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
+import { forwardRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 
 // =============================================================================
 // MATRIX primitives — restrained, editorial, monochrome (spec §52–§53).
@@ -7,12 +7,10 @@ import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAt
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "outline";
 
-export function Button({
-  variant = "primary",
-  className,
-  children,
-  ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) {
+export const Button = forwardRef<
+  HTMLButtonElement,
+  ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }
+>(function Button({ variant = "primary", className, children, type = "button", ...props }, ref) {
   const styles: Record<ButtonVariant, string> = {
     primary: "bg-ink text-bg hover:bg-ink-2 active:bg-ink transition-colors",
     secondary: "bg-surface-2 text-ink hover:bg-surface-3",
@@ -22,8 +20,10 @@ export function Button({
   };
   return (
     <button
+      ref={ref}
+      type={type}
       className={cn(
-        "inline-flex min-h-10 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-10",
         styles[variant],
         className,
       )}
@@ -32,23 +32,23 @@ export function Button({
       {children}
     </button>
   );
-}
+});
 
-export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={cn("input-base", className)} {...props} />;
-}
+export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input({ className, ...props }, ref) {
+  return <input ref={ref} className={cn("input-base", className)} {...props} />;
+});
 
-export function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className={cn("input-base min-h-10 resize-none", className)} {...props} />;
-}
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(function Textarea({ className, ...props }, ref) {
+  return <textarea ref={ref} className={cn("input-base min-h-11 resize-none", className)} {...props} />;
+});
 
-export function Select({ className, children, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
+export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(function Select({ className, children, ...props }, ref) {
   return (
-    <select className={cn("input-base cursor-pointer", className)} {...props}>
+    <select ref={ref} className={cn("input-base cursor-pointer", className)} {...props}>
       {children}
     </select>
   );
-}
+});
 
 export function Field({ label, htmlFor, hint, children }: { label: string; htmlFor?: string; hint?: string; children: ReactNode }) {
   return (
@@ -132,6 +132,7 @@ export function Menu({ trigger, items }: { trigger: ReactNode; items: { label: s
         {items.map((it, i) => (
           <button
             key={i}
+            type="button"
             onClick={it.onClick}
             className={cn(
               "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors",

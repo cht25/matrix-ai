@@ -93,6 +93,7 @@
 
 html {
   scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -104,6 +105,21 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/* Faster taps, no 300ms delay; keep pinch-zoom available. */
+button, a, [role="button"], summary {
+  touch-action: manipulation;
+}
+
+/* iOS: 16px inputs prevent auto-zoom on focus. */
+@media (max-width: 640px) {
+  .input-base,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }
 
 /* Faint editorial gradient wash behind content */
@@ -266,6 +282,14 @@ body::before {
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Chat / app chrome measurements — used so the composer never sits
+   under the mobile header, bottom nav, or iOS home indicator. */
+:root {
+  --app-header: 3.5rem;
+  --app-bottom-nav: 4rem;
 }
 
 .skip-link {

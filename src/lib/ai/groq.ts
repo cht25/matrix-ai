@@ -1,6 +1,11 @@
 // =============================================================================
 // Groq provider (spec §15: AIProvider abstraction). The Groq API key NEVER
 // leaves the server. Additional providers can be added behind this interface.
+//
+// Model IDs must stay current — Groq retires production models. As of
+// 2026-08-16 llama-3.3-70b-versatile / llama-3.1-8b-instant / the Llama 3.2
+// vision previews are shut down for free/developer tiers. Chat uses the
+// official replacements (openai/gpt-oss-*); vision uses Qwen 3.6 (multimodal).
 // =============================================================================
 
 export type AIMessage = {
@@ -31,6 +36,10 @@ export interface AIProvider {
   healthCheck(): Promise<boolean>;
 }
 
+function isReasoningModel(model: string): boolean {
+  return model.includes("gpt-oss") || model.includes("qwen");
+}
+
 export class GroqProvider implements AIProvider {
   private apiKey: string;
   private baseUrl = "https://api.groq.com/openai/v1";
@@ -40,13 +49,22 @@ export class GroqProvider implements AIProvider {
   }
 
   private buildBody(req: AIProviderRequest, stream: boolean): Record<string, unknown> {
+    const maxTokens = req.maxTokens ?? 1024;
     const body: Record<string, unknown> = {
       model: req.model,
       messages: req.messages,
-      temperature: req.temperature ?? 0.4,
-      max_tokens: req.maxTokens ?? 1024,
+      temperature: req.temperature ?? 0.5,
+      max_tokens: maxTokens,
       stream,
     };
+    // Reasoning models (GPT-OSS, Qwen 3.6) require max_completion_tokens and
+    // ignore / reject a lone max_tokens. Hide chain-of-thought so the teen
+    // only sees the actual answer; keep effort low so first tokens arrive fast.
+    if (isReasoningModel(req.model)) {
+      body.max_completion_tokens = maxTokens;
+      body.reasoning_format = "hidden";
+      body.reasoning_effort = req.imageDataUrl || req.model.includes("qwen") ? "none" : "low";
+    }
     if (req.imageDataUrl) {
       const last = req.messages[req.messages.length - 1];
       body.messages = [
@@ -92,7 +110,7 @@ export class GroqProvider implements AIProvider {
     }
 
     const data = (await res.json()) as {
-      choices: { message: { content: string } }[];
+      choices: { message: { content?: string | null } }[];
       model: string;
       usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
     };
@@ -139,7 +157,9 @@ export class GroqProvider implements AIProvider {
         const payload = trimmed.slice(5).trim();
         if (payload === "[DONE]") return;
         try {
-          const json = JSON.parse(payload) as { choices?: { delta?: { content?: string } }[] };
+          const json = JSON.parse(payload) as {
+            choices?: { delta?: { content?: string | null } }[];
+          };
           const delta = json.choices?.[0]?.delta?.content;
           if (delta) yield delta;
         } catch {
@@ -150,11 +170,11 @@ export class GroqProvider implements AIProvider {
   }
 }
 
-// Model registry (server-side only).
+// Model registry (server-side only). Official Groq replacements as of 2026-08-16.
 export const MODELS = {
-  chat: "llama-3.3-70b-versatile",
-  vision: "llama-3.2-11b-vision-preview",
-  fast: "llama-3.1-8b-instant",
+  chat: "openai/gpt-oss-120b",
+  vision: "qwen/qwen3.6-27b",
+  fast: "openai/gpt-oss-20b",
 } as const;
 
 export function createProvider(): AIProvider | null {

@@ -52,3 +52,16 @@ describe("Cyber safety classification (spec §23)", () => {
     expect(classify("How do I report a scam to the police?").harmful).toBe(false);
   });
 });
+
+describe("Greetings and follow-ups", () => {
+  it("treats greetings as on-topic so chat can start", () => {
+    expect(classify("hi").on_topic).toBe(true);
+    expect(classify("hello").on_topic).toBe(true);
+    expect(classify("help").on_topic).toBe(true);
+    expect(classify("what should I do?").on_topic).toBe(true);
+  });
+
+  it("still refuses unrelated homework", () => {
+    expect(classify("Can you help me with my math homework? 2+2?").on_topic).toBe(false);
+  });
+});

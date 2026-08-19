@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GroqProvider } from "../src/lib/ai/groq";
+import { GroqProvider, MODELS } from "../src/lib/ai/groq";
 import { buildSystemMessages, validateOutput, buildSummaryPrompt } from "../src/lib/ai/prompts";
 
 const originalFetch = globalThis.fetch;
@@ -14,14 +14,14 @@ describe("GroqProvider (spec §15)", () => {
       ok: true,
       json: async () => ({
         choices: [{ message: { content: "Stay safe online!" } }],
-        model: "llama-3.3-70b-versatile",
+        model: MODELS.chat,
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
       }),
     }) as unknown as typeof fetch;
 
     const provider = new GroqProvider("gsk-test");
     const res = await provider.chat({
-      model: "llama-3.3-70b-versatile",
+      model: MODELS.chat,
       messages: [{ role: "user", content: "Is this email a scam?" }],
     });
 
@@ -31,7 +31,9 @@ describe("GroqProvider (spec §15)", () => {
     const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(String(url)).toContain("api.groq.com");
     const body = JSON.parse(String(init.body));
-    expect(body.model).toBe("llama-3.3-70b-versatile");
+    expect(body.model).toBe(MODELS.chat);
+    expect(body.max_completion_tokens).toBeDefined();
+    expect(body.reasoning_format).toBe("hidden");
   });
 
   it("throws on API errors", async () => {
@@ -47,7 +49,7 @@ describe("GroqProvider (spec §15)", () => {
     }) as unknown as typeof fetch;
 
     const provider = new GroqProvider("gsk-test");
-    await provider.chat({ model: "llama-3.2-11b-vision-preview", messages: [{ role: "user", content: "analyze" }], imageDataUrl: "data:image/png;base64,abc" });
+    await provider.chat({ model: MODELS.vision, messages: [{ role: "user", content: "analyze" }], imageDataUrl: "data:image/png;base64,abc" });
 
     const [, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     const body = JSON.parse(String(init.body));

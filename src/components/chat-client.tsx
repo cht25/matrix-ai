@@ -14,7 +14,7 @@ import { useRouter } from "next/navigation";
 import {
   FileSearch, Flag, GraduationCap, KeyRound, Paperclip, RefreshCcw, Send, ShieldAlert, Square,
 } from "lucide-react";
-import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
+import { firebaseBrowserConfigured, waitForAuthUser } from "@/lib/firebase/client";
 import { uploadOwnedFile } from "@/lib/client/api";
 import { Button, Textarea } from "@/components/ui";
 import { Markdown } from "@/components/markdown";
@@ -22,6 +22,7 @@ import { MatrixMark } from "@/components/logo";
 import { useToast } from "@/components/toast";
 import { ServerProblem } from "@/components/server-problem";
 import { classifyGatewayResponse, classifyRequestException, failureCopy, type ApiFailure } from "@/lib/api-errors";
+import { useI18n } from "@/lib/i18n/client";
 import { cn } from "@/lib/utils";
 
 type Message = {
@@ -31,9 +32,6 @@ type Message = {
   created_at?: string;
 };
 
-// Deadlines for the real network calls. If the gateway has not responded
-// with headers in this window we surface a timeout failure; once streaming,
-// a longer idle window without any token also becomes a timeout.
 const CONNECT_TIMEOUT_MS = 25_000;
 const STREAM_IDLE_TIMEOUT_MS = 45_000;
 
@@ -54,6 +52,13 @@ async function parseErrorCode(res: Response): Promise<string | null> {
   }
 }
 
+function lastUserContent(list: Message[]): string | null {
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].role === "user") return list[i].content;
+  }
+  return null;
+}
+
 export function ChatClient({
   initialMessages,
   conversationId: initialConvId,
@@ -67,6 +72,7 @@ export function ChatClient({
 }) {
   const router = useRouter();
   const toast = useToast();
+  const { t } = useI18n();
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [input, setInput] = useState("");
   const [convId, setConvId] = useState<string | null>(initialConvId);
@@ -74,11 +80,18 @@ export function ChatClient({
   const [streamedText, setStreamedText] = useState<string | null>(null);
   const [failure, setFailure] = useState<ApiFailure | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [lastUserMessage, setLastUserMessage] = useState<string | null>(null);
+  const [lastUserMessage, setLastUserMessage] = useState<string | null>(lastUserContent(initialMessages));
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const convIdRef = useRef<string | null>(initialConvId);
+
+  useEffect(() => {
+    convIdRef.current = convId;
+  }, [convId]);
 
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -92,6 +105,37 @@ export function ChatClient({
     abortRef.current?.abort();
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
   }, []);
+
+  // Keep the composer above the iOS/Android keyboard.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const sync = () => {
+      const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      setKeyboardInset(inset > 40 ? inset : 0);
+    };
+    vv.addEventListener("resize", sync);
+    vv.addEventListener("scroll", sync);
+    sync();
+    return () => {
+      vv.removeEventListener("resize", sync);
+      vv.removeEventListener("scroll", sync);
+    };
+  }, []);
+
+  function autosize() {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 144)}px`;
+  }
+
+  function rememberConv(id: string | null) {
+    if (!id || convIdRef.current === id) return;
+    convIdRef.current = id;
+    setConvId(id);
+    onConversationCreated?.(id);
+  }
 
   function clearIdleTimer() {
     if (idleTimerRef.current) {
@@ -107,22 +151,25 @@ export function ChatClient({
     }, ms);
   }
 
+  function commitPartial(text: string, replaceLastAssistant: boolean) {
+    const reply = text.trim();
+    if (!reply) return;
+    setMessages((m) => {
+      const base = replaceLastAssistant && m[m.length - 1]?.role === "assistant" ? m.slice(0, -1) : m;
+      const last = base[base.length - 1];
+      if (last?.role === "assistant" && last.content === reply) return base;
+      return [...base, { role: "assistant", content: reply, created_at: new Date().toISOString() }];
+    });
+  }
+
   function stop() {
-    // Stop must actually cancel the in-flight request.
     clearIdleTimer();
     abortRef.current?.abort(new DOMException("Stopped by user.", "AbortError"));
     setStreaming(false);
   }
 
-  async function requestToken(): Promise<string | null> {
-    // The AI gateway (/api/ai) is a same-origin route — the httpOnly session
-    // cookie authenticates it. Ensure it is fresh (re-mint if missing).
-    const user = fbAuth().currentUser;
-    if (!user) return null;
-    return "session-cookie";
-  }
-
-  async function streamMessage(message: string, replaceLastAssistant = false) {
+  async function streamMessage(message: string, opts: { replaceLastAssistant?: boolean; reuseUser?: boolean; regenerate?: boolean } = {}) {
+    const replaceLastAssistant = opts.replaceLastAssistant === true;
     setFailure(null);
     setNotice(null);
     setStreaming(true);
@@ -136,15 +183,12 @@ export function ChatClient({
       return;
     }
 
-    const token = await requestToken();
-    if (!token) {
-      setFailure(failureCopy("auth"));
-      setStreaming(false);
-      setStreamedText(null);
-      return;
-    }
+    // Session cookie authenticates /api/ai — do NOT require Firebase currentUser
+    // (it is often still null for a beat after a refresh, which used to fail every send).
     const controller = new AbortController();
     abortRef.current = controller;
+    let collected = "";
+    let committed = false;
 
     try {
       armIdleTimer(CONNECT_TIMEOUT_MS, controller);
@@ -152,10 +196,17 @@ export function ChatClient({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ action: "chat", stream: true, conversation_id: convId, is_temporary: isTemporary, message }),
+        body: JSON.stringify({
+          action: "chat",
+          stream: true,
+          conversation_id: convIdRef.current,
+          is_temporary: isTemporary,
+          message,
+          regenerate: opts.regenerate === true,
+          reuse_user: opts.reuseUser === true || opts.regenerate === true,
+        }),
         signal: controller.signal,
       });
-      // Connected — from here the streaming idle window applies.
       armIdleTimer(STREAM_IDLE_TIMEOUT_MS, controller);
 
       if (!res.ok) {
@@ -166,17 +217,13 @@ export function ChatClient({
 
       const contentType = res.headers.get("content-type") ?? "";
       if (!contentType.includes("text/event-stream")) {
-        // Non-streaming gateway answer (e.g. an on-topic refusal).
         clearIdleTimer();
         const data = (await res.json()) as { reply?: string; conversation_id?: string };
+        if (data.conversation_id) rememberConv(data.conversation_id);
         if (data.reply) {
-          const reply = data.reply;
-          setMessages((m) => [...m, { role: "assistant", content: reply, created_at: new Date().toISOString() }]);
-          if (data.conversation_id && convId !== data.conversation_id) {
-            setConvId(data.conversation_id);
-            onConversationCreated?.(data.conversation_id);
-            if (!isTemporary) router.replace(`/chat/${data.conversation_id}`);
-          }
+          commitPartial(data.reply, replaceLastAssistant);
+          committed = true;
+          if (data.conversation_id && !isTemporary) router.replace(`/chat/${data.conversation_id}`);
           return;
         }
         setFailure(failureCopy("server"));
@@ -191,14 +238,13 @@ export function ChatClient({
       }
       const decoder = new TextDecoder();
       let buffer = "";
-      let finalReply = "";
-      let gotConversationId: string | null = null;
       let streamError: string | null = null;
+      let gotConversationId: string | null = null;
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        armIdleTimer(STREAM_IDLE_TIMEOUT_MS, controller); // activity — reset idle deadline
+        armIdleTimer(STREAM_IDLE_TIMEOUT_MS, controller);
         buffer += decoder.decode(value, { stream: true });
         const events = buffer.split("\n\n");
         buffer = events.pop() ?? "";
@@ -210,17 +256,17 @@ export function ChatClient({
               delta?: string; done?: boolean; conversation_id?: string; error?: string;
             };
             if (typeof data.delta === "string") {
-              finalReply += data.delta;
-              setStreamedText(finalReply);
+              collected += data.delta;
+              setStreamedText(collected);
             }
-            if (data.conversation_id) gotConversationId = data.conversation_id;
+            if (data.conversation_id) {
+              gotConversationId = data.conversation_id;
+              rememberConv(data.conversation_id);
+            }
             if (data.error) streamError = data.error;
             if (data.done) {
-              const reply = finalReply;
-              setMessages((m) => {
-                const base = replaceLastAssistant ? m.slice(0, -1) : m;
-                return [...base, { role: "assistant", content: reply, created_at: new Date().toISOString() }];
-              });
+              commitPartial(collected, replaceLastAssistant);
+              committed = true;
             }
           } catch {
             // malformed event — skip
@@ -229,22 +275,27 @@ export function ChatClient({
       }
       clearIdleTimer();
 
-      if (streamError) {
-        // The gateway reported a mid-stream failure. Everything already on
-        // screen is real output — offer a clean retry for the rest.
+      if (!committed && collected.trim()) {
+        commitPartial(collected, replaceLastAssistant);
+        committed = true;
+      }
+      if (streamError && !collected.trim()) {
         setFailure({ ...failureCopy("server"), detail: "The response was interrupted. Your message is safe — try again." });
         return;
       }
-      if (gotConversationId && convId !== gotConversationId) {
-        setConvId(gotConversationId);
-        onConversationCreated?.(gotConversationId);
-        if (!isTemporary) router.replace(`/chat/${gotConversationId}`);
+      if (gotConversationId && !isTemporary && !initialConvId) {
+        // Navigate only after the stream finished so we don't abort it.
+        router.replace(`/chat/${gotConversationId}`);
       }
     } catch (err) {
       clearIdleTimer();
       const userStopped = err instanceof DOMException && err.name === "AbortError";
+      if (collected.trim()) {
+        commitPartial(collected, replaceLastAssistant);
+        committed = true;
+      }
       if (userStopped) {
-        setNotice("Generation stopped. Your message is safe.");
+        setNotice(collected.trim() ? "Generation stopped." : "Generation stopped. Your message is safe.");
       } else {
         setFailure(classifyRequestException(err));
       }
@@ -256,18 +307,19 @@ export function ChatClient({
     }
   }
 
-  async function send(e?: React.FormEvent, messageOverride?: string) {
+  async function send(e?: { preventDefault(): void }, messageOverride?: string) {
     e?.preventDefault();
     const message = (messageOverride ?? input).trim();
     if (!message || streaming) return;
     setInput("");
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
     setMessages((m) => [...m, { role: "user", content: message, created_at: new Date().toISOString() }]);
     await streamMessage(message);
   }
 
   function regenerate() {
     if (!lastUserMessage || streaming) return;
-    void streamMessage(lastUserMessage, true);
+    void streamMessage(lastUserMessage, { replaceLastAssistant: true, regenerate: true, reuseUser: true });
   }
 
   function retry() {
@@ -278,12 +330,13 @@ export function ChatClient({
       const msg = lastUserMessage;
       setMessages((m) => [...m, { role: "user", content: msg, created_at: new Date().toISOString() }]);
     }
-    void streamMessage(lastUserMessage, false);
+    void streamMessage(lastUserMessage, { reuseUser: Boolean(convIdRef.current) });
   }
 
   async function handleFile(file: File | undefined | null) {
     if (!file || streaming) return;
     setFailure(null);
+    if (fileRef.current) fileRef.current.value = "";
     const okTypes = ["image/png", "image/jpeg", "image/webp"];
     if (!okTypes.includes(file.type)) {
       setFailure({ ...failureCopy("invalid-request"), title: "Unsupported file", detail: "Only PNG, JPEG and WebP images can be analysed.", retryable: false });
@@ -305,7 +358,8 @@ export function ChatClient({
     abortRef.current = controller;
 
     try {
-      if (!fbAuth().currentUser) {
+      const user = await waitForAuthUser();
+      if (!user) {
         setFailure(failureCopy("auth"));
         return;
       }
@@ -336,8 +390,7 @@ export function ChatClient({
         setFailure(classifyGatewayResponse(502, typeof data.error === "string" ? data.error : null));
         return;
       }
-      const reply = data.reply;
-      setMessages((m) => [...m, { role: "assistant", content: reply, created_at: new Date().toISOString() }]);
+      setMessages((m) => [...m, { role: "assistant", content: data.reply!, created_at: new Date().toISOString() }]);
     } catch (err) {
       const userStopped = err instanceof DOMException && err.name === "AbortError";
       if (!userStopped) setFailure(classifyRequestException(err));
@@ -354,24 +407,26 @@ export function ChatClient({
   }
 
   return (
-    <div className="flex h-[calc(100dvh-9.5rem)] flex-col lg:h-[calc(100dvh-7.5rem)]">
+    <div
+      className="flex min-h-0 flex-1 flex-col"
+      style={keyboardInset ? { paddingBottom: keyboardInset } : undefined}
+    >
       {isTemporary ? (
-        <div className="mb-3 border-b border-border pb-3 text-[13px] text-ink-2">
-          <span className="eyebrow">Temporary</span> — this conversation will not be saved to your account or memory.
+        <div className="mb-3 shrink-0 border-b border-border pb-3 text-[13px] text-ink-2">
+          <span className="eyebrow">Temporary</span> — {t("chat.tempNotice").replace(/^Temporary Chat — /, "")}
         </div>
       ) : null}
 
-      {/* Transcript */}
-      <div className="no-scrollbar flex-1 space-y-7 overflow-y-auto px-1 py-2 sm:px-2">
+      <div className="no-scrollbar min-h-0 flex-1 space-y-7 overflow-y-auto overscroll-contain px-0.5 py-2 sm:px-2">
         {messages.length === 0 && !streaming ? (
-          <div className="flex h-full flex-col items-center justify-center text-center">
+          <div className="flex min-h-full flex-col items-center justify-center px-1 py-6 text-center">
             <div className="mb-5">
               <span className="mb-4 inline-block" aria-hidden="true">
                 <MatrixMark className="h-12 w-12 text-ink-2" />
               </span>
               <p className="eyebrow mb-2">MATRIX</p>
-              <h1 className="font-display text-[26px] font-semibold tracking-tight text-ink sm:text-3xl">
-                How can MATRIX help protect you?
+              <h1 className="font-display text-[22px] font-semibold tracking-tight text-ink sm:text-3xl">
+                {t("chat.title")}
               </h1>
               <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-ink-2">
                 Your AI Cyber Safety Assistant. Ask about phishing, passwords, scams and privacy —
@@ -382,11 +437,12 @@ export function ChatClient({
               {SUGGESTIONS.map((s) => (
                 <button
                   key={s.label}
+                  type="button"
                   onClick={() => {
                     if (s.href) router.push(s.href);
                     else if (s.prompt) void send(undefined, s.prompt);
                   }}
-                  className="flex items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-left text-[13px] font-medium text-ink-2 transition-colors hover:border-border-strong hover:bg-surface-2 hover:text-ink"
+                  className="flex min-h-12 items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-left text-[13px] font-medium text-ink-2 transition-colors hover:border-border-strong hover:bg-surface-2 hover:text-ink"
                 >
                   <span className="text-ink-3" aria-hidden="true">{s.icon}</span>
                   {s.label}
@@ -403,10 +459,10 @@ export function ChatClient({
                     <MatrixMark className="h-5 w-5 text-ink-3" />
                   </span>
                 ) : null}
-                <div className={cn("min-w-0", m.role === "user" ? "max-w-[85%] sm:max-w-[75%]" : "max-w-[92%] flex-1 sm:max-w-none")}>
+                <div className={cn("min-w-0", m.role === "user" ? "max-w-[88%] sm:max-w-[75%]" : "max-w-[96%] flex-1 sm:max-w-none")}>
                   {m.role === "user" ? (
                     <div className="rounded-lg border border-border bg-surface-2 px-4 py-2.5 text-[14.5px] leading-relaxed text-ink">
-                      <p className="whitespace-pre-wrap">{m.content}</p>
+                      <p className="whitespace-pre-wrap break-words">{m.content}</p>
                     </div>
                   ) : (
                     <div className="border-l border-border pl-4">
@@ -416,7 +472,11 @@ export function ChatClient({
                   <div className={cn("mt-1.5 flex items-center gap-3 px-0.5 text-[10.5px] text-ink-3", m.role === "user" ? "justify-end" : "")}>
                     <span>{m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span>
                     {m.role === "assistant" ? (
-                      <button onClick={() => copyMessage(m.content)} className="font-medium uppercase tracking-wide transition-colors hover:text-ink-2">
+                      <button
+                        type="button"
+                        onClick={() => copyMessage(m.content)}
+                        className="min-h-8 min-w-8 font-medium uppercase tracking-wide transition-colors hover:text-ink-2"
+                      >
                         Copy
                       </button>
                     ) : null}
@@ -425,7 +485,6 @@ export function ChatClient({
               </div>
             ))}
 
-            {/* Streaming — "MATRIX is connecting…" until output starts, then the reply builds up live. */}
             {streaming ? (
               <div className="msg-in flex gap-3.5">
                 <span className="mt-0.5 hidden shrink-0 sm:block" aria-hidden="true">
@@ -450,7 +509,6 @@ export function ChatClient({
               </div>
             ) : null}
 
-            {/* Honest failure card — category-aware, with [Retry]. */}
             {failure ? (
               <ServerProblem failure={failure} onRetry={retry} onDismiss={() => setFailure(null)} />
             ) : null}
@@ -460,52 +518,69 @@ export function ChatClient({
       </div>
 
       {notice ? (
-        <p className="mt-2 text-[13px] text-ink-2">{notice}</p>
+        <p className="mt-2 shrink-0 text-[13px] text-ink-2">{notice}</p>
       ) : null}
 
-      {/* Composer — large, centered, restrained */}
-      <div className="mt-4">
-        <form onSubmit={(e) => void send(e)} className="mx-auto flex max-w-2xl items-end gap-1.5 rounded-xl border border-border-strong bg-surface p-1.5 shadow-[var(--shadow-card)] transition-colors focus-within:border-accent">
-          <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" onChange={(e) => void handleFile(e.target.files?.[0])} />
+      <div className="shrink-0 pt-3">
+        <form
+          onSubmit={(e) => void send(e)}
+          className="mx-auto flex max-w-2xl items-end gap-1.5 rounded-xl border border-border-strong bg-surface p-1.5 shadow-[var(--shadow-card)] transition-colors focus-within:border-accent"
+        >
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="sr-only"
+            onChange={(e) => void handleFile(e.target.files?.[0])}
+          />
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
             disabled={streaming}
             aria-label="Attach a screenshot for analysis"
             title="Attach a screenshot for analysis"
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-md text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-40"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-md text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-40"
           >
             <Paperclip size={16} strokeWidth={1.6} />
           </button>
           <Textarea
+            ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              requestAnimationFrame(autosize);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 void send(e);
               }
             }}
-            placeholder="Ask MATRIX about cybersecurity…"
+            placeholder={t("chat.placeholder")}
             rows={1}
             aria-label="Message MATRIX"
             disabled={streaming}
-            className="max-h-36 flex-1 !border-0 !bg-transparent !shadow-none focus:!shadow-none focus:!outline-none focus:!ring-0"
+            className="max-h-36 min-h-11 flex-1 !border-0 !bg-transparent !px-1 !py-2.5 !shadow-none focus:!shadow-none focus:!outline-none focus:!ring-0"
           />
           {streaming ? (
-            <Button type="button" variant="ghost" onClick={stop} className="shrink-0 !px-3" aria-label="Stop generating">
+            <Button type="button" variant="ghost" onClick={stop} className="h-11 shrink-0 !px-3" aria-label="Stop generating">
               <Square size={14} strokeWidth={1.8} /> Stop
             </Button>
           ) : (
-            <Button type="submit" disabled={!input.trim()} className="shrink-0 !px-3.5" aria-label="Send message">
+            <Button type="submit" disabled={!input.trim()} className="h-11 shrink-0 !px-3.5" aria-label={t("chat.send")}>
               <Send size={15} strokeWidth={1.7} />
             </Button>
           )}
         </form>
-        <div className="mx-auto mt-2 flex max-w-2xl items-center justify-between px-1">
-          <p className="text-[11px] text-ink-3">Enter to send · Shift+Enter for a new line</p>
+        <div className="mx-auto mt-2 flex max-w-2xl items-center justify-between gap-2 px-1 pb-1">
+          <p className="hidden text-[11px] text-ink-3 sm:block">Enter to send · Shift+Enter for a new line</p>
+          <p className="text-[11px] text-ink-3 sm:hidden">Tap send · Shift+Enter for a new line</p>
           {!streaming && messages.length >= 2 && lastUserMessage ? (
-            <button onClick={regenerate} className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-3 transition-colors hover:text-ink">
+            <button
+              type="button"
+              onClick={regenerate}
+              className="flex min-h-8 items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-3 transition-colors hover:text-ink"
+            >
               <RefreshCcw size={11} strokeWidth={1.7} /> Regenerate
             </button>
           ) : null}

@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   eslint: { ignoreDuringBuilds: true },
+  // Allow the Arena / e2b preview host to load the dev server.
+  allowedDevOrigins: ["*.e2b.app"],
   experimental: {
     serverActions: { bodySizeLimit: "8mb" },
   },
@@ -11,7 +13,6 @@ const nextConfig: NextConfig = {
         source: "/(.*)",
         headers: [
           { key: "X-Content-Type-Options", value: "nosniff" },
-          { key: "X-Frame-Options", value: "DENY" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           {
             key: "Permissions-Policy",

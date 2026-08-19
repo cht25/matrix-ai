@@ -16,15 +16,16 @@
 // =============================================================================
 
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb, adminAuth, nowTs, toTs } from "@/lib/firebase/admin";
+import { adminDb, adminAuth, nowTs } from "@/lib/firebase/admin";
 import { verifySession, type SessionUser } from "@/lib/firebase/session";
 import { redactPII, containsCredentials, leakedPII } from "@/lib/ai/pii";
-import { classify } from "@/lib/ai/domain";
+import { classify, isGreetingOrFollowup } from "@/lib/ai/domain";
 import { createProvider, MODELS, type AIMessage, type AIProvider } from "@/lib/ai/groq";
 import { buildSystemMessages, validateOutput, buildSummaryPrompt } from "@/lib/ai/prompts";
 import { validateImageUpload } from "@/lib/ai/upload-validation";
 import { ragSearch } from "@/lib/server/rpc";
 import { downloadImage } from "@/lib/server/cloudinary";
+import { descDoc } from "@/lib/server/sort";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -62,17 +63,34 @@ async function getUser(req: NextRequest): Promise<SessionUser | null> {
 }
 
 async function checkRateLimit(d: Db, userId: string, kind: "chat" | "scan" | "summary"): Promise<{ ok: boolean; message?: string }> {
+  // Equality-only query + in-memory windowing. A created_at inequality plus
+  // two equality filters needs a composite index — missing indexes used to
+  // 500 every chat request (FAILED_PRECONDITION). Fail *open* so a logging
+  // glitch never blocks the assistant.
   const { perMinute, perDay } = RATE_LIMITS[kind];
-  const minuteAgo = toTs(new Date(Date.now() - 60_000));
-  const dayAgo = toTs(new Date(Date.now() - 86_400_000));
-  const logs = d.collection("ai_usage_logs");
-  const [minuteSnap, daySnap] = await Promise.all([
-    logs.where("user_id", "==", userId).where("request_type", "==", kind).where("created_at", ">=", minuteAgo).count().get(),
-    logs.where("user_id", "==", userId).where("request_type", "==", kind).where("created_at", ">=", dayAgo).count().get(),
-  ]);
-  if (minuteSnap.data().count >= perMinute) return { ok: false, message: "RATE_LIMITED_MINUTE" };
-  if (daySnap.data().count >= perDay) return { ok: false, message: "RATE_LIMITED_DAY" };
-  return { ok: true };
+  try {
+    const snap = await d.collection("ai_usage_logs").where("user_id", "==", userId).get();
+    const now = Date.now();
+    let minute = 0;
+    let day = 0;
+    for (const doc of snap.docs) {
+      if (doc.data().request_type !== kind) continue;
+      const raw = doc.data().created_at as { toMillis?: () => number; toDate?: () => Date } | string | undefined;
+      const t =
+        typeof raw === "object" && raw?.toMillis ? raw.toMillis() :
+        typeof raw === "object" && raw?.toDate ? raw.toDate().getTime() :
+        typeof raw === "string" ? Date.parse(raw) : 0;
+      if (!t) continue;
+      if (now - t < 60_000) minute++;
+      if (now - t < 86_400_000) day++;
+    }
+    if (minute >= perMinute) return { ok: false, message: "RATE_LIMITED_MINUTE" };
+    if (day >= perDay) return { ok: false, message: "RATE_LIMITED_DAY" };
+    return { ok: true };
+  } catch (err) {
+    console.error("[MATRIX] Rate-limit check failed — allowing the request.", err);
+    return { ok: true };
+  }
 }
 
 async function logUsage(d: Db, userId: string, model: string, requestType: string, tokenUsage: unknown, latencyMs: number, status: string) {
@@ -216,9 +234,12 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const conversationId = typeof body.conversation_id === "string" ? body.conversation_id : null;
   const isTemporary = body.is_temporary === true;
   const wantStream = body.stream === true;
+  const regenerate = body.regenerate === true;
+  const reuseUser = body.reuse_user === true || regenerate;
 
   if (!message) return json({ error: "MESSAGE_REQUIRED" }, 400);
   if (message.length > 4000) return json({ error: "MESSAGE_TOO_LONG" }, 400);
+  if (reuseUser && !conversationId) return json({ error: "CONVERSATION_NOT_FOUND" }, 404);
 
   const rate = await checkRateLimit(d, user.uid, "chat");
   if (!rate.ok) {
@@ -249,15 +270,24 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
 
   // --- store the user message (original stays in the DB; PII never hits Groq) --
   const redaction = redactPII(message);
-  await convRef.collection("messages").add({
-    role: "user",
-    content: message,
-    metadata: { pii_redacted: !redaction.safe, detected: redaction.detected.map((x) => x.type) },
-    created_at: nowTs(),
-  });
+  if (!reuseUser) {
+    await convRef.collection("messages").add({
+      role: "user",
+      content: message,
+      metadata: { pii_redacted: !redaction.safe, detected: redaction.detected.map((x) => x.type) },
+      created_at: nowTs(),
+    });
+  }
 
   // --- classification (no LLM call needed for refusals) ------------------------
   const classification = classify(redaction.redacted);
+  // Existing threads: allow short follow-ups / greetings that would otherwise
+  // look off-topic ("ok", "what next?") so the chat doesn't break mid-flow.
+  if (!classification.on_topic && (conversationId || isGreetingOrFollowup(message))) {
+    classification.on_topic = true;
+    classification.topic = classification.topic ?? "cyber_education";
+    classification.refusal = null;
+  }
   if (!classification.on_topic) {
     await logSafety(d, user.uid, "off_topic", "off-topic request refused");
     await logUsage(d, user.uid, "none", "chat", {}, Date.now() - started, "refused");
@@ -288,14 +318,19 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   // Context: summary + recent messages + safe memory + RAG
   const [summaryDoc, recentSnap, profileDoc] = await Promise.all([
     d.collection("conversation_summaries").doc(convId).get(),
-    convRef.collection("messages").orderBy("created_at", "desc").limit(8).get(),
+    convRef.collection("messages").get(),
     d.collection("profiles").doc(user.uid).get(),
   ]);
   const history: AIMessage[] = [];
   if (summaryDoc.data()?.summary) history.push({ role: "system", content: "Summary of the earlier conversation:\n" + summaryDoc.data()!.summary });
-  for (const m of [...recentSnap.docs].reverse()) {
+  const recentDocs = recentSnap.docs.sort(descDoc("created_at")).slice(0, 10).reverse();
+  for (const m of recentDocs) {
     const role = m.data().role;
     if (role === "user" || role === "assistant") history.push({ role, content: m.data().content });
+  }
+  // Regenerating: drop the last assistant turn so the model writes a fresh one.
+  if (regenerate) {
+    while (history.length && history[history.length - 1]?.role === "assistant") history.pop();
   }
   const memories = await loadSafeMemories(d, user.uid);
   if (memories) history.push({ role: "system", content: "Safe context about the user (never repeat back verbatim):\n" + memories });
@@ -323,7 +358,8 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
         };
         let window = "";
         try {
-          for await (const delta of provider.streamChat!({ model: MODELS.chat, messages, temperature: 0.4, maxTokens: 1024 })) {
+          emit({ conversation_id: convId });
+          for await (const delta of provider.streamChat!({ model: MODELS.chat, messages, temperature: 0.5, maxTokens: 1600 })) {
             // Per-delta output safety + PII leak filtering.
             const probe = (window + delta).slice(-400);
             const check = validateOutput(probe);
@@ -345,16 +381,24 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
           const msg = e instanceof Error ? e.message : "stream error";
           if (msg !== "CLIENT_DISCONNECTED") {
             await logUsage(d, user.uid, MODELS.chat, "chat", {}, Date.now() - started, "error");
-            // Persist what streamed, so the user can retry cleanly.
-            if (full && done) {
+          }
+          // Persist whatever actually streamed so Stop / disconnect doesn't
+          // throw the reply away — the client can keep it on screen too.
+          if (full && !done) {
+            try {
               await finalizeChat(d, {
                 provider, user, conversationId: convId, isTemporary, message,
                 redactedMessage: redaction.redacted, reply: full, history, redaction, started,
                 model: MODELS.chat,
               });
+              done = true;
+            } catch {
+              /* best-effort persist */
             }
+          }
+          if (msg !== "CLIENT_DISCONNECTED") {
             try {
-              emit({ error: "STREAM_FAILED" });
+              emit({ error: "STREAM_FAILED", conversation_id: convId });
             } catch {
               /* client gone */
             }
@@ -378,7 +422,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   let reply: string;
   let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   try {
-    const result = await provider.chat({ model: MODELS.chat, messages, temperature: 0.4, maxTokens: 1024 });
+    const result = await provider.chat({ model: MODELS.chat, messages, temperature: 0.5, maxTokens: 1600 });
     reply = result.content;
     usage = result.usage;
   } catch {

@@ -93,10 +93,10 @@ export async function getConversation(d: Db, uid: string, id: string) {
   const ref = d.collection("conversations").doc(id);
   const conv = await ref.get();
   if (!conv.exists || conv.data()!.user_id !== uid) return null;
-  const messages = await ref.collection("messages").orderBy("created_at", "asc").get();
+  const messages = await ref.collection("messages").get();
   return {
     conversation: { id: conv.id, title: conv.data()!.title ?? "New conversation", is_temporary: conv.data()!.is_temporary ?? false },
-    messages: messages.docs.map((m) => ({ id: m.id, role: m.data().role, content: m.data().content, created_at: iso(m.data().created_at) })),
+    messages: messages.docs.sort(ascDoc("created_at")).map((m) => ({ id: m.id, role: m.data().role, content: m.data().content, created_at: iso(m.data().created_at) })),
   };
 }
 

@@ -212,7 +212,7 @@ export function DocsShell({ slug, children }: { slug: string; children: React.Re
             <Link href="/" className="block rounded-lg px-2.5 py-2 text-sm text-ink-2 hover:bg-surface-2 hover:text-ink">← Back to MATRIX</Link>
           </div>
         </aside>
-        {menuOpen ? <button className="fixed inset-0 z-20 bg-black/50 lg:hidden" aria-label="Close menu" onClick={() => setMenuOpen(false)} /> : null}
+        {menuOpen ? <button type="button" className="fixed inset-0 z-[25] bg-black/50 lg:hidden" aria-label="Close menu" onClick={() => setMenuOpen(false)} /> : null}
 
         {/* Article */}
         <div className="min-w-0 flex-1 px-4 py-8 sm:px-8">

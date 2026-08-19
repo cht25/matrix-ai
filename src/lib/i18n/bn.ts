@@ -17,6 +17,7 @@ export const bn: En = {
   "nav.history": "ইতিহাস",
   "nav.security": "নিরাপত্তা",
   "nav.settings": "সেটিংস",
+  "nav.docs": "ডকুমেন্টেশন",
   "nav.admin": "অ্যাডমিন",
   "nav.logout": "সাইন আউট",
   "nav.signIn": "সাইন ইন",

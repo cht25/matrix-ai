@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { getCurrentUser } from "@/lib/data";
+import { isConfigured } from "@/lib/env";
 import {
   AlertTriangle, FileWarning, KeyRound, Link2, Lock, Shield, Smartphone, UserX, Wallet,
 } from "lucide-react";
@@ -7,6 +9,7 @@ import { Logo } from "@/components/logo";
 import { Button, Card } from "@/components/ui";
 
 export const metadata: Metadata = { title: "I Need Help Now" };
+export const dynamic = "force-dynamic";
 
 type EmergencyCategory = {
   id: string;
@@ -114,13 +117,15 @@ const CATEGORIES: EmergencyCategory[] = [
   },
 ];
 
-export default function EmergencyPage() {
+export default async function EmergencyPage() {
+  const signedIn = isConfigured() ? Boolean(await getCurrentUser().catch(() => null)) : false;
+  const chatHref = signedIn ? "/chat" : "/login";
   return (
     <div className="min-h-dvh">
-      <header className="sticky top-0 z-40 border-b border-border bg-surface/85 backdrop-blur-xl">
-        <div className="mx-auto flex h-14 max-w-4xl items-center justify-between px-4">
-          <Logo size="sm" />
-          <Link href="/login"><Button variant="outline" className="!min-h-9 !px-3 text-xs">Sign in for personalised help</Button></Link>
+      <header className="sticky top-0 z-40 border-b border-border bg-surface/85 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
+        <div className="mx-auto flex h-14 max-w-4xl items-center justify-between gap-2 px-4">
+          <Logo size="sm" href={signedIn ? "/chat" : "/"} />
+          <Link href={chatHref}><Button variant="outline" className="!min-h-11 !px-3 text-xs">{signedIn ? "Open chat" : "Sign in for help"}</Button></Link>
         </div>
       </header>
 
@@ -154,7 +159,7 @@ export default function EmergencyPage() {
         <div className="mt-10 border border-border bg-surface p-6 text-center">
           <h2 className="text-[15px] font-semibold text-ink">Not sure which one fits?</h2>
           <p className="mt-1 text-sm text-ink-2">Ask MATRIX AI — it will walk you through what to do based on exactly what happened.</p>
-          <Link href="/login" className="mt-4 inline-block"><Button>Open the AI chat</Button></Link>
+          <Link href={chatHref} className="mt-4 inline-block"><Button>Open the AI chat</Button></Link>
         </div>
       </main>
     </div>

@@ -16,7 +16,7 @@
 // content.
 
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
-import { getAuth, type Auth } from "firebase/auth";
+import { getAuth, onAuthStateChanged, type Auth, type User } from "firebase/auth";
 import { getFirestore, type Firestore } from "firebase/firestore";
 import { env, isConfigured } from "@/lib/env";
 
@@ -42,3 +42,21 @@ export function fbDb(): Firestore {
 export const FIREBASE_NOT_CONFIGURED_MESSAGE =
   "FIREBASE_NOT_CONFIGURED: NEXT_PUBLIC_FIREBASE_API_KEY / NEXT_PUBLIC_FIREBASE_PROJECT_ID are missing or invalid. " +
   "Set them in the host environment and redeploy.";
+
+/** Wait until Firebase Auth has restored a persisted session (or timed out). */
+export function waitForAuthUser(timeoutMs = 4000): Promise<User | null> {
+  if (!firebaseBrowserConfigured) return Promise.resolve(null);
+  const auth = fbAuth();
+  if (auth.currentUser) return Promise.resolve(auth.currentUser);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      unsub();
+      resolve(auth.currentUser);
+    }, timeoutMs);
+    const unsub = onAuthStateChanged(auth, (user) => {
+      clearTimeout(timer);
+      unsub();
+      resolve(user);
+    });
+  });
+}
