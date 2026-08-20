@@ -64,9 +64,47 @@ export function safeAgentPath(input: string): string | null {
 
 const FILE_BLOCK = /<<<MATRIX_FILE\s+path="([^"]+)"\s*>>>\s*\n?([\s\S]*?)\n?<<<END_MATRIX_FILE>>>/g;
 
+// Markdown fenced blocks the model may emit instead of (or around) the exact
+// MATRIX_FILE protocol. We only treat a fence as a *file* when a concrete
+// filename is present — either in the fence's info string (` ```html index.html `
+// or ` ```src/app.tsx `) or as a bold/heading filename on the line just above
+// the fence (`**index.html**`). Bare ```html snippets with no filename are left
+// in the reply, never turned into files.
+const FENCED_FILE = /```([^\n`]*)\n([\s\S]*?)\n?```/g;
+
+const FILE_NAME_EXTS = new Set([
+  ...CODE_EXTENSIONS,
+  "txt", "svg", "csv", "tsv", "map", "webmanifest", "gitignore", "env",
+]);
+
+function filenameFromInfo(info: string): string | null {
+  for (const token of info.split(/\s+/)) {
+    const cleaned = token.replace(/^[`*_"'()[\]]+|[`*_"'()[\]]+$/g, "");
+    if (!cleaned.includes(".")) continue;
+    const path = safeAgentPath(cleaned);
+    if (!path) continue;
+    const ext = path.toLowerCase().split(".").pop() ?? "";
+    if (FILE_NAME_EXTS.has(ext)) return path;
+  }
+  return null;
+}
+
+function filenameFromHeader(line: string): string | null {
+  const bold = line.match(/^\*{1,2}([^*\n]+\.[A-Za-z0-9]+)\*{1,2}$/);
+  const heading = line.match(/^#{1,3}\s+([^\s#]+\.[A-Za-z0-9]+)\s*$/);
+  const candidate = bold?.[1]?.trim() ?? heading?.[1]?.trim();
+  if (!candidate) return null;
+  const path = safeAgentPath(candidate);
+  if (!path) return null;
+  const ext = path.toLowerCase().split(".").pop() ?? "";
+  return FILE_NAME_EXTS.has(ext) ? path : null;
+}
+
 /**
- * Extracts files from the agent's deliberately simple text protocol. Invalid
- * paths, duplicate paths and oversized output are dropped rather than trusted.
+ * Extracts files from the agent's deliberately simple text protocol, with a
+ * tolerant fallback for models that use filename-tagged Markdown fences
+ * instead. Invalid paths, duplicate paths and oversized output are dropped
+ * rather than trusted.
  */
 export function parseAgentResponse(raw: string): { reply: string; files: AgentFile[] } {
   const files: AgentFile[] = [];
@@ -85,10 +123,51 @@ export function parseAgentResponse(raw: string): { reply: string; files: AgentFi
     files.push({ path, content, language: languageForPath(path) });
   }
 
-  const reply = raw
+  // Fallback: the model used filename-tagged fences instead of the protocol.
+  const fenceRanges: Array<[number, number]> = [];
+  if (files.length === 0) {
+    FENCED_FILE.lastIndex = 0;
+    let fence: RegExpExecArray | null;
+    while ((fence = FENCED_FILE.exec(raw)) !== null && files.length < 80) {
+      const info = (fence[1] ?? "").trim();
+      let path = filenameFromInfo(info);
+      if (!path) {
+        const lines = raw.slice(0, fence.index).split("\n");
+        for (let i = lines.length - 1; i >= Math.max(0, lines.length - 3); i--) {
+          path = filenameFromHeader(lines[i] ?? "");
+          if (path) break;
+        }
+      }
+      const content = (fence[2] ?? "").replace(/^\n|\n$/g, "");
+      if (!path || seen.has(path) || content.length > 200_000 || total + content.length > 1_500_000) continue;
+      seen.add(path);
+      total += content.length;
+      files.push({ path, content, language: languageForPath(path) });
+      fenceRanges.push([fence.index, fence.index + fence[0].length]);
+    }
+  }
+
+  // Remove fences we promoted into files so the code is not duplicated.
+  // (Ranges are indices into `raw`, so strip before the other cleanups.)
+  let reply = raw;
+  if (fenceRanges.length) {
+    let out = "";
+    let cursor = 0;
+    for (const [start, end] of fenceRanges) {
+      out += reply.slice(cursor, start);
+      cursor = end;
+    }
+    out += reply.slice(cursor);
+    reply = out;
+  }
+
+  reply = reply
     .replace(FILE_BLOCK, "")
+    // Strip any dangling protocol markers the model left half-written.
+    .replace(/<<<MATRIX_FILE[^\n]*>>>|<<<END_MATRIX_FILE>>>/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+
   return {
     reply: reply || (files.length ? `Created ${files.length} project file${files.length === 1 ? "" : "s"}. Review the changes before previewing or pushing them.` : raw.trim()),
     files,

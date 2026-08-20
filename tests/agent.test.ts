@@ -33,6 +33,34 @@ describe("Agent artifact protocol", () => {
     expect(safeAgentPath(".git/config")).toBeNull();
     expect(safeAgentPath("src/app/page.tsx")).toBe("src/app/page.tsx");
   });
+
+  it("recovers files from filename-tagged Markdown fences (info string)", () => {
+    const parsed = parseAgentResponse(
+      "Here is the site.\n\n```html index.html\n<h1>Hello</h1>\n```\n\n```css css/style.css\nh1 { color: blue; }\n```\n",
+    );
+    expect(parsed.files.map((f) => f.path)).toEqual(["index.html", "css/style.css"]);
+    expect(parsed.reply).not.toContain("<h1>Hello</h1>");
+    expect(parsed.reply).toContain("Here is the site");
+  });
+
+  it("recovers files from bold filename headers above fences", () => {
+    const parsed = parseAgentResponse(
+      "Done.\n\n**pages/about.html**\n```html\n<p>About</p>\n```\n",
+    );
+    expect(parsed.files.map((f) => f.path)).toEqual(["pages/about.html"]);
+    expect(parsed.reply).not.toContain("<p>About</p>");
+  });
+
+  it("leaves bare filename-less code fences in the reply (not files)", () => {
+    const parsed = parseAgentResponse("Conceptual answer:\n\n```html\n<span>example</span>\n```\n");
+    expect(parsed.files).toEqual([]);
+    expect(parsed.reply).toContain("<span>example</span>");
+  });
+
+  it("strips dangling protocol markers from the reply", () => {
+    const parsed = parseAgentResponse("See below.\n\n<<<MATRIX_FILE path=\"index.html\">>>\n<h1>Hi</h1>\n");
+    expect(parsed.reply).not.toContain("MATRIX_FILE");
+  });
 });
 
 describe("OpenRouterProvider", () => {

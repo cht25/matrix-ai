@@ -24,6 +24,9 @@ export const metadata: Metadata = {
   description:
     "MATRIX is an all-in-one AI assistant for writing, learning, planning, research, digital safety and coding, with an Agent workspace, live preview and review-before-push GitHub integration.",
   applicationName: "MATRIX",
+  verification: {
+    google: "w7nP74RD04O12Z-gbtUMGn1cZ9SRQz9SnRY-94e1v-w",
+  },
   icons: {
     icon: [
       { url: BRAND_ICON_URL, type: "image/png" },

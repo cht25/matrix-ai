@@ -29,6 +29,7 @@ import { validateImageUpload } from "@/lib/ai/upload-validation";
 import { ragSearch } from "@/lib/server/rpc";
 import { downloadImage } from "@/lib/server/cloudinary";
 import { descDoc } from "@/lib/server/sort";
+import { applyProjectFiles, ensureProject } from "@/lib/server/projects";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -175,10 +176,11 @@ async function finalizeChat(d: Db, opts: {
   mode: ChatMode;
   codingDetected: boolean;
   files?: AgentFile[];
+  projectId?: string | null;
 }) {
   const {
     provider, user, conversationId, isTemporary, message, redactedMessage, reply,
-    history, redaction, started, model, mode, codingDetected, files = [],
+    history, redaction, started, model, mode, codingDetected, files = [], projectId = null,
   } = opts;
   const convRef = d.collection("conversations").doc(conversationId);
 
@@ -190,6 +192,7 @@ async function finalizeChat(d: Db, opts: {
       model,
       coding_detected: codingDetected,
       ...(files.length ? { artifacts: files } : {}),
+      ...(projectId ? { project_id: projectId } : {}),
     },
     created_at: nowTs(),
   });
@@ -548,15 +551,31 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     files = parsed.files;
   }
 
+  // Agent artifacts are persisted to a per-conversation project here on the
+  // server (single source of truth) so the workspace always reopens the same
+  // project instead of creating a new one each time. Best-effort: a project
+  // write failure never fails the chat — the files still travel in `artifacts`.
+  let projectId: string | null = null;
+  if (mode === "agent" && files.length) {
+    try {
+      const proj = await ensureProject(d, user, { conversation_id: convId, title: (message || "Agent project").slice(0, 80) });
+      await applyProjectFiles(d, user, { project_id: proj.id, files, source: "agent" });
+      projectId = proj.id;
+    } catch {
+      // best-effort (e.g. project limit) — reply still returns the files
+    }
+  }
+
   await finalizeChat(d, {
     provider, user, conversationId: convId, isTemporary, message,
     redactedMessage: redaction.redacted, reply, history, redaction, started,
-    model: selectedModel, mode, codingDetected, files,
+    model: selectedModel, mode, codingDetected, files, projectId,
   });
   return json({
     reply,
     files,
     conversation_id: convId,
+    project_id: projectId,
     refused: false,
     pii_redacted: !redaction.safe,
     mode,

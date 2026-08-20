@@ -245,12 +245,15 @@ export async function listLiveSites(d: Db) {
 export async function loadPublishedFile(d: Db, slug: string, path: string) {
   const site = await d.collection("published_sites").doc(slug).get();
   if (!site.exists || site.data()?.status !== "live") return null;
-  const wanted = !path || path === "/" ? "index.html" : path.replace(/^\/+/, "");
+  const raw = (path || "").replace(/^\/+/, "");
+  const wanted = !raw ? "index.html" : raw.endsWith("/") ? `${raw}index.html` : raw;
   const files = await site.ref.collection("files").get();
   const match =
     files.docs.find((doc) => doc.data().path === wanted) ??
-    (wanted.endsWith("/") ? files.docs.find((doc) => doc.data().path === `${wanted}index.html`) : undefined) ??
-    files.docs.find((doc) => doc.data().path === "index.html" && (wanted === "" || wanted === "index.html"));
+    // Extensionless URLs resolve to the matching .html file (e.g. /about → about.html).
+    files.docs.find((doc) => doc.data().path === `${wanted}.html`) ??
+    files.docs.find((doc) => doc.data().path === `${wanted}/index.html`) ??
+    files.docs.find((doc) => doc.data().path === "index.html" && (raw === "" || raw === "index.html"));
   if (!match) return null;
   return {
     path: match.data().path as string,

@@ -93,6 +93,14 @@ function latestArtifacts(list: ChatMessage[]): AgentFile[] {
   return [];
 }
 
+function latestProjectId(list: ChatMessage[]): string | null {
+  for (let i = list.length - 1; i >= 0; i--) {
+    const pid = list[i].metadata?.project_id;
+    if (typeof pid === "string" && pid) return pid;
+  }
+  return null;
+}
+
 export function ChatClient({
   initialMessages,
   conversationId: initialConvId,
@@ -127,6 +135,7 @@ export function ChatClient({
   const [keyboardInset, setKeyboardInset] = useState(0);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [agentFiles, setAgentFiles] = useState<AgentFile[]>(latestArtifacts(initialMessages));
+  const [agentProjectId, setAgentProjectId] = useState<string | null>(latestProjectId(initialMessages));
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [lastModel, setLastModel] = useState<string | null>(() => {
     for (let i = initialMessages.length - 1; i >= 0; i--) if (initialMessages[i].metadata?.model) return initialMessages[i].metadata!.model!;
@@ -219,6 +228,7 @@ export function ChatClient({
     const reply = text.trim();
     if (!reply) return;
     if (metadata.model) setLastModel(metadata.model);
+    if (metadata.project_id) setAgentProjectId(metadata.project_id);
     if (metadata.artifacts?.length) {
       setAgentFiles(metadata.artifacts);
       setWorkspaceOpen(true);
@@ -296,20 +306,20 @@ export function ChatClient({
           reply?: string;
           conversation_id?: string;
           files?: AgentFile[];
+          project_id?: string | null;
           model?: string;
           mode?: ChatMode;
           coding_detected?: boolean;
           theme_gallery?: boolean;
         };
         if (data.conversation_id) rememberConv(data.conversation_id);
-        if (data.files?.length && data.conversation_id) {
-          void rpc("project_ensure", { conversation_id: data.conversation_id, title: message.slice(0, 60) })
-            .then((proj) => rpc("project_apply_files", { project_id: (proj as { id: string }).id, files: data.files, source: "agent" }))
-            .catch(() => {});
-        }
+        // The project is created and files are persisted server-side; the
+        // workspace reuses it via project_id (or the conversation id).
+        if (data.project_id) setAgentProjectId(data.project_id);
         if (data.reply) {
           commitPartial(data.reply, replaceLastAssistant, {
             artifacts: data.files,
+            project_id: data.project_id ?? undefined,
             model: data.model,
             mode: data.mode,
             coding_detected: data.coding_detected,
@@ -673,7 +683,7 @@ export function ChatClient({
                       {m.metadata?.artifacts?.length ? (
                         <button
                           type="button"
-                          onClick={() => { setAgentFiles(m.metadata!.artifacts!); setWorkspaceOpen(true); }}
+                          onClick={() => { setAgentFiles(m.metadata!.artifacts!); setAgentProjectId(m.metadata?.project_id ?? null); setWorkspaceOpen(true); }}
                           className="mt-3 flex w-full items-center justify-between gap-3 rounded-xl border border-accent/30 bg-accent-soft px-3.5 py-3 text-left transition-colors hover:border-accent/60"
                         >
                           <span className="flex min-w-0 items-center gap-2.5"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent text-white"><MonitorPlay size={15} /></span><span><span className="block text-xs font-semibold text-ink">Open Agent workspace</span><span className="block text-[11px] text-ink-3">{m.metadata.artifacts.length} file{m.metadata.artifacts.length === 1 ? "" : "s"} · Live preview · GitHub push</span></span></span>
@@ -814,7 +824,13 @@ export function ChatClient({
       </div>
 
       {mode === "agent" ? (
-        <AgentWorkspace files={agentFiles} open={workspaceOpen} onClose={() => setWorkspaceOpen(false)} />
+        <AgentWorkspace
+          files={agentFiles}
+          open={workspaceOpen}
+          onClose={() => setWorkspaceOpen(false)}
+          conversationId={convId}
+          projectId={agentProjectId ?? undefined}
+        />
       ) : null}
     </div>
   );
