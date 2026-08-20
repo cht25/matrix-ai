@@ -70,7 +70,7 @@ export async function ensureProject(
   if (p.conversation_id) {
     const existing = await d.collection("projects").where("conversation_id", "==", p.conversation_id).limit(5).get();
     const mine = existing.docs.find((doc) => doc.data().owner_id === user.uid && !doc.data().archived_at);
-    if (mine) return { id: mine.id, title: mine.data().title ?? "Untitled project" };
+    if (mine) return { id: mine.id, title: mine.data().title ?? "Untitled project", file_count: mine.data().file_count ?? 0 };
   }
   const current = await d.collection("projects").where("owner_id", "==", user.uid).get();
   const active = current.docs.filter((doc) => !doc.data().archived_at).length;
@@ -93,7 +93,7 @@ export async function ensureProject(
     created_at: nowTs(),
     updated_at: nowTs(),
   });
-  return { id: created.id, title };
+  return { id: created.id, title, file_count: 0 };
 }
 
 export async function getProject(d: Db, user: SessionUser, projectId: string) {

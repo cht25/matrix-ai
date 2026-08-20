@@ -73,9 +73,19 @@ export function ProjectWorkspace({
     let cancelled = false;
     (async () => {
       try {
-        const id = projectId ?? (await rpc<{ id: string }>("project_ensure", { conversation_id: conversationId ?? null, title: "Agent project" })).id;
+        let id = projectId ?? "";
+        let applyInitial = !projectId && initialFiles.length > 0;
+        if (!projectId) {
+          // Reuse the conversation's project when one exists (server-side
+          // persistence already linked it), otherwise create it.
+          const proj = await rpc<{ id: string; file_count?: number }>("project_ensure", { conversation_id: conversationId ?? null, title: "Agent project" });
+          id = proj.id;
+          // Only write the generated files when the project is still empty —
+          // never clobber files the user has edited since.
+          applyInitial = applyInitial && (proj.file_count ?? 0) === 0;
+        }
         if (cancelled) return;
-        if (initialFiles.length && !projectId) {
+        if (applyInitial) {
           await rpc("project_apply_files", { project_id: id, files: initialFiles, source: "agent" }).catch(() => {});
         }
         await load(id);
