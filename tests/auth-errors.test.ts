@@ -34,6 +34,17 @@ describe("authErrorKind", () => {
     expect(authErrorKind(fbErr("auth/operation-not-allowed"))).toBe("provider");
   });
 
+  it("never labels a session-mint failure as a generic Google failure", () => {
+    expect(authErrorKind(fbErr("SESSION_MINT_FAILED"))).toBe("session");
+    expect(describeAuthError(fbErr("SESSION_MINT_FAILED"), "Sign-in with google failed")).toContain("Retry session");
+    expect(describeAuthError(fbErr("SESSION_MINT_FAILED"), "Sign-in with google failed")).not.toMatch(/google failed/i);
+  });
+
+  it("explains account-exists-with-different-credential", () => {
+    expect(authErrorKind(fbErr("auth/account-exists-with-different-credential"))).toBe("account-exists");
+    expect(describeAuthError(fbErr("auth/account-exists-with-different-credential"), "fallback")).toContain("already exists");
+  });
+
   it("recognises user-level errors", () => {
     expect(authErrorKind(fbErr("auth/invalid-credential"))).toBe("invalid-credential");
     expect(authErrorKind(fbErr("auth/wrong-password"))).toBe("invalid-credential");

@@ -33,7 +33,9 @@ export async function rpc<T = unknown>(action: string, args: Record<string, unkn
  * cookie used by server components and API routes. Called right after any
  * successful sign-in (password, OAuth, MFA) — idempotent.
  */
-export async function mintSessionCookie(): Promise<void> {
+export type SessionMint = { ok: true; uid: string; onboarding_complete: boolean };
+
+export async function mintSessionCookie(): Promise<SessionMint> {
   const user = fbAuth().currentUser;
   if (!user) throw new RpcCallError("UNAUTHENTICATED", 401);
   // Force-refresh so the server never sees a stale token after OAuth.
@@ -44,10 +46,11 @@ export async function mintSessionCookie(): Promise<void> {
     body: JSON.stringify({ idToken }),
     credentials: "same-origin",
   });
+  const data = (await res.json().catch(() => ({}))) as { error?: string; uid?: string; onboarding_complete?: boolean };
   if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new RpcCallError(data.error ?? "SESSION_MINT_FAILED", res.status);
   }
+  return { ok: true, uid: data.uid ?? user.uid, onboarding_complete: data.onboarding_complete === true };
 }
 
 /** Sign out everywhere: clear the cookie + Firebase client state. */

@@ -190,6 +190,24 @@ service cloud.firestore {
     }
     match /ai_safety_events/{id}     { allow read, write: if false; }
 
+    match /projects/{id} {
+      allow read: if (signedIn() && resource.data.owner_id == request.auth.uid) || adminClaim();
+      allow write: if false;
+      match /{document=**} {
+        allow read: if (signedIn() && get(/databases/$(database)/documents/projects/$(id)).data.owner_id == request.auth.uid) || adminClaim();
+        allow write: if false;
+      }
+    }
+    match /deployments/{id} {
+      allow read: if (signedIn() && resource.data.owner_id == request.auth.uid) || adminClaim();
+      allow write: if false;
+    }
+    match /published_sites/{slug} {
+      allow read, write: if false;
+      match /files/{fid} { allow read, write: if false; }
+    }
+    match /system_settings/{id} { allow read, write: if false; }
+
     // --- Default deny --------------------------------------------------------------
     match /{document=**} {
       allow read, write: if false;

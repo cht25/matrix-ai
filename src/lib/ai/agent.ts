@@ -74,12 +74,12 @@ export function parseAgentResponse(raw: string): { reply: string; files: AgentFi
   let total = 0;
   let match: RegExpExecArray | null;
   FILE_BLOCK.lastIndex = 0;
-  while ((match = FILE_BLOCK.exec(raw)) !== null && files.length < 40) {
+  while ((match = FILE_BLOCK.exec(raw)) !== null && files.length < 80) {
     const path = safeAgentPath(match[1]);
     const content = match[2].replace(/^\n|\n$/g, "");
-    // Firestore stores artifacts on the assistant message; stay comfortably
-    // below its 1 MiB document limit after field/index overhead.
-    if (!path || seen.has(path) || content.length > 300_000 || total + content.length > 700_000) continue;
+    // Persist large trees on the project collection; keep a bounded copy on
+    // the assistant message so chat history stays under Firestore's 1 MiB cap.
+    if (!path || seen.has(path) || content.length > 200_000 || total + content.length > 1_500_000) continue;
     seen.add(path);
     total += content.length;
     files.push({ path, content, language: languageForPath(path) });

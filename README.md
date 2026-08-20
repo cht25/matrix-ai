@@ -245,6 +245,8 @@ Whichever you choose, remember to:
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | server only | GitHub OAuth App for Agent-mode repository access |
 | `GITHUB_TOKEN_ENCRYPTION_KEY` | server only | Encrypts GitHub tokens at rest (32+ random characters) |
 | `GITHUB_OAUTH_CALLBACK_URL` | server only | Exact OAuth callback (`https://host/api/github/callback`) |
+| `IDENTITY_PEPPER` | server only | HMAC pepper for birth-certificate numbers (32+ chars). Missing → identity submit fails honestly |
+| `ADMIN_BOOTSTRAP_KEY` | server only | One-time key for `/admin/setup` to create the first super_admin |
 
 ## Firestore data model
 

@@ -27,6 +27,7 @@ describe("isPublic", () => {
     expect(isPublic("/docs/introduction")).toBe(true);
     expect(isPublic("/scams/phishing")).toBe(true);
     expect(isPublic("/certificate/verify/abc")).toBe(true);
+    expect(isPublic("/s/my-site")).toBe(true);
   });
 
   it("does not treat app routes as public", () => {

@@ -24,6 +24,7 @@ import { createProvider, MODELS, type AIMessage, type AIProvider } from "@/lib/a
 import { createCodingProvider, OPENROUTER_MODELS } from "@/lib/ai/openrouter";
 import { formatAttachmentContext, isCodingRequest, parseAgentResponse, safeAgentPath, type AgentFile, type ChatMode, type TextAttachment } from "@/lib/ai/agent";
 import { buildAgentSystemMessages, buildSystemMessages, validateOutput, buildSummaryPrompt } from "@/lib/ai/prompts";
+import { isThemeIntent, THEME_GALLERY_REPLY_BN, THEME_GALLERY_REPLY_EN } from "@/lib/theme-intent";
 import { validateImageUpload } from "@/lib/ai/upload-validation";
 import { ragSearch } from "@/lib/server/rpc";
 import { downloadImage } from "@/lib/server/cloudinary";
@@ -274,6 +275,34 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const regenerate = body.regenerate === true;
   const reuseUser = body.reuse_user === true || regenerate;
   const preferredLanguage: "en" | "bn" | undefined = body.language === "bn" ? "bn" : body.language === "en" ? "en" : undefined;
+
+  if (mode !== "agent" && isThemeIntent(message)) {
+    let convId = conversationId;
+    if (!convId) {
+      const created = await d.collection("conversations").add({
+        user_id: user.uid,
+        title: message.replace(/\s+/g, " ").slice(0, 60),
+        mode: "general",
+        is_temporary: isTemporary,
+        summary: "",
+        archived_at: null,
+        deleted_at: null,
+        created_at: nowTs(),
+        updated_at: nowTs(),
+      });
+      convId = created.id;
+    }
+    const reply = preferredLanguage === "bn" || /[\u0980-\u09ff]/.test(message) ? THEME_GALLERY_REPLY_BN : THEME_GALLERY_REPLY_EN;
+    if (!reuseUser) {
+      await d.collection("conversations").doc(convId).collection("messages").add({
+        role: "user", content: message, metadata: { mode: "general" }, created_at: nowTs(),
+      });
+    }
+    await d.collection("conversations").doc(convId).collection("messages").add({
+      role: "assistant", content: reply, metadata: { action: "theme_gallery" }, created_at: nowTs(),
+    });
+    return json({ reply, conversation_id: convId, theme_gallery: true, metadata: { action: "theme_gallery" } });
+  }
 
   if (!message) return json({ error: "MESSAGE_REQUIRED" }, 400);
   if (message.length > 12_000) return json({ error: "MESSAGE_TOO_LONG" }, 400);

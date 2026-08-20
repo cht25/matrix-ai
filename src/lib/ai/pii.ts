@@ -26,7 +26,9 @@ const PASSWORD_RE = /\b(?:password|passwd|pwd|pin|passphrase)\b[:\s]*[^\s,.;!?]{
 const CARD_RE = /\b(?:\d[ -]?){13,19}\b/g;
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
 const ID_RE =
-  /\b(?:birth[- ]?certificate|national[- ]?id|nid|ssn|social[- ]?security|passport|driving[- ]?licen[cs]e|aadhaar|tax[- ]?id)\b[:\s]*[A-Za-z0-9-]{4,}/gi;
+  /\b(?:birth[- ]?certificate(?:[- ]?(?:no|number|#))?|cert(?:ificate)?[- ]?(?:no|number|#)|জন্মনিবন্ধন|national[- ]?id|nid|ssn|social[- ]?security|passport|driving[- ]?licen[cs]e|aadhaar|tax[- ]?id)\b[:\s#]*[A-Za-z0-9-]{4,}/gi;
+const DOB_RE =
+  /\b(?:date[- ]of[- ]birth|dob|born on|জন্ম(?:\s*তারিখ)?|জন্মতারিখ)\b(?:[:\s]+(?:is|was|=)?[:\s]*)?\d{4}[-/]\d{1,2}[-/]\d{1,2}/gi;
 const ADDRESS_RE =
   /\b(?:street|road|avenue|ave|boulevard|blvd|lane|ln|house|home|address|building|apartment|apt|flat|village|district)\b[^\n.]{3,80}/gi;
 const TOKEN_RE = /\b(?:token|api[- ]?key|secret[- ]?key|access[- ]?token|bearer)\b[:\s]*[A-Za-z0-9_\-\.]{8,}/gi;
@@ -38,6 +40,7 @@ const REDACTORS: { type: string; label: string; re: RegExp }[] = [
   { type: "otp", label: "ONE_TIME_CODE", re: OTP_RE },
   { type: "password", label: "PASSWORD", re: PASSWORD_RE },
   { type: "government_id", label: "GOVERNMENT_ID", re: ID_RE },
+  { type: "dob", label: "DATE_OF_BIRTH", re: DOB_RE },
   { type: "token", label: "SECRET_TOKEN", re: TOKEN_RE },
   { type: "card", label: "PAYMENT_CARD", re: CARD_RE },
   { type: "email", label: "EMAIL", re: EMAIL_RE },

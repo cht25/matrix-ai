@@ -14,6 +14,8 @@ const SECTIONS = [
   { href: "/admin/scams", label: "Scam library" },
   { href: "/admin/security", label: "Security" },
   { href: "/admin/audit-logs", label: "Audit logs" },
+  { href: "/admin/sites", label: "Published sites" },
+  { href: "/admin/setup", label: "Setup" },
 ];
 
 export function AdminNav() {

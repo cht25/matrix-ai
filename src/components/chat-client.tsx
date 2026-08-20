@@ -27,6 +27,8 @@ import { useI18n } from "@/lib/i18n/client";
 import { cn } from "@/lib/utils";
 import type { AgentFile, ChatMode, TextAttachment } from "@/lib/ai/agent";
 import { AgentWorkspace } from "@/components/agent-workspace";
+import { ThemeGallery } from "@/components/theme-gallery";
+import { rpc } from "@/lib/client/api";
 
 type MessageMetadata = {
   mode?: ChatMode;
@@ -34,6 +36,8 @@ type MessageMetadata = {
   coding_detected?: boolean;
   artifacts?: AgentFile[];
   attachment_names?: string[];
+  action?: string;
+  project_id?: string;
 };
 
 export type ChatMessage = {
@@ -295,14 +299,21 @@ export function ChatClient({
           model?: string;
           mode?: ChatMode;
           coding_detected?: boolean;
+          theme_gallery?: boolean;
         };
         if (data.conversation_id) rememberConv(data.conversation_id);
+        if (data.files?.length && data.conversation_id) {
+          void rpc("project_ensure", { conversation_id: data.conversation_id, title: message.slice(0, 60) })
+            .then((proj) => rpc("project_apply_files", { project_id: (proj as { id: string }).id, files: data.files, source: "agent" }))
+            .catch(() => {});
+        }
         if (data.reply) {
           commitPartial(data.reply, replaceLastAssistant, {
             artifacts: data.files,
             model: data.model,
             mode: data.mode,
             coding_detected: data.coding_detected,
+            action: data.theme_gallery ? "theme_gallery" : undefined,
           });
           committed = true;
           if (data.conversation_id && !isTemporary) router.replace(`/chat/${data.conversation_id}`);
@@ -654,6 +665,11 @@ export function ChatClient({
                   ) : (
                     <div className="border-l border-border pl-4">
                       <Markdown text={m.content} />
+                      {m.metadata?.action === "theme_gallery" ? (
+                        <div className="mt-3 rounded-xl border border-border bg-surface p-3">
+                          <ThemeGallery compact />
+                        </div>
+                      ) : null}
                       {m.metadata?.artifacts?.length ? (
                         <button
                           type="button"

@@ -11,6 +11,8 @@ import { adminDb } from "@/lib/firebase/admin";
 import { getSessionUser, type SessionUser } from "@/lib/firebase/session";
 import { RpcError } from "@/lib/server/rpc";
 import * as rpc from "@/lib/server/rpc";
+import * as projects from "@/lib/server/projects";
+import * as deploy from "@/lib/server/deploy";
 import { nowTs } from "@/lib/firebase/admin";
 import { ascDoc } from "@/lib/server/sort";
 
@@ -70,6 +72,87 @@ const ACTIONS: Record<string, Handler> = {
       verification_type: z.enum(["birth_certificate", "passport", "national_id", "external_provider"]).parse(b.verification_type),
       verification_reference: z.string().startsWith(`identity-documents/${u.uid}/`).parse(b.verification_reference),
     }),
+
+  submit_identity_number: (d, u, b) =>
+    rpc.submitIdentityNumber(d, u, { birth_certificate_number: z.string().min(1).max(64).parse(b.birth_certificate_number) }),
+
+  onboarding_status: (d, u) => rpc.profileOnboardingComplete(d, u.uid).then((complete) => ({ complete })),
+
+  theme_update: (d, u, b) => rpc.updateTheme(d, u, { theme: str(b.theme), theme_template: str(b.theme_template) }),
+  notifications_list: (d, u) => rpc.listNotifications(d, u),
+  notifications_mark_read: (d, u, b) => rpc.markNotificationsRead(d, u, { id: b.id ? str(b.id) : undefined, all: bool(b.all) }),
+  usage_summary: (d, u) => rpc.usageSummary(d, u),
+
+  project_list: (d, u) => projects.listProjects(d, u),
+  project_ensure: (d, u, b) =>
+    projects.ensureProject(d, u, { conversation_id: b.conversation_id ? str(b.conversation_id) : null, title: str(b.title) }),
+  project_get: (d, u, b) => projects.getProject(d, u, z.string().min(1).parse(b.id)),
+  project_update: (d, u, b) =>
+    projects.updateProject(d, u, { id: z.string().min(1).parse(b.id), title: b.title ? str(b.title) : undefined, description: b.description ? str(b.description) : undefined, archive: bool(b.archive) }),
+  project_file_upsert: (d, u, b) =>
+    projects.upsertProjectFile(d, u, {
+      project_id: z.string().min(1).parse(b.project_id),
+      path: z.string().min(1).parse(b.path),
+      content: z.string().parse(b.content ?? ""),
+      encoding: b.encoding === "base64" ? "base64" : "utf8",
+      source: str(b.source, "user"),
+    }),
+  project_file_delete: (d, u, b) =>
+    projects.deleteProjectFile(d, u, { project_id: z.string().min(1).parse(b.project_id), path: z.string().min(1).parse(b.path) }),
+  project_file_rename: (d, u, b) =>
+    projects.renameProjectFile(d, u, { project_id: z.string().min(1).parse(b.project_id), from: z.string().min(1).parse(b.from), to: z.string().min(1).parse(b.to) }),
+  project_apply_files: (d, u, b) =>
+    projects.applyProjectFiles(d, u, {
+      project_id: z.string().min(1).parse(b.project_id),
+      files: z.array(z.object({ path: z.string(), content: z.string(), language: z.string().optional(), encoding: z.enum(["utf8", "base64"]).optional() })).parse(b.files).map((file) => ({
+        path: file.path,
+        content: file.content,
+        language: file.language ?? "text",
+        encoding: file.encoding ?? "utf8",
+      })),
+      source: str(b.source, "agent"),
+      title: b.title ? str(b.title) : undefined,
+    }),
+  project_version_save: (d, u, b) =>
+    projects.saveProjectVersion(d, u, { project_id: z.string().min(1).parse(b.project_id), source: str(b.source, "manual"), summary: str(b.summary) }),
+  project_version_list: (d, u, b) => projects.listProjectVersions(d, u, z.string().min(1).parse(b.project_id)),
+  project_version_restore: (d, u, b) =>
+    projects.restoreProjectVersion(d, u, { project_id: z.string().min(1).parse(b.project_id), version_id: z.string().min(1).parse(b.version_id) }),
+  project_set_env: (d, u, b) =>
+    projects.setProjectEnv(d, u, { project_id: z.string().min(1).parse(b.project_id), env: z.record(z.string()).parse(b.env ?? {}) }),
+  project_publish: (d, u, b) => deploy.publishProject(d, u, { project_id: z.string().min(1).parse(b.project_id), slug: b.slug ? str(b.slug) : undefined }),
+  project_unpublish: (d, u, b) => deploy.unpublishProject(d, u, z.string().min(1).parse(b.project_id)),
+  project_deployment: (d, u, b) => deploy.getDeployment(d, u, z.string().min(1).parse(b.project_id)),
+  project_add_domain: (d, u, b) => deploy.addProjectDomain(d, u, { project_id: z.string().min(1).parse(b.project_id), domain: z.string().min(3).parse(b.domain) }),
+  project_verify_domain: (d, u, b) => deploy.verifyProjectDomain(d, u, z.string().min(1).parse(b.project_id)),
+
+  admin_bootstrap: (d, u, b) => rpc.bootstrapAdmin(d, u, z.string().min(1).parse(b.key)),
+  admin_set_role: (d, u, b) => rpc.adminSetUserRole(d, u, { uid: z.string().min(1).parse(b.uid), role: z.string().min(1).parse(b.role) }),
+  admin_set_disabled: (d, u, b) => rpc.adminSetUserDisabled(d, u, { uid: z.string().min(1).parse(b.uid), disabled: z.boolean().parse(b.disabled) }),
+  course_upsert: (d, u, b) =>
+    rpc.upsertCourse(d, u, {
+      id: b.id ? str(b.id) : undefined,
+      title: z.string().min(2).parse(b.title),
+      slug: z.string().min(2).parse(b.slug),
+      description: str(b.description),
+      level: str(b.level, "beginner"),
+      duration_minutes: Number(b.duration_minutes ?? 30),
+      icon: str(b.icon, "book"),
+      status: str(b.status, "draft"),
+      modules: Array.isArray(b.modules) ? (b.modules as never) : undefined,
+    }),
+  admin_course_get: (d, u, b) => rpc.getAdminCourse(d, u, z.string().min(1).parse(b.id)),
+  admin_live_sites: async (d, u) => {
+    if (!(await rpc.isAdmin(d, u.uid))) throw new RpcError("PERMISSION_DENIED", 403);
+    return deploy.listLiveSites(d);
+  },
+  admin_unpublish_site: async (d, u, b) => {
+    if (!(await rpc.isAdmin(d, u.uid))) throw new RpcError("PERMISSION_DENIED", 403);
+    const slug = z.string().min(3).parse(b.slug);
+    await deploy.adminUnpublishSite(d, slug);
+    await rpc.logAudit(d, u.uid, "site_unpublished", "published_sites", slug, str(b.reason));
+    return true;
+  },
 
   // --- security events & sessions ----------------------------------------------
   record_security_event: (d, u, b) => rpc.recordSecurityEvent(d, u, str(b.event_type), (b.metadata as Record<string, unknown>) ?? {}),

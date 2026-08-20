@@ -1,41 +1,55 @@
 "use client";
 
+import { Monitor, Moon, Sun } from "lucide-react";
 import { useTheme, type Theme } from "@/lib/theme";
+import { ThemeGallery } from "@/components/theme-gallery";
 import { Card } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
-const OPTIONS: { id: Theme; label: string; icon: string; desc: string }[] = [
-  { id: "dark", label: "Dark", icon: "🌙", desc: "Black cyber environment — default" },
-  { id: "light", label: "Light", icon: "☀️", desc: "Bright and clean" },
-  { id: "system", label: "System", icon: "🖥️", desc: "Follow your device setting" },
+const OPTIONS: { id: Theme; label: string; desc: string; icon: typeof Moon }[] = [
+  { id: "dark", label: "Dark", desc: "Black cyber environment — default", icon: Moon },
+  { id: "light", label: "Light", desc: "Bright editorial paper", icon: Sun },
+  { id: "system", label: "System", desc: "Follow your device setting", icon: Monitor },
 ];
 
 export function AppearancePanel() {
   const { theme, setTheme } = useTheme();
   return (
-    <Card>
-      <h2 className="font-bold text-ink">Appearance</h2>
-      <p className="mt-1 text-sm text-ink-2">The animated background adapts to both themes. Reduced-motion is respected automatically.</p>
-      <div className="mt-4 grid gap-3 sm:grid-cols-3" role="radiogroup" aria-label="Theme">
-        {OPTIONS.map((o) => (
-          <button
-            key={o.id}
-            role="radio"
-            aria-checked={theme === o.id}
-            onClick={() => setTheme(o.id)}
-            className={cn(
-              "card card-hover flex min-h-28 flex-col items-start justify-between !p-4 text-left",
-              theme === o.id && "!border-accent ring-2 ring-accent/40",
-            )}
-          >
-            <span className="text-2xl" aria-hidden="true">{o.icon}</span>
-            <span>
-              <span className="block font-bold text-ink">{o.label}</span>
-              <span className="block text-xs text-ink-3">{o.desc}</span>
-            </span>
-          </button>
-        ))}
-      </div>
-    </Card>
+    <div className="space-y-4">
+      <Card>
+        <h2 className="font-bold text-ink">Appearance</h2>
+        <p className="mt-1 text-sm text-ink-2">Dark, light and system stay first-class. Templates only change your account.</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3" role="radiogroup" aria-label="Theme">
+          {OPTIONS.map((o) => {
+            const Icon = o.icon;
+            return (
+              <button
+                key={o.id}
+                role="radio"
+                aria-checked={theme === o.id}
+                onClick={() => setTheme(o.id)}
+                className={cn(
+                  "card card-hover flex min-h-28 flex-col items-start justify-between !p-4 text-left",
+                  theme === o.id && "!border-accent ring-2 ring-accent/40",
+                )}
+              >
+                <Icon size={18} className="text-ink-2" />
+                <span>
+                  <span className="block font-bold text-ink">{o.label}</span>
+                  <span className="block text-xs text-ink-3">{o.desc}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+      <Card>
+        <h2 className="font-bold text-ink">Theme templates</h2>
+        <p className="mt-1 text-sm text-ink-2">Professionally designed palettes. Applying one never changes anyone else's MATRIX.</p>
+        <div className="mt-4">
+          <ThemeGallery />
+        </div>
+      </Card>
+    </div>
   );
 }

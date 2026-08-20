@@ -52,10 +52,12 @@ export function VerificationQueue({ codes }: { codes: Set<string> }) {
             <span className="font-mono text-xs text-ink-3">{v.user_id}</span>
           </div>
           <p className="mt-2 text-sm text-ink-2">
-            Type: {v.verification_type} · Submitted {formatDate(v.created_at)} · Reference: <code className="rounded bg-surface-2 px-1 text-xs">{v.verification_reference}</code>
+            Type: {v.verification_type === "birth_certificate_number" ? "birth certificate number" : v.verification_type} · Submitted {formatDate(v.created_at)} · Masked: <code className="rounded bg-surface-2 px-1 text-xs">{v.verification_reference}</code>
           </p>
           <p className="mt-1 text-xs text-ink-3">
-            The document itself lives in the private <code className="rounded bg-surface-2 px-1">identity-documents</code> bucket — download it via storage to review.
+            {v.verification_type === "birth_certificate_number"
+              ? "Only a one-way hash is stored. The raw number is never shown here, logged, or sent to the AI."
+              : "Legacy image submission — the file lives in the private identity-documents folder."}
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Input

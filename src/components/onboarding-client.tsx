@@ -4,15 +4,21 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { sendEmailVerification } from "firebase/auth";
 import { fbAuth } from "@/lib/firebase/client";
-import { rpc, RpcCallError, uploadOwnedFile } from "@/lib/client/api";
+import { rpc, RpcCallError } from "@/lib/client/api";
 import { calculateAge } from "@/lib/utils";
-import { Check, Circle, Upload } from "lucide-react";
+import { Check, Circle, Eye, EyeOff } from "lucide-react";
 import { Alert, Button, Card, Field, Input, Select, Spinner } from "@/components/ui";
 
 type Profile = { full_name: string; date_of_birth: string | null; age_verified: boolean; school_name: string; class_grade: string; country: string };
 type Consent = { status: string; consent_method: string } | null;
-type Verification = { verification_status: string; rejection_reason: string } | null;
+type Verification = { verification_status: string; rejection_reason: string; verification_type?: string } | null;
 type Country = { id: string; name: string; consent_required: boolean; consent_min_age: number };
+
+const WHY_DOB =
+  "MATRIX is for people aged 11–17. We ask for your date of birth so we can check that you are in that age range, apply the correct guardian-consent rules for your country, and keep adult accounts out of a youth platform.";
+
+const WHY_CERT =
+  "We ask for your birth certificate number (not a photo) so the security team can confirm you are a real person in that age range without collecting a scan of a legal document. A document image is a high-risk piece of identity data. A number can be checked and stored as a one-way hash. We never send your date of birth or certificate number to the AI. We never show the number back in chat, logs, or analytics. Only hashed data is stored. Admins see a masked reference and a verification status, not the raw number.";
 
 export function OnboardingClient({
   profile, consent, verification, countries, emailVerified,
@@ -24,10 +30,13 @@ export function OnboardingClient({
   emailVerified: boolean;
 }) {
   const router = useRouter();
+  const [fullName, setFullName] = useState(profile?.full_name ?? "");
   const [dob, setDob] = useState(profile?.date_of_birth ?? "");
+  const [certNumber, setCertNumber] = useState("");
+  const [showCert, setShowCert] = useState(false);
   const [school, setSchool] = useState(profile?.school_name ?? "");
   const [grade, setGrade] = useState(profile?.class_grade ?? "");
-  const [country, setCountry] = useState(profile?.country ?? "US");
+  const [country, setCountry] = useState(profile?.country ?? "BD");
   const [guardianName, setGuardianName] = useState("");
   const [guardianEmail, setGuardianEmail] = useState("");
   const [relationship, setRelationship] = useState("");
@@ -39,20 +48,29 @@ export function OnboardingClient({
   const verificationStatus = verification?.verification_status ?? "none";
   const selectedCountry = countries.find((c) => c.id === country);
   const age = dob ? calculateAge(dob) : null;
+  const identityDone = verificationStatus === "approved" || verificationStatus === "pending_review" || profile?.age_verified;
 
   async function saveProfile(e: React.FormEvent) {
     e.preventDefault();
     setMsg(null);
     setBusy(true);
-    let result: { consent_status?: string; age?: number } | undefined;
     try {
-      result = await rpc<{ consent_status?: string; age?: number }>("complete_profile", {
+      const result = await rpc<{ consent_status?: string; age?: number }>("complete_profile", {
         dob: dob || null,
-        full_name: profile?.full_name ?? "",
+        full_name: fullName.trim() || profile?.full_name || "",
         school_name: school,
         class_grade: grade,
         country,
       });
+      if (result.age !== undefined && (result.age < 11 || result.age > 17)) {
+        setBusy(false);
+        setMsg({ tone: "danger", text: `MATRIX AI is for users aged 11–17. (Age entered: ${result.age})` });
+        return;
+      }
+      if (!identityDone && certNumber.trim()) {
+        await rpc("submit_identity_number", { birth_certificate_number: certNumber.trim() });
+        setCertNumber("");
+      }
     } catch (err) {
       setBusy(false);
       const code = err instanceof RpcCallError ? err.code : "SAVE_FAILED";
@@ -61,17 +79,42 @@ export function OnboardingClient({
         DOB_FUTURE: "Your date of birth can't be in the future.",
         DOB_TOO_YOUNG: "MATRIX AI is for users aged 11 and up.",
         DOB_TOO_OLD: "MATRIX AI is for users aged 17 and under.",
+        CERT_NUMBER_MISSING: "Please enter your birth certificate number.",
+        CERT_NUMBER_INVALID: "That birth certificate number doesn't look valid. Use 6–32 letters or numbers.",
+        CERT_NUMBER_IN_USE: "That birth certificate number is already linked to another account.",
+        CERT_NUMBER_RATE_LIMITED: "Too many attempts today. Please try again tomorrow.",
+        IDENTITY_PEPPER_NOT_CONFIGURED: "Identity verification isn't configured on this server yet. The administrator must set IDENTITY_PEPPER.",
       };
       setMsg({ tone: "danger", text: map[code] ?? code });
       return;
     }
     setBusy(false);
-    if (result.age !== undefined && (result.age < 11 || result.age > 17)) {
-      setMsg({ tone: "danger", text: `MATRIX AI is for users aged 11–17. (Age entered: ${result.age})` });
-      return;
-    }
-    setMsg({ tone: "success", text: "Profile saved. Continue to the next steps below." });
+    setMsg({ tone: "success", text: "Saved. Continue with any remaining steps below." });
     router.refresh();
+  }
+
+  async function submitCertOnly(e: React.FormEvent) {
+    e.preventDefault();
+    setMsg(null);
+    setBusy(true);
+    try {
+      await rpc("submit_identity_number", { birth_certificate_number: certNumber.trim() });
+      setCertNumber("");
+      setMsg({ tone: "success", text: "Birth certificate number submitted as a one-way hash. A reviewer will confirm it." });
+      router.refresh();
+    } catch (err) {
+      const code = err instanceof RpcCallError ? err.code : "SAVE_FAILED";
+      const map: Record<string, string> = {
+        CERT_NUMBER_MISSING: "Please enter your birth certificate number.",
+        CERT_NUMBER_INVALID: "That birth certificate number doesn't look valid. Use 6–32 letters or numbers.",
+        CERT_NUMBER_IN_USE: "That birth certificate number is already linked to another account.",
+        CERT_NUMBER_RATE_LIMITED: "Too many attempts today. Please try again tomorrow.",
+        IDENTITY_PEPPER_NOT_CONFIGURED: "Identity verification isn't configured on this server yet. The administrator must set IDENTITY_PEPPER.",
+      };
+      setMsg({ tone: "danger", text: map[code] ?? code });
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function submitGuardianConsent(e: React.FormEvent) {
@@ -93,42 +136,16 @@ export function OnboardingClient({
     router.refresh();
   }
 
-  async function uploadIdentity(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setMsg(null);
-    setBusy(true);
-    try {
-      if (!fbAuth().currentUser) throw new Error("Not signed in");
-      const path = await uploadOwnedFile("identity-documents", file);
-      await rpc("submit_identity_verification", {
-        verification_type: "birth_certificate",
-        verification_reference: path,
-      });
-      setMsg({
-        tone: "success",
-        text: "Document uploaded securely. The raw document number is never stored in the database, sent to the AI, or logged — a security team member will review it.",
-      });
-      router.refresh();
-    } catch (e2) {
-      setMsg({ tone: "danger", text: e2 instanceof Error ? e2.message : "Upload failed." });
-    } finally {
-      setBusy(false);
-    }
-  }
-
   const steps = [
-    { title: "Profile", done: !needsDob, body: "Set your date of birth (verified server-side), school and country." },
-    { title: "Guardian consent", done: consentStatus === "approved", body: consentStatus === "pending" ? "A guardian consent is required for your country/age." : undefined },
-    { title: "Age verification", done: verificationStatus === "approved" || profile?.age_verified, body: "Upload a birth certificate or ID — reviewed by a human, stored privately." },
-    { title: "Email verification", done: emailVerified, body: emailVerified ? undefined : "Confirm your email address from the link we sent." },
+    { title: "Profile", done: !needsDob, body: "Date of birth, name and country — validated on the server." },
+    { title: "Birth certificate number", done: Boolean(identityDone), body: identityDone ? "Submitted for review (hashed, never shown to the AI)." : "Number only — no photo." },
+    { title: "Guardian consent", done: consentStatus === "approved", body: consentStatus === "pending" ? "Required for your country/age if you are under the local consent age." : undefined },
+    { title: "Email verification", done: emailVerified, body: emailVerified ? undefined : "Confirm your email if your sign-in provider did not already verify it." },
   ];
-
   const allDone = steps.every((s) => s.done);
 
   return (
     <div className="space-y-5">
-      {/* Progress steps */}
       <Card>
         <h2 className="font-bold text-ink">Your setup checklist</h2>
         <ul className="mt-3 space-y-2">
@@ -150,12 +167,15 @@ export function OnboardingClient({
         ) : null}
       </Card>
 
-      {/* Step 1: profile */}
       <Card>
         <h2 className="font-bold text-ink">1 · Your profile</h2>
+        <p className="mt-2 text-sm leading-relaxed text-ink-2">{WHY_DOB}</p>
         <form onSubmit={saveProfile} className="mt-4 space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Date of birth" htmlFor="dob" hint={age ? `Age calculated server-side: ${age}` : "Required — validated in the database."}>
+            <Field label="Full name" htmlFor="full-name">
+              <Input id="full-name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
+            </Field>
+            <Field label="Date of birth" htmlFor="dob" hint={age ? `Age calculated: ${age}` : "Required — validated on the server."}>
               <Input id="dob" type="date" value={dob} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setDob(e.target.value)} required={needsDob} />
             </Field>
             <Field label="Country" htmlFor="country">
@@ -175,17 +195,61 @@ export function OnboardingClient({
               In {selectedCountry.name}, users under {selectedCountry.consent_min_age} need guardian consent — you'll provide it in the next step.
             </Alert>
           ) : null}
+          {!identityDone ? (
+            <Field label="Birth certificate number" htmlFor="cert" hint="6–32 letters or numbers. Stored as a hash only.">
+              <div className="relative">
+                <Input
+                  id="cert"
+                  type={showCert ? "text" : "password"}
+                  autoComplete="off"
+                  value={certNumber}
+                  onChange={(e) => setCertNumber(e.target.value)}
+                  placeholder={country === "BD" ? "e.g. 19901234567890123" : "Certificate number"}
+                  required={needsDob}
+                />
+                <button
+                  type="button"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-2 text-ink-3 hover:text-ink"
+                  onClick={() => setShowCert((v) => !v)}
+                  aria-label={showCert ? "Hide number" : "Show number"}
+                >
+                  {showCert ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </Field>
+          ) : null}
           <Button type="submit" disabled={busy}>{busy ? <Spinner /> : "Save profile"}</Button>
         </form>
       </Card>
 
-      {/* Step 2: consent */}
       <Card>
-        <h2 className="font-bold text-ink">2 · Guardian consent</h2>
+        <h2 className="font-bold text-ink">2 · Birth certificate number</h2>
+        <p className="mt-2 text-sm leading-relaxed text-ink-2">{WHY_CERT}</p>
+        {profile?.age_verified ? (
+          <Alert tone="success">Age verified ✓</Alert>
+        ) : verificationStatus === "pending_review" ? (
+          <Alert tone="info">Your number was hashed and is waiting for a security-team review. You'll get a notification when it's approved.</Alert>
+        ) : verificationStatus === "rejected" ? (
+          <>
+            <Alert tone="danger">Your previous submission was rejected: {verification?.rejection_reason || "no reason given"}.</Alert>
+            <form onSubmit={submitCertOnly} className="mt-4 space-y-3">
+              <Field label="Birth certificate number" htmlFor="cert-retry">
+                <Input id="cert-retry" type={showCert ? "text" : "password"} value={certNumber} onChange={(e) => setCertNumber(e.target.value)} required />
+              </Field>
+              <Button type="submit" disabled={busy}>{busy ? <Spinner /> : "Resubmit number"}</Button>
+            </form>
+          </>
+        ) : (
+          <p className="mt-3 text-sm text-ink-3">Enter the number with your profile above. No image upload is required.</p>
+        )}
+      </Card>
+
+      <Card>
+        <h2 className="font-bold text-ink">3 · Guardian consent</h2>
         {consentStatus === "approved" ? (
           <Alert tone="success">Consent approved ✓</Alert>
         ) : consentStatus === "pending" && consent?.consent_method === "self" ? (
-          <Alert tone="info">Self-consent confirmed at signup (you're at/above the consent age in your country).</Alert>
+          <Alert tone="info">Self-consent confirmed (you're at/above the consent age in your country).</Alert>
         ) : (
           <>
             <p className="mt-2 text-sm text-ink-2">
@@ -211,24 +275,6 @@ export function OnboardingClient({
         )}
       </Card>
 
-      {/* Step 3: identity verification */}
-      <Card>
-        <h2 className="font-bold text-ink">3 · Age verification</h2>
-        {profile?.age_verified ? (
-          <Alert tone="success">Age verified ✓</Alert>
-        ) : verificationStatus === "pending_review" ? (
-          <Alert tone="info">Your document is being reviewed by the security team. You'll get a notification when it's approved.</Alert>
-        ) : verificationStatus === "rejected" ? (
-          <>
-            <Alert tone="danger">Your previous submission was rejected: {verification?.rejection_reason || "no reason given"}. Please upload a clearer document.</Alert>
-            <IdentityUpload onUpload={uploadIdentity} busy={busy} />
-          </>
-        ) : (
-          <IdentityUpload onUpload={uploadIdentity} busy={busy} />
-        )}
-      </Card>
-
-      {/* Step 4: email */}
       <Card>
         <h2 className="font-bold text-ink">4 · Email verification</h2>
         {emailVerified ? (
@@ -242,21 +288,6 @@ export function OnboardingClient({
       </Card>
 
       {msg ? <Alert tone={msg.tone}>{msg.text}</Alert> : null}
-    </div>
-  );
-}
-
-function IdentityUpload({ onUpload, busy }: { onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void; busy: boolean }) {
-  return (
-    <div className="mt-4">
-      <p className="text-sm text-ink-2">
-        Upload a clear photo of a birth certificate or other accepted ID (PNG/JPG, max 5 MB). It goes to a
-        private storage bucket, is never exposed publicly, and is never sent to the AI.
-      </p>
-      <label className="mt-3 inline-flex cursor-pointer items-center gap-2 rounded-xl border border-border-strong bg-surface px-4 py-2.5 text-sm font-semibold text-ink-2 hover:bg-bg">
-        {busy ? <Spinner /> : <><Upload size={15} strokeWidth={1.6} /> Choose document</>}
-        <input type="file" accept="image/png,image/jpeg" className="sr-only" onChange={onUpload} disabled={busy} />
-      </label>
     </div>
   );
 }
