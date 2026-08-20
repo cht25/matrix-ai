@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { internalLocation, isAuthPage, isPublic, pathMatches } from "../src/lib/routing";
 
 describe("pathMatches", () => {
@@ -56,5 +58,27 @@ describe("internalLocation", () => {
   it("collapses protocol-relative hosts into a same-origin path", () => {
     expect(internalLocation("//thamjj13.top/login")).toBe("/thamjj13.top/login");
     expect(internalLocation("//thamjj13.top/login").startsWith("//")).toBe(false);
+  });
+});
+
+describe("middleware static-asset exclusions", () => {
+  // The matcher in src/middleware.ts must let static files through untouched.
+  // Googlebot fetches the Search Console verification file logged out — a
+  // 307 to /login fails HTML-file verification, so `.html` must be excluded.
+  const source = readFileSync(path.resolve(__dirname, "../src/middleware.ts"), "utf8");
+  const literal = source.match(/matcher:\s*\[\s*("(?:[^"\\]|\\.)*")/)?.[1] ?? '""';
+  const matcher = new RegExp(`^${JSON.parse(literal)}$`);
+
+  it("excludes .html files (Google site verification) from auth redirects", () => {
+    expect(matcher.test("/google2c32b414ac39f412.html")).toBe(false);
+  });
+
+  it("still guards page routes", () => {
+    expect(matcher.test("/chat")).toBe(true);
+    expect(matcher.test("/dashboard")).toBe(true);
+  });
+
+  it("ships the Google verification file where Next.js serves it (public/)", () => {
+    expect(existsSync(path.resolve(__dirname, "../public/google2c32b414ac39f412.html"))).toBe(true);
   });
 });
