@@ -10,7 +10,7 @@ type VerificationItem = {
   verification_reference: string; created_at: string;
 };
 
-export function VerificationQueue({ codes }: { codes: Set<string> }) {
+export function VerificationQueue({ codes }: { codes: string[] }) {
   const [items, setItems] = useState<VerificationItem[] | null>(null);
   const [reason, setReason] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState<string | null>(null);
@@ -24,7 +24,7 @@ export function VerificationQueue({ codes }: { codes: Set<string> }) {
     }
   }
 
-  useEffect(() => { if (codes.has("verification.review")) void load(); }, [codes]);
+  useEffect(() => { if (codes.includes("verification.review")) void load(); }, [codes]);
 
   async function review(id: string, approve: boolean) {
     try {
@@ -36,7 +36,7 @@ export function VerificationQueue({ codes }: { codes: Set<string> }) {
     }
   }
 
-  if (!codes.has("verification.review")) {
+  if (!codes.includes("verification.review")) {
     return <Card><p className="text-sm text-ink-3">You need the <strong>verification.review</strong> permission.</p></Card>;
   }
   if (!items) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;
@@ -80,7 +80,7 @@ type ConsentItem = {
   guardian_name: string; guardian_email: string; created_at: string;
 };
 
-export function ConsentQueue({ codes }: { codes: Set<string> }) {
+export function ConsentQueue({ codes }: { codes: string[] }) {
   const [items, setItems] = useState<ConsentItem[] | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -93,7 +93,7 @@ export function ConsentQueue({ codes }: { codes: Set<string> }) {
     }
   }
 
-  useEffect(() => { if (codes.has("consent.review")) void load(); }, [codes]);
+  useEffect(() => { if (codes.includes("consent.review")) void load(); }, [codes]);
 
   async function review(userId: string, approve: boolean) {
     try {
@@ -105,7 +105,7 @@ export function ConsentQueue({ codes }: { codes: Set<string> }) {
     }
   }
 
-  if (!codes.has("consent.review")) {
+  if (!codes.includes("consent.review")) {
     return <Card><p className="text-sm text-ink-3">You need the <strong>consent.review</strong> permission.</p></Card>;
   }
   if (!items) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;

@@ -10,8 +10,8 @@ export const metadata: Metadata = { title: "Admin · Audit logs" };
 export default async function AdminAuditPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
-  const codes = new Set<string>(await getAdminPermissions(db(), user.uid));
-  if (codes.size === 0) redirect("/chat");
+  const codes = await getAdminPermissions(db(), user.uid);
+  if (codes.length === 0) redirect("/chat");
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Audit logs</h1>

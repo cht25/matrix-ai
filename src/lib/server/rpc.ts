@@ -14,6 +14,7 @@ import { descDoc } from "@/lib/server/sort";
 import { identityHashes, maskLast4, validateCertNumber } from "@/lib/server/identity-number";
 import { env, isIdentityPepperConfigured } from "@/lib/env";
 import { isThemeMode, isThemeTemplateId } from "@/lib/theme-templates";
+import { ALL_ADMIN_PERMISSION_CODES, normalizeAdminPermission } from "@/lib/admin-rbac";
 
 export { RpcError } from "@/lib/server/errors";
 import { RpcError } from "@/lib/server/errors";
@@ -624,15 +625,43 @@ export async function isAdmin(d: Db, uid: string): Promise<boolean> {
   return assignment.exists;
 }
 
+/**
+ * Permission codes for the signed-in admin. Super admins always receive the
+ * full matrix so a missing seed (empty `admin_role_permissions`) cannot blank
+ * or redirect the panel. Never throws — Firestore failures log and return [].
+ */
+export async function listAdminPermissionCodes(d: Db, uid: string): Promise<string[]> {
+  try {
+    const assignment = await d.collection("admin_role_assignments").doc(uid).get();
+    if (!assignment.exists) return [];
+    const roleId = String(assignment.data()?.role_id ?? "");
+    if (!roleId) return [];
+    if (roleId === "super_admin") return [...ALL_ADMIN_PERMISSION_CODES];
+    const links = await d.collection("admin_role_permissions").where("role_id", "==", roleId).get();
+    const codes = links.docs
+      .map((link) => {
+        const fromField = String(link.data()?.permission_id ?? "").trim();
+        if (fromField) return fromField;
+        const parts = link.id.split("__");
+        return parts.length > 1 ? parts.slice(1).join("__") : "";
+      })
+      .filter(Boolean)
+      .map(normalizeAdminPermission);
+    return [...new Set(codes)];
+  } catch (err) {
+    console.error("[MATRIX] listAdminPermissionCodes failed", err);
+    return [];
+  }
+}
+
 export async function hasPermission(d: Db, uid: string, permission: string): Promise<boolean> {
   const assignment = await d.collection("admin_role_assignments").doc(uid).get();
   if (!assignment.exists) return false;
-  const roleId = assignment.data()!.role_id as string;
-  const perms = await d.collection("admin_role_permissions").where("role_id", "==", roleId).get();
-  if (perms.empty) return false;
-  const permIds = perms.docs.map((p) => p.id.split("__")[1]).filter(Boolean);
-  const permDocs = await d.getAll(...permIds.map((id) => d.collection("admin_permissions").doc(id)));
-  return permDocs.some((p) => p.exists && p.data()?.code === permission);
+  const roleId = String(assignment.data()?.role_id ?? "");
+  if (roleId === "super_admin") return true;
+  const needed = normalizeAdminPermission(permission);
+  const codes = await listAdminPermissionCodes(d, uid);
+  return codes.includes(needed);
 }
 
 export async function logAudit(
@@ -659,41 +688,40 @@ export async function logAudit(
 export async function adminListUsers(d: Db, requester: SessionUser) {
   if (!(await hasPermission(d, requester.uid, "users.view"))) throw new RpcError("PERMISSION_DENIED", 403);
   const auth = (await import("firebase-admin/auth")).getAuth();
-  const [profiles, consents, verifications] = await Promise.all([
-    d.collection("profiles").orderBy("created_at", "desc").limit(500).get(),
+  const [profiles, consents, verifications, listed] = await Promise.all([
+    d.collection("profiles").limit(500).get(),
     d.collection("guardian_consents").get(),
-    d.collection("identity_verifications").orderBy("created_at", "desc").get(),
+    d.collection("identity_verifications").get(),
+    auth.listUsers(500).catch(() => ({ users: [] as import("firebase-admin/auth").UserRecord[] })),
   ]);
   const consentByUser = new Map(consents.docs.map((c) => [c.id, c.data().status as string]));
   const latestVerification = new Map<string, string>();
-  for (const v of verifications.docs) {
+  const verificationSorted = [...verifications.docs].sort(descDoc("created_at"));
+  for (const v of verificationSorted) {
     const uid = v.data().user_id as string;
     if (!latestVerification.has(uid)) latestVerification.set(uid, v.data().verification_status as string);
   }
-  const users = await Promise.all(
-    profiles.docs.map(async (p) => {
+  const lastSignInByUid = new Map(
+    listed.users.map((u) => [u.uid, u.metadata.lastSignInTime ? new Date(u.metadata.lastSignInTime) : null]),
+  );
+  const users = profiles.docs
+    .slice()
+    .sort(descDoc("created_at"))
+    .map((p) => {
       const data = p.data();
-      let lastSignIn: Date | null = null;
-      try {
-        const meta = (await auth.getUser(p.id)).metadata;
-        const when = meta.lastSignInTime ? new Date(meta.lastSignInTime) : null;
-        lastSignIn = when && !Number.isNaN(when.getTime()) ? when : null;
-      } catch {
-        /* user deleted in Auth but not Firestore — report null */
-      }
+      const lastSignIn = lastSignInByUid.get(p.id) ?? null;
       return {
         id: p.id,
         email: data.email ?? "",
         full_name: data.full_name ?? "",
         created_at: data.created_at?.toDate?.().toISOString() ?? "",
-        last_sign_in_at: lastSignIn ? lastSignIn.toISOString() : null,
+        last_sign_in_at: lastSignIn && !Number.isNaN(lastSignIn.getTime()) ? lastSignIn.toISOString() : null,
         age_verified: data.age_verified ?? false,
         country: data.country ?? "",
         consent_status: consentByUser.get(p.id) ?? "none",
         identity_status: latestVerification.get(p.id) ?? "none",
       };
-    }),
-  );
+    });
   return users;
 }
 

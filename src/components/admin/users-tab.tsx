@@ -10,15 +10,15 @@ type AdminUser = {
   age_verified: boolean; country: string; consent_status: string; identity_status: string;
 };
 
-export function UsersTab({ codes }: { codes: Set<string> }) {
+export function UsersTab({ codes }: { codes: string[] }) {
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const canManage = codes.has("users.view");
+  const canManage = codes.includes("users.view");
 
   useEffect(() => {
-    if (!codes.has("users.view")) return;
+    if (!codes.includes("users.view")) return;
     rpc<AdminUser[]>("admin_list_users")
       .then((data) => setUsers(data ?? []))
       .catch((err) => setError(err instanceof RpcCallError ? err.code : "LOAD_FAILED"));
@@ -51,7 +51,7 @@ export function UsersTab({ codes }: { codes: Set<string> }) {
     setBusy(null);
   }
 
-  if (!codes.has("users.view")) {
+  if (!codes.includes("users.view")) {
     return <Card><p className="text-sm text-ink-3">You need the <strong>users.view</strong> permission to see users.</p></Card>;
   }
   if (error) return <Card><p className="text-sm text-danger">{error}</p></Card>;

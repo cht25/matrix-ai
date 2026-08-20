@@ -1,34 +1,34 @@
-import { db, getCurrentUser } from "@/lib/data";
-import { adminListUsers } from "@/lib/server/rpc";
+import { db } from "@/lib/data";
+import { hasAdminCode } from "@/lib/admin-rbac";
 import { Card } from "@/components/ui";
 
-export async function OverviewTab({ codes }: { codes: Set<string> }) {
+export async function OverviewTab({ codes }: { codes: string[] }) {
   const d = db();
-  const sessionUser = await getCurrentUser();
-  const user = { uid: sessionUser?.uid ?? "", email: sessionUser?.email ?? null, emailVerified: sessionUser?.emailVerified ?? false };
 
   const [users, reports, pendingVerification, pendingConsents, safetyEvents] = await Promise.all([
-    codes.has("users.view") ? adminListUsers(d, user).catch(() => []) : [],
-    codes.has("reports.view")
-      ? d.collection("scam_reports").where("status", "==", "submitted").get().then((s) => s.docs).catch(() => [])
-      : [],
-    codes.has("verification.review")
-      ? d.collection("identity_verifications").where("verification_status", "==", "pending_review").get().then((s) => s.docs).catch(() => [])
-      : [],
-    codes.has("consent.review")
-      ? d.collection("guardian_consents").where("status", "==", "pending").get().then((s) => s.docs).catch(() => [])
-      : [],
-    codes.has("ai.view")
-      ? d.collection("ai_safety_events").orderBy("created_at", "desc").limit(50).get().then((s) => s.docs).catch(() => [])
-      : [],
+    hasAdminCode(codes, "users.view")
+      ? d.collection("profiles").get().then((s) => s.size).catch(() => 0)
+      : 0,
+    hasAdminCode(codes, "reports.view")
+      ? d.collection("scam_reports").where("status", "==", "submitted").get().then((s) => s.size).catch(() => 0)
+      : 0,
+    hasAdminCode(codes, "verification.review")
+      ? d.collection("identity_verifications").where("verification_status", "==", "pending_review").get().then((s) => s.size).catch(() => 0)
+      : 0,
+    hasAdminCode(codes, "consent.review")
+      ? d.collection("guardian_consents").where("status", "==", "pending").get().then((s) => s.size).catch(() => 0)
+      : 0,
+    hasAdminCode(codes, "ai.view")
+      ? d.collection("ai_safety_events").get().then((s) => Math.min(50, s.size)).catch(() => 0)
+      : 0,
   ]);
 
   const stats = [
-    { label: "Registered users", value: users.length, visible: codes.has("users.view") },
-    { label: "New scam reports", value: reports.length, visible: codes.has("reports.view") },
-    { label: "Pending age verifications", value: pendingVerification.length, visible: codes.has("verification.review") },
-    { label: "Pending consents", value: pendingConsents.length, visible: codes.has("consent.review") },
-    { label: "AI safety events (last 50)", value: safetyEvents.length, visible: codes.has("ai.view") },
+    { label: "Registered users", value: users, visible: hasAdminCode(codes, "users.view") },
+    { label: "New scam reports", value: reports, visible: hasAdminCode(codes, "reports.view") },
+    { label: "Pending age verifications", value: pendingVerification, visible: hasAdminCode(codes, "verification.review") },
+    { label: "Pending consents", value: pendingConsents, visible: hasAdminCode(codes, "consent.review") },
+    { label: "AI safety events (last 50)", value: safetyEvents, visible: hasAdminCode(codes, "ai.view") },
   ];
 
   return (
@@ -45,7 +45,7 @@ export async function OverviewTab({ codes }: { codes: Set<string> }) {
       <Card>
         <p className="text-sm font-medium text-ink-3">Your permissions</p>
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {[...codes].map((c) => (
+          {codes.map((c) => (
             <span key={c} className="rounded-full border border-border bg-bg px-2 py-0.5 text-xs text-ink-2">{c}</span>
           ))}
         </div>

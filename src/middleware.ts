@@ -56,11 +56,10 @@ export async function middleware(request: NextRequest) {
     return bounce(request, "/login", { next: pathname });
   }
 
-  // Admin routes need an admin role. Unverified here (UX only) — the admin
-  // layout re-checks authoritatively with the Admin SDK.
-  if (valid && pathname.startsWith("/admin") && pathname !== "/admin/setup" && !payload?.role && !payload?.admin) {
-    return bounce(request, "/chat");
-  }
+  // Do NOT bounce /admin from unverified JWT claims. Custom claims (`admin`,
+  // `role`) lag behind Firestore `admin_role_assignments` until the next
+  // sign-in, so this check used to send real admins back to /chat and made
+  // the panel look broken. Authoritative RBAC lives in the admin layout.
 
   const res = NextResponse.next();
   res.headers.set("x-matrix-pathname", pathname);

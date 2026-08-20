@@ -7,7 +7,7 @@ import { CourseEditor } from "@/components/admin/course-editor";
 
 type Course = { id: string; slug: string; title: string; level: string; status: string; sort_order: number };
 
-export function CoursesAdmin({ codes, courses }: { codes: Set<string>; courses: Course[] }) {
+export function CoursesAdmin({ codes, courses }: { codes: string[]; courses: Course[] }) {
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -25,7 +25,7 @@ export function CoursesAdmin({ codes, courses }: { codes: Set<string>; courses: 
     window.location.reload();
   }
 
-  if (!codes.has("content.manage")) {
+  if (!codes.includes("content.manage")) {
     return <Card><p className="text-sm text-ink-2">You need the <strong>content.manage</strong> permission (content_admin / super_admin).</p></Card>;
   }
 

@@ -8,12 +8,12 @@ import { timeAgo } from "@/lib/utils";
 type Event = { id: string; user_id: string; event_type: string; created_at: string };
 type Session = { id: string; user_id: string; device_name: string; last_seen_at: string; revoked_at: string | null };
 
-export function SecurityAdmin({ codes }: { codes: Set<string> }) {
+export function SecurityAdmin({ codes }: { codes: string[] }) {
   const [events, setEvents] = useState<Event[] | null>(null);
   const [sessions, setSessions] = useState<Session[] | null>(null);
 
   useEffect(() => {
-    if (!codes.has("security.view")) return;
+    if (!codes.includes("security.view")) return;
     Promise.all([
       rpc<Event[]>("admin_security_events").catch(() => [] as Event[]),
       rpc<Session[]>("admin_sessions").catch(() => [] as Session[]),
@@ -23,7 +23,7 @@ export function SecurityAdmin({ codes }: { codes: Set<string> }) {
     });
   }, [codes]);
 
-  if (!codes.has("security.view")) {
+  if (!codes.includes("security.view")) {
     return <Card><p className="text-sm text-ink-2">You need the <strong>security.view</strong> permission (security_admin / super_admin / auditor).</p></Card>;
   }
   if (!events || !sessions) return <Card className="flex items-center gap-2 text-ink-2"><Spinner /> Loading…</Card>;

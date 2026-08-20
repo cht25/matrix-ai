@@ -11,7 +11,7 @@ type Report = {
   country: string; status: string; created_at: string; admin_notes: string;
 };
 
-export function ReportsTab({ codes }: { codes: Set<string> }) {
+export function ReportsTab({ codes }: { codes: string[] }) {
   const [items, setItems] = useState<Report[] | null>(null);
   const [statuses, setStatuses] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -30,7 +30,7 @@ export function ReportsTab({ codes }: { codes: Set<string> }) {
     }
   }
 
-  useEffect(() => { if (codes.has("reports.view")) void load(); }, [codes]);
+  useEffect(() => { if (codes.includes("reports.view")) void load(); }, [codes]);
 
   async function update(id: string) {
     try {
@@ -45,7 +45,7 @@ export function ReportsTab({ codes }: { codes: Set<string> }) {
     }
   }
 
-  if (!codes.has("reports.view")) {
+  if (!codes.includes("reports.view")) {
     return <Card><p className="text-sm text-ink-3">You need the <strong>reports.view</strong> permission.</p></Card>;
   }
   if (!items) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;
@@ -86,17 +86,17 @@ export function ReportsTab({ codes }: { codes: Set<string> }) {
   );
 }
 
-export function AiSafetyTab({ codes }: { codes: Set<string> }) {
+export function AiSafetyTab({ codes }: { codes: string[] }) {
   const [items, setItems] = useState<{ id: string; event_type: string; detail: string; created_at: string }[] | null>(null);
 
   useEffect(() => {
-    if (!codes.has("ai.view")) return;
+    if (!codes.includes("ai.view")) return;
     rpc<{ id: string; event_type: string; detail: string; created_at: string }[]>("admin_safety_events")
       .then((data) => setItems((data ?? []) as typeof items))
       .catch(() => setItems([]));
   }, [codes]);
 
-  if (!codes.has("ai.view")) {
+  if (!codes.includes("ai.view")) {
     return <Card><p className="text-sm text-ink-3">You need the <strong>ai.view</strong> permission.</p></Card>;
   }
   if (!items) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;
@@ -127,17 +127,17 @@ export function AiSafetyTab({ codes }: { codes: Set<string> }) {
   );
 }
 
-export function AuditTab({ codes }: { codes: Set<string> }) {
+export function AuditTab({ codes }: { codes: string[] }) {
   const [items, setItems] = useState<{ id: string; actor_id: string; action: string; target_type: string; target_id: string; reason: string; created_at: string }[] | null>(null);
 
   useEffect(() => {
-    if (!codes.has("audit.view")) return;
+    if (!codes.includes("audit.view")) return;
     rpc<{ id: string; actor_id: string; action: string; target_type: string; target_id: string; reason: string; created_at: string }[]>("admin_audit_logs")
       .then((data) => setItems((data ?? []) as typeof items))
       .catch(() => setItems([]));
   }, [codes]);
 
-  if (!codes.has("audit.view")) {
+  if (!codes.includes("audit.view")) {
     return <Card><p className="text-sm text-ink-3">You need the <strong>audit.view</strong> permission (auditor/super_admin).</p></Card>;
   }
   if (!items) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;

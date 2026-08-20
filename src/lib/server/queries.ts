@@ -5,7 +5,7 @@
 import "server-only";
 import { Db } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
-import { isAdmin, securityScore } from "@/lib/server/rpc";
+import { isAdmin, listAdminPermissionCodes, securityScore } from "@/lib/server/rpc";
 import { ascDoc, descDoc } from "@/lib/server/sort";
 
 // IMPORTANT: queries in this module deliberately use equality-only Firestore

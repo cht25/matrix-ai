@@ -14,7 +14,7 @@ import * as rpc from "@/lib/server/rpc";
 import * as projects from "@/lib/server/projects";
 import * as deploy from "@/lib/server/deploy";
 import { nowTs } from "@/lib/firebase/admin";
-import { ascDoc } from "@/lib/server/sort";
+import { ascDoc, descDoc } from "@/lib/server/sort";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -307,7 +307,7 @@ const ACTIONS: Record<string, Handler> = {
   },
 
   report_status: async (d, u, b) => {
-    if (!(await rpc.hasPermission(d, u.uid, "reports.manage"))) throw new RpcError("PERMISSION_DENIED", 403);
+    if (!(await rpc.hasPermission(d, u.uid, "reports.view"))) throw new RpcError("PERMISSION_DENIED", 403);
     const status = z.enum(["submitted", "in_review", "resolved", "closed"]).parse(b.status);
     await d.collection("scam_reports").doc(z.string().min(1).parse(b.id)).set(
       { status, admin_notes: str(b.admin_notes).slice(0, 2000), updated_at: nowTs() }, { merge: true },
@@ -371,9 +371,9 @@ const ACTIONS: Record<string, Handler> = {
   },
 
   admin_reports: async (d, u) => {
-    if (!(await rpc.hasPermission(d, u.uid, "reports.manage"))) throw new RpcError("PERMISSION_DENIED", 403);
-    const snap = await d.collection("scam_reports").orderBy("created_at", "desc").limit(50).get();
-    return snap.docs.map((r) => ({
+    if (!(await rpc.hasPermission(d, u.uid, "reports.view"))) throw new RpcError("PERMISSION_DENIED", 403);
+    const snap = await d.collection("scam_reports").limit(200).get();
+    return snap.docs.sort(descDoc("created_at")).slice(0, 50).map((r) => ({
       id: r.id, platform: r.data().platform ?? "", description: r.data().description ?? "", money_lost: r.data().money_lost ?? 0,
       account_compromised: r.data().account_compromised ?? false, personal_information_shared: r.data().personal_information_shared ?? false,
       country: r.data().country ?? "", status: r.data().status ?? "", created_at: r.data().created_at?.toDate?.().toISOString() ?? "", admin_notes: r.data().admin_notes ?? "",

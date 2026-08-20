@@ -15,6 +15,10 @@ import {
   Bot, BrainCircuit, Code2, FileCode2, FileSearch, Github, GraduationCap,
   MonitorPlay, Paperclip, RefreshCcw, Send, ShieldAlert, Sparkles, Square, X,
 } from "lucide-react";
+import { AutoSpeakToggle, ListenButton } from "@/components/chat-speech-controls";
+import {
+  primeSpeech, readAutoSpeakPreference, speakMarkdown, stopSpeech, writeAutoSpeakPreference,
+} from "@/lib/chat-speech";
 import { firebaseBrowserConfigured, waitForAuthUser } from "@/lib/firebase/client";
 import { uploadOwnedFile } from "@/lib/client/api";
 import { Button, Textarea } from "@/components/ui";
@@ -148,10 +152,28 @@ export function ChatClient({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const convIdRef = useRef<string | null>(initialConvId);
   const lastAttachmentsRef = useRef<PendingAttachment[]>([]);
+  const [autoSpeak, setAutoSpeak] = useState(true);
+  const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const autoSpeakRef = useRef(true);
+  const localeRef = useRef(locale);
 
   useEffect(() => {
     convIdRef.current = convId;
   }, [convId]);
+
+  useEffect(() => {
+    const preferred = readAutoSpeakPreference(true);
+    setAutoSpeak(preferred);
+    autoSpeakRef.current = preferred;
+  }, []);
+
+  useEffect(() => {
+    autoSpeakRef.current = autoSpeak;
+  }, [autoSpeak]);
+
+  useEffect(() => {
+    localeRef.current = locale;
+  }, [locale]);
 
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -164,6 +186,7 @@ export function ChatClient({
   useEffect(() => () => {
     abortRef.current?.abort();
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    stopSpeech();
   }, []);
 
   // Keep the composer above the iOS/Android keyboard.
@@ -199,6 +222,8 @@ export function ChatClient({
 
   function switchMode(next: ChatMode) {
     if (next === mode || isTemporary || streaming) return;
+    stopSpeech();
+    setSpeakingId(null);
     if (convIdRef.current || messages.length > 0) {
       router.push(`/chat?mode=${next}&new=${Date.now()}`);
       return;
@@ -247,6 +272,45 @@ export function ChatClient({
     setStreaming(false);
   }
 
+  function toggleAutoSpeak() {
+    const next = !autoSpeak;
+    setAutoSpeak(next);
+    autoSpeakRef.current = next;
+    writeAutoSpeakPreference(next);
+    if (!next) {
+      stopSpeech();
+      setSpeakingId(null);
+    }
+  }
+
+  function listenTo(id: string, text: string, isLatest = false) {
+    if (mode === "agent") return;
+    if (speakingId === id || (speakingId === "auto" && isLatest)) {
+      stopSpeech();
+      setSpeakingId(null);
+      return;
+    }
+    primeSpeech();
+    const ok = speakMarkdown(text, {
+      locale: localeRef.current,
+      onend: () => setSpeakingId((current) => (current === id ? null : current)),
+      onerror: () => setSpeakingId((current) => (current === id ? null : current)),
+    });
+    setSpeakingId(ok ? id : null);
+  }
+
+  function maybeAutoSpeak(text: string) {
+    if (mode === "agent" || !autoSpeakRef.current) return;
+    const cleaned = text.trim();
+    if (!cleaned) return;
+    const ok = speakMarkdown(cleaned, {
+      locale: localeRef.current,
+      onend: () => setSpeakingId((current) => (current === "auto" ? null : current)),
+      onerror: () => setSpeakingId((current) => (current === "auto" ? null : current)),
+    });
+    setSpeakingId(ok ? "auto" : null);
+  }
+
   async function streamMessage(message: string, opts: { replaceLastAssistant?: boolean; reuseUser?: boolean; regenerate?: boolean; attachments?: PendingAttachment[] } = {}) {
     const replaceLastAssistant = opts.replaceLastAssistant === true;
     const sentAttachments = opts.attachments ?? [];
@@ -255,6 +319,9 @@ export function ChatClient({
     setStreaming(true);
     setLastUserMessage(message);
     setStreamedText("");
+    stopSpeech();
+    setSpeakingId(null);
+    if (mode !== "agent" && autoSpeakRef.current) primeSpeech();
 
     if (!firebaseBrowserConfigured) {
       setFailure({ ...failureCopy("not-configured"), detail: "The MATRIX backend is not configured on this deployment yet, so chat cannot start." });
@@ -326,6 +393,7 @@ export function ChatClient({
             action: data.theme_gallery ? "theme_gallery" : undefined,
           });
           committed = true;
+          maybeAutoSpeak(data.reply);
           if (data.conversation_id && !isTemporary) router.replace(`/chat/${data.conversation_id}`);
           return;
         }
@@ -379,6 +447,7 @@ export function ChatClient({
             if (data.done) {
               commitPartial(collected, replaceLastAssistant, streamMetadata);
               committed = true;
+              maybeAutoSpeak(collected);
             }
           } catch {
             // malformed event — skip
@@ -390,6 +459,7 @@ export function ChatClient({
       if (!committed && collected.trim()) {
         commitPartial(collected, replaceLastAssistant, streamMetadata);
         committed = true;
+        maybeAutoSpeak(collected);
       }
       if (streamError && !collected.trim()) {
         setFailure({ ...failureCopy("server"), detail: "The response was interrupted. Your message is safe — try again." });
@@ -496,6 +566,7 @@ export function ChatClient({
 
     if (mode !== "agent") {
       setMessages((m) => [...m, { role: "user", content: `Attachment: ${file.name}`, created_at: new Date().toISOString() }]);
+      if (autoSpeakRef.current) primeSpeech();
     }
     setStreaming(true);
     setStreamedText("");
@@ -548,6 +619,7 @@ export function ChatClient({
         setNotice(`${file.name} was inspected and is ready as Agent context. Add an instruction, then send.`);
       } else {
         setMessages((m) => [...m, { role: "assistant", content: data.reply!, created_at: new Date().toISOString() }]);
+        maybeAutoSpeak(data.reply!);
       }
     } catch (err) {
       const userStopped = err instanceof DOMException && err.name === "AbortError";
@@ -603,14 +675,17 @@ export function ChatClient({
               >
                 <MonitorPlay size={13} /> Workspace{agentFiles.length ? ` · ${agentFiles.length}` : ""}
               </button>
-            ) : null}
+            ) : (
+              <AutoSpeakToggle on={autoSpeak} onToggle={toggleAutoSpeak} onLabel={t("chat.autoSpeakOn")} offLabel={t("chat.autoSpeakOff")} />
+            )}
           </div>
         </div>
       ) : null}
 
       {isTemporary ? (
-        <div className="mb-3 shrink-0 border-b border-border pb-3 text-[13px] text-ink-2">
-          <span className="eyebrow">Temporary</span> — {t("chat.tempNotice").replace(/^Temporary Chat — /, "")}
+        <div className="mb-3 flex shrink-0 items-center justify-between gap-3 border-b border-border pb-3 text-[13px] text-ink-2">
+          <p><span className="eyebrow">Temporary</span> — {t("chat.tempNotice").replace(/^Temporary Chat — /, "")}</p>
+          <AutoSpeakToggle on={autoSpeak} onToggle={toggleAutoSpeak} onLabel={t("chat.autoSpeakOn")} offLabel={t("chat.autoSpeakOff")} />
         </div>
       ) : null}
 
@@ -705,6 +780,15 @@ export function ChatClient({
                       >
                         Copy
                       </button>
+                    ) : null}
+                    {m.role === "assistant" && mode !== "agent" ? (
+                      <ListenButton
+                        speaking={speakingId === (m.id ?? `msg-${i}`) || (speakingId === "auto" && i === messages.length - 1)}
+                        onClick={() => listenTo(m.id ?? `msg-${i}`, m.content)}
+                        disabled={streaming}
+                        listenLabel={t("chat.listen")}
+                        stopLabel={t("chat.stopSpeech")}
+                      />
                     ) : null}
                   </div>
                 </div>
