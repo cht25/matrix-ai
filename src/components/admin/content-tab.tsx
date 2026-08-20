@@ -11,8 +11,8 @@ type Article = {
 };
 type Category = { id: string; name: string };
 
-export function ContentTab({ codes }: { codes: Set<string> }) {
-  const canManage = codes.has("content.manage");
+export function ContentTab({ codes }: { codes: string[] }) {
+  const canManage = codes.includes("content.manage");
   const [articles, setArticles] = useState<Article[] | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [filter, setFilter] = useState("all");
@@ -101,8 +101,8 @@ export function ContentTab({ codes }: { codes: Set<string> }) {
 
 type Grant = { id: string; target_user_id: string; scope: string; reason: string; status: string; expires_at: string; created_at: string };
 
-export function GrantsTab({ codes }: { codes: Set<string> }) {
-  const canAccess = codes.has("privacy.access");
+export function GrantsTab({ codes }: { codes: string[] }) {
+  const canAccess = codes.includes("privacy.access");
   const [grants, setGrants] = useState<Grant[] | null>(null);
   const [targetUser, setTargetUser] = useState("");
   const [reason, setReason] = useState("");

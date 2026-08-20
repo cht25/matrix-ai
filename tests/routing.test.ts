@@ -78,6 +78,12 @@ describe("middleware static-asset exclusions", () => {
     expect(matcher.test("/dashboard")).toBe(true);
   });
 
+  it("does not bounce /admin from unverified JWT admin claims", () => {
+    // Real admins often have a Firestore assignment before the session cookie
+    // carries `admin`/`role` custom claims. Middleware used to 307 them to /chat.
+    expect(source).not.toMatch(/pathname\.startsWith\("\/admin"\)/);
+  });
+
   it("ships the Google verification file where Next.js serves it (public/)", () => {
     expect(existsSync(path.resolve(__dirname, "../public/google2c32b414ac39f412.html"))).toBe(true);
   });

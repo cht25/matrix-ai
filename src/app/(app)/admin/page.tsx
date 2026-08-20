@@ -8,16 +8,12 @@ import { Card } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Admin" };
 
-async function getPerms() {
-  return new Set<string>(await getAdminPermissions(db(), (await getCurrentUser())?.uid ?? ""));
-}
-
 export default async function AdminPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const codes = await getPerms();
-  if (codes.size === 0) redirect("/chat");
+  const codes = await getAdminPermissions(db(), user.uid);
+  if (codes.length === 0) redirect("/chat");
 
   return (
     <div className="space-y-6">
