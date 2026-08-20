@@ -16,7 +16,7 @@ import { internalLocation, isAuthPage, isPublic } from "@/lib/routing";
 // host is not bound to this service the browser lands on a plain-text
 // "Not Found" — which is Render's default, not this app's 404 page.
 
-type JwtPayload = { exp?: number; role?: string; email_verified?: boolean };
+type JwtPayload = { exp?: number; role?: string; admin?: boolean; email_verified?: boolean };
 
 /** Cheap base64url decode of the JWT payload — NO signature verification. */
 function decodePayload(jwt: string): JwtPayload | null {
@@ -55,11 +55,13 @@ export async function middleware(request: NextRequest) {
 
   // Admin routes need an admin role. Unverified here (UX only) — the admin
   // layout re-checks authoritatively with the Admin SDK.
-  if (valid && pathname.startsWith("/admin") && !payload?.role) {
+  if (valid && pathname.startsWith("/admin") && pathname !== "/admin/setup" && !payload?.role && !payload?.admin) {
     return bounce("/chat");
   }
 
-  return NextResponse.next();
+  const res = NextResponse.next();
+  res.headers.set("x-matrix-pathname", pathname);
+  return res;
 }
 
 export const config = {

@@ -67,6 +67,8 @@ export const env = {
   serviceKeyRaw,
   groqApiKey: process.env.GROQ_API_KEY ?? "",
   openRouterApiKey: process.env.OPENROUTER_API_KEY ?? "",
+  identityPepper: clean(process.env.IDENTITY_PEPPER ?? ""),
+  adminBootstrapKey: clean(process.env.ADMIN_BOOTSTRAP_KEY ?? ""),
   github: {
     clientId: clean(process.env.GITHUB_CLIENT_ID ?? ""),
     clientSecret: clean(process.env.GITHUB_CLIENT_SECRET ?? ""),
@@ -99,6 +101,16 @@ export function isGithubConfigured(): boolean {
   const github = env.github;
   return Boolean(github.clientId && github.clientSecret && github.tokenEncryptionKey.length >= 32) &&
     !PLACEHOLDERS.some((p) => github.clientId.includes(p) || github.clientSecret.includes(p));
+}
+
+/** True when birth-certificate numbers can be hashed (never stored plaintext). */
+export function isIdentityPepperConfigured(): boolean {
+  return env.identityPepper.length >= 32 && !PLACEHOLDERS.some((p) => env.identityPepper.includes(p));
+}
+
+/** True when the one-time in-app first-admin bootstrap can run. */
+export function isAdminBootstrapConfigured(): boolean {
+  return env.adminBootstrapKey.length >= 16 && !PLACEHOLDERS.some((p) => env.adminBootstrapKey.includes(p));
 }
 
 /** True when image uploads (Cloudinary) are configured. */

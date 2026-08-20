@@ -88,7 +88,14 @@ export async function POST(req: NextRequest) {
     deleteQuery(d.collection("security_events"), "user_id", uid),
     deleteQuery(d.collection("user_sessions"), "user_id", uid),
     deleteQuery(d.collection("ai_usage_logs"), "user_id", uid),
+    deleteQuery(d.collection("deployments"), "owner_id", uid),
   ]);
+  const userProjects = await d.collection("projects").where("owner_id", "==", uid).limit(50).get();
+  for (const project of userProjects.docs) {
+    const files = await project.ref.collection("files").listDocuments();
+    await Promise.all(files.map((f) => f.delete()));
+    await project.ref.delete();
+  }
 
   // 3. Audit (actor disappears after delete — log first).
   await d.collection("audit_logs").add({

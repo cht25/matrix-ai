@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { rpc, RpcCallError } from "@/lib/client/api";
 import { Alert, Badge, Button, Card, Spinner } from "@/components/ui";
+import { CourseEditor } from "@/components/admin/course-editor";
 
 type Course = { id: string; slug: string; title: string; level: string; status: string; sort_order: number };
 
@@ -29,6 +30,8 @@ export function CoursesAdmin({ codes, courses }: { codes: Set<string>; courses: 
   }
 
   return (
+    <div className="space-y-4">
+    <CourseEditor />
     <Card>
       <h2 className="font-bold text-ink">Courses ({courses.length})</h2>
       <p className="mt-1 text-xs text-ink-3">Only published courses are visible to users. Status changes are audited.</p>
@@ -48,5 +51,6 @@ export function CoursesAdmin({ codes, courses }: { codes: Set<string>; courses: 
         ))}
       </ul>
     </Card>
+    </div>
   );
 }

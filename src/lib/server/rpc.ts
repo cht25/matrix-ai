@@ -11,16 +11,12 @@ import crypto from "node:crypto";
 import { Db, nowTs, toTs } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
 import { descDoc } from "@/lib/server/sort";
+import { identityHashes, maskLast4, validateCertNumber } from "@/lib/server/identity-number";
+import { env, isIdentityPepperConfigured } from "@/lib/env";
+import { isThemeMode, isThemeTemplateId } from "@/lib/theme-templates";
 
-// ---------------------------------------------------------------------------
-// Errors (mirror the SQL exception codes)
-// ---------------------------------------------------------------------------
-export class RpcError extends Error {
-  constructor(readonly code: string, readonly status: number = 400) {
-    super(code);
-    this.name = "RpcError";
-  }
-}
+export { RpcError } from "@/lib/server/errors";
+import { RpcError } from "@/lib/server/errors";
 
 // ---------------------------------------------------------------------------
 // 1. HELPERS — DOB validation (registration requires 11 <= age <= 17)
@@ -171,6 +167,62 @@ export async function completeProfile(
   };
 }
 
+export async function profileOnboardingComplete(d: Db, uid: string): Promise<boolean> {
+  const [profile, verifications] = await Promise.all([
+    d.collection("profiles").doc(uid).get(),
+    d.collection("identity_verifications").where("user_id", "==", uid).get(),
+  ]);
+  const dob = String(profile.data()?.date_of_birth ?? "").trim();
+  if (!dob) return false;
+  const latest = verifications.docs.sort(descDoc("created_at"))[0];
+  const status = latest?.data()?.verification_status as string | undefined;
+  return status === "pending_review" || status === "approved";
+}
+
+export async function submitIdentityNumber(
+  d: Db,
+  user: SessionUser,
+  p: { birth_certificate_number: string },
+) {
+  if (!isIdentityPepperConfigured()) throw new RpcError("IDENTITY_PEPPER_NOT_CONFIGURED", 503);
+  const check = validateCertNumber(p.birth_certificate_number);
+  if (!check.ok) throw new RpcError(check.reason);
+  const hashes = identityHashes(env.identityPepper, user.uid, check.normalized);
+
+  const recent = await d.collection("identity_verifications").where("user_id", "==", user.uid).get();
+  const dayAgo = Date.now() - 86_400_000;
+  const todayCount = recent.docs.filter((doc) => {
+    const t = doc.data().created_at?.toDate?.()?.getTime?.() ?? 0;
+    return t >= dayAgo;
+  }).length;
+  if (todayCount >= 5) throw new RpcError("CERT_NUMBER_RATE_LIMITED", 429);
+
+  const dup = await d.collection("identity_verifications").where("identity_hash_global", "==", hashes.identity_hash_global).get();
+  const taken = dup.docs.some((doc) => {
+    const data = doc.data();
+    if (data.user_id === user.uid) return false;
+    return data.verification_status === "approved" || data.verification_status === "pending_review";
+  });
+  if (taken) throw new RpcError("CERT_NUMBER_IN_USE", 409);
+
+  await d.collection("identity_verifications").add({
+    user_id: user.uid,
+    verification_type: "birth_certificate_number",
+    verification_status: "pending_review",
+    verification_reference: maskLast4(hashes.identity_last4),
+    identity_hash: hashes.identity_hash,
+    identity_hash_global: hashes.identity_hash_global,
+    identity_last4: hashes.identity_last4,
+    identity_hash_version: hashes.identity_hash_version,
+    reviewer_id: null,
+    rejection_reason: "",
+    verified_at: null,
+    created_at: nowTs(),
+    updated_at: nowTs(),
+  });
+  return { submitted: true, masked: maskLast4(hashes.identity_last4) };
+}
+
 export async function submitGuardianConsent(
   d: Db,
   user: SessionUser,
@@ -210,6 +262,9 @@ export async function submitIdentityVerification(
     verification_type: p.verification_type,
     verification_status: "pending_review",
     verification_reference: p.verification_reference,
+    identity_hash: "",
+    identity_hash_global: "",
+    identity_last4: "",
     reviewer_id: null,
     rejection_reason: "",
     verified_at: null,
@@ -217,6 +272,226 @@ export async function submitIdentityVerification(
     updated_at: nowTs(),
   });
   return true;
+}
+
+export async function updateTheme(
+  d: Db,
+  user: SessionUser,
+  p: { theme?: string; theme_template?: string },
+) {
+  const patch: Record<string, unknown> = { updated_at: nowTs() };
+  if (isThemeMode(p.theme)) patch.theme = p.theme;
+  if (isThemeTemplateId(p.theme_template)) patch.theme_template = p.theme_template;
+  await d.collection("profiles").doc(user.uid).set(patch, { merge: true });
+  await d.collection("user_security_settings").doc(user.uid).set(
+    {
+      ...(isThemeMode(p.theme) ? { theme: p.theme } : {}),
+      ...(isThemeTemplateId(p.theme_template) ? { theme_template: p.theme_template } : {}),
+      updated_at: nowTs(),
+    },
+    { merge: true },
+  );
+  return { theme: p.theme ?? null, theme_template: p.theme_template ?? null };
+}
+
+export async function listNotifications(d: Db, user: SessionUser) {
+  const snap = await d.collection("notifications").where("user_id", "==", user.uid).get();
+  return snap.docs
+    .sort(descDoc("created_at"))
+    .slice(0, 30)
+    .map((doc) => ({
+      id: doc.id,
+      type: doc.data().type ?? "info",
+      title: doc.data().title ?? "",
+      body: doc.data().body ?? "",
+      link: doc.data().link ?? "",
+      read_at: doc.data().read_at ? doc.data().read_at.toDate?.().toISOString?.() ?? null : null,
+      created_at: doc.data().created_at?.toDate?.().toISOString?.() ?? "",
+    }));
+}
+
+export async function markNotificationsRead(d: Db, user: SessionUser, p: { id?: string; all?: boolean }) {
+  if (p.all) {
+    const snap = await d.collection("notifications").where("user_id", "==", user.uid).get();
+    await Promise.all(
+      snap.docs.filter((doc) => !doc.data().read_at).map((doc) => doc.ref.set({ read_at: nowTs() }, { merge: true })),
+    );
+    return true;
+  }
+  if (!p.id) throw new RpcError("NOT_FOUND", 404);
+  const ref = d.collection("notifications").doc(p.id);
+  const doc = await ref.get();
+  if (!doc.exists || doc.data()!.user_id !== user.uid) throw new RpcError("NOT_FOUND", 404);
+  await ref.set({ read_at: nowTs() }, { merge: true });
+  return true;
+}
+
+export async function usageSummary(d: Db, user: SessionUser) {
+  const snap = await d.collection("ai_usage_logs").where("user_id", "==", user.uid).get();
+  const now = Date.now();
+  let chatDay = 0;
+  let scanDay = 0;
+  for (const doc of snap.docs) {
+    const raw = doc.data().created_at as { toMillis?: () => number; toDate?: () => Date } | undefined;
+    const t = raw?.toMillis ? raw.toMillis() : raw?.toDate ? raw.toDate().getTime() : 0;
+    if (!t || now - t >= 86_400_000) continue;
+    if (doc.data().request_type === "chat") chatDay++;
+    if (doc.data().request_type === "scan") scanDay++;
+  }
+  return { chat_used: chatDay, chat_limit: 300, scan_used: scanDay, scan_limit: 50 };
+}
+
+export async function adminRoleOf(d: Db, uid: string): Promise<string | null> {
+  const assignment = await d.collection("admin_role_assignments").doc(uid).get();
+  return assignment.exists ? (assignment.data()!.role_id as string) : null;
+}
+
+export async function bootstrapAdmin(d: Db, user: SessionUser, key: string) {
+  const { isAdminBootstrapConfigured } = await import("@/lib/env");
+  if (!isAdminBootstrapConfigured()) throw new RpcError("BOOTSTRAP_NOT_CONFIGURED", 503);
+  if (key !== env.adminBootstrapKey) throw new RpcError("INVALID_BOOTSTRAP_KEY", 403);
+  const existing = await d.collection("admin_role_assignments").limit(1).get();
+  if (!existing.empty) throw new RpcError("BOOTSTRAP_CLOSED", 409);
+  await d.collection("admin_role_assignments").doc(user.uid).set({
+    role_id: "super_admin",
+    assigned_by: user.uid,
+    created_at: nowTs(),
+  });
+  const auth = (await import("firebase-admin/auth")).getAuth();
+  await auth.setCustomUserClaims(user.uid, { admin: true, role: "super_admin" });
+  await logAudit(d, user.uid, "admin_bootstrap", "admin_role_assignments", user.uid, "first super_admin");
+  return { role: "super_admin" };
+}
+
+export async function adminSetUserRole(d: Db, actor: SessionUser, p: { uid: string; role: string }) {
+  if ((await adminRoleOf(d, actor.uid)) !== "super_admin") throw new RpcError("PERMISSION_DENIED", 403);
+  const auth = (await import("firebase-admin/auth")).getAuth();
+  if (p.role === "none") {
+    await d.collection("admin_role_assignments").doc(p.uid).delete();
+    await auth.setCustomUserClaims(p.uid, { admin: false });
+    await logAudit(d, actor.uid, "admin_role_removed", "user", p.uid, "");
+    return true;
+  }
+  const roleDoc = await d.collection("admin_roles").doc(p.role).get();
+  if (!roleDoc.exists) throw new RpcError("ROLE_INVALID", 400);
+  await d.collection("admin_role_assignments").doc(p.uid).set({
+    role_id: p.role,
+    assigned_by: actor.uid,
+    created_at: nowTs(),
+  });
+  await auth.setCustomUserClaims(p.uid, { admin: true, role: p.role });
+  await logAudit(d, actor.uid, "admin_role_assigned", "user", p.uid, p.role);
+  return true;
+}
+
+export async function adminSetUserDisabled(d: Db, actor: SessionUser, p: { uid: string; disabled: boolean }) {
+  if ((await adminRoleOf(d, actor.uid)) !== "super_admin") throw new RpcError("PERMISSION_DENIED", 403);
+  const auth = (await import("firebase-admin/auth")).getAuth();
+  await auth.updateUser(p.uid, { disabled: p.disabled });
+  if (p.disabled) await auth.revokeRefreshTokens(p.uid);
+  await logAudit(d, actor.uid, p.disabled ? "user_disabled" : "user_enabled", "user", p.uid, "");
+  return true;
+}
+
+export async function upsertCourse(
+  d: Db,
+  user: SessionUser,
+  p: {
+    id?: string;
+    title: string;
+    slug: string;
+    description?: string;
+    level?: string;
+    duration_minutes?: number;
+    icon?: string;
+    status?: string;
+    modules?: {
+      title: string;
+      description?: string;
+      lessons?: { title: string; summary?: string; body?: string }[];
+      quiz?: { title: string; pass_percent?: number; questions?: { question: string; options: string[]; correct_index: number; explanation?: string }[] };
+    }[];
+  },
+) {
+  if (!(await hasPermission(d, user.uid, "content.manage"))) throw new RpcError("PERMISSION_DENIED", 403);
+  const slug = p.slug.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+  if (!slug) throw new RpcError("SLUG_INVALID");
+  const payload = {
+    title: p.title.trim().slice(0, 160),
+    slug,
+    description: (p.description ?? "").slice(0, 2000),
+    level: p.level ?? "beginner",
+    duration_minutes: Number(p.duration_minutes ?? 30),
+    icon: p.icon ?? "book",
+    status: p.status === "published" || p.status === "archived" ? p.status : "draft",
+    updated_at: nowTs(),
+  };
+  let courseId = p.id;
+  if (courseId) {
+    await d.collection("courses").doc(courseId).set(payload, { merge: true });
+  } else {
+    const created = await d.collection("courses").add({ ...payload, sort_order: Date.now() % 10_000, created_at: nowTs() });
+    courseId = created.id;
+  }
+  if (p.modules?.length) {
+    for (const [mi, mod] of p.modules.entries()) {
+      const moduleDoc = await d.collection("course_modules").add({
+        course_id: courseId,
+        title: mod.title.slice(0, 160),
+        description: (mod.description ?? "").slice(0, 800),
+        sort_order: mi,
+        created_at: nowTs(),
+        updated_at: nowTs(),
+      });
+      for (const [li, lesson] of (mod.lessons ?? []).entries()) {
+        await d.collection("lessons").add({
+          module_id: moduleDoc.id,
+          title: lesson.title.slice(0, 160),
+          summary: (lesson.summary ?? "").slice(0, 400),
+          body: (lesson.body ?? "").slice(0, 20_000),
+          sort_order: li,
+          created_at: nowTs(),
+          updated_at: nowTs(),
+        });
+      }
+      if (mod.quiz) {
+        const quizDoc = await d.collection("quizzes").add({
+          module_id: moduleDoc.id,
+          title: mod.quiz.title.slice(0, 160),
+          pass_percent: Number(mod.quiz.pass_percent ?? 60),
+          sort_order: 0,
+          created_at: nowTs(),
+          updated_at: nowTs(),
+        });
+        for (const [qi, q] of (mod.quiz.questions ?? []).entries()) {
+          const options = q.options.slice(0, 6).map((text, idx) => ({ id: `opt_${qi}_${idx}`, option_text: text.slice(0, 400) }));
+          const question = await d.collection("quiz_questions").add({
+            quiz_id: quizDoc.id,
+            question: q.question.slice(0, 800),
+            explanation: (q.explanation ?? "").slice(0, 800),
+            options,
+            sort_order: qi,
+          });
+          const correct = options[q.correct_index]?.id ?? options[0]?.id ?? null;
+          await d.collection("quiz_answers").doc(question.id).set({ correct_option_id: correct });
+        }
+      }
+    }
+  }
+  await logAudit(d, user.uid, "course_upserted", "courses", courseId, payload.title);
+  return { id: courseId, slug };
+}
+
+export async function getAdminCourse(d: Db, user: SessionUser, courseId: string) {
+  if (!(await hasPermission(d, user.uid, "content.manage"))) throw new RpcError("PERMISSION_DENIED", 403);
+  const course = await d.collection("courses").doc(courseId).get();
+  if (!course.exists) throw new RpcError("NOT_FOUND", 404);
+  const modules = await d.collection("course_modules").where("course_id", "==", courseId).get();
+  return {
+    id: course.id,
+    ...course.data(),
+    modules: modules.docs.map((m) => ({ id: m.id, title: m.data().title, description: m.data().description ?? "" })),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -264,7 +539,7 @@ export async function reviewIdentityVerification(
       user_id: target,
       type: "security",
       title: "Identity verification needs attention",
-      body: "Please re-submit your age verification document.",
+      body: "Please re-submit your date of birth and birth certificate number.",
       link: "",
       read_at: null,
       created_at: nowTs(),

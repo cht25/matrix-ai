@@ -35,6 +35,12 @@ describe("PII redaction (spec §16)", () => {
     expect(r.redacted).toContain("[ADDRESS]");
   });
 
+  it("redacts labelled dates of birth", () => {
+    const r = redactPII("My date of birth is 2012-04-18 please remember it");
+    expect(r.redacted).toContain("[DATE_OF_BIRTH]");
+    expect(r.redacted).not.toContain("2012-04-18");
+  });
+
   it("leaves safe messages untouched", () => {
     const r = redactPII("Is this email a phishing scam? It says I won a prize.");
     expect(r.safe).toBe(true);

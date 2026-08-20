@@ -11,6 +11,7 @@ export const en = {
   "nav.emergency": "I Need Help Now",
   "nav.courses": "Courses",
   "nav.certificates": "Certificates",
+  "nav.projects": "Projects",
   "nav.history": "History",
   "nav.security": "Security",
   "nav.settings": "Settings",

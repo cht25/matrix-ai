@@ -18,6 +18,7 @@ export const PUBLIC_PATHS = [
   "/scams",
   "/api/health",
   "/api/ai",
+  "/s",
 ] as const;
 
 /** Auth screens — signed-in visitors are bounced to /chat. */

@@ -12,6 +12,7 @@
 
 import "server-only";
 import { cookies } from "next/headers";
+import type { NextRequest } from "next/server";
 import { adminAuth, adminConfigured } from "@/lib/firebase/admin";
 
 export const SESSION_COOKIE = "__session";
@@ -52,10 +53,13 @@ export async function getSessionUser(): Promise<SessionUser | null> {
 }
 
 /** Cookie write options shared by the mint and refresh endpoints. */
-export function sessionCookieOptions() {
+export function sessionCookieOptions(req?: NextRequest) {
+  const forwarded = req?.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const urlHttps = req?.nextUrl.protocol === "https:";
+  const secure = forwarded === "https" || urlHttps || (process.env.NODE_ENV === "production" && forwarded !== "http");
   return {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure,
     sameSite: "lax" as const,
     path: "/",
     maxAge: SESSION_MAX_AGE_SECONDS,

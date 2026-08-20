@@ -1,9 +1,13 @@
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { db, getCurrentUser } from "@/lib/data";
 import { getSidebarData } from "@/lib/server/queries";
+import { profileOnboardingComplete } from "@/lib/server/rpc";
 import { AppShell } from "@/components/app-shell";
 import { ServerProblemScreen } from "@/components/server-problem";
 import { isConfigured } from "@/lib/env";
+import { ThemeProvider } from "@/lib/theme";
+import { isThemeMode, isThemeTemplateId } from "@/lib/theme-templates";
 import type { SidebarConversation } from "@/lib/chat-utils";
 
 // Everything under (app) renders per-request with the real session and the

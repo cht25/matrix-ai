@@ -14,6 +14,7 @@ export const bn: En = {
   "nav.emergency": "এখনই সাহায্য দরকার",
   "nav.courses": "কোর্সসমূহ",
   "nav.certificates": "সার্টিফিকেট",
+  "nav.projects": "প্রজেক্ট",
   "nav.history": "ইতিহাস",
   "nav.security": "নিরাপত্তা",
   "nav.settings": "সেটিংস",

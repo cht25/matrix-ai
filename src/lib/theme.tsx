@@ -1,19 +1,30 @@
 "use client";
 
-// Theme system: dark (default) · light · system, persisted in localStorage.
+// Theme system: dark · light · system + per-user template palettes.
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Monitor, Moon, Sun } from "lucide-react";
+import { rpc } from "@/lib/client/api";
+import { isThemeMode, isThemeTemplateId, type ThemeMode, type ThemeTemplateId } from "@/lib/theme-templates";
 
-export type Theme = "dark" | "light" | "system";
+export type Theme = ThemeMode;
 const KEY = "matrix-theme";
+const TEMPLATE_KEY = "matrix-theme-template";
 
 type ThemeCtx = {
   theme: Theme;
+  template: ThemeTemplateId;
   resolved: "dark" | "light";
   setTheme: (t: Theme) => void;
+  setTemplate: (t: ThemeTemplateId) => void;
 };
 
-const Ctx = createContext<ThemeCtx>({ theme: "dark", resolved: "dark", setTheme: () => {} });
+const Ctx = createContext<ThemeCtx>({
+  theme: "dark",
+  template: "default",
+  resolved: "dark",
+  setTheme: () => {},
+  setTemplate: () => {},
+});
 
 export function resolveTheme(theme: Theme): "dark" | "light" {
   if (theme === "system") {
@@ -22,15 +33,35 @@ export function resolveTheme(theme: Theme): "dark" | "light" {
   return theme;
 }
 
-export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>("dark");
-  const [resolved, setResolved] = useState<"dark" | "light">("dark");
+function applyDom(resolved: "dark" | "light", template: ThemeTemplateId) {
+  document.documentElement.setAttribute("data-theme", resolved);
+  document.documentElement.setAttribute("data-theme-template", template);
+}
+
+export function ThemeProvider({
+  children,
+  initialTheme,
+  initialTemplate,
+  persistAccount = false,
+}: {
+  children: ReactNode;
+  initialTheme?: Theme;
+  initialTemplate?: ThemeTemplateId;
+  persistAccount?: boolean;
+}) {
+  const [theme, setThemeState] = useState<Theme>(initialTheme ?? "dark");
+  const [template, setTemplateState] = useState<ThemeTemplateId>(initialTemplate ?? "default");
+  const [resolved, setResolved] = useState<"dark" | "light">(initialTheme === "light" ? "light" : "dark");
 
   useEffect(() => {
-    const stored = (localStorage.getItem(KEY) as Theme | null) ?? "dark";
-    setThemeState(stored);
-    setResolved(resolveTheme(stored));
-  }, []);
+    const storedTheme = localStorage.getItem(KEY);
+    const storedTemplate = localStorage.getItem(TEMPLATE_KEY);
+    const nextTheme = initialTheme ?? (isThemeMode(storedTheme) ? storedTheme : "dark");
+    const nextTemplate = initialTemplate ?? (isThemeTemplateId(storedTemplate) ? storedTemplate : "default");
+    setThemeState(nextTheme);
+    setTemplateState(nextTemplate);
+    setResolved(resolveTheme(nextTheme));
+  }, [initialTheme, initialTemplate]);
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: light)");
@@ -45,20 +76,27 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", resolved);
-  }, [resolved]);
+    applyDom(resolved, template);
+  }, [resolved, template]);
 
   const value = useMemo<ThemeCtx>(
     () => ({
       theme,
+      template,
       resolved,
       setTheme: (t) => {
         localStorage.setItem(KEY, t);
         setThemeState(t);
         setResolved(resolveTheme(t));
+        if (persistAccount) void rpc("theme_update", { theme: t }).catch(() => {});
+      },
+      setTemplate: (t) => {
+        localStorage.setItem(TEMPLATE_KEY, t);
+        setTemplateState(t);
+        if (persistAccount) void rpc("theme_update", { theme_template: t }).catch(() => {});
       },
     }),
-    [theme, resolved],
+    [theme, template, resolved, persistAccount],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

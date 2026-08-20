@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import { createSessionCookie, SESSION_COOKIE, sessionCookieOptions } from "@/lib/firebase/session";
-import { ensureUserDocuments } from "@/lib/server/rpc";
+import { ensureUserDocuments, profileOnboardingComplete } from "@/lib/server/rpc";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,24 +25,25 @@ export async function POST(req: NextRequest) {
   try {
     decoded = await adminAuth().verifyIdToken(idToken, true);
   } catch {
-    // Bad, malformed, expired or revoked token — the client's problem.
     return NextResponse.json({ error: "INVALID_TOKEN" }, { status: 401 });
   }
 
   try {
-    // Mint the cookie first so a Firestore hiccup cannot block sign-in.
     const cookie = await createSessionCookie(idToken);
+    let onboardingComplete = false;
     try {
-      await ensureUserDocuments(adminAuth(), adminDb(), decoded.uid, decoded.email ?? null);
+      const d = adminDb();
+      await ensureUserDocuments(adminAuth(), d, decoded.uid, decoded.email ?? null, decoded.name as string | undefined);
+      onboardingComplete = await profileOnboardingComplete(d, decoded.uid);
     } catch (provisionErr) {
       console.error("[MATRIX] ensureUserDocuments failed", provisionErr);
     }
-    const res = NextResponse.json({ ok: true, uid: decoded.uid });
-    res.cookies.set(SESSION_COOKIE, cookie, sessionCookieOptions());
+    const res = NextResponse.json({ ok: true, uid: decoded.uid, onboarding_complete: onboardingComplete });
+    res.cookies.set(SESSION_COOKIE, cookie, sessionCookieOptions(req));
     return res;
   } catch (err) {
     console.error("[MATRIX] session cookie mint failed", err);
-    return NextResponse.json({ error: "INTERNAL" }, { status: 500 });
+    return NextResponse.json({ error: "SESSION_MINT_FAILED" }, { status: 500 });
   }
 }
 

@@ -12,6 +12,8 @@ export type AuthErrorKind =
   | "config" // wrong/deleted API key or project — operator must fix env + redeploy
   | "domain" // host not in Authentication → Settings → Authorized domains
   | "provider" // sign-in method not enabled in the Firebase console
+  | "account-exists"
+  | "session"
   | "invalid-credential"
   | "network"
   | "rate-limit"
@@ -40,6 +42,10 @@ export function authErrorKind(err: unknown): AuthErrorKind {
   }
   if (raw.includes("unauthorized-domain") || raw.includes("unauthorized_continue_uri")) return "domain";
   if (raw.includes("operation-not-allowed")) return "provider";
+  if (raw.includes("account-exists-with-different-credential") || raw.includes("credential-already-in-use")) {
+    return "account-exists";
+  }
+  if (raw.includes("session_mint_failed") || raw.includes("session mint")) return "session";
   if (raw.includes("network-request-failed")) return "network";
   if (raw.includes("too-many-requests") || raw.includes("too_many_attempts")) return "rate-limit";
   if (/(invalid-credential|invalid_login_credentials|wrong-password|user-not-found|user_not_found)/.test(raw)) {
@@ -62,6 +68,10 @@ const COPY: Record<AuthErrorKind, string> = {
     "Server setup problem — this site's domain isn't approved in Firebase yet (console → Authentication → Settings → Authorized domains). The administrator needs to add it.",
   provider:
     "Server setup problem — this sign-in method isn't enabled in Firebase (console → Authentication → Sign-in method).",
+  "account-exists":
+    "An account with this email already exists. Sign in with email and password, then link Google or Facebook in Settings.",
+  session:
+    "Signed in with your account, but the server could not create your session. Tap Retry session — you will not create a second account.",
   "invalid-credential": "Incorrect email or password.",
   network: "Network problem — check your connection and try again.",
   "rate-limit": "Too many attempts. Please wait a moment and try again.",

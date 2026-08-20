@@ -10,6 +10,7 @@ import { NotificationsForm } from "@/components/settings/notifications-form";
 import { AppearancePanel } from "@/components/settings/appearance-panel";
 import { LanguagePanel } from "@/components/settings/language-panel";
 import { GithubConnection } from "@/components/github-connection";
+import { UsagePanel } from "@/components/settings/usage-panel";
 
 export const metadata: Metadata = { title: "Settings" };
 
@@ -40,7 +41,10 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       <SettingsTabs tabs={tabs} active={tab} />
 
       {tab === "account" && (
-        <AccountForm profile={profile} countries={countries} />
+        <>
+          <AccountForm profile={profile} countries={countries} />
+          <UsagePanel />
+        </>
       )}
       {tab === "privacy" && (
         <PrivacyPanel settings={settings} memories={memories} />

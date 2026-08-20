@@ -17,6 +17,7 @@ import { AiStatus } from "@/components/ai-status";
 import { ThemeToggle } from "@/lib/theme";
 import { ToastProvider } from "@/components/toast";
 import { SignOutButton } from "@/components/sign-out-button";
+import { NotificationsBell } from "@/components/notifications-bell";
 import { groupConversations, groupLabel, formatTime, type SidebarConversation } from "@/lib/chat-utils";
 import { useI18n } from "@/lib/i18n/client";
 import { cn } from "@/lib/utils";
@@ -38,7 +39,7 @@ function useOnline() {
 }
 
 function isImmersivePath(pathname: string) {
-  return pathname === "/chat" || pathname.startsWith("/chat/") || pathname.startsWith("/temporary-chat");
+  return pathname === "/chat" || pathname.startsWith("/chat/") || pathname.startsWith("/temporary-chat") || pathname.startsWith("/projects/");
 }
 
 function NewChatButton({
@@ -210,6 +211,7 @@ function SidebarBody({
   const agentActive = pathname === "/chat" && searchParams.get("mode") === "agent";
   const { t } = useI18n();
   const tools = [
+    { href: "/projects", label: "Projects", icon: <Code2 size={15} strokeWidth={1.6} />, detail: "Files, preview, publish" },
     { href: "/scanner", label: t("nav.scanner"), icon: <FileSearch size={15} strokeWidth={1.6} />, detail: "Images & suspicious content" },
     { href: "/scams", label: t("nav.scams"), icon: <ShieldAlert size={15} strokeWidth={1.6} />, detail: "Safety library" },
     { href: "/courses", label: t("nav.courses"), icon: <GraduationCap size={15} strokeWidth={1.6} />, detail: "Guided learning" },
@@ -329,7 +331,8 @@ function ProfileMenu({ user, onNavigate }: { user: { email: string; fullName: st
 function ShellFooter({ user, onNavigate }: { user: { email: string; fullName: string } | null; onNavigate?: () => void }) {
   return (
     <div className="shrink-0 border-t border-border px-3 py-2">
-      <div className="mb-1 flex justify-end">
+      <div className="mb-1 flex items-center justify-end gap-1">
+        <NotificationsBell />
         <ThemeToggle compact />
       </div>
       <ProfileMenu user={user} onNavigate={onNavigate} />
@@ -464,7 +467,9 @@ export function AppShell({
           <div
             className={cn(
               immersive
-                ? "mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col px-3 sm:px-6"
+                ? pathname.startsWith("/projects/")
+                  ? "mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col px-2 sm:px-4"
+                  : "mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col px-3 sm:px-6"
                 : "mx-auto max-w-4xl px-4 py-5 sm:px-6 lg:py-7",
             )}
           >

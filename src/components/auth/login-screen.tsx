@@ -6,22 +6,16 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   signInWithEmailAndPassword,
-  GoogleAuthProvider,
-  FacebookAuthProvider,
-  signInWithPopup,
-  signInWithRedirect,
-  getRedirectResult,
   getMultiFactorResolver,
   type MultiFactorResolver,
-  type AuthProvider,
 } from "firebase/auth";
 import { TotpMultiFactorGenerator } from "firebase/auth";
 import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
 import { describeAuthError } from "@/lib/firebase/auth-errors";
-import { mintSessionCookie, rpc } from "@/lib/client/api";
+import { completeAuthenticatedSession, consumeOAuthRedirect, postAuthPath, signInWithOAuth } from "@/lib/auth/oauth";
 import { BrandLockup } from "@/components/logo";
 import { Alert, Button, Field, Input, Spinner } from "@/components/ui";
 import { ThemeToggle } from "@/lib/theme";
@@ -130,7 +124,6 @@ export function FacebookIcon() {
 }
 
 export function LoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next") ?? "/chat";
   const [email, setEmail] = useState("");
@@ -140,26 +133,42 @@ export function LoginForm() {
   const [mfa, setMfa] = useState<MultiFactorResolver | null>(null);
   const [mfaCode, setMfaCode] = useState("");
 
+  const [sessionRetry, setSessionRetry] = useState(false);
+
   async function finishSignIn() {
-    await mintSessionCookie();
-    await rpc("record_security_event", { event_type: "login", metadata: {} }).catch(() => {});
-    router.push(next);
-    router.refresh();
+    const session = await completeAuthenticatedSession();
+    window.location.href = postAuthPath(session.onboardingComplete, next);
+  }
+
+  async function retrySession() {
+    setError(null);
+    setBusy(true);
+    try {
+      await finishSignIn();
+    } catch {
+      setError("Signed in with your account, but the server could not create your session. Tap Retry session — you will not create a second account.");
+      setSessionRetry(true);
+      setBusy(false);
+    }
   }
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const cred = await getRedirectResult(fbAuth());
-        if (cancelled || !cred) return;
+      const result = await consumeOAuthRedirect();
+      if (cancelled || !result) return;
+      if (result.status === "cancelled") return;
+      if (result.status === "ok") {
         setBusy(true);
-        await finishSignIn();
-      } catch (err) {
-        if (cancelled) return;
-        setError(describeAuthError(err, "We couldn't finish Google / Facebook sign-in. Please try again."));
-        setBusy(false);
+        window.location.href = postAuthPath(result.onboardingComplete, next);
+        return;
       }
+      if (result.status === "session-failed") {
+        setError(result.message);
+        setSessionRetry(true);
+        return;
+      }
+      if (result.status === "error") setError(result.message);
     })();
     return () => {
       cancelled = true;
@@ -217,21 +226,20 @@ export function LoginForm() {
   }
 
   async function oauth(provider: "google" | "facebook") {
-    const auth = fbAuth();
-    const providerObj = provider === "google" ? new GoogleAuthProvider() : new FacebookAuthProvider();
-    try {
-      await signInWithPopup(auth, providerObj);
-      await finishSignIn();
-    } catch (err) {
-      const code = (err as { code?: string }).code ?? "";
-      if (code === "auth/popup-blocked" || code === "auth/operation-not-supported-in-this-environment") {
-        const { signInWithRedirect } = await import("firebase/auth");
-        await signInWithRedirect(auth, providerObj).catch(() => {});
-        return;
-      }
-      if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") return;
-      setError("Sign-in with " + provider + " failed. Try email instead.");
+    setError(null);
+    setSessionRetry(false);
+    const result = await signInWithOAuth(provider);
+    if (result.status === "cancelled" || result.status === "redirecting") return;
+    if (result.status === "ok") {
+      window.location.href = postAuthPath(result.onboardingComplete, next);
+      return;
     }
+    if (result.status === "session-failed") {
+      setError(result.message);
+      setSessionRetry(true);
+      return;
+    }
+    setError(result.message);
   }
 
   if (!firebaseBrowserConfigured) {
@@ -262,6 +270,11 @@ export function LoginForm() {
           <Input id="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
         </Field>
         {error ? <Alert tone="danger">{error}</Alert> : null}
+        {sessionRetry ? (
+          <Button type="button" variant="outline" className="w-full" disabled={busy} onClick={() => void retrySession()}>
+            {busy ? <Spinner /> : "Retry session"}
+          </Button>
+        ) : null}
         <Button type="submit" className="w-full" disabled={busy}>
           {busy ? <Spinner /> : "Sign In"}
         </Button>
