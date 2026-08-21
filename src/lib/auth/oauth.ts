@@ -18,6 +18,7 @@ import {
 import { fbAuth } from "@/lib/firebase/client";
 import { describeAuthError } from "@/lib/firebase/auth-errors";
 import { mintSessionCookie, RpcCallError } from "@/lib/client/api";
+import { postAuthDestination } from "@/lib/routing";
 
 export type OAuthProviderId = "google" | "facebook";
 
@@ -69,12 +70,8 @@ export function describeOAuthFailure(err: unknown, provider: OAuthProviderId): s
   return `We couldn't finish ${label} sign-in. Please try again or use email instead.`;
 }
 
-export function postAuthPath(onboardingComplete: boolean, next?: string | null): string {
-  if (!onboardingComplete) return "/onboarding";
-  if (next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/login") && !next.startsWith("/register")) {
-    return next;
-  }
-  return "/chat";
+export function postAuthPath(_onboardingComplete: boolean, next?: string | null): string {
+  return postAuthDestination(next);
 }
 
 export async function completeAuthenticatedSession(): Promise<{ uid: string; onboardingComplete: boolean }> {

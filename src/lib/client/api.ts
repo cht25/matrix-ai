@@ -69,7 +69,7 @@ const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
  * the server — the same contract the Supabase/Firebase-Storage versions used.
  */
 export async function uploadOwnedFile(
-  folder: "security-screenshots" | "identity-documents",
+  folder: "security-screenshots" | "identity-documents" | "avatars",
   file: File | Blob,
   filename?: string,
 ): Promise<string> {
@@ -83,11 +83,12 @@ export async function uploadOwnedFile(
   if (mime && !ALLOWED_IMAGE_TYPES.includes(mime)) throw new RpcCallError("UNSUPPORTED_TYPE", 400);
 
   const name = filename ?? (file instanceof File ? file.name : `upload-${Date.now()}`);
+  const kind = folder === "identity-documents" ? "identity" : folder === "avatars" ? "avatar" : "screenshot";
   const grantRes = await fetch("/api/upload-signature", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "same-origin",
-    body: JSON.stringify({ kind: folder === "identity-documents" ? "identity" : "screenshot", filename: name }),
+    body: JSON.stringify({ kind, filename: name }),
   });
   const grant = (await grantRes.json().catch(() => ({}))) as {
     uploadUrl: string;
@@ -96,6 +97,7 @@ export async function uploadOwnedFile(
     folder: string;
     publicId: string;
     signature: string;
+    deliveryType?: "authenticated" | "upload";
     error?: string;
   };
   if (!grantRes.ok || !grant.signature) throw new RpcCallError(grant.error ?? "SIGNATURE_FAILED", grantRes.status);
@@ -107,13 +109,19 @@ export async function uploadOwnedFile(
   form.append("folder", grant.folder);
   form.append("public_id", grant.publicId);
   form.append("signature", grant.signature);
-  form.append("type", "authenticated");
+  if (grant.deliveryType !== "upload") form.append("type", "authenticated");
 
   const upload = await fetch(grant.uploadUrl, { method: "POST", body: form });
-  const uploaded = (await upload.json().catch(() => ({}))) as { public_id?: string; format?: string; error?: { message?: string } };
+  const uploaded = (await upload.json().catch(() => ({}))) as {
+    public_id?: string;
+    format?: string;
+    secure_url?: string;
+    error?: { message?: string };
+  };
   if (!upload.ok || !uploaded.public_id) {
     throw new RpcCallError("UPLOAD_FAILED", upload.status);
   }
+  if (folder === "avatars" && uploaded.secure_url) return uploaded.secure_url;
   // Storage path contract: folder-prefixed public_id + extension.
   return `${uploaded.public_id}.${uploaded.format ?? "jpg"}`;
 }

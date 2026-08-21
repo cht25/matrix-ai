@@ -6,7 +6,7 @@ export const bn: En = {
   "brand.byline": "THAMJJ13.TOP হোয়াইট হ্যাট টিম",
   "nav.home": "হোম",
   "nav.dashboard": "ড্যাশবোর্ড",
-  "nav.chat": "এআই চ্যাট",
+  "nav.chat": "চ্যাট",
   "nav.tempChat": "অস্থায়ী চ্যাট",
   "nav.scanner": "স্ক্রিনশট স্ক্যানার",
   "nav.scams": "প্রতারণা লাইব্রেরি",

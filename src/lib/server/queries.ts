@@ -48,6 +48,7 @@ export async function getSidebarData(d: Db, uid: string) {
       };
     }),
     profileName: profile.data()?.full_name ?? "",
+    profileAvatar: typeof profile.data()?.avatar_url === "string" ? profile.data()!.avatar_url : "",
     isAdmin: admin,
   };
 }
@@ -293,6 +294,7 @@ export async function getSettingsData(d: Db, uid: string) {
       ? {
           id: profile.id, full_name: p.full_name ?? "", email: p.email ?? "", phone: p.phone ?? "",
           school_name: p.school_name ?? "", class_grade: p.class_grade ?? "", country: p.country ?? "", date_of_birth: p.date_of_birth ?? "",
+          avatar_url: p.avatar_url ?? "",
         }
       : null,
     settings: s

@@ -1,80 +1,95 @@
 @import "tailwindcss";
 
 /* =============================================================================
-   MATRIX design system — premium cybersecurity identity.
-   Monochromatic (deep black · charcoal · off-white) with a restrained steel
-   blue accent. Editorial typography, thin borders, refined radius.
+   MATRIX design system — premium, calm, independently designed light & dark.
+   Blue is an accent only. No pure black / pure white page fills.
    ============================================================================= */
 
-/* -----------------------------------------------------------------------------
-   Palette sampled from the calligraphic MATRIX logo:
-   obsidian void, graphite ink strokes, electric royal-blue swashes.
-   ----------------------------------------------------------------------------- */
-
 :root {
-  /* Light theme — ivory paper, royal blue calligraphy */
-  --bg: #f3f5fb;
-  --bg-grad: radial-gradient(1200px 560px at 50% -10%, rgba(31, 107, 255, 0.12), transparent 62%),
-    radial-gradient(900px 420px at 85% 8%, rgba(10, 59, 212, 0.07), transparent 60%);
+  --bg: #f6f8fc;
+  --bg-grad: radial-gradient(1100px 520px at 50% -12%, rgba(37, 99, 235, 0.08), transparent 62%),
+    radial-gradient(800px 380px at 88% 6%, rgba(37, 99, 235, 0.04), transparent 58%);
   --surface: #ffffff;
-  --surface-2: #f1f4fc;
-  --surface-3: #e5eaf8;
-  --border: #dde3f2;
-  --border-strong: #b9c6e6;
-  --ink: #070b18;
-  --ink-2: #3d4761;
-  --ink-3: #7b86a3;
-  --accent: #1244d6;
-  --accent-2: #0a2f9e;
-  --accent-soft: rgba(31, 107, 255, 0.09);
-  --accent-glow: rgba(31, 107, 255, 0.26);
-  --grid-line: rgba(10, 30, 80, 0.05);
-  --node-core: rgba(18, 68, 214, 0.34);
-  --node-line: rgba(18, 68, 214, 0.12);
+  --surface-2: #f1f5fb;
+  --surface-3: #e8eef8;
+  --sidebar: #f1f5fb;
+  --border: #e2e8f3;
+  --border-strong: #c9d4e8;
+  --ink: #0f172a;
+  --ink-2: #64748b;
+  --ink-3: #94a3b8;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-2: #1d4ed8;
+  --accent-soft: rgba(37, 99, 235, 0.1);
+  --accent-glow: rgba(37, 99, 235, 0.16);
+  --grid-line: rgba(15, 23, 42, 0.04);
+  --node-core: rgba(37, 99, 235, 0.22);
+  --node-line: rgba(37, 99, 235, 0.1);
   --danger: #b2464f;
   --danger-soft: rgba(178, 70, 79, 0.09);
   --success: #2f7d5c;
   --success-soft: rgba(47, 125, 92, 0.09);
   --warning: #9a7a35;
   --warning-soft: rgba(154, 122, 53, 0.09);
-  --shadow-card: 0 1px 2px rgba(9, 20, 51, 0.05), 0 6px 22px rgba(9, 20, 51, 0.07);
-  --shadow-pop: 0 2px 10px rgba(9, 20, 51, 0.1), 0 16px 44px rgba(9, 20, 51, 0.14);
-  --radius-sm: 6px;
-  --radius: 10px;
-  --radius-lg: 14px;
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06);
+  --shadow-pop: 0 2px 8px rgba(15, 23, 42, 0.08), 0 16px 40px rgba(15, 23, 42, 0.1);
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
   --brand-blend: multiply;
+  --ease: 180ms ease-out;
+  --app-header: 3.5rem;
+  --app-bottom-nav: 4rem;
+  --sidebar-width: 276px;
+}
+
+[data-theme="light"] {
+  --bg: #f6f8fc;
+  --surface: #ffffff;
+  --surface-2: #f1f5fb;
+  --surface-3: #e8eef8;
+  --sidebar: #f1f5fb;
+  --border: #e2e8f3;
+  --border-strong: #c9d4e8;
+  --ink: #0f172a;
+  --ink-2: #64748b;
+  --ink-3: #94a3b8;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-2: #1d4ed8;
 }
 
 [data-theme="dark"] {
-  /* Dark theme — the logo's own world: pure black ground, blue ink light */
-  --bg: #000104;
-  --bg-grad: radial-gradient(1200px 560px at 50% -12%, rgba(31, 107, 255, 0.16), transparent 62%),
-    radial-gradient(800px 380px at 12% 4%, rgba(10, 59, 212, 0.12), transparent 60%),
-    radial-gradient(900px 460px at 88% 12%, rgba(91, 155, 255, 0.07), transparent 62%);
-  --surface: #05070f;
-  --surface-2: #090d1a;
-  --surface-3: #0e1426;
-  --border: rgba(120, 165, 255, 0.14);
-  --border-strong: rgba(120, 165, 255, 0.3);
-  --ink: #e8eefc;
-  --ink-2: #a9b7d6;
-  --ink-3: #6a7899;
-  --accent: #3f80ff;
-  --accent-2: #8ab6ff;
-  --accent-soft: rgba(63, 128, 255, 0.12);
-  --accent-glow: rgba(63, 128, 255, 0.3);
-  --grid-line: rgba(120, 165, 255, 0.05);
-  --node-core: rgba(91, 155, 255, 0.34);
-  --node-line: rgba(63, 128, 255, 0.12);
+  --bg: #070b14;
+  --bg-grad: radial-gradient(1100px 520px at 50% -14%, rgba(59, 130, 246, 0.1), transparent 62%),
+    radial-gradient(720px 360px at 12% 0%, rgba(59, 130, 246, 0.06), transparent 58%);
+  --surface: #0d1424;
+  --surface-2: #111a2d;
+  --surface-3: #162038;
+  --sidebar: #0a1020;
+  --border: #1e2b45;
+  --border-strong: #2a3b5c;
+  --ink: #f8fafc;
+  --ink-2: #a7b4cc;
+  --ink-3: #71809a;
+  --accent: #3b82f6;
+  --accent-hover: #60a5fa;
+  --accent-2: #60a5fa;
+  --accent-soft: rgba(59, 130, 246, 0.14);
+  --accent-glow: rgba(59, 130, 246, 0.18);
+  --grid-line: rgba(167, 180, 204, 0.05);
+  --node-core: rgba(59, 130, 246, 0.28);
+  --node-line: rgba(59, 130, 246, 0.1);
   --danger: #e08b8b;
   --danger-soft: rgba(224, 139, 139, 0.1);
   --success: #74d0a4;
   --success-soft: rgba(116, 208, 164, 0.1);
   --warning: #d8b571;
   --warning-soft: rgba(216, 181, 113, 0.1);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.6), 0 6px 24px rgba(0, 4, 20, 0.6);
-  --shadow-pop: 0 2px 10px rgba(0, 0, 0, 0.65), 0 18px 52px rgba(0, 6, 28, 0.7),
-    0 0 0 1px rgba(63, 128, 255, 0.06);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.28), 0 8px 28px rgba(2, 6, 18, 0.35);
+  --shadow-pop: 0 2px 10px rgba(0, 0, 0, 0.35), 0 18px 44px rgba(2, 6, 18, 0.45);
   --brand-blend: screen;
 }
 
@@ -83,6 +98,7 @@
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-surface-3: var(--surface-3);
+  --color-sidebar: var(--sidebar);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
   --color-ink: var(--ink);
@@ -90,11 +106,12 @@
   --color-ink-3: var(--ink-3);
   --color-accent: var(--accent);
   --color-accent-2: var(--accent-2);
+  --color-accent-hover: var(--accent-hover);
   --color-danger: var(--danger);
   --color-success: var(--success);
   --color-warning: var(--warning);
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Noto Sans Bengali", sans-serif;
-  --font-display: "Cormorant Garamond", "Manrope", ui-serif, Georgia, serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", "Noto Sans Bengali", sans-serif;
+  --font-display: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-script: "Tangerine", "Cormorant Garamond", ui-serif, cursive;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
   --shadow-card: var(--shadow-card);
@@ -117,15 +134,13 @@ body {
   letter-spacing: -0.006em;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  transition: background-color 0.25s ease, color 0.25s ease;
+  transition: background-color 0.2s ease-out, color 0.2s ease-out;
 }
 
-/* Faster taps, no 300ms delay; keep pinch-zoom available. */
 button, a, [role="button"], summary {
   touch-action: manipulation;
 }
 
-/* iOS: 16px inputs prevent auto-zoom on focus. */
 @media (max-width: 640px) {
   .input-base,
   input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
@@ -135,7 +150,6 @@ button, a, [role="button"], summary {
   }
 }
 
-/* Faint editorial gradient wash behind content */
 body::before {
   content: "";
   position: fixed;
@@ -151,53 +165,36 @@ body::before {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  html {
-    scroll-behavior: auto;
-  }
-  *,
-  *::before,
-  *::after {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
 }
 
 :focus-visible {
-  outline: 1.5px solid var(--accent);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: 6px;
 }
 
-/* Scrollbars — minimal */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
-*::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
-}
-*::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: 3px;
-}
-*::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-/* =============================================================================
-   Primitives
-   ============================================================================= */
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+*::-webkit-scrollbar-track { background: transparent; }
 
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
 }
 
 .card-hover {
-  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  transition: border-color var(--ease), box-shadow var(--ease), transform var(--ease);
 }
 .card-hover:hover {
   border-color: var(--border-strong);
@@ -212,97 +209,54 @@ body::before {
   color: var(--ink);
   padding: 0.625rem 0.875rem;
   font-size: 0.875rem;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color var(--ease), box-shadow var(--ease);
 }
-.input-base::placeholder {
-  color: var(--ink-3);
-}
+.input-base::placeholder { color: var(--ink-3); }
 .input-base:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-/* Section labels */
 .eyebrow {
   font-size: 0.6875rem;
   font-weight: 600;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-3);
 }
 
-/* Typing indicator — restrained */
-.typing-dot {
-  animation: typing-fade 1.3s infinite ease-in-out;
-}
-.typing-dot:nth-child(2) {
-  animation-delay: 0.18s;
-}
-.typing-dot:nth-child(3) {
-  animation-delay: 0.36s;
-}
+.typing-dot { animation: typing-fade 1.3s infinite ease-in-out; }
+.typing-dot:nth-child(2) { animation-delay: 0.18s; }
+.typing-dot:nth-child(3) { animation-delay: 0.36s; }
 @keyframes typing-fade {
-  0%, 60%, 100% {
-    opacity: 0.25;
-  }
-  30% {
-    opacity: 1;
-  }
+  0%, 60%, 100% { opacity: 0.25; }
+  30% { opacity: 1; }
 }
 
 @keyframes msg-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
-.msg-in {
-  animation: msg-in 0.24s ease-out;
-}
+.msg-in { animation: msg-in 0.2s ease-out; }
 
 @keyframes drawer-in {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(0);
-  }
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
 }
-.drawer-in {
-  animation: drawer-in 0.2s ease-out;
-}
+.drawer-in { animation: drawer-in 0.2s ease-out; }
 
 @keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
-.fade-in {
-  animation: fade-in 0.18s ease-out;
-}
+.fade-in { animation: fade-in 0.18s ease-out; }
 
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
-}
+.no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
-}
-
-/* Chat / app chrome measurements — used so the composer never sits
-   under the mobile header, bottom nav, or iOS home indicator. */
-:root {
-  --app-header: 3.5rem;
-  --app-bottom-nav: 4rem;
 }
 
 .skip-link {
@@ -316,23 +270,14 @@ body::before {
   padding: 8px 16px;
   transition: top 0.15s ease;
 }
-.skip-link:focus {
-  top: 12px;
-}
-
-/* =============================================================================
-   Editorial AI reply typography — no bubbles, strong hierarchy
-   ============================================================================= */
+.skip-link:focus { top: 12px; }
 
 .ai-reply {
   font-size: 0.9375rem;
   line-height: 1.7;
   color: var(--ink-2);
 }
-.ai-reply strong {
-  color: var(--ink);
-  font-weight: 600;
-}
+.ai-reply strong { color: var(--ink); font-weight: 600; }
 .ai-reply h1, .ai-reply h2, .ai-reply h3, .ai-reply h4 {
   color: var(--ink);
   font-weight: 600;
@@ -341,27 +286,21 @@ body::before {
   margin-top: 1.1em;
   margin-bottom: 0.4em;
 }
-.ai-reply p {
-  margin: 0.55em 0;
-}
+.ai-reply p { margin: 0.55em 0; }
 .ai-reply ul, .ai-reply ol {
   margin: 0.55em 0;
   padding-left: 1.3rem;
   display: grid;
   gap: 0.3em;
 }
-.ai-reply ul {
-  list-style: disc;
-}
-.ai-reply ol {
-  list-style: decimal;
-}
+.ai-reply ul { list-style: disc; }
+.ai-reply ol { list-style: decimal; }
 .ai-reply code {
   font-family: var(--font-mono);
   font-size: 0.84em;
   background: var(--surface-3);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 0.08em 0.32em;
   color: var(--accent-2);
 }
@@ -372,8 +311,8 @@ body::before {
 }
 
 .code-block {
-  background: #07090c;
-  border: 1px solid rgba(226, 230, 238, 0.1);
+  background: #0d1424;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: #d5dae2;
 }
@@ -385,87 +324,43 @@ body::before {
   line-height: 1.6;
 }
 
-/* Thin hairline dividers */
 .hairline {
   border: 0;
   border-top: 1px solid var(--border);
   margin: 0;
 }
 
-/* =============================================================================
-   Brand layer — calligraphic MATRIX identity
-   The hosted logo art sits on its own black canvas; we blend it into the UI so
-   only the ink and the electric-blue swashes remain, then add a soft bloom.
-   ============================================================================= */
-
-/* Glass chrome — lets the cinematic blue void show through so the
-   calligraphic logo (black canvas + electric swashes) can blend cleanly. */
 .app-glass {
-  background:
-    linear-gradient(
-      180deg,
-      rgba(22, 64, 180, 0.34) 0%,
-      rgba(8, 22, 64, 0.22) 36%,
-      rgba(0, 8, 28, 0.16) 100%
-    );
-  backdrop-filter: blur(18px) saturate(1.35);
-  -webkit-backdrop-filter: blur(18px) saturate(1.35);
-}
-.app-sidebar {
-  background:
-    linear-gradient(
-      180deg,
-      rgba(22, 64, 180, 0.34) 0%,
-      rgba(8, 22, 64, 0.22) 36%,
-      rgba(0, 8, 28, 0.16) 100%
-    );
-  backdrop-filter: blur(18px) saturate(1.35);
-  -webkit-backdrop-filter: blur(18px) saturate(1.35);
-  border-right: 1px solid rgba(120, 165, 255, 0.2);
-  box-shadow: inset -1px 0 0 rgba(91, 155, 255, 0.08);
-}
-[data-theme="light"] .app-glass,
-[data-theme="light"] .app-sidebar {
-  background:
-    linear-gradient(
-      180deg,
-      rgba(226, 234, 255, 0.72) 0%,
-      rgba(243, 245, 251, 0.58) 100%
-    );
-  box-shadow: none;
-}
-[data-theme="light"] .app-sidebar {
-  border-right-color: var(--border);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(16px) saturate(1.15);
+  -webkit-backdrop-filter: blur(16px) saturate(1.15);
+  border-bottom: 1px solid var(--border);
 }
 
-/* True-black plate matching the hosted logo canvas so mix-blend-mode: screen
-   knocks out the PNG ground and leaves only the glowing lettering. */
+.app-sidebar {
+  background: var(--sidebar);
+  border-right: 1px solid var(--border);
+}
+
 .sidebar-brand {
   display: flex;
   align-items: center;
   min-width: 0;
   isolation: isolate;
   border-radius: 12px;
-  padding: 0.3rem 0.55rem 0.3rem 0.3rem;
-  background:
-    radial-gradient(120% 160% at 12% 50%, rgba(31, 107, 255, 0.42), transparent 58%),
-    #000104;
-  box-shadow:
-    0 0 0 1px rgba(91, 155, 255, 0.22),
-    0 0 22px rgba(31, 107, 255, 0.28);
+  padding: 0.2rem 0.45rem 0.2rem 0.2rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
 }
-[data-theme="light"] .sidebar-brand {
-  background:
-    radial-gradient(120% 160% at 12% 50%, rgba(31, 107, 255, 0.14), transparent 58%),
-    #070b18;
+[data-theme="dark"] .sidebar-brand {
+  background: #070b14;
+  border-color: var(--border);
 }
 
-/* On the void plate, screen-blend the raster so only ink + blue swashes remain. */
 .sidebar-brand .brand-mark-img,
 .sidebar-brand .brand-wordmark-img {
-  mix-blend-mode: screen;
-  filter: saturate(1.35) contrast(1.18) brightness(1.22)
-    drop-shadow(0 0 10px rgba(63, 128, 255, 0.4));
+  mix-blend-mode: var(--brand-blend);
+  filter: saturate(1.12) contrast(1.08);
 }
 
 .brand-mark,
@@ -482,66 +377,45 @@ body::before {
   height: 100%;
   object-fit: contain;
   mix-blend-mode: var(--brand-blend);
-  filter: saturate(1.12) contrast(1.06);
-  transition: filter 0.25s ease, transform 0.25s ease;
+  filter: saturate(1.08) contrast(1.04);
+  transition: filter 0.2s ease-out, transform 0.2s ease-out;
 }
 
 [data-theme="dark"] .brand-mark-img,
 [data-theme="dark"] .brand-wordmark-img {
-  filter: saturate(1.2) contrast(1.1) brightness(1.12)
-    drop-shadow(0 0 10px rgba(63, 128, 255, 0.35));
+  filter: saturate(1.12) contrast(1.08) brightness(1.08);
 }
 
 .group:hover .brand-wordmark-img,
 .group:hover .brand-mark-img {
-  filter: saturate(1.35) contrast(1.12) brightness(1.2)
-    drop-shadow(0 0 16px rgba(91, 155, 255, 0.55));
+  filter: saturate(1.18) contrast(1.08) brightness(1.1);
 }
 
 .brand-wordmark-glow .brand-wordmark-img,
 .brand-mark-glow .brand-mark-img {
-  filter: saturate(1.25) contrast(1.1) brightness(1.16)
-    drop-shadow(0 0 22px rgba(63, 128, 255, 0.42)) drop-shadow(0 0 60px rgba(10, 59, 212, 0.32));
+  filter: saturate(1.15) contrast(1.08) brightness(1.08);
 }
 
-/* Light theme: the logo's black ground multiplies away on ivory paper. */
 [data-theme="light"] .brand-mark-img,
 [data-theme="light"] .brand-wordmark-img {
-  filter: saturate(1.3) contrast(1.15);
+  filter: saturate(1.2) contrast(1.1);
 }
 
-/* -----------------------------------------------------------------------------
-   Calligraphic typography
-   ----------------------------------------------------------------------------- */
-
-h1,
-h2,
-.font-display {
-  font-family: var(--font-display);
-  letter-spacing: -0.012em;
+h1, h2, .font-display {
+  font-family: var(--font-sans);
+  letter-spacing: -0.02em;
 }
 
-h1 {
-  font-weight: 600;
-}
+h1 { font-weight: 600; }
 
-/* Script accent — for hero signatures, certificate names, section flourishes. */
 .script {
   font-family: var(--font-script);
   font-weight: 700;
   letter-spacing: 0.01em;
   line-height: 1.05;
-  background: linear-gradient(96deg, var(--ink) 6%, var(--accent-2) 48%, var(--accent) 92%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--accent);
 }
 
-[data-theme="dark"] .script {
-  text-shadow: 0 0 34px rgba(63, 128, 255, 0.28);
-}
-
-/* Eyebrow with hairline swash rules on either side. */
 .eyebrow.flourish {
   display: inline-flex;
   align-items: center;
@@ -556,101 +430,116 @@ h1 {
   background: linear-gradient(90deg, transparent, var(--border-strong), transparent);
 }
 
-/* Four-point sparkle from the logo's swash terminals. */
-.sparkle {
-  position: relative;
-}
-.sparkle::after {
-  content: "";
-  position: absolute;
-  top: -0.35rem;
-  right: -0.7rem;
-  width: 10px;
-  height: 10px;
-  background: var(--accent-2);
-  clip-path: polygon(50% 0%, 58% 42%, 100% 50%, 58% 58%, 50% 100%, 42% 58%, 0% 50%, 42% 42%);
-  opacity: 0.85;
-  filter: drop-shadow(0 0 6px var(--accent-glow));
-  animation: sparkle-pulse 3.6s ease-in-out infinite;
-}
-@keyframes sparkle-pulse {
-  0%, 100% { opacity: 0.35; transform: scale(0.85) rotate(0deg); }
-  50% { opacity: 0.95; transform: scale(1.1) rotate(45deg); }
-}
+.sparkle { position: relative; }
+.sparkle::after { content: none; }
 
-/* Swash divider — a calligraphic hairline with a blue core. */
 .swash-rule {
   height: 1px;
   border: 0;
-  background: linear-gradient(90deg, transparent, var(--border-strong) 18%, var(--accent) 50%, var(--border-strong) 82%, transparent);
-  opacity: 0.65;
+  background: linear-gradient(90deg, transparent, var(--border-strong) 20%, var(--accent) 50%, var(--border-strong) 80%, transparent);
+  opacity: 0.55;
 }
 
-/* Accent surfaces pick up the logo's ink-blue sheen. */
-[data-theme="dark"] .card {
-  background-image: linear-gradient(180deg, rgba(63, 128, 255, 0.045), transparent 42%);
+.composer-shell {
+  border-radius: 20px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  transition: border-color var(--ease), box-shadow var(--ease);
+}
+.composer-shell:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-card);
 }
 
-::selection {
-  background: rgba(63, 128, 255, 0.28);
-  color: var(--ink);
+.suggest-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 64px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 12px 14px;
+  text-align: left;
+  transition: border-color var(--ease), background-color var(--ease), transform var(--ease);
 }
+.suggest-card:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+  transform: translateY(-1px);
+}
+.suggest-card:active { transform: translateY(0); }
 
-/* =============================================================================
-   Per-user theme templates (layered on dark/light tokens)
-   ============================================================================= */
+.nav-item {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 10px;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-2);
+  transition: background-color var(--ease), color var(--ease);
+}
+.nav-item:hover { background: var(--surface-2); color: var(--ink); }
+.nav-item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 
 [data-theme-template="midnight"][data-theme="dark"] {
   --bg: #020617; --surface: #0b1224; --surface-2: #111b33; --surface-3: #172244;
-  --ink: #e0e7ff; --ink-2: #a5b4fc; --ink-3: #64748b;
-  --accent: #6366f1; --accent-2: #a5b4fc; --accent-soft: rgba(99, 102, 241, 0.14);
+  --sidebar: #07101f; --ink: #e0e7ff; --ink-2: #a5b4fc; --ink-3: #64748b;
+  --accent: #6366f1; --accent-hover: #818cf8; --accent-2: #a5b4fc; --accent-soft: rgba(99, 102, 241, 0.14);
 }
 [data-theme-template="midnight"][data-theme="light"] {
   --bg: #eef2ff; --surface: #ffffff; --surface-2: #e0e7ff; --surface-3: #c7d2fe;
-  --ink: #1e1b4b; --ink-2: #3730a3; --ink-3: #64748b;
-  --accent: #4338ca; --accent-2: #312e81; --accent-soft: rgba(67, 56, 202, 0.1);
+  --sidebar: #e0e7ff; --ink: #1e1b4b; --ink-2: #3730a3; --ink-3: #64748b;
+  --accent: #4338ca; --accent-hover: #3730a3; --accent-2: #312e81; --accent-soft: rgba(67, 56, 202, 0.1);
 }
 
 [data-theme-template="ivory"][data-theme="dark"] {
   --bg: #14110d; --surface: #1c1812; --surface-2: #262017; --surface-3: #322a1e;
-  --ink: #f4efe4; --ink-2: #d6cbb6; --ink-3: #8a7d68;
-  --accent: #d4a017; --accent-2: #f0d48a; --accent-soft: rgba(212, 160, 23, 0.14);
+  --sidebar: #18140f; --ink: #f4efe4; --ink-2: #d6cbb6; --ink-3: #8a7d68;
+  --accent: #d4a017; --accent-hover: #f0d48a; --accent-2: #f0d48a; --accent-soft: rgba(212, 160, 23, 0.14);
 }
 [data-theme-template="ivory"][data-theme="light"] {
   --bg: #f7f1e6; --surface: #fffaf1; --surface-2: #f3e8d4; --surface-3: #e8d7b8;
-  --ink: #1c1610; --ink-2: #5a4c38; --ink-3: #8a7d68;
-  --accent: #9a6b12; --accent-2: #7a5210; --accent-soft: rgba(154, 107, 18, 0.1);
+  --sidebar: #f3e8d4; --ink: #1c1610; --ink-2: #5a4c38; --ink-3: #8a7d68;
+  --accent: #9a6b12; --accent-hover: #7a5210; --accent-2: #7a5210; --accent-soft: rgba(154, 107, 18, 0.1);
 }
 
 [data-theme-template="carbon"][data-theme="dark"] {
   --bg: #0a0b0d; --surface: #14161a; --surface-2: #1c1f25; --surface-3: #272b33;
-  --ink: #eceff3; --ink-2: #c0c6d0; --ink-3: #7b8494;
-  --accent: #94a3b8; --accent-2: #cbd5e1; --accent-soft: rgba(148, 163, 184, 0.14);
+  --sidebar: #101216; --ink: #eceff3; --ink-2: #c0c6d0; --ink-3: #7b8494;
+  --accent: #94a3b8; --accent-hover: #cbd5e1; --accent-2: #cbd5e1; --accent-soft: rgba(148, 163, 184, 0.14);
 }
 [data-theme-template="carbon"][data-theme="light"] {
   --bg: #e8eaee; --surface: #ffffff; --surface-2: #f1f5f9; --surface-3: #e2e8f0;
-  --ink: #111318; --ink-2: #334155; --ink-3: #64748b;
-  --accent: #334155; --accent-2: #0f172a; --accent-soft: rgba(51, 65, 85, 0.1);
+  --sidebar: #f1f5f9; --ink: #111318; --ink-2: #334155; --ink-3: #64748b;
+  --accent: #334155; --accent-hover: #0f172a; --accent-2: #0f172a; --accent-soft: rgba(51, 65, 85, 0.1);
 }
 
 [data-theme-template="aurora"][data-theme="dark"] {
   --bg: #041016; --surface: #0b1c24; --surface-2: #102830; --surface-3: #16343e;
-  --ink: #e7fbff; --ink-2: #a5f3fc; --ink-3: #5e8b94;
-  --accent: #22d3ee; --accent-2: #67e8f9; --accent-soft: rgba(34, 211, 238, 0.14);
+  --sidebar: #081820; --ink: #e7fbff; --ink-2: #a5f3fc; --ink-3: #5e8b94;
+  --accent: #22d3ee; --accent-hover: #67e8f9; --accent-2: #67e8f9; --accent-soft: rgba(34, 211, 238, 0.14);
 }
 [data-theme-template="aurora"][data-theme="light"] {
   --bg: #ecfeff; --surface: #ffffff; --surface-2: #cffafe; --surface-3: #a5f3fc;
-  --ink: #083344; --ink-2: #155e75; --ink-3: #57808c;
-  --accent: #0e7490; --accent-2: #155e75; --accent-soft: rgba(14, 116, 144, 0.1);
+  --sidebar: #cffafe; --ink: #083344; --ink-2: #155e75; --ink-3: #57808c;
+  --accent: #0e7490; --accent-hover: #155e75; --accent-2: #155e75; --accent-soft: rgba(14, 116, 144, 0.1);
 }
 
 [data-theme-template="forest"][data-theme="dark"] {
   --bg: #07140d; --surface: #0e1d14; --surface-2: #15281c; --surface-3: #1c3425;
-  --ink: #e8f6ec; --ink-2: #bbf7d0; --ink-3: #6b8f76;
-  --accent: #4ade80; --accent-2: #86efac; --accent-soft: rgba(74, 222, 128, 0.14);
+  --sidebar: #0b1912; --ink: #e8f6ec; --ink-2: #bbf7d0; --ink-3: #6b8f76;
+  --accent: #4ade80; --accent-hover: #86efac; --accent-2: #86efac; --accent-soft: rgba(74, 222, 128, 0.14);
 }
 [data-theme-template="forest"][data-theme="light"] {
   --bg: #f0f7f2; --surface: #ffffff; --surface-2: #dcfce7; --surface-3: #bbf7d0;
-  --ink: #102016; --ink-2: #166534; --ink-3: #5b7a64;
-  --accent: #15803d; --accent-2: #166534; --accent-soft: rgba(21, 128, 61, 0.1);
+  --sidebar: #dcfce7; --ink: #102016; --ink-2: #166534; --ink-3: #5b7a64;
+  --accent: #15803d; --accent-hover: #166534; --accent-2: #166534; --accent-soft: rgba(21, 128, 61, 0.1);
 }

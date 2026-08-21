@@ -46,7 +46,7 @@ export function ChatHeader({ conversationId, initialTitle }: { conversationId: s
       {editing ? (
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <Input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Conversation title" autoFocus className="!py-2" />
-          <button type="button" onClick={() => void save()} className="min-h-11 shrink-0 rounded-lg bg-ink px-3.5 text-sm font-medium text-bg transition-colors hover:bg-ink-2">Save</button>
+          <button type="button" onClick={() => void save()} className="min-h-11 shrink-0 rounded-[10px] bg-accent px-3.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover">Save</button>
           <button type="button" onClick={() => { setTitle(initialTitle); setEditing(false); }} className="min-h-11 shrink-0 rounded-lg px-3 text-sm font-semibold text-ink-2 hover:bg-surface-2">Cancel</button>
         </div>
       ) : (

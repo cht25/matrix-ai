@@ -50,6 +50,25 @@ export function isAuthPage(path: string): boolean {
  * critical behind Cloudflare / Render, where an absolute `new URL(..., request.url)`
  * can pick up a different Host (e.g. an unbound apex) and 404 there.
  */
+/**
+ * Where to send a user after a successful sign-in.
+ * Profile details are edited in Settings — never forced as a first-login wizard.
+ */
+export function postAuthDestination(next?: string | null): string {
+  if (
+    typeof next === "string" &&
+    next.startsWith("/") &&
+    !next.startsWith("//") &&
+    !next.startsWith("/login") &&
+    !next.startsWith("/register") &&
+    next !== "/onboarding" &&
+    !next.startsWith("/onboarding/")
+  ) {
+    return next;
+  }
+  return "/chat";
+}
+
 export function internalLocation(pathname: string, search?: Record<string, string>): string {
   // Collapse any leading slashes so "//evil.example/login" cannot become a
   // protocol-relative Location (which the browser would treat as another host).
