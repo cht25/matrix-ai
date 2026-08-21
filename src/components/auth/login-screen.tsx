@@ -15,8 +15,10 @@ import {
 import { TotpMultiFactorGenerator } from "firebase/auth";
 import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
 import { describeAuthError } from "@/lib/firebase/auth-errors";
+import { isValidEmail } from "@/lib/utils";
 import { completeAuthenticatedSession, consumeOAuthRedirect, postAuthPath, signInWithOAuth } from "@/lib/auth/oauth";
 import { BrandLockup } from "@/components/logo";
+import { PasswordInput } from "@/components/password-input";
 import { Alert, Button, Field, Input, Spinner } from "@/components/ui";
 import { ThemeToggle } from "@/lib/theme";
 import { ServerProblem } from "@/components/server-problem";
@@ -179,10 +181,13 @@ export function LoginForm() {
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     if (!firebaseBrowserConfigured) return;
+    if (!email.trim()) return setError("Please enter your email address.");
+    if (!isValidEmail(email.trim())) return setError("Please enter a valid email address.");
+    if (!password) return setError("Please enter your password.");
     setError(null);
     setBusy(true);
     try {
-      await signInWithEmailAndPassword(fbAuth(), email, password);
+      await signInWithEmailAndPassword(fbAuth(), email.trim(), password);
       await finishSignIn();
     } catch (err) {
       const code = (err as { code?: string }).code ?? "";
@@ -267,7 +272,7 @@ export function LoginForm() {
           <Input id="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" required />
         </Field>
         <Field label="Password" htmlFor="password">
-          <Input id="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
+          <PasswordInput id="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
         </Field>
         {error ? <Alert tone="danger">{error}</Alert> : null}
         {sessionRetry ? (

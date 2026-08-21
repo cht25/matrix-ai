@@ -88,6 +88,18 @@ function HistoryList({ conversations, onNavigate }: { conversations: SidebarConv
     return conversations.filter((c) => c.title.toLowerCase().includes(needle) || c.summary.toLowerCase().includes(needle));
   }, [q, conversations]);
 
+  useEffect(() => {
+    if (!openId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpenId(null);
+        setRenaming(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [openId]);
+
   const groups = useMemo(() => groupConversations(filtered), [filtered]);
   const groupKeys = (Object.keys(groups) as (keyof typeof groups)[]).filter((k) => groups[k].length > 0);
 
@@ -284,12 +296,23 @@ function SidebarBody({
 function ProfileMenu({ user, onNavigate }: { user: ShellUser | null; onNavigate?: () => void }) {
   const [open, setOpen] = useState(false);
   const { t } = useI18n();
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
   return (
     <div className="relative">
       <button
         type="button"
         onClick={() => setOpen(!open)}
         aria-expanded={open}
+        aria-haspopup="menu"
         aria-label="Open profile menu"
         className="flex w-full items-center gap-2.5 rounded-[12px] px-2 py-2 text-left transition-colors duration-150 ease-out hover:bg-surface-2"
       >
@@ -366,8 +389,13 @@ export function AppShell({
     if (!drawerOpen) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
     return () => {
       document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
     };
   }, [drawerOpen]);
 
@@ -390,7 +418,12 @@ export function AppShell({
               aria-label="Close menu"
               onClick={() => setDrawerOpen(false)}
             />
-            <aside className="app-sidebar drawer-in fixed inset-y-0 left-0 z-50 flex w-[min(88vw,20rem)] flex-col pt-[env(safe-area-inset-top)] lg:hidden">
+            <aside
+              className="app-sidebar drawer-in fixed inset-y-0 left-0 z-50 flex w-[min(88vw,20rem)] flex-col pt-[env(safe-area-inset-top)] lg:hidden"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Navigation menu"
+            >
               <div className="flex shrink-0 items-center justify-between px-3 pb-2 pt-3">
                 <div className="sidebar-brand min-w-0">
                   <Logo size="md" href="/chat" />

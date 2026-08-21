@@ -1,10 +1,12 @@
 "use client";
 
-// Theme system: dark · light · system + per-user template palettes.
+// Theme system: light (primary/default) · dark · system + per-user template
+// palettes. New visitors, fresh installs and signed-out guests all start in
+// the LIGHT theme — it is the reference implementation of the MATRIX design.
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Monitor, Moon, Sun } from "lucide-react";
 import { rpc } from "@/lib/client/api";
-import { isThemeMode, isThemeTemplateId, type ThemeMode, type ThemeTemplateId } from "@/lib/theme-templates";
+import { DEFAULT_THEME, isThemeMode, isThemeTemplateId, type ThemeMode, type ThemeTemplateId } from "@/lib/theme-templates";
 
 export type Theme = ThemeMode;
 const KEY = "matrix-theme";
@@ -19,9 +21,9 @@ type ThemeCtx = {
 };
 
 const Ctx = createContext<ThemeCtx>({
-  theme: "dark",
+  theme: DEFAULT_THEME,
   template: "default",
-  resolved: "dark",
+  resolved: DEFAULT_THEME === "dark" ? "dark" : "light",
   setTheme: () => {},
   setTemplate: () => {},
 });
@@ -49,14 +51,14 @@ export function ThemeProvider({
   initialTemplate?: ThemeTemplateId;
   persistAccount?: boolean;
 }) {
-  const [theme, setThemeState] = useState<Theme>(initialTheme ?? "dark");
+  const [theme, setThemeState] = useState<Theme>(initialTheme ?? DEFAULT_THEME);
   const [template, setTemplateState] = useState<ThemeTemplateId>(initialTemplate ?? "default");
-  const [resolved, setResolved] = useState<"dark" | "light">(initialTheme === "light" ? "light" : "dark");
+  const [resolved, setResolved] = useState<"dark" | "light">((initialTheme ?? DEFAULT_THEME) === "dark" ? "dark" : "light");
 
   useEffect(() => {
     const storedTheme = localStorage.getItem(KEY);
     const storedTemplate = localStorage.getItem(TEMPLATE_KEY);
-    const nextTheme = initialTheme ?? (isThemeMode(storedTheme) ? storedTheme : "dark");
+    const nextTheme = initialTheme ?? (isThemeMode(storedTheme) ? storedTheme : DEFAULT_THEME);
     const nextTemplate = initialTemplate ?? (isThemeTemplateId(storedTemplate) ? storedTemplate : "default");
     setThemeState(nextTheme);
     setTemplateState(nextTemplate);
@@ -106,13 +108,14 @@ export function useTheme() {
   return useContext(Ctx);
 }
 
-const ORDER: Theme[] = ["dark", "light", "system"];
-const LABELS: Record<Theme, string> = { dark: "Dark", light: "Light", system: "System" };
+const ORDER: Theme[] = ["light", "dark", "system"];
+const LABELS: Record<Theme, string> = { light: "Light", dark: "Dark", system: "System" };
+const ICONS: Record<Theme, typeof Sun> = { light: Sun, dark: Moon, system: Monitor };
 
 export function ThemeToggle({ compact = false }: { compact?: boolean }) {
   const { theme, setTheme } = useTheme();
   const next = ORDER[(ORDER.indexOf(theme) + 1) % ORDER.length];
-  const Icon = theme === "dark" ? Moon : theme === "light" ? Sun : Monitor;
+  const Icon = ICONS[theme];
   return (
     <button
       type="button"

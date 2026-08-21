@@ -12,6 +12,7 @@ import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
 import { describeAuthError } from "@/lib/firebase/auth-errors";
 import { mintSessionCookie, rpc } from "@/lib/client/api";
 import { AuthShell, AuthUnavailable } from "@/components/auth/login-screen";
+import { PasswordInput } from "@/components/password-input";
 import { Alert, Button, Field, Input, Spinner } from "@/components/ui";
 
 function ResetPasswordInner() {
@@ -78,10 +79,10 @@ function ResetPasswordInner() {
     <AuthShell title="Choose a new password" subtitle="Make it a passphrase — 3–4 random words, at least 12 characters.">
       <form onSubmit={handleSubmit} className="space-y-4">
         <Field label="New password" htmlFor="new-password">
-          <Input id="new-password" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <PasswordInput id="new-password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
         </Field>
         <Field label="Confirm new password" htmlFor="confirm-password">
-          <Input id="confirm-password" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
+          <PasswordInput id="confirm-password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
         </Field>
         {error ? <Alert tone="danger">{error}</Alert> : null}
         <Button type="submit" className="w-full" disabled={busy}>{busy ? <Spinner /> : "Update password"}</Button>

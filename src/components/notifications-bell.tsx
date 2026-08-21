@@ -11,6 +11,15 @@ export function NotificationsBell({ placement = "auto" }: { placement?: "up" | "
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
 
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
   async function load() {
     const data = await rpc<Item[]>("notifications_list").catch(() => []);
     setItems(data ?? []);
@@ -32,6 +41,8 @@ export function NotificationsBell({ placement = "auto" }: { placement?: "up" | "
         onClick={() => { setOpen((v) => !v); if (!open) void load(); }}
         className="relative grid h-10 w-10 place-items-center rounded-lg text-ink-2 hover:bg-surface-2 hover:text-ink"
         aria-label={unread ? `${unread} unread notifications` : "Notifications"}
+        aria-expanded={open}
+        aria-haspopup="menu"
       >
         <Bell size={16} />
         {unread ? <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-accent" /> : null}

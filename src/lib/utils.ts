@@ -43,7 +43,7 @@ export function riskColor(level: string): string {
 
 export function scoreLabel(score: number): { label: string; color: string } {
   if (score >= 80) return { label: "Strong", color: "text-success" };
-  if (score >= 60) return { label: "Good", color: "text-teal-600" };
+  if (score >= 60) return { label: "Good", color: "text-accent-2" };
   if (score >= 40) return { label: "Building", color: "text-warning" };
   return { label: "Getting started", color: "text-ink-3" };
 }

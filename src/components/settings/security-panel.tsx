@@ -7,6 +7,7 @@ import { TotpMultiFactorGenerator } from "firebase/auth";
 import QRCode from "qrcode";
 import { fbAuth } from "@/lib/firebase/client";
 import { rpc } from "@/lib/client/api";
+import { PasswordInput } from "@/components/password-input";
 import { Alert, Button, Card, Field, Input, Spinner } from "@/components/ui";
 
 type Factor = { uid: string; factorId: "totp" | "phone"; displayName?: string };
@@ -137,10 +138,10 @@ export function SecurityPanel() {
         <form onSubmit={changePassword} className="mt-4 space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="New password" htmlFor="new-password">
-              <Input id="new-password" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+              <PasswordInput id="new-password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
             </Field>
             <Field label="Confirm new password" htmlFor="confirm-password">
-              <Input id="confirm-password" type="password" autoComplete="new-password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required />
+              <PasswordInput id="confirm-password" autoComplete="new-password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required />
             </Field>
           </div>
           <Button type="submit" disabled={busy}>{busy ? <Spinner /> : "Update password"}</Button>

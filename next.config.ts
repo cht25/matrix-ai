@@ -1,9 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  reactStrictMode: true,
   eslint: { ignoreDuringBuilds: true },
   // Allow the Arena / e2b preview host to load the dev server.
-  allowedDevOrigins: ["*.e2b.app"],
+  allowedDevOrigins: ["*.e2b.app", "*"],
   experimental: {
     serverActions: { bodySizeLimit: "8mb" },
   },
