@@ -1,7 +1,7 @@
 "use client";
 
-// MATRIX registration: create the Auth account, then finish remaining
-// required fields (DOB + birth certificate number) on /onboarding.
+// MATRIX registration: create the Auth account, then go straight into chat.
+// Profile details (name, photo, optional identity) live in Settings.
 
 import { useEffect, useState } from "react";
 import {
@@ -70,7 +70,7 @@ export function RegisterForm() {
       const auth = fbAuth();
       const cred = await createUserWithEmailAndPassword(auth, email, password);
       if (fullName.trim()) await updateProfile(cred.user, { displayName: fullName.trim() });
-      await sendEmailVerification(cred.user, { url: `${window.location.origin}/verify?next=/onboarding` });
+      await sendEmailVerification(cred.user, { url: `${window.location.origin}/verify?next=/chat` });
       const session = await mintSessionCookie();
       window.location.href = postAuthPath(session.onboarding_complete);
     } catch (err) {
@@ -111,9 +111,9 @@ export function RegisterForm() {
   return (
     <div>
       <form onSubmit={submitBasic} className="space-y-4" noValidate>
-        <h1 className="text-lg font-bold text-ink">Create your MATRIX account</h1>
+        <h1 className="text-lg font-semibold text-ink">Create your MATRIX account</h1>
         <p className="text-sm leading-relaxed text-ink-2">
-          After this step we only ask for your date of birth and birth certificate number — not a photo of any document.
+          You can add a photo and extra profile details later in Settings.
         </p>
         <Field label="Full name" htmlFor="full-name">
           <Input id="full-name" autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Your name" required />
@@ -130,7 +130,7 @@ export function RegisterForm() {
             {busy ? <Spinner /> : "Retry session"}
           </Button>
         ) : null}
-        <Button type="submit" className="w-full" disabled={busy}>{busy ? <Spinner /> : "Continue"}</Button>
+        <Button type="submit" className="w-full" disabled={busy}>{busy ? <Spinner /> : "Create account"}</Button>
       </form>
       <Divider />
       <OAuthButtons onGoogle={() => oauth("google")} onFacebook={() => oauth("facebook")} />

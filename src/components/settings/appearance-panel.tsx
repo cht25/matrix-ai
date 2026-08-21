@@ -7,8 +7,8 @@ import { Card } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
 const OPTIONS: { id: Theme; label: string; desc: string; icon: typeof Moon }[] = [
-  { id: "dark", label: "Dark", desc: "Black cyber environment — default", icon: Moon },
-  { id: "light", label: "Light", desc: "Bright editorial paper", icon: Sun },
+  { id: "dark", label: "Dark", desc: "Deep navy — easy on the eyes", icon: Moon },
+  { id: "light", label: "Light", desc: "Soft paper with blue-gray layers", icon: Sun },
   { id: "system", label: "System", desc: "Follow your device setting", icon: Monitor },
 ];
 

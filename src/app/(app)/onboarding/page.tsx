@@ -15,10 +15,10 @@ export default async function OnboardingPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
-        <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Welcome to MATRIX AI </h1>
-        <p className="mt-1 text-ink-3">
-          A few quick steps to set up your safe account. Some steps need a security team review — you can
-          still explore the scam library while you wait.
+        <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Profile verification</h1>
+        <p className="mt-1 text-ink-2">
+          Optional identity details for age verification. You can skip this and chat immediately — edit these
+          anytime from Settings.
         </p>
       </div>
       <OnboardingClient

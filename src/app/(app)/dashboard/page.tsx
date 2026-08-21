@@ -27,7 +27,7 @@ export default async function DashboardPage() {
 
   const recommendations: Recommendation[] = [];
   if (!emailConfirmed) recommendations.push({ text: "Verify your email address to strengthen your account.", href: "/settings?tab=account", cta: "Verify email" });
-  if (profile && !profile.age_verified) recommendations.push({ text: "Complete identity (age) verification to unlock everything.", href: "/onboarding", cta: "Verify identity" });
+  if (profile && !profile.age_verified) recommendations.push({ text: "Add identity details in your profile if you want age verification.", href: "/settings?tab=account", cta: "Edit profile" });
   if (completedLessons === 0) recommendations.push({ text: "Start a course — the fastest way to raise your score.", href: "/courses", cta: "Browse courses" });
   if (!certificates || certificates.length === 0) recommendations.push({ text: "Finish a course and pass its quiz to earn a certificate.", href: "/courses", cta: "Get certified" });
   if (score < 80) recommendations.push({ text: "Turn on two-factor authentication (2FA) on your accounts.", href: "/settings?tab=security", cta: "Security settings" });
@@ -44,7 +44,7 @@ export default async function DashboardPage() {
           </h1>
           <p className="mt-1 text-sm text-ink-2">Your cyber safety snapshot.</p>
         </div>
-        <Link href="/chat" className="inline-flex min-h-11 shrink-0 items-center rounded-lg bg-ink px-3.5 text-sm font-medium text-bg transition-colors hover:bg-ink-2 sm:px-4">
+        <Link href="/chat" className="inline-flex min-h-11 shrink-0 items-center rounded-[10px] bg-accent px-3.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover sm:px-4">
           Open MATRIX AI
         </Link>
       </div>

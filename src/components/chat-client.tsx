@@ -12,10 +12,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Bot, BrainCircuit, Code2, FileCode2, FileSearch, Github, GraduationCap,
-  MonitorPlay, Paperclip, RefreshCcw, Send, ShieldAlert, Sparkles, Square, X,
+  Bot, BrainCircuit, Code2, FileCode2, FileSearch, Github, Globe, GraduationCap,
+  Image as ImageIcon, Lock, MonitorPlay, Paperclip, RefreshCcw, Send, ShieldAlert,
+  Sparkles, Square, WandSparkles, X, Zap,
 } from "lucide-react";
 import { AutoSpeakToggle, ListenButton } from "@/components/chat-speech-controls";
+import { NotificationsBell } from "@/components/notifications-bell";
 import {
   primeSpeech, readAutoSpeakPreference, speakMarkdown, stopSpeech, writeAutoSpeakPreference,
 } from "@/lib/chat-speech";
@@ -32,7 +34,6 @@ import { cn } from "@/lib/utils";
 import type { AgentFile, ChatMode, TextAttachment } from "@/lib/ai/agent";
 import { AgentWorkspace } from "@/components/agent-workspace";
 import { ThemeGallery } from "@/components/theme-gallery";
-import { rpc } from "@/lib/client/api";
 
 type MessageMetadata = {
   mode?: ChatMode;
@@ -58,12 +59,19 @@ const CONNECT_TIMEOUT_MS = 25_000;
 const STREAM_IDLE_TIMEOUT_MS = 45_000;
 
 const SUGGESTIONS = [
-  { icon: <Sparkles size={15} strokeWidth={1.5} />, label: "Plan or brainstorm", prompt: "Help me turn an idea into a clear step-by-step plan." },
-  { icon: <BrainCircuit size={15} strokeWidth={1.5} />, label: "Explain something", prompt: "Explain a difficult topic simply, then give me a practical example." },
-  { icon: <FileSearch size={15} strokeWidth={1.5} />, label: "Analyse a file or image", prompt: null, action: "attach" },
-  { icon: <Code2 size={15} strokeWidth={1.5} />, label: "Build with Agent", prompt: null, href: "/chat?mode=agent" },
-  { icon: <ShieldAlert size={15} strokeWidth={1.5} />, label: "Check something suspicious", prompt: "Help me check whether a message, link or situation is suspicious." },
-  { icon: <GraduationCap size={15} strokeWidth={1.5} />, label: "Learn a new skill", prompt: "Help me learn a useful new skill with a short beginner lesson and an exercise." },
+  { icon: <Sparkles size={16} strokeWidth={1.6} />, label: "Plan or brainstorm", desc: "Turn an idea into steps", prompt: "Help me turn an idea into a clear step-by-step plan." },
+  { icon: <BrainCircuit size={16} strokeWidth={1.6} />, label: "Explain something", desc: "Simple, with an example", prompt: "Explain a difficult topic simply, then give me a practical example." },
+  { icon: <FileSearch size={16} strokeWidth={1.6} />, label: "Analyse a file or image", desc: "Inspect what you attach", prompt: null, action: "attach" },
+  { icon: <Code2 size={16} strokeWidth={1.6} />, label: "Build with Agent", desc: "Preview and push code", prompt: null, href: "/chat?mode=agent" },
+  { icon: <ShieldAlert size={16} strokeWidth={1.6} />, label: "Check something suspicious", desc: "Links, messages, scams", prompt: "Help me check whether a message, link or situation is suspicious." },
+  { icon: <GraduationCap size={16} strokeWidth={1.6} />, label: "Learn a new skill", desc: "A short beginner lesson", prompt: "Help me learn a useful new skill with a short beginner lesson and an exercise." },
+];
+
+const FEATURES = [
+  { icon: <Zap size={14} strokeWidth={1.7} />, title: "Smart & Fast", desc: "Answers in seconds" },
+  { icon: <Lock size={14} strokeWidth={1.7} />, title: "Secure & Private", desc: "Your data stays yours" },
+  { icon: <WandSparkles size={14} strokeWidth={1.7} />, title: "Multi-Model AI", desc: "Automatic routing" },
+  { icon: <ImageIcon size={14} strokeWidth={1.7} />, title: "File & Image Support", desc: "Drop in what you need" },
 ];
 
 const AGENT_SUGGESTIONS = [
@@ -149,7 +157,10 @@ export function ChatClient({
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const imageRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [webSearch, setWebSearch] = useState(false);
+  const [codeHint, setCodeHint] = useState(false);
   const convIdRef = useRef<string | null>(initialConvId);
   const lastAttachmentsRef = useRef<PendingAttachment[]>([]);
   const [autoSpeak, setAutoSpeak] = useState(true);
@@ -492,8 +503,12 @@ export function ChatClient({
   async function send(e?: { preventDefault(): void }, messageOverride?: string) {
     e?.preventDefault();
     const pending = messageOverride ? [] : attachments;
-    const message = (messageOverride ?? input).trim() || (pending.length ? "Review these attached files and help me with them." : "");
+    let message = (messageOverride ?? input).trim() || (pending.length ? "Review these attached files and help me with them." : "");
     if (!message || streaming) return;
+    if (!messageOverride) {
+      if (webSearch) message = `Use up-to-date public knowledge where it helps.\n\n${message}`;
+      if (codeHint) message = `Answer with complete, runnable code when it helps.\n\n${message}`;
+    }
     setInput("");
     lastAttachmentsRef.current = pending;
     setAttachments([]);
@@ -527,6 +542,7 @@ export function ChatClient({
     if (!file || streaming) return;
     setFailure(null);
     if (fileRef.current) fileRef.current.value = "";
+    if (imageRef.current) imageRef.current.value = "";
     const okTypes = ["image/png", "image/jpeg", "image/webp"];
     if (!okTypes.includes(file.type)) {
       const allowedName = /(?:^|\.)(?:txt|md|mdx|json|jsonc|js|jsx|mjs|cjs|ts|tsx|py|html?|css|scss|sass|less|vue|svelte|sql|graphql|ya?ml|toml|xml|env|sh|bash|go|rs|java|kt|php|rb|swift|dart|c|h|cc|cpp|cs)$/i.test(file.name) || /^(?:Dockerfile|Makefile)$/i.test(file.name);
@@ -643,12 +659,12 @@ export function ChatClient({
     >
       {!isTemporary ? (
         <div className="mb-2 flex min-h-12 shrink-0 items-center justify-between gap-3 border-b border-border py-1.5">
-          <div className="inline-flex items-center rounded-lg border border-border bg-surface p-1" aria-label="Conversation mode">
+          <div className="inline-flex items-center rounded-[12px] border border-border bg-surface p-1" aria-label="Conversation mode">
             <button
               type="button"
               onClick={() => switchMode("general")}
               disabled={streaming}
-              className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors", mode === "general" ? "bg-surface-2 text-ink shadow-sm" : "text-ink-3 hover:text-ink")}
+              className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-[8px] px-3 text-xs font-medium transition-colors duration-150 ease-out", mode === "general" ? "bg-surface-2 text-ink shadow-sm" : "text-ink-3 hover:text-ink")}
               aria-pressed={mode === "general"}
             >
               <Bot size={13} /> Chat
@@ -657,27 +673,30 @@ export function ChatClient({
               type="button"
               onClick={() => switchMode("agent")}
               disabled={streaming}
-              className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors", mode === "agent" ? "bg-accent text-white shadow-sm" : "text-ink-3 hover:text-ink")}
+              className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-[8px] px-3 text-xs font-medium transition-colors duration-150 ease-out", mode === "agent" ? "bg-accent text-white shadow-sm" : "text-ink-3 hover:text-ink")}
               aria-pressed={mode === "agent"}
             >
               <Code2 size={13} /> Agent
             </button>
           </div>
-          <div className="flex min-w-0 items-center gap-2">
-            <span title="Coding requests are automatically routed to NVIDIA Nemotron 3 Ultra through OpenRouter" className="hidden max-w-56 truncate text-[10.5px] font-medium uppercase tracking-[0.1em] text-ink-3 sm:block">
+          <div className="flex min-w-0 items-center gap-1 sm:gap-2">
+            <span title="Coding requests are automatically routed to NVIDIA Nemotron 3 Ultra through OpenRouter" className="hidden max-w-52 truncate text-[11px] font-medium text-ink-3 lg:block">
               {mode === "agent" ? "Nemotron 3 Ultra · OpenRouter" : lastModel?.includes("nemotron") ? "Coding detected · Nemotron" : "Automatic model routing"}
             </span>
             {mode === "agent" ? (
               <button
                 type="button"
                 onClick={() => setWorkspaceOpen(true)}
-                className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-border px-2.5 text-xs font-medium text-ink-2 hover:border-border-strong hover:bg-surface-2 hover:text-ink"
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-[10px] border border-border px-2.5 text-xs font-medium text-ink-2 transition-colors hover:border-border-strong hover:bg-surface-2 hover:text-ink"
               >
                 <MonitorPlay size={13} /> Workspace{agentFiles.length ? ` · ${agentFiles.length}` : ""}
               </button>
             ) : (
               <AutoSpeakToggle on={autoSpeak} onToggle={toggleAutoSpeak} onLabel={t("chat.autoSpeakOn")} offLabel={t("chat.autoSpeakOff")} />
             )}
+            <div className="hidden lg:block">
+              <NotificationsBell placement="down" />
+            </div>
           </div>
         </div>
       ) : null}
@@ -691,26 +710,34 @@ export function ChatClient({
 
       <div className="no-scrollbar min-h-0 flex-1 space-y-7 overflow-y-auto overscroll-contain px-0.5 py-2 sm:px-2">
         {messages.length === 0 && !streaming ? (
-          <div className="flex min-h-full flex-col items-center justify-center px-1 py-6 text-center">
+          <div className="flex flex-col items-center px-1 py-6 text-center sm:py-8">
             <div className="mb-5">
               <span className="mb-3 inline-block" aria-hidden="true">
-                <MatrixWordmark className="h-14 w-56 sm:h-16 sm:w-64" />
+                <MatrixWordmark className="h-10 w-40 sm:h-12 sm:w-48" />
               </span>
-              <p className="eyebrow flourish mb-2">
-                {mode === "agent" ? "Plan · Build · Preview · Push" : locale === "bn" ? "একটি সহকারী, সব ধরনের কাজে" : "One assistant for the whole task"}
-              </p>
-              <h1 className="font-display text-[22px] font-semibold tracking-tight text-ink sm:text-3xl">
+              <h1 className="text-[22px] font-semibold tracking-tight text-ink sm:text-[28px]">
                 {mode === "agent" ? "What should we build?" : locale === "bn" ? "আজ কীভাবে সাহায্য করতে পারি?" : "How can I help today?"}
               </h1>
-              <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-ink-2">
+              <p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-ink-2 sm:text-sm">
                 {mode === "agent"
-                  ? "Describe the product or fix, then attach any existing project files. Nemotron 3 Ultra will create reviewable files you can preview and push to GitHub only after approval."
+                  ? "Describe the product or fix, then attach any existing project files. Review before preview or push."
                   : locale === "bn"
-                    ? "লেখা, শেখা, পরিকল্পনা, গবেষণা, প্রযুক্তি, কোডিং ও নিরাপদ ডিজিটাল সহায়তা—বাংলা, Banglish বা English-এ যেকোনো প্রশ্ন করুন।"
-                    : "Ask about writing, learning, planning, research, technology, coding, or safe digital help. Attach the material when you want MATRIX to inspect something specific."}
+                    ? "লেখা, শেখা, পরিকল্পনা, গবেষণা, কোডিং ও নিরাপদ ডিজিটাল সহায়তা।"
+                    : "Ask about writing, learning, planning, research, coding, or safe digital help."}
               </p>
             </div>
-            <div className="grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
+            {mode !== "agent" ? (
+              <div className="mb-5 hidden w-full max-w-2xl grid-cols-2 gap-2 sm:grid lg:grid-cols-4">
+                {FEATURES.map((f) => (
+                  <div key={f.title} className="rounded-[16px] border border-border bg-surface px-3 py-3 text-left">
+                    <span className="text-accent">{f.icon}</span>
+                    <p className="mt-2 text-[13px] font-medium text-ink">{f.title}</p>
+                    <p className="mt-0.5 text-[11px] text-ink-3">{f.desc}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <div className="no-scrollbar grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
               {suggestions.map((s) => (
                 <button
                   key={s.label}
@@ -720,10 +747,13 @@ export function ChatClient({
                     else if ("action" in s && s.action === "attach") fileRef.current?.click();
                     else if (s.prompt) void send(undefined, s.prompt);
                   }}
-                  className="flex min-h-12 items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-left text-[13px] font-medium text-ink-2 transition-colors hover:border-border-strong hover:bg-surface-2 hover:text-ink"
+                  className="suggest-card"
                 >
-                  <span className="text-ink-3" aria-hidden="true">{s.icon}</span>
-                  {s.label}
+                  <span className="mt-0.5 text-accent" aria-hidden="true">{s.icon}</span>
+                  <span className="min-w-0">
+                    <span className="block text-[13px] font-medium text-ink">{s.label}</span>
+                    {"desc" in s && s.desc ? <span className="mt-0.5 block text-[11px] text-ink-3">{s.desc}</span> : null}
+                  </span>
                 </button>
               ))}
             </div>
@@ -739,7 +769,7 @@ export function ChatClient({
                 ) : null}
                 <div className={cn("min-w-0", m.role === "user" ? "max-w-[88%] sm:max-w-[75%]" : "max-w-[96%] flex-1 sm:max-w-none")}>
                   {m.role === "user" ? (
-                    <div className="rounded-lg border border-border bg-surface-2 px-4 py-2.5 text-[14.5px] leading-relaxed text-ink">
+                    <div className="rounded-[16px] border border-border bg-surface-2 px-4 py-2.5 text-[14.5px] leading-relaxed text-ink">
                       <p className="whitespace-pre-wrap break-words">{m.content}</p>
                       {m.metadata?.attachment_names?.length ? (
                         <div className="mt-2 flex flex-wrap gap-1.5 border-t border-border pt-2">
@@ -842,10 +872,7 @@ export function ChatClient({
             ))}
           </div>
         ) : null}
-        <form
-          onSubmit={(e) => void send(e)}
-          className="mx-auto flex max-w-2xl items-end gap-1.5 rounded-xl border border-border-strong bg-surface p-1.5 shadow-[var(--shadow-card)] transition-colors focus-within:border-accent"
-        >
+        <form onSubmit={(e) => void send(e)} className="composer-shell mx-auto max-w-2xl p-3">
           <input
             ref={fileRef}
             type="file"
@@ -853,16 +880,13 @@ export function ChatClient({
             className="sr-only"
             onChange={(e) => void handleFile(e.target.files?.[0])}
           />
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
-            disabled={streaming}
-            aria-label="Attach an image, document, or source-code file"
-            title="Attach an image, document, or source-code file"
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-md text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-40"
-          >
-            <Paperclip size={16} strokeWidth={1.6} />
-          </button>
+          <input
+            ref={imageRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="sr-only"
+            onChange={(e) => void handleFile(e.target.files?.[0])}
+          />
           <Textarea
             ref={textareaRef}
             value={input}
@@ -880,17 +904,51 @@ export function ChatClient({
             rows={1}
             aria-label="Message MATRIX"
             disabled={streaming}
-            className="max-h-36 min-h-11 flex-1 !border-0 !bg-transparent !px-1 !py-2.5 !shadow-none focus:!shadow-none focus:!outline-none focus:!ring-0"
+            className="max-h-36 min-h-11 w-full !border-0 !bg-transparent !px-1 !py-1.5 !shadow-none focus:!shadow-none focus:!outline-none focus:!ring-0"
           />
-          {streaming ? (
-            <Button type="button" variant="ghost" onClick={stop} className="h-11 shrink-0 !px-3" aria-label="Stop generating">
-              <Square size={14} strokeWidth={1.8} /> Stop
-            </Button>
-          ) : (
-            <Button type="submit" disabled={!input.trim() && attachments.length === 0} className="h-11 shrink-0 !px-3.5" aria-label={t("chat.send")}>
-              <Send size={15} strokeWidth={1.7} />
-            </Button>
-          )}
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-0.5">
+              <button type="button" onClick={() => fileRef.current?.click()} disabled={streaming} aria-label="Attach a file" title="Attach a file" className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] text-ink-3 transition-colors duration-150 hover:bg-surface-2 hover:text-ink disabled:opacity-40">
+                <Paperclip size={16} strokeWidth={1.7} />
+              </button>
+              <button type="button" onClick={() => imageRef.current?.click()} disabled={streaming} aria-label="Attach an image" title="Attach an image" className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] text-ink-3 transition-colors duration-150 hover:bg-surface-2 hover:text-ink disabled:opacity-40">
+                <ImageIcon size={16} strokeWidth={1.7} />
+              </button>
+              <button type="button" onClick={() => setWebSearch((v) => !v)} aria-pressed={webSearch} aria-label="Web search" title="Web search" className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors duration-150", webSearch ? "bg-accent-soft text-accent" : "text-ink-3 hover:bg-surface-2 hover:text-ink")}>
+                <Globe size={16} strokeWidth={1.7} />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (mode === "agent") setCodeHint((v) => !v);
+                  else switchMode("agent");
+                }}
+                aria-pressed={mode === "agent" || codeHint}
+                aria-label="Code"
+                title={mode === "agent" ? "Code hint" : "Build with Agent"}
+                className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors duration-150", mode === "agent" || codeHint ? "bg-accent-soft text-accent" : "text-ink-3 hover:bg-surface-2 hover:text-ink")}
+              >
+                <Code2 size={16} strokeWidth={1.7} />
+              </button>
+            </div>
+            {streaming ? (
+              <Button type="button" variant="ghost" onClick={stop} className="h-11 shrink-0 !px-3" aria-label="Stop generating">
+                <Square size={14} strokeWidth={1.8} /> Stop
+              </Button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!input.trim() && attachments.length === 0}
+                aria-label={t("chat.send")}
+                className={cn(
+                  "grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors duration-150 ease-out",
+                  input.trim() || attachments.length > 0 ? "bg-accent text-white hover:bg-accent-hover" : "bg-surface-2 text-ink-3",
+                )}
+              >
+                <Send size={16} strokeWidth={1.8} />
+              </button>
+            )}
+          </div>
         </form>
         <div className="mx-auto mt-2 flex max-w-2xl items-center justify-between gap-2 px-1 pb-1">
           <p className="hidden text-[11px] text-ink-3 sm:block">{mode === "agent" ? "Agent may make mistakes · review files before preview or push" : "MATRIX may make mistakes · verify important information"}</p>

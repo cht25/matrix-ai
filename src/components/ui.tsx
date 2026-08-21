@@ -1,10 +1,6 @@
 import { cn } from "@/lib/utils";
 import { forwardRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 
-// =============================================================================
-// MATRIX primitives — restrained, editorial, monochrome (spec §52–§53).
-// =============================================================================
-
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "outline";
 
 export const Button = forwardRef<
@@ -12,7 +8,7 @@ export const Button = forwardRef<
   ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }
 >(function Button({ variant = "primary", className, children, type = "button", ...props }, ref) {
   const styles: Record<ButtonVariant, string> = {
-    primary: "bg-ink text-bg hover:bg-ink-2 active:bg-ink transition-colors",
+    primary: "bg-accent text-white hover:bg-accent-hover active:bg-accent-2",
     secondary: "bg-surface-2 text-ink hover:bg-surface-3",
     ghost: "text-ink-2 hover:bg-surface-2 hover:text-ink",
     danger: "bg-danger text-white hover:opacity-90",
@@ -23,7 +19,7 @@ export const Button = forwardRef<
       ref={ref}
       type={type}
       className={cn(
-        "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-10",
+        "inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] px-4 py-2 text-sm font-medium transition-colors duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-10",
         styles[variant],
         className,
       )}
@@ -70,7 +66,7 @@ export function Badge({ className, children }: { className?: string; children: R
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded border border-border bg-surface px-2 py-0.5 text-[11px] font-medium tracking-wide text-ink-2",
+        "inline-flex items-center gap-1 rounded-lg border border-border bg-surface-2 px-2 py-0.5 text-[11px] font-medium tracking-wide text-ink-2",
         className,
       )}
     >
@@ -82,13 +78,13 @@ export function Badge({ className, children }: { className?: string; children: R
 export function Progress({ value, className }: { value: number; className?: string }) {
   return (
     <div
-      className={cn("h-1 w-full overflow-hidden rounded-full bg-surface-3", className)}
+      className={cn("h-1.5 w-full overflow-hidden rounded-full bg-surface-3", className)}
       role="progressbar"
       aria-valuenow={value}
       aria-valuemin={0}
       aria-valuemax={100}
     >
-      <div className="h-full rounded-full bg-ink transition-[width] duration-500" style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
+      <div className="h-full rounded-full bg-accent transition-[width] duration-500" style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
     </div>
   );
 }
@@ -100,7 +96,7 @@ export function Alert({ tone = "info", children }: { tone?: "info" | "success" |
     warning: "border-warning/40 bg-warning-soft text-warning",
     danger: "border-danger/40 bg-danger-soft text-danger",
   };
-  return <div className={cn("rounded-lg border px-4 py-3 text-sm leading-relaxed", tones[tone])}>{children}</div>;
+  return <div className={cn("rounded-xl border px-4 py-3 text-sm leading-relaxed", tones[tone])}>{children}</div>;
 }
 
 export function Spinner({ className }: { className?: string }) {
@@ -115,7 +111,7 @@ export function Spinner({ className }: { className?: string }) {
 
 export function EmptyState({ icon, title, body, action }: { icon?: ReactNode; title: string; body?: string; action?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2.5 rounded-xl border border-dashed border-border-strong bg-surface px-6 py-12 text-center">
+    <div className="flex flex-col items-center justify-center gap-2.5 rounded-2xl border border-dashed border-border-strong bg-surface px-6 py-12 text-center">
       {icon ? <div className="text-ink-3">{icon}</div> : null}
       <p className="text-[15px] font-semibold text-ink">{title}</p>
       {body ? <p className="max-w-sm text-sm leading-relaxed text-ink-2">{body}</p> : null}
@@ -128,14 +124,14 @@ export function Menu({ trigger, items }: { trigger: ReactNode; items: { label: s
   return (
     <details className="group relative">
       <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">{trigger}</summary>
-      <div className="card fade-in absolute right-0 z-30 mt-1 w-44 overflow-hidden !rounded-lg !p-1 shadow-[var(--shadow-pop)]">
+      <div className="card fade-in absolute right-0 z-30 mt-1 w-44 overflow-hidden !rounded-xl !p-1 shadow-[var(--shadow-pop)]">
         {items.map((it, i) => (
           <button
             key={i}
             type="button"
             onClick={it.onClick}
             className={cn(
-              "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors",
+              "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors",
               it.danger ? "text-danger hover:bg-danger-soft" : "text-ink hover:bg-surface-2",
             )}
           >

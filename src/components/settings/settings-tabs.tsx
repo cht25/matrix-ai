@@ -10,8 +10,8 @@ export function SettingsTabs({ tabs, active }: { tabs: { id: string; label: stri
           key={t.id}
           href={`/settings?tab=${t.id}`}
           aria-current={active === t.id ? "page" : undefined}
-          className={`min-h-11 shrink-0 whitespace-nowrap rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
-            active === t.id ? "bg-ink text-bg" : "text-ink-2 hover:bg-surface-2 hover:text-ink"
+          className={`min-h-11 shrink-0 whitespace-nowrap rounded-[10px] px-4 py-2 text-sm font-medium transition-colors duration-150 ease-out ${
+            active === t.id ? "bg-accent text-white" : "text-ink-2 hover:bg-surface-2 hover:text-ink"
           }`}
         >
           {t.label}

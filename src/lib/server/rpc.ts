@@ -63,6 +63,7 @@ export async function ensureUserDocuments(
   const existing = await profileRef.get();
   const prev = existing.data();
   const fullName = (displayName || record?.displayName || prev?.full_name || "").toString().slice(0, 120);
+  const photoURL = (record?.photoURL || "").toString().slice(0, 2000);
 
   await profileRef.set(
     {
@@ -83,11 +84,13 @@ export async function ensureUserDocuments(
         address: "",
         country: "",
         phone: "",
-        avatar_url: "",
+        avatar_url: photoURL,
         created_at: nowTs(),
       },
       { merge: true },
     );
+  } else if (!String(prev?.avatar_url ?? "").trim() && photoURL) {
+    await profileRef.set({ avatar_url: photoURL, updated_at: nowTs() }, { merge: true });
   }
   await d.collection("user_security_settings").doc(uid).set(
     {

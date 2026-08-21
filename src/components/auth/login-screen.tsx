@@ -55,7 +55,7 @@ export function AuthShell({ children, title, subtitle }: { children: React.React
           {subtitle ? <p className="mt-1 text-[13px] leading-relaxed text-ink-2">{subtitle}</p> : null}
         </div>
       ) : null}
-      <div className="w-full max-w-sm">{children}</div>
+      <div className="card w-full max-w-sm p-6 sm:p-7">{children}</div>
       <hr className="swash-rule mt-10 w-40" />
       <p className="mt-4 text-[11px] uppercase tracking-[0.18em] text-ink-3">
         For ages 11–17 · THAMJJ13.TOP White Hat Team

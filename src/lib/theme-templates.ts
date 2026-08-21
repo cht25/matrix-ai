@@ -21,8 +21,8 @@ export const THEME_TEMPLATES: ThemeTemplate[] = [
     id: "default",
     name: "MATRIX Default",
     description: "Obsidian ground, steel-blue calligraphy — the original identity.",
-    dark: { bg: "#000104", surface: "#05070f", ink: "#e8eefc", accent: "#3f80ff" },
-    light: { bg: "#f3f5fb", surface: "#ffffff", ink: "#070b18", accent: "#1244d6" },
+    dark: { bg: "#070b14", surface: "#0d1424", ink: "#f8fafc", accent: "#3b82f6" },
+    light: { bg: "#f6f8fc", surface: "#ffffff", ink: "#0f172a", accent: "#2563eb" },
   },
   {
     id: "midnight",

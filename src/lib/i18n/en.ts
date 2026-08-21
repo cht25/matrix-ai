@@ -3,7 +3,7 @@ export const en = {
   "brand.byline": "by THAMJJ13.TOP White Hat Team",
   "nav.home": "Home",
   "nav.dashboard": "Dashboard",
-  "nav.chat": "AI Chat",
+  "nav.chat": "Chat",
   "nav.tempChat": "Temporary Chat",
   "nav.scanner": "Screenshot Scanner",
   "nav.scams": "Scam Library",

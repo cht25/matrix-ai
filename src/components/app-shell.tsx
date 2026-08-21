@@ -1,8 +1,7 @@
 "use client";
 
-// MATRIX application shell — compact all-in-one workspace.
-// Desktop: chat/agent/private modes, searchable recent work and collapsed tools.
-// Mobile: top bar + slide-in drawer + focused bottom navigation.
+// MATRIX application shell — compact workspace with a 276px sidebar on desktop
+// and a slide-out drawer on mobile. Chat / Agent / Private stay first-class.
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
@@ -18,9 +17,12 @@ import { ThemeToggle } from "@/lib/theme";
 import { ToastProvider } from "@/components/toast";
 import { SignOutButton } from "@/components/sign-out-button";
 import { NotificationsBell } from "@/components/notifications-bell";
+import { UserAvatar } from "@/components/avatar";
 import { groupConversations, groupLabel, formatTime, type SidebarConversation } from "@/lib/chat-utils";
 import { useI18n } from "@/lib/i18n/client";
 import { cn } from "@/lib/utils";
+
+type ShellUser = { email: string; fullName: string; avatarUrl?: string };
 
 function useOnline() {
   const [online, setOnline] = useState(true);
@@ -112,13 +114,13 @@ function HistoryList({ conversations, onNavigate }: { conversations: SidebarConv
   return (
     <div className="flex flex-col">
       <div className="relative mb-3">
-        <Search size={13} strokeWidth={1.6} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" aria-hidden="true" />
+        <Search size={14} strokeWidth={1.7} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3" aria-hidden="true" />
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder={t("common.search")}
           aria-label="Search conversations"
-          className="input-base !rounded-md !py-2 pl-8 text-[13px]"
+          className="input-base !rounded-[8px] !py-2 pl-8 text-[13px]"
         />
       </div>
       <nav className="space-y-4 pr-0.5" aria-label="Conversation history">
@@ -128,21 +130,21 @@ function HistoryList({ conversations, onNavigate }: { conversations: SidebarConv
           groupKeys.map((k) => (
             <div key={k}>
               <p className="eyebrow px-1 pb-1.5">{groupLabel(k)}</p>
-              <ul className="space-y-px">
+              <ul className="space-y-0.5">
                 {groups[k].map((c) => (
-                  <li key={c.id} className="group relative flex items-center">
+                  <li key={c.id} className="group relative flex min-w-0 items-center">
                     <Link
                       href={`/chat/${c.id}`}
                       onClick={onNavigate}
                       className={cn(
-                        "flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-[13px] transition-colors",
-                        pathname === `/chat/${c.id}` ? "bg-surface-2 font-medium text-ink" : "text-ink-2 hover:bg-surface-2 hover:text-ink",
+                        "flex min-w-0 flex-1 items-center gap-2 rounded-[10px] py-2 pl-2 pr-1 text-[13px] transition-colors duration-150 ease-out",
+                        pathname === `/chat/${c.id}` ? "bg-accent-soft font-medium text-accent" : "text-ink-2 hover:bg-surface-2 hover:text-ink",
                       )}
                     >
-                      {c.mode === "agent" ? <Code2 size={12} className="shrink-0 text-accent" aria-hidden="true" /> : <MessageSquare size={12} className="shrink-0 text-ink-3" aria-hidden="true" />}
-                      <span className="truncate">{c.title}</span>
+                      {c.mode === "agent" ? <Code2 size={13} className="shrink-0 text-accent" aria-hidden="true" /> : <MessageSquare size={13} className="shrink-0 text-ink-3" aria-hidden="true" />}
+                      <span className="min-w-0 flex-1 truncate">{c.title}</span>
                     </Link>
-                    <span className="pointer-events-none mr-1 hidden shrink-0 text-[10px] text-ink-3 lg:group-hover:inline">
+                    <span className="pointer-events-none mr-0.5 hidden shrink-0 text-[10px] text-ink-3 lg:group-hover:inline">
                       {formatTime(c.updated_at)}
                     </span>
                     <div className="relative shrink-0">
@@ -151,14 +153,14 @@ function HistoryList({ conversations, onNavigate }: { conversations: SidebarConv
                         aria-label="Conversation actions"
                         aria-expanded={openId === c.id}
                         onClick={() => setOpenId(openId === c.id ? null : c.id)}
-                        className="grid h-9 w-9 place-items-center rounded-md text-ink-3 hover:bg-surface-2 hover:text-ink lg:opacity-70 lg:group-hover:opacity-100"
+                        className="grid h-9 w-9 place-items-center rounded-[8px] text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink lg:opacity-0 lg:group-hover:opacity-100 lg:focus:opacity-100"
                       >
                         <MoreVertical size={14} strokeWidth={1.7} />
                       </button>
                       {openId === c.id ? (
                         <>
                           <button type="button" className="fixed inset-0 z-20 cursor-default" aria-hidden="true" onClick={() => setOpenId(null)} />
-                          <div className="card absolute right-0 z-30 mt-1 w-36 !rounded-lg !p-1 text-xs shadow-[var(--shadow-pop)]">
+                          <div className="card absolute right-0 z-30 mt-1 w-36 !rounded-xl !p-1 text-xs shadow-[var(--shadow-pop)]">
                             {renaming === c.id ? (
                               <div className="space-y-1 p-1">
                                 <input
@@ -169,13 +171,13 @@ function HistoryList({ conversations, onNavigate }: { conversations: SidebarConv
                                   className="input-base !py-1 text-xs"
                                   aria-label="New title"
                                 />
-                                <button type="button" onClick={() => void rename(c.id)} className="w-full rounded bg-ink px-2 py-1.5 text-white">{t("common.save")}</button>
+                                <button type="button" onClick={() => void rename(c.id)} className="w-full rounded-[8px] bg-accent px-2 py-1.5 text-white">{t("common.save")}</button>
                               </div>
                             ) : (
                               <>
-                                <button type="button" onClick={() => { setRenaming(c.id); setRenameValue(c.title); }} className="block w-full rounded px-2 py-2 text-left text-ink hover:bg-surface-2">Rename</button>
-                                <button type="button" onClick={() => void archive(c.id)} className="block w-full rounded px-2 py-2 text-left text-ink hover:bg-surface-2">Archive</button>
-                                <button type="button" onClick={() => void remove(c.id)} className="block w-full rounded px-2 py-2 text-left text-danger hover:bg-danger-soft">{t("common.delete")}</button>
+                                <button type="button" onClick={() => { setRenaming(c.id); setRenameValue(c.title); }} className="block w-full rounded-[8px] px-2 py-2 text-left text-ink hover:bg-surface-2">Rename</button>
+                                <button type="button" onClick={() => void archive(c.id)} className="block w-full rounded-[8px] px-2 py-2 text-left text-ink hover:bg-surface-2">Archive</button>
+                                <button type="button" onClick={() => void remove(c.id)} className="block w-full rounded-[8px] px-2 py-2 text-left text-danger hover:bg-danger-soft">{t("common.delete")}</button>
                               </>
                             )}
                           </div>
@@ -211,11 +213,11 @@ function SidebarBody({
   const agentActive = pathname === "/chat" && searchParams.get("mode") === "agent";
   const { t } = useI18n();
   const tools = [
-    { href: "/projects", label: "Projects", icon: <Code2 size={15} strokeWidth={1.6} />, detail: "Files, preview, publish" },
-    { href: "/scanner", label: t("nav.scanner"), icon: <FileSearch size={15} strokeWidth={1.6} />, detail: "Images & suspicious content" },
-    { href: "/scams", label: t("nav.scams"), icon: <ShieldAlert size={15} strokeWidth={1.6} />, detail: "Safety library" },
-    { href: "/courses", label: t("nav.courses"), icon: <GraduationCap size={15} strokeWidth={1.6} />, detail: "Guided learning" },
-    { href: "/report", label: t("nav.report"), icon: <Shield size={15} strokeWidth={1.6} />, detail: "Reporting assistant" },
+    { href: "/projects", label: "Projects", icon: <Code2 size={16} strokeWidth={1.7} />, detail: "Files, preview, publish" },
+    { href: "/scanner", label: t("nav.scanner"), icon: <FileSearch size={16} strokeWidth={1.7} />, detail: "Images & suspicious content" },
+    { href: "/scams", label: t("nav.scams"), icon: <ShieldAlert size={16} strokeWidth={1.7} />, detail: "Safety library" },
+    { href: "/courses", label: t("nav.courses"), icon: <GraduationCap size={16} strokeWidth={1.7} />, detail: "Guided learning" },
+    { href: "/report", label: t("nav.report"), icon: <Shield size={16} strokeWidth={1.7} />, detail: "Reporting assistant" },
   ];
 
   return (
@@ -230,48 +232,48 @@ function SidebarBody({
       <div className="shrink-0 px-3 pb-3">
         <NewChatButton
           onNavigate={onNavigate}
-          className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-ink text-[13px] font-medium text-bg transition-colors hover:bg-ink-2"
+          className="flex min-h-11 w-full items-center justify-center gap-2 rounded-[12px] bg-accent text-[14px] font-medium text-white transition-colors duration-150 ease-out hover:bg-accent-hover"
         >
-          <Plus size={14} strokeWidth={1.8} aria-hidden="true" /> New chat
+          <Plus size={16} strokeWidth={2} aria-hidden="true" /> New chat
         </NewChatButton>
-        <nav className="mt-2 grid grid-cols-3 gap-1" aria-label="Assistant modes">
-          <Link href="/chat" onClick={onNavigate} className={cn("flex min-h-10 flex-col items-center justify-center gap-0.5 rounded-lg text-[10px] font-medium hover:bg-surface-2 hover:text-ink", pathname === "/chat" && !agentActive ? "bg-surface-2 text-ink" : "text-ink-2")}>
-            <MessageSquare size={14} /> Chat
+        <nav className="mt-3 space-y-0.5" aria-label="Assistant modes">
+          <Link href="/chat" onClick={onNavigate} className={cn("nav-item", pathname === "/chat" && !agentActive && "is-active")}>
+            <MessageSquare size={16} strokeWidth={1.7} /> Chat
           </Link>
-          <Link href="/chat?mode=agent" onClick={onNavigate} className={cn("flex min-h-10 flex-col items-center justify-center gap-0.5 rounded-lg text-[10px] font-medium hover:bg-surface-2", agentActive ? "bg-accent-soft text-accent" : "text-ink-2 hover:text-ink")}>
-            <Code2 size={14} /> Agent
+          <Link href="/chat?mode=agent" onClick={onNavigate} className={cn("nav-item", agentActive && "is-active")}>
+            <Code2 size={16} strokeWidth={1.7} /> Agent
           </Link>
-          <Link href="/temporary-chat" onClick={onNavigate} className={cn("flex min-h-10 flex-col items-center justify-center gap-0.5 rounded-lg text-[10px] font-medium hover:bg-surface-2 hover:text-ink", pathname.startsWith("/temporary-chat") ? "bg-surface-2 text-ink" : "text-ink-2")}>
-            <History size={14} /> Private
+          <Link href="/temporary-chat" onClick={onNavigate} className={cn("nav-item", pathname.startsWith("/temporary-chat") && "is-active")}>
+            <History size={16} strokeWidth={1.7} /> Private
           </Link>
         </nav>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3">
         <div className="mb-2 flex items-center justify-between px-1">
-          <p className="eyebrow">Recent work</p>
-          <Link href="/history" onClick={onNavigate} className="text-[10px] font-medium text-ink-3 hover:text-ink">View all</Link>
+          <p className="eyebrow">Recent chats</p>
+          <Link href="/history" onClick={onNavigate} className="text-[11px] font-medium text-ink-3 transition-colors hover:text-ink">View all</Link>
         </div>
         <HistoryList conversations={conversations} onNavigate={onNavigate} />
 
         <details className="group mt-5 border-t border-border pt-3" open={conversations.length === 0}>
-          <summary className="flex min-h-9 cursor-pointer list-none items-center justify-between rounded-md px-1 text-ink-2 hover:text-ink [&::-webkit-details-marker]:hidden">
+          <summary className="flex min-h-9 cursor-pointer list-none items-center justify-between rounded-[8px] px-1 text-ink-2 hover:text-ink [&::-webkit-details-marker]:hidden">
             <span className="eyebrow">More tools</span>
-            <ChevronDown size={13} className="transition-transform group-open:rotate-180" />
+            <ChevronDown size={13} className="transition-transform duration-150 group-open:rotate-180" />
           </summary>
           <nav className="mt-1 space-y-0.5" aria-label="More tools">
             {tools.map((item) => (
-              <Link key={item.href} href={item.href} onClick={onNavigate} className={cn("flex min-h-11 items-center gap-2.5 rounded-lg px-2 transition-colors hover:bg-surface-2", pathname === item.href || pathname.startsWith(item.href + "/") ? "bg-surface-2 text-ink" : "text-ink-2")}>
+              <Link key={item.href} href={item.href} onClick={onNavigate} className={cn("flex min-h-11 items-center gap-2.5 rounded-[10px] px-2 transition-colors duration-150 ease-out hover:bg-surface-2", pathname === item.href || pathname.startsWith(item.href + "/") ? "bg-surface-2 text-ink" : "text-ink-2")}>
                 <span className="text-ink-3">{item.icon}</span>
-                <span className="min-w-0"><span className="block text-[12px] font-medium">{item.label}</span><span className="block truncate text-[10px] text-ink-3">{item.detail}</span></span>
+                <span className="min-w-0"><span className="block text-[13px] font-medium">{item.label}</span><span className="block truncate text-[11px] text-ink-3">{item.detail}</span></span>
               </Link>
             ))}
-            <Link href="/emergency" onClick={onNavigate} className="mt-1 flex min-h-10 items-center gap-2.5 rounded-lg px-2 text-[12px] font-medium text-danger hover:bg-danger-soft"><ShieldAlert size={15} /> Emergency help</Link>
+            <Link href="/emergency" onClick={onNavigate} className="mt-1 flex min-h-10 items-center gap-2.5 rounded-[10px] px-2 text-[13px] font-medium text-danger hover:bg-danger-soft"><ShieldAlert size={16} /> Emergency help</Link>
           </nav>
         </details>
 
         {isAdmin ? (
-          <Link href="/admin" onClick={onNavigate} className="mt-3 flex min-h-10 items-center gap-2.5 rounded-lg border border-border px-2 text-[12px] text-ink-2 hover:bg-surface-2 hover:text-ink"><LayoutGrid size={15} /> {t("nav.admin")}</Link>
+          <Link href="/admin" onClick={onNavigate} className="mt-3 flex min-h-10 items-center gap-2.5 rounded-[10px] border border-border px-2 text-[13px] text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"><LayoutGrid size={16} /> {t("nav.admin")}</Link>
         ) : null}
       </div>
       {footer}
@@ -279,7 +281,7 @@ function SidebarBody({
   );
 }
 
-function ProfileMenu({ user, onNavigate }: { user: { email: string; fullName: string } | null; onNavigate?: () => void }) {
+function ProfileMenu({ user, onNavigate }: { user: ShellUser | null; onNavigate?: () => void }) {
   const [open, setOpen] = useState(false);
   const { t } = useI18n();
   return (
@@ -288,11 +290,10 @@ function ProfileMenu({ user, onNavigate }: { user: { email: string; fullName: st
         type="button"
         onClick={() => setOpen(!open)}
         aria-expanded={open}
-        className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-surface-2"
+        aria-label="Open profile menu"
+        className="flex w-full items-center gap-2.5 rounded-[12px] px-2 py-2 text-left transition-colors duration-150 ease-out hover:bg-surface-2"
       >
-        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-border-strong bg-surface-2 text-xs font-semibold text-ink">
-          {(user?.fullName || user?.email || "U").slice(0, 1).toUpperCase()}
-        </span>
+        <UserAvatar src={user?.avatarUrl} name={user?.fullName || user?.email} size={32} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] font-medium text-ink">{user?.fullName || "User"}</span>
           <span className="block truncate text-[11px] text-ink-3">{user?.email}</span>
@@ -301,9 +302,10 @@ function ProfileMenu({ user, onNavigate }: { user: { email: string; fullName: st
       {open ? (
         <>
           <button type="button" className="fixed inset-0 z-20 cursor-default" aria-hidden="true" onClick={() => setOpen(false)} />
-          <div className="card fade-in absolute bottom-full left-0 z-30 mb-1 w-56 !rounded-lg !p-1.5 shadow-[var(--shadow-pop)]">
+          <div className="card fade-in absolute bottom-full left-0 z-30 mb-1 w-56 !rounded-xl !p-1.5 shadow-[var(--shadow-pop)]">
             {[
               { label: t("nav.dashboard"), href: "/dashboard" },
+              { label: "Edit profile", href: "/settings?tab=account" },
               { label: "GitHub integration", href: "/settings?tab=integrations" },
               { label: t("nav.security"), href: "/security" },
               { label: t("nav.settings"), href: "/settings" },
@@ -314,12 +316,13 @@ function ProfileMenu({ user, onNavigate }: { user: { email: string; fullName: st
                 key={it.href}
                 href={it.href}
                 onClick={() => { setOpen(false); onNavigate?.(); }}
-                className="block rounded-md px-3 py-2.5 text-sm text-ink transition-colors hover:bg-surface-2"
+                className="block rounded-[8px] px-3 py-2.5 text-sm text-ink transition-colors hover:bg-surface-2"
               >
                 {it.label}
               </Link>
             ))}
             <div className="my-1 border-t border-border" />
+            <div className="px-1 py-1"><ThemeToggle /></div>
             <SignOutButton label={t("nav.logout")} />
           </div>
         </>
@@ -328,13 +331,9 @@ function ProfileMenu({ user, onNavigate }: { user: { email: string; fullName: st
   );
 }
 
-function ShellFooter({ user, onNavigate }: { user: { email: string; fullName: string } | null; onNavigate?: () => void }) {
+function ShellFooter({ user, onNavigate }: { user: ShellUser | null; onNavigate?: () => void }) {
   return (
     <div className="shrink-0 border-t border-border px-3 py-2">
-      <div className="mb-1 flex items-center justify-end gap-1">
-        <NotificationsBell />
-        <ThemeToggle compact />
-      </div>
       <ProfileMenu user={user} onNavigate={onNavigate} />
     </div>
   );
@@ -346,7 +345,7 @@ export function AppShell({
   isAdmin,
   children,
 }: {
-  user: { email: string; fullName: string } | null;
+  user: ShellUser | null;
   conversations: SidebarConversation[];
   isAdmin: boolean;
   children: ReactNode;
@@ -375,7 +374,7 @@ export function AppShell({
   return (
     <ToastProvider>
       <div className="min-h-dvh lg:flex">
-        <aside className="app-sidebar fixed inset-y-0 left-0 z-40 hidden w-64 lg:block">
+        <aside className="app-sidebar fixed inset-y-0 left-0 z-40 hidden w-[276px] lg:block">
           <SidebarBody
             conversations={conversations}
             isAdmin={isAdmin}
@@ -387,7 +386,7 @@ export function AppShell({
           <>
             <button
               type="button"
-              className="fade-in fixed inset-0 z-40 bg-black/60 backdrop-blur-sm lg:hidden"
+              className="fade-in fixed inset-0 z-40 bg-[#070B14]/50 backdrop-blur-sm lg:hidden"
               aria-label="Close menu"
               onClick={() => setDrawerOpen(false)}
             />
@@ -396,7 +395,7 @@ export function AppShell({
                 <div className="sidebar-brand min-w-0">
                   <Logo size="md" href="/chat" />
                 </div>
-                <button type="button" onClick={() => setDrawerOpen(false)} aria-label="Close menu" className="grid h-11 w-11 place-items-center rounded-md text-ink-2 hover:bg-surface-2">
+                <button type="button" onClick={() => setDrawerOpen(false)} aria-label="Close menu" className="grid h-11 w-11 place-items-center rounded-[10px] text-ink-2 hover:bg-surface-2">
                   <X size={16} strokeWidth={1.6} />
                 </button>
               </div>
@@ -413,14 +412,14 @@ export function AppShell({
           </>
         ) : null}
 
-        <header className="app-glass sticky top-0 z-30 flex h-[calc(3.5rem+env(safe-area-inset-top))] items-end border-b border-border lg:hidden">
+        <header className="app-glass sticky top-0 z-30 flex h-[calc(3.5rem+env(safe-area-inset-top))] items-end lg:hidden">
           <div className="flex h-14 w-full items-center justify-between gap-2 px-2">
           <div className="flex min-w-0 items-center gap-0.5">
             <button
               type="button"
               onClick={() => setDrawerOpen(true)}
               aria-label="Open menu"
-              className="grid h-11 w-11 place-items-center rounded-md text-ink-2 hover:bg-surface-2"
+              className="grid h-11 w-11 place-items-center rounded-[10px] text-ink-2 hover:bg-surface-2"
             >
               <Menu size={18} strokeWidth={1.6} />
             </button>
@@ -430,11 +429,12 @@ export function AppShell({
             <AiStatus className="hidden sm:inline-flex" />
           </div>
           <div className="flex items-center gap-0.5">
+            <NotificationsBell placement="down" />
             <Link
               href="/temporary-chat"
               aria-label={t("nav.tempChat")}
               className={cn(
-                "grid h-11 w-11 place-items-center rounded-md",
+                "grid h-11 w-11 place-items-center rounded-[10px]",
                 pathname.startsWith("/temporary-chat") ? "bg-surface-2 text-ink" : "text-ink-2 hover:bg-surface-2",
               )}
             >
@@ -442,7 +442,7 @@ export function AppShell({
             </Link>
             <NewChatButton
               ariaLabel={t("chat.new")}
-              className="grid h-11 w-11 place-items-center rounded-md text-ink-2 hover:bg-surface-2"
+              className="grid h-11 w-11 place-items-center rounded-[10px] text-ink-2 hover:bg-surface-2"
             >
               <Plus size={16} strokeWidth={1.6} />
             </NewChatButton>
@@ -458,12 +458,25 @@ export function AppShell({
 
         <div
           className={cn(
-            "min-w-0 flex-1 lg:pl-64",
+            "min-w-0 flex-1 lg:pl-[276px]",
             immersive
               ? "flex h-[calc(100dvh-3.5rem-env(safe-area-inset-top))] flex-col overflow-hidden pb-[calc(var(--app-bottom-nav)+env(safe-area-inset-bottom))] lg:h-dvh lg:pb-0"
               : "pb-[calc(var(--app-bottom-nav)+env(safe-area-inset-bottom))] lg:pb-0",
           )}
         >
+          {!immersive ? (
+            <div className="hidden h-12 shrink-0 items-center justify-end gap-1 border-b border-border px-4 lg:flex">
+              <NotificationsBell placement="down" />
+              <ThemeToggle compact />
+              <Link
+                href="/settings?tab=account"
+                aria-label="Edit profile"
+                className="ml-1 grid h-11 w-11 place-items-center rounded-[10px] text-ink-2 transition-colors hover:bg-surface-2"
+              >
+                <UserAvatar src={user?.avatarUrl} name={user?.fullName || user?.email} size={28} />
+              </Link>
+            </div>
+          ) : null}
           <div
             className={cn(
               immersive

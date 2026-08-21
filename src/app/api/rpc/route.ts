@@ -24,6 +24,26 @@ type Handler = (d: ReturnType<typeof adminDb>, user: SessionUser, body: Record<s
 const str = (v: unknown, fallback = "") => (typeof v === "string" ? v : fallback);
 const bool = (v: unknown, fallback = false) => (typeof v === "boolean" ? v : fallback);
 
+function isAllowedAvatarUrl(url: string): boolean {
+  if (!url) return true;
+  if (url.startsWith("data:image/jpeg;base64,") || url.startsWith("data:image/png;base64,") || url.startsWith("data:image/webp;base64,")) {
+    return url.length <= 180_000;
+  }
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return false;
+    const host = parsed.hostname;
+    return (
+      host === "res.cloudinary.com" ||
+      host.endsWith(".googleusercontent.com") ||
+      host.endsWith(".fbcdn.net") ||
+      host.endsWith(".fbsbx.com")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>;
   try {
@@ -231,6 +251,11 @@ const ACTIONS: Record<string, Handler> = {
     if (typeof b.school_name === "string") patch.school_name = b.school_name.trim().slice(0, 120);
     if (typeof b.class_grade === "string") patch.class_grade = b.class_grade.trim().slice(0, 40);
     if (typeof b.country === "string" && b.country) patch.country = b.country.slice(0, 2).toUpperCase();
+    if (typeof b.avatar_url === "string") {
+      const url = b.avatar_url.trim();
+      if (url && !isAllowedAvatarUrl(url)) throw new RpcError("AVATAR_INVALID", 400);
+      patch.avatar_url = url.slice(0, 180_000);
+    }
     // Sensitive columns (date_of_birth / age_verified*) are NOT patchable here —
     // only complete_profile / review_identity_verification may set them.
     await d.collection("profiles").doc(u.uid).set(patch, { merge: true });

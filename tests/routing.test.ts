@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { internalLocation, isAuthPage, isPublic, pathMatches } from "../src/lib/routing";
+import { internalLocation, isAuthPage, isPublic, pathMatches, postAuthDestination } from "../src/lib/routing";
 
 describe("pathMatches", () => {
   it("treats '/' as exact — never a prefix of every URL", () => {

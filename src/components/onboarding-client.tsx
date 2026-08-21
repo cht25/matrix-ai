@@ -297,7 +297,7 @@ function ResendEmail() {
   async function resend() {
     const user = fbAuth().currentUser;
     if (!user?.email) return;
-    await sendEmailVerification(user, { url: `${window.location.origin}/verify?next=/onboarding` }).catch(() => {});
+    await sendEmailVerification(user, { url: `${window.location.origin}/verify?next=/settings` }).catch(() => {});
     setSent(true);
   }
   return sent ? <p className="mt-2 text-sm font-medium text-success">Resent ✓ check your inbox.</p> : (

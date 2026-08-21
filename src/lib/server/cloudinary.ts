@@ -15,7 +15,7 @@ import crypto from "node:crypto";
 import { v2 as cloudinary } from "cloudinary";
 import { env, isCloudinaryConfigured } from "@/lib/env";
 
-export const UPLOAD_FOLDERS = ["security-screenshots", "identity-documents"] as const;
+export const UPLOAD_FOLDERS = ["security-screenshots", "identity-documents", "avatars"] as const;
 export type UploadFolder = (typeof UPLOAD_FOLDERS)[number];
 
 function sdk() {
@@ -37,6 +37,7 @@ export type UploadSignature = {
   folder: string;
   publicId: string;
   signature: string;
+  deliveryType: "authenticated" | "upload";
 };
 
 /**
@@ -51,10 +52,10 @@ export function createUploadSignature(uid: string, kind: UploadFolder, filename:
   const folder = `${kind}/${uid}`;
   const publicId = `${Date.now()}-${safeName || "image"}`;
   const timestamp = Math.floor(Date.now() / 1000);
-  const signature = c.utils.api_sign_request(
-    { folder, public_id: publicId, timestamp, type: "authenticated" },
-    env.cloudinary.apiSecret,
-  );
+  const deliveryType: UploadSignature["deliveryType"] = kind === "avatars" ? "upload" : "authenticated";
+  const toSign: Record<string, string | number> = { folder, public_id: publicId, timestamp };
+  if (deliveryType === "authenticated") toSign.type = "authenticated";
+  const signature = c.utils.api_sign_request(toSign, env.cloudinary.apiSecret);
   return {
     uploadUrl: `https://api.cloudinary.com/v1_1/${env.cloudinary.cloudName}/image/upload`,
     cloudName: env.cloudinary.cloudName,
@@ -63,6 +64,7 @@ export function createUploadSignature(uid: string, kind: UploadFolder, filename:
     folder,
     publicId,
     signature,
+    deliveryType,
   };
 }
 

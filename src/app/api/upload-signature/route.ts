@@ -20,7 +20,11 @@ export async function POST(req: NextRequest) {
   if (!isCloudinaryConfigured()) return NextResponse.json({ error: "UPLOADS_NOT_CONFIGURED" }, { status: 503 });
 
   const body = (await req.json().catch(() => ({}))) as { kind?: string; filename?: string };
-  const kind = body.kind === "identity" ? "identity-documents" : body.kind === "screenshot" ? "security-screenshots" : null;
+  const kind =
+    body.kind === "identity" ? "identity-documents" :
+    body.kind === "screenshot" ? "security-screenshots" :
+    body.kind === "avatar" ? "avatars" :
+    null;
   if (!kind) return NextResponse.json({ error: "KIND_INVALID" }, { status: 400 });
 
   const signature = createUploadSignature(user.uid, kind as UploadFolder, typeof body.filename === "string" ? body.filename : "");

@@ -28,7 +28,7 @@ export function AutoSpeakToggle({
       aria-pressed={on}
       title={on ? onLabel : offLabel}
       className={cn(
-        "inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors",
+        "inline-flex min-h-9 items-center gap-1.5 rounded-[10px] border px-2.5 text-xs font-medium transition-colors duration-150 ease-out",
         on ? "border-border bg-surface-2 text-ink" : "border-border text-ink-3 hover:border-border-strong hover:bg-surface-2 hover:text-ink",
       )}
     >

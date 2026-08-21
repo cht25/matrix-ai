@@ -7,7 +7,7 @@ import { rpc } from "@/lib/client/api";
 
 type Item = { id: string; title: string; body: string; link: string; read_at: string | null; created_at: string };
 
-export function NotificationsBell() {
+export function NotificationsBell({ placement = "auto" }: { placement?: "up" | "down" | "auto" }) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
 
@@ -39,7 +39,7 @@ export function NotificationsBell() {
       {open ? (
         <>
           <button type="button" className="fixed inset-0 z-20 cursor-default" aria-hidden="true" onClick={() => setOpen(false)} />
-          <div className="card absolute bottom-full right-0 z-30 mb-1 w-72 !rounded-lg !p-2 shadow-[var(--shadow-pop)]">
+          <div className={placement === "down" ? "card absolute right-0 top-full z-30 mt-1 w-72 !rounded-xl !p-2 shadow-[var(--shadow-pop)]" : "card absolute bottom-full right-0 z-30 mb-1 w-72 !rounded-xl !p-2 shadow-[var(--shadow-pop)]"}>
             <div className="mb-1 flex items-center justify-between px-2 py-1">
               <p className="text-xs font-semibold text-ink">Notifications</p>
               {unread ? <button type="button" className="text-[11px] text-accent" onClick={() => void markAll()}>Mark all read</button> : null}
