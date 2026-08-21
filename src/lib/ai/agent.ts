@@ -174,6 +174,52 @@ export function parseAgentResponse(raw: string): { reply: string; files: AgentFi
   };
 }
 
+/** True when the model stopped mid-file (open MATRIX_FILE or odd fence count). */
+export function agentGenerationIncomplete(raw: string): boolean {
+  if (!raw.trim()) return true;
+  const opens = raw.match(/<<<MATRIX_FILE\b/g)?.length ?? 0;
+  const closes = raw.match(/<<<END_MATRIX_FILE>>>/g)?.length ?? 0;
+  if (opens > closes) return true;
+  const fences = raw.match(/```/g)?.length ?? 0;
+  if (fences % 2 === 1) return true;
+  return false;
+}
+
+/** Turn a chat code snippet into publishable static files (no upload required). */
+export function filesFromSnippet(lang: string, code: string): AgentFile[] {
+  const content = code.replace(/\s+$/, "") + "\n";
+  const l = (lang || "text").toLowerCase();
+  if (l === "html" || l === "htm" || /^\s*<!DOCTYPE/i.test(content) || /<html[\s>]/i.test(content)) {
+    return [{ path: "index.html", content, language: "html" }];
+  }
+  if (l === "css" || l === "scss" || l === "less") {
+    return [
+      { path: "styles.css", content, language: "css" },
+      {
+        path: "index.html",
+        content: `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8"/>\n<meta name="viewport" content="width=device-width, initial-scale=1"/>\n<link rel="stylesheet" href="styles.css"/>\n<title>MATRIX site</title>\n</head>\n<body></body>\n</html>\n`,
+        language: "html",
+      },
+    ];
+  }
+  if (["js", "javascript", "mjs", "ts"].includes(l)) {
+    return [
+      { path: "app.js", content, language: "javascript" },
+      {
+        path: "index.html",
+        content: `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8"/>\n<meta name="viewport" content="width=device-width, initial-scale=1"/>\n<title>MATRIX site</title>\n</head>\n<body>\n<script src="app.js"></script>\n</body>\n</html>\n`,
+        language: "html",
+      },
+    ];
+  }
+  const escaped = content.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return [{
+    path: "index.html",
+    content: `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8"/>\n<meta name="viewport" content="width=device-width, initial-scale=1"/>\n<title>Snippet</title>\n<style>body{font:14px/1.5 ui-monospace,monospace;margin:1.5rem;white-space:pre-wrap}</style>\n</head>\n<body>${escaped}</body>\n</html>\n`,
+    language: "html",
+  }];
+}
+
 export function formatAttachmentContext(attachments: TextAttachment[]): string {
   if (!attachments.length) return "";
   const blocks = attachments.map((file) => {

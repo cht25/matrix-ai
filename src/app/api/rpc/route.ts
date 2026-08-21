@@ -121,6 +121,13 @@ const ACTIONS: Record<string, Handler> = {
   project_set_env: (d, u, b) =>
     projects.setProjectEnv(d, u, { project_id: z.string().min(1).parse(b.project_id), env: z.record(z.string()).parse(b.env ?? {}) }),
   project_publish: (d, u, b) => deploy.publishProject(d, u, { project_id: z.string().min(1).parse(b.project_id), slug: b.slug ? str(b.slug) : undefined }),
+  snippet_publish: (d, u, b) =>
+    deploy.publishSnippet(d, u, {
+      lang: str(b.lang, "html"),
+      code: z.string().min(1).max(400_000).parse(b.code),
+      title: b.title ? str(b.title) : undefined,
+      slug: b.slug ? str(b.slug) : undefined,
+    }),
   project_unpublish: (d, u, b) => deploy.unpublishProject(d, u, z.string().min(1).parse(b.project_id)),
   project_deployment: (d, u, b) => deploy.getDeployment(d, u, z.string().min(1).parse(b.project_id)),
   project_add_domain: (d, u, b) => deploy.addProjectDomain(d, u, { project_id: z.string().min(1).parse(b.project_id), domain: z.string().min(3).parse(b.domain) }),
@@ -142,6 +149,26 @@ const ACTIONS: Record<string, Handler> = {
       modules: Array.isArray(b.modules) ? (b.modules as never) : undefined,
     }),
   admin_course_get: (d, u, b) => rpc.getAdminCourse(d, u, z.string().min(1).parse(b.id)),
+  admin_seed_rbac: async (d, u) => {
+    if ((await rpc.adminRoleOf(d, u.uid)) !== "super_admin") throw new RpcError("PERMISSION_DENIED", 403);
+    return rpc.seedAdminRbac(d);
+  },
+  admin_ai_usage: async (d, u) => {
+    if (!(await rpc.hasPermission(d, u.uid, "ai.view"))) throw new RpcError("PERMISSION_DENIED", 403);
+    const snap = await d.collection("ai_usage_logs").get();
+    return snap.docs
+      .sort(descDoc("created_at"))
+      .slice(0, 80)
+      .map((e) => ({
+        id: e.id,
+        user_id: e.data().user_id ?? "",
+        model: e.data().model ?? "",
+        request_type: e.data().request_type ?? "",
+        status: e.data().status ?? "",
+        latency_ms: e.data().latency_ms ?? 0,
+        created_at: e.data().created_at?.toDate?.().toISOString() ?? "",
+      }));
+  },
   admin_live_sites: async (d, u) => {
     if (!(await rpc.isAdmin(d, u.uid))) throw new RpcError("PERMISSION_DENIED", 403);
     return deploy.listLiveSites(d);

@@ -5,30 +5,50 @@ import { useRouter } from "next/navigation";
 import { rpc, RpcCallError } from "@/lib/client/api";
 import { Alert, Button, Field, Input, Spinner } from "@/components/ui";
 
-export function AdminSetupForm() {
+export function AdminSetupForm({ seedOnly = false }: { seedOnly?: boolean }) {
   const router = useRouter();
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setMsg(null);
+    setOk(null);
     try {
-      await rpc("admin_bootstrap", { key });
-      router.push("/admin");
-      router.refresh();
+      if (seedOnly) {
+        await rpc("admin_seed_rbac");
+        setOk("Permission matrix seeded. Open the admin panel.");
+        router.refresh();
+      } else {
+        await rpc("admin_bootstrap", { key });
+        router.push("/admin");
+        router.refresh();
+      }
     } catch (err) {
       const code = err instanceof RpcCallError ? err.code : "BOOTSTRAP_FAILED";
       const map: Record<string, string> = {
         BOOTSTRAP_NOT_CONFIGURED: "ADMIN_BOOTSTRAP_KEY is not set on the server.",
         INVALID_BOOTSTRAP_KEY: "That bootstrap key is not correct.",
         BOOTSTRAP_CLOSED: "An administrator already exists.",
+        PERMISSION_DENIED: "Only a super_admin can seed the permission matrix.",
       };
       setMsg(map[code] ?? code);
+    } finally {
       setBusy(false);
     }
+  }
+
+  if (seedOnly) {
+    return (
+      <form onSubmit={submit} className="card space-y-4 p-5">
+        {msg ? <Alert tone="danger">{msg}</Alert> : null}
+        {ok ? <Alert tone="info">{ok}</Alert> : null}
+        <Button type="submit" disabled={busy}>{busy ? <Spinner /> : "Seed admin permissions"}</Button>
+      </form>
+    );
   }
 
   return (

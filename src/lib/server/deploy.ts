@@ -26,6 +26,22 @@ async function ownedProject(d: Db, user: SessionUser, projectId: string) {
   return { ref, data: doc.data()! };
 }
 
+export async function publishSnippet(
+  d: Db,
+  user: SessionUser,
+  p: { lang?: string; code: string; title?: string; slug?: string },
+) {
+  const code = p.code.trim();
+  if (!code) throw new RpcError("NO_FILES", 400);
+  if (code.length > 400_000) throw new RpcError("FILE_TOO_LARGE", 400);
+  const { filesFromSnippet } = await import("@/lib/ai/agent");
+  const { applyProjectFiles, ensureProject } = await import("@/lib/server/projects");
+  const files = filesFromSnippet(p.lang ?? "html", code);
+  const proj = await ensureProject(d, user, { title: (p.title || "Snippet site").slice(0, 80) });
+  await applyProjectFiles(d, user, { project_id: proj.id, files, source: "user", title: p.title });
+  return publishProject(d, user, { project_id: proj.id, slug: p.slug });
+}
+
 export async function publishProject(
   d: Db,
   user: SessionUser,

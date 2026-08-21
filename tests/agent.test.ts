@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isCodingRequest, parseAgentResponse, safeAgentPath } from "../src/lib/ai/agent";
+import { agentGenerationIncomplete, filesFromSnippet, isCodingRequest, parseAgentResponse, safeAgentPath } from "../src/lib/ai/agent";
 import { OPENROUTER_MODELS, OpenRouterProvider } from "../src/lib/ai/openrouter";
 
 const originalFetch = globalThis.fetch;
@@ -60,6 +60,18 @@ describe("Agent artifact protocol", () => {
   it("strips dangling protocol markers from the reply", () => {
     const parsed = parseAgentResponse("See below.\n\n<<<MATRIX_FILE path=\"index.html\">>>\n<h1>Hi</h1>\n");
     expect(parsed.reply).not.toContain("MATRIX_FILE");
+  });
+
+  it("detects truncated MATRIX_FILE output", () => {
+    expect(agentGenerationIncomplete('<<<MATRIX_FILE path="index.html">>>\n<html>')).toBe(true);
+    expect(agentGenerationIncomplete('<<<MATRIX_FILE path="index.html">>>\n<html></html>\n<<<END_MATRIX_FILE>>>')).toBe(false);
+  });
+
+  it("turns a snippet into publishable files without an upload", () => {
+    const html = filesFromSnippet("html", "<h1>Hi</h1>");
+    expect(html[0].path).toBe("index.html");
+    const css = filesFromSnippet("css", "body{margin:0}");
+    expect(css.some((f) => f.path === "index.html")).toBe(true);
   });
 });
 
