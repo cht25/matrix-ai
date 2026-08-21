@@ -54,7 +54,7 @@ the browser or an AI prompt.
 | Storage | **Cloudinary** (free tier) — server-signed uploads, private (authenticated) assets only |
 | Authorization | Firestore **security rules** + a server-side RPC layer (`src/lib/server/rpc.ts`) that ports every Postgres `SECURITY DEFINER` function |
 | Backend/API | Next.js route handlers (Node runtime, Admin SDK) |
-| AI | **Groq** for general chat/vision + **OpenRouter NVIDIA Nemotron 3 Ultra** (`nvidia/nemotron-3-ultra-550b-a55b`) for auto-detected coding and Agent mode; both behind `/api/ai` |
+| AI | **Groq** for general chat/vision + **OpenRouter NVIDIA Nemotron 3 Ultra** (`nvidia/nemotron-3-ultra-550b-a55b:free`; override with `OPENROUTER_CODING_MODEL` for a paid/custom route) for auto-detected coding and Agent mode; both behind `/api/ai` |
 | i18n | English + Bangla dictionaries (architecture ready for more) |
 | Tests | Vitest (AI pipeline, PII, classification, file validation, age rules, env config) |
 
@@ -241,7 +241,7 @@ Whichever you choose, remember to:
 | `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | server only | Private image storage (screenshots, ID docs) |
 | `GROQ_API_KEY` | server only | General chat + vision gateway → Groq |
 | `OPENROUTER_API_KEY` | server only | Coding auto-routing + Agent → OpenRouter |
-| `OPENROUTER_CODING_MODEL` | server only | Optional coding-model override; defaults to NVIDIA Nemotron 3 Ultra |
+| `OPENROUTER_CODING_MODEL` | server only | Optional coding-model override; defaults to `nvidia/nemotron-3-ultra-550b-a55b:free` |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | server only | GitHub OAuth App for Agent-mode repository access |
 | `GITHUB_TOKEN_ENCRYPTION_KEY` | server only | Encrypts GitHub tokens at rest (32+ random characters) |
 | `GITHUB_OAUTH_CALLBACK_URL` | server only | Exact OAuth callback (`https://host/api/github/callback`) |

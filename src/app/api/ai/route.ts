@@ -21,7 +21,9 @@ import { verifySession, type SessionUser } from "@/lib/firebase/session";
 import { redactPII, containsCredentials, leakedPII } from "@/lib/ai/pii";
 import { classify } from "@/lib/ai/domain";
 import { createProvider, MODELS, type AIMessage, type AIProvider } from "@/lib/ai/groq";
-import { createCodingProvider, OPENROUTER_MODELS } from "@/lib/ai/openrouter";
+import { AI_CONFIG, createAIRoutes, logAIConfiguration, type AIRouteTarget } from "@/lib/ai/config";
+import { completeWithFallback, streamWithFallback } from "@/lib/ai/executor";
+import { AIProviderError, logProviderFailure, providerPublicCode } from "@/lib/ai/provider-error";
 import { agentGenerationIncomplete, formatAttachmentContext, isCodingRequest, parseAgentResponse, safeAgentPath, type AgentFile, type ChatMode, type TextAttachment } from "@/lib/ai/agent";
 import { buildAgentSystemMessages, buildSystemMessages, validateOutput, buildSummaryPrompt } from "@/lib/ai/prompts";
 import { isThemeIntent, THEME_GALLERY_REPLY_BN, THEME_GALLERY_REPLY_EN } from "@/lib/theme-intent";
@@ -43,8 +45,42 @@ const RATE_LIMITS: Record<string, { perMinute: number; perDay: number }> = {
 
 type Db = ReturnType<typeof adminDb>;
 
-function json(obj: unknown, status = 200) {
-  return NextResponse.json(obj, { status });
+function json(obj: unknown, status = 200, requestId?: string) {
+  return NextResponse.json(obj, {
+    status,
+    headers: requestId ? { "X-MATRIX-Request-ID": requestId } : undefined,
+  });
+}
+
+function providerStatus(error: unknown): number {
+  if (error instanceof AIProviderError) {
+    if (error.type === "invalid_request") return 400;
+    if (error.type === "timeout") return 504;
+    if (error.type === "provider_unavailable" || error.type === "rate_limit" || error.type === "billing") return 503;
+  }
+  return 502;
+}
+
+function requestIdFrom(body: Record<string, unknown>): string {
+  const value = typeof body.request_id === "string" ? body.request_id.trim() : "";
+  return /^[a-zA-Z0-9._:-]{8,100}$/.test(value) ? value : crypto.randomUUID();
+}
+
+async function claimRequest(d: Db, userId: string, requestId: string): Promise<boolean> {
+  try {
+    await d.collection("ai_request_dedup").doc(`${userId}_${requestId}`).create({
+      user_id: userId,
+      request_id: requestId,
+      created_at: nowTs(),
+    });
+    return true;
+  } catch (error) {
+    const code = String((error as { code?: unknown })?.code ?? "").toLowerCase();
+    if (code.includes("already") || code === "6") return false;
+    // An idempotency log outage must not make the AI gateway unavailable.
+    console.error("[MATRIX] AI request de-duplication check failed; continuing.", { requestId, code: code || "unknown" });
+    return true;
+  }
 }
 
 async function getUser(req: NextRequest): Promise<SessionUser | null> {
@@ -97,16 +133,23 @@ async function checkRateLimit(d: Db, userId: string, kind: "chat" | "scan" | "su
   }
 }
 
-async function logUsage(d: Db, userId: string, model: string, requestType: string, tokenUsage: unknown, latencyMs: number, status: string) {
-  await d.collection("ai_usage_logs").add({
-    user_id: userId,
-    model,
-    request_type: requestType,
-    token_usage: tokenUsage ?? {},
-    latency_ms: latencyMs,
-    status,
-    created_at: nowTs(),
-  });
+async function logUsage(d: Db, userId: string, model: string, requestType: string, tokenUsage: unknown, latencyMs: number, status: string, requestId?: string) {
+  try {
+    await d.collection("ai_usage_logs").add({
+      user_id: userId,
+      model,
+      request_type: requestType,
+      token_usage: tokenUsage ?? {},
+      latency_ms: latencyMs,
+      status,
+      ...(requestId ? { request_id: requestId } : {}),
+      created_at: nowTs(),
+    });
+  } catch (error) {
+    // Observability must not turn a successful provider response into a chat
+    // failure. Keep the diagnostic small and do not log request contents.
+    console.error("[MATRIX] AI usage log write failed.", { requestId: requestId ?? "none", error: error instanceof Error ? error.message.slice(0, 120) : "unknown" });
+  }
 }
 
 async function logSafety(d: Db, userId: string | null, eventType: string, detail: string) {
@@ -163,6 +206,7 @@ async function countUserMessages(d: Db, conversationId: string): Promise<number>
 
 async function finalizeChat(d: Db, opts: {
   provider: AIProvider;
+  providerName?: string;
   user: SessionUser;
   conversationId: string;
   isTemporary: boolean;
@@ -177,10 +221,11 @@ async function finalizeChat(d: Db, opts: {
   codingDetected: boolean;
   files?: AgentFile[];
   projectId?: string | null;
+  requestId?: string;
 }) {
   const {
-    provider, user, conversationId, isTemporary, message, redactedMessage, reply,
-    history, redaction, started, model, mode, codingDetected, files = [], projectId = null,
+    provider, providerName, user, conversationId, isTemporary, message, redactedMessage, reply,
+    history, redaction, started, model, mode, codingDetected, files = [], projectId = null, requestId,
   } = opts;
   const convRef = d.collection("conversations").doc(conversationId);
 
@@ -190,6 +235,7 @@ async function finalizeChat(d: Db, opts: {
     metadata: {
       mode,
       model,
+      ...(providerName ? { provider: providerName } : {}),
       coding_detected: codingDetected,
       ...(files.length ? { artifacts: files } : {}),
       ...(projectId ? { project_id: projectId } : {}),
@@ -203,7 +249,7 @@ async function finalizeChat(d: Db, opts: {
     const count = await countUserMessages(d, conversationId);
     if (count >= 10 && count % 10 === 0) {
       try {
-        const sum = await provider.chat({ model, messages: [{ role: "user", content: buildSummaryPrompt(history.slice(-6)) }], maxTokens: 300 });
+        const sum = await provider.chat({ model, messages: [{ role: "user", content: buildSummaryPrompt(history.slice(-6)) }], maxTokens: 300, requestId });
         await d.collection("conversation_summaries").doc(conversationId).set({
           conversation_id: conversationId,
           summary: sum.content,
@@ -229,6 +275,7 @@ async function finalizeChat(d: Db, opts: {
             { role: "user", content: redactedMessage },
           ],
           maxTokens: 60,
+          requestId,
         });
         const fact = mem.content.trim();
         if (fact && fact !== "NONE" && fact.length < 160) {
@@ -247,7 +294,7 @@ async function finalizeChat(d: Db, opts: {
     }
   }
 
-  await logUsage(d, user.uid, model, "chat", {}, Date.now() - started, "ok");
+  await logUsage(d, user.uid, model, "chat", {}, Date.now() - started, "ok", requestId);
 }
 
 function normaliseTextAttachments(value: unknown): TextAttachment[] {
@@ -268,13 +315,15 @@ function normaliseTextAttachments(value: unknown): TextAttachment[] {
 
 async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown>) {
   const started = Date.now();
+  const requestId = requestIdFrom(body);
   const message = typeof body.message === "string" ? body.message.trim() : "";
   const conversationId = typeof body.conversation_id === "string" ? body.conversation_id : null;
   const isTemporary = body.is_temporary === true;
   const requestedMode: ChatMode = body.mode === "agent" && !isTemporary ? "agent" : "general";
   let mode = requestedMode;
   const attachments = normaliseTextAttachments(body.attachments);
-  const wantStream = body.stream === true && mode !== "agent";
+  const requestedStream = body.stream === true;
+  let wantStream = requestedStream && mode !== "agent";
   const regenerate = body.regenerate === true;
   const reuseUser = body.reuse_user === true || regenerate;
   const preferredLanguage: "en" | "bn" | undefined = body.language === "bn" ? "bn" : body.language === "en" ? "en" : undefined;
@@ -307,9 +356,13 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     return json({ reply, conversation_id: convId, theme_gallery: true, metadata: { action: "theme_gallery" } });
   }
 
-  if (!message) return json({ error: "MESSAGE_REQUIRED" }, 400);
-  if (message.length > 12_000) return json({ error: "MESSAGE_TOO_LONG" }, 400);
-  if (reuseUser && !conversationId) return json({ error: "CONVERSATION_NOT_FOUND" }, 404);
+  if (!message) return json({ error: "MESSAGE_REQUIRED" }, 400, requestId);
+  if (message.length > 12_000) return json({ error: "MESSAGE_TOO_LONG" }, 400, requestId);
+  if (reuseUser && !conversationId) return json({ error: "CONVERSATION_NOT_FOUND" }, 404, requestId);
+
+  if (!(await claimRequest(d, user.uid, requestId))) {
+    return json({ error: "DUPLICATE_REQUEST" }, 409, requestId);
+  }
 
   const rate = await checkRateLimit(d, user.uid, "chat");
   if (!rate.ok) {
@@ -323,6 +376,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     const conv = await d.collection("conversations").doc(convId).get();
     if (!conv.exists || conv.data()!.user_id !== user.uid) return json({ error: "CONVERSATION_NOT_FOUND" }, 404);
     mode = conv.data()!.mode === "agent" && !isTemporary ? "agent" : "general";
+    wantStream = requestedStream && mode !== "agent";
   } else {
     const title = message.replace(/\s+/g, " ").slice(0, 60);
     const created = await d.collection("conversations").add({
@@ -362,7 +416,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const classification = classify(redaction.redacted);
   if (classification.harmful) {
     await logSafety(d, user.uid, "harmful_request", classification.harmful_category ?? "harmful");
-    await logUsage(d, user.uid, "none", "chat", {}, Date.now() - started, "refused");
+    await logUsage(d, user.uid, "none", "chat", {}, Date.now() - started, "refused", requestId);
     const refusal = preferredLanguage === "bn" || /[\u0980-\u09ff]/.test(message)
       ? "কারও ক্ষতি করা বা অনুমতি ছাড়া অন্যের সিস্টেমে ঢোকার নির্দেশনা আমি দিতে পারি না। তবে একই বিষয় নিরাপদভাবে শেখা, নিজের ডিভাইস বা অ্যাকাউন্ট রক্ষা করা, সমস্যা থেকে পুনরুদ্ধার করা, অথবা বৈধ ল্যাবে অনুশীলনে আমি সাহায্য করতে পারি।"
       : classification.refusal!;
@@ -377,15 +431,16 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   }
 
   // --- prompt construction + automatic model routing --------------------------
-  // Agent mode always uses Nemotron. In General mode, obvious coding work is
-  // auto-detected and routed to the same coding model, but preview/push tools
-  // remain unavailable until the user explicitly opens Agent mode.
+  // Agent mode and obvious coding work use OpenRouter first. A transient
+  // OpenRouter failure is retried once, then safely moved to Groq. General
+  // conversation remains Groq-only so routing is deterministic.
   const codingDetected = mode === "agent" || isCodingRequest(message, attachments);
-  const provider = codingDetected ? createCodingProvider() : createProvider();
-  const selectedModel = codingDetected ? OPENROUTER_MODELS.coding : MODELS.chat;
-  if (!provider) {
-    await logUsage(d, user.uid, "none", "chat", {}, Date.now() - started, "error");
-    return json({ error: codingDetected ? "CODING_MODEL_NOT_CONFIGURED" : "AI_GATEWAY_NOT_CONFIGURED" }, 503);
+  const preferFallback = body.prefer_fallback === true;
+  const targets = createAIRoutes(codingDetected, preferFallback);
+  const selectedModel = targets[0]?.model ?? (codingDetected ? AI_CONFIG.coding.model : AI_CONFIG.general.model);
+  if (!targets.length) {
+    await logUsage(d, user.uid, "none", "chat", {}, Date.now() - started, "error", requestId);
+    return json({ error: codingDetected ? "CODING_MODEL_NOT_CONFIGURED" : "AI_GATEWAY_NOT_CONFIGURED", conversation_id: convId }, 503, requestId);
   }
 
   // Context: summary + recent messages + safe memory + RAG
@@ -426,15 +481,16 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     ...(attachmentContext ? [{ role: "system" as const, content: attachmentContext }] : []),
     ...(codingDetected && mode === "general" ? [{
       role: "system" as const,
-      content: "A coding task was automatically detected, so NVIDIA Nemotron 3 Ultra is handling this response. Give accurate, complete code and filenames, but do not emit MATRIX_FILE artifact blocks: live preview and GitHub push are available only in Agent mode.",
+      content: "A coding task was automatically detected and is being handled by MATRIX coding routing. Give accurate, complete code and filenames, but do not emit MATRIX_FILE artifact blocks: live preview and GitHub push are available only in Agent mode.",
     }] : []),
     { role: "user", content: redaction.redacted },
   ];
 
   // --- Provider streaming path ------------------------------------------------
-  if (wantStream && mode !== "agent" && provider.streamChat) {
+  if (wantStream && mode !== "agent" && targets[0]?.client.streamChat) {
     let done = false;
     let full = "";
+    let activeTarget: AIRouteTarget = targets[0];
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         const emit = (obj: Record<string, unknown>) => {
@@ -446,8 +502,21 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
         };
         let window = "";
         try {
-          emit({ conversation_id: convId, mode, model: selectedModel, coding_detected: codingDetected });
-          for await (const delta of provider.streamChat!({ model: selectedModel, messages, temperature: codingDetected ? 0.3 : 0.5, maxTokens: codingDetected ? 3200 : 1600 })) {
+          emit({ conversation_id: convId, mode, model: activeTarget.model, provider: activeTarget.provider, coding_detected: codingDetected });
+          for await (const item of streamWithFallback(
+            targets,
+            {
+              messages,
+              temperature: codingDetected ? 0.3 : 0.5,
+              maxTokens: codingDetected ? 3200 : 1600,
+              requestId,
+            },
+            (target, fallback) => {
+              activeTarget = target;
+              if (fallback) emit({ model: target.model, provider: target.provider, fallback: true });
+            },
+          )) {
+            const delta = item.delta;
             // Per-delta output safety + PII leak filtering.
             const probe = (window + delta).slice(-400);
             const check = validateOutput(probe);
@@ -461,31 +530,33 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
           if (!full.trim()) throw new Error("EMPTY_AI_RESPONSE");
           done = true;
           await finalizeChat(d, {
-            provider, user, conversationId: convId, isTemporary, message,
+            provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
             redactedMessage: redaction.redacted, reply: full, history, redaction, started,
-            model: selectedModel, mode, codingDetected,
+            model: activeTarget.model, mode, codingDetected, requestId,
           });
           emit({
             done: true,
             conversation_id: convId,
             pii_redacted: !redaction.safe,
             mode,
-            model: selectedModel,
+            model: activeTarget.model,
+            provider: activeTarget.provider,
             coding_detected: codingDetected,
           });
         } catch (e) {
           const msg = e instanceof Error ? e.message : "stream error";
           if (msg !== "CLIENT_DISCONNECTED") {
-            await logUsage(d, user.uid, selectedModel, "chat", {}, Date.now() - started, "error");
+            logProviderFailure(e, requestId);
+            await logUsage(d, user.uid, activeTarget.model, "chat", {}, Date.now() - started, "error", requestId);
           }
           // Persist whatever actually streamed so Stop / disconnect doesn't
           // throw the reply away — the client can keep it on screen too.
           if (full && !done) {
             try {
               await finalizeChat(d, {
-                provider, user, conversationId: convId, isTemporary, message,
+                provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
                 redactedMessage: redaction.redacted, reply: full, history, redaction, started,
-                model: selectedModel, mode, codingDetected,
+                model: activeTarget.model, mode, codingDetected, requestId,
               });
               done = true;
             } catch {
@@ -494,7 +565,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
           }
           if (msg !== "CLIENT_DISCONNECTED") {
             try {
-              emit({ error: "STREAM_FAILED", conversation_id: convId });
+              emit({ error: providerPublicCode(e), conversation_id: convId });
             } catch {
               /* client gone */
             }
@@ -510,6 +581,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache, no-transform",
         "X-Accel-Buffering": "no",
+        "X-MATRIX-Request-ID": requestId,
       },
     });
   }
@@ -517,38 +589,44 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   // --- Non-streaming path (Agent returns structured file artifacts) ------------
   let rawReply: string;
   let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  let activeTarget: AIRouteTarget = targets[0];
   try {
-    const result = await provider.chat({
-      model: selectedModel,
+    const result = await completeWithFallback(targets, {
       messages,
       temperature: mode === "agent" ? 0.25 : 0.5,
       maxTokens: mode === "agent" ? 16384 : codingDetected ? 4096 : 1600,
+      requestId,
     });
-    rawReply = result.content;
-    usage = result.usage;
-    if (!rawReply.trim()) throw new Error("EMPTY_AI_RESPONSE");
+    activeTarget = result.target;
+    rawReply = result.response.content;
+    usage = result.response.usage;
 
     // Continue when the model hits the token cap mid-file so Agent does not
     // return truncated HTML/JS. Up to 3 extra turns, concatenated.
     if (mode === "agent") {
-      let incomplete = result.finishReason === "length" || agentGenerationIncomplete(rawReply);
+      let incomplete = result.response.finishReason === "length" || agentGenerationIncomplete(rawReply);
       let continuations = 0;
       while (incomplete && continuations < 3) {
         continuations += 1;
-        const cont = await provider.chat({
-          model: selectedModel,
-          messages: [
-            ...messages,
-            { role: "assistant", content: rawReply },
-            {
-              role: "user",
-              content:
-                "Continue from the exact character where you stopped. Do not restart the answer. Finish every open MATRIX_FILE block with complete file contents and <<<END_MATRIX_FILE>>>. No placeholders or omitted sections.",
-            },
-          ],
-          temperature: 0.2,
-          maxTokens: 16384,
-        });
+        const continuation = await completeWithFallback(
+          [activeTarget, ...targets.filter((target) => target !== activeTarget)],
+          {
+            messages: [
+              ...messages,
+              { role: "assistant", content: rawReply },
+              {
+                role: "user",
+                content:
+                  "Continue from the exact character where you stopped. Do not restart the answer. Finish every open MATRIX_FILE block with complete file contents and <<<END_MATRIX_FILE>>>. No placeholders or omitted sections.",
+              },
+            ],
+            temperature: 0.2,
+            maxTokens: 16384,
+            requestId,
+          },
+        );
+        activeTarget = continuation.target;
+        const cont = continuation.response;
         if (!cont.content.trim()) break;
         rawReply += cont.content;
         usage = {
@@ -559,9 +637,10 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
         incomplete = cont.finishReason === "length" || agentGenerationIncomplete(rawReply);
       }
     }
-  } catch {
-    await logUsage(d, user.uid, selectedModel, "chat", {}, Date.now() - started, "error");
-    return json({ error: "AI_GATEWAY_ERROR" }, 502);
+  } catch (error) {
+    logProviderFailure(error, requestId);
+    await logUsage(d, user.uid, activeTarget?.model ?? selectedModel, "chat", {}, Date.now() - started, "error", requestId);
+    return json({ error: providerPublicCode(error), conversation_id: convId }, providerStatus(error), requestId);
   }
 
   let files: AgentFile[] = [];
@@ -599,9 +678,9 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   }
 
   await finalizeChat(d, {
-    provider, user, conversationId: convId, isTemporary, message,
+    provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
     redactedMessage: redaction.redacted, reply, history, redaction, started,
-    model: selectedModel, mode, codingDetected, files, projectId,
+    model: activeTarget.model, mode, codingDetected, files, projectId, requestId,
   });
   return json({
     reply,
@@ -611,10 +690,13 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     refused: false,
     pii_redacted: !redaction.safe,
     mode,
-    model: selectedModel,
+    model: activeTarget.model,
+    provider: activeTarget.provider,
+    fallback: codingDetected && activeTarget.provider === "Groq",
     coding_detected: codingDetected,
     usage,
-  });
+    request_id: requestId,
+  }, 200, requestId);
 }
 
 // ---------------------------------------------------------------------------
@@ -622,6 +704,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
 // ---------------------------------------------------------------------------
 async function handleScan(d: Db, user: SessionUser, body: Record<string, unknown>) {
   const started = Date.now();
+  const requestId = requestIdFrom(body);
   const storagePath = typeof body.storage_path === "string" ? body.storage_path.trim() : "";
   if (!storagePath) return json({ error: "STORAGE_PATH_REQUIRED" }, 400);
 
@@ -646,7 +729,7 @@ async function handleScan(d: Db, user: SessionUser, body: Record<string, unknown
   }
 
   const provider = createProvider();
-  if (!provider) return json({ error: "AI_GATEWAY_NOT_CONFIGURED" }, 503);
+  if (!provider) return json({ error: "AI_GATEWAY_NOT_CONFIGURED" }, 503, requestId);
 
   const dataUrl = `data:${check.mime};base64,${Buffer.from(bytes).toString("base64")}`;
 
@@ -665,18 +748,19 @@ async function handleScan(d: Db, user: SessionUser, body: Record<string, unknown
       messages: [{ role: "user", content: prompt }],
       imageDataUrl: dataUrl,
       maxTokens: 1200,
+      requestId,
     });
     reply = result.content;
     usage = result.usage;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "unknown";
-    await logUsage(d, user.uid, MODELS.vision, "scan", {}, Date.now() - started, "error");
-    return json({ error: "AI_GATEWAY_ERROR", detail: msg }, 502);
+    logProviderFailure(e, requestId);
+    await logUsage(d, user.uid, MODELS.vision, "scan", {}, Date.now() - started, "error", requestId);
+    return json({ error: providerPublicCode(e) }, providerStatus(e), requestId);
   }
 
   if (agentReference) {
-    await logUsage(d, user.uid, MODELS.vision, "scan", usage, Date.now() - started, "ok");
-    return json({ reply, reference: true });
+    await logUsage(d, user.uid, MODELS.vision, "scan", usage, Date.now() - started, "ok", requestId);
+    return json({ reply, reference: true, request_id: requestId }, 200, requestId);
   }
 
   const riskMatch = reply.match(/\b(critical|high|medium|low)\b/i);
@@ -696,8 +780,8 @@ async function handleScan(d: Db, user: SessionUser, body: Record<string, unknown
     created_at: nowTs(),
   });
 
-  await logUsage(d, user.uid, MODELS.vision, "scan", usage, Date.now() - started, "ok");
-  return json({ analysis_id: analysis.id, risk_level: risk, confidence, reply });
+  await logUsage(d, user.uid, MODELS.vision, "scan", usage, Date.now() - started, "ok", requestId);
+  return json({ analysis_id: analysis.id, risk_level: risk, confidence, reply, request_id: requestId }, 200, requestId);
 }
 
 // ---------------------------------------------------------------------------
@@ -705,21 +789,29 @@ async function handleScan(d: Db, user: SessionUser, body: Record<string, unknown
 // reach the AI provider. Used by the UI status indicator and /api/health.
 // ---------------------------------------------------------------------------
 async function handleHealth(mode: ChatMode = "general") {
-  const provider = mode === "agent" ? createCodingProvider() : createProvider();
-  if (!provider) return json({ status: "unconfigured", mode }, 503);
-  const ok = await provider.healthCheck();
-  if (!ok) return json({ status: "unavailable", mode }, 503);
-  return json({
-    status: "online",
-    mode,
-    chat_model: mode === "agent" ? OPENROUTER_MODELS.coding : MODELS.chat,
-  });
+  const targets = createAIRoutes(mode === "agent");
+  if (!targets.length) return json({ status: "unconfigured", mode }, 503);
+  for (let i = 0; i < targets.length; i += 1) {
+    const target = targets[i];
+    if (await target.client.healthCheck()) {
+      return json({
+        status: "online",
+        mode,
+        provider: target.provider,
+        chat_model: target.model,
+        fallback: i > 0,
+      });
+    }
+  }
+  return json({ status: "unavailable", mode, chat_model: targets[0].model }, 503);
 }
 
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 export async function POST(req: NextRequest) {
+  const requestId = crypto.randomUUID();
+  logAIConfiguration();
   try {
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const action = body.action;
@@ -735,7 +827,7 @@ export async function POST(req: NextRequest) {
     if (action === "scan") return await handleScan(d, user, body);
     return json({ error: "UNKNOWN_ACTION" }, 400);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "internal error";
-    return json({ error: "INTERNAL", detail: msg.slice(0, 300) }, 500);
+    logProviderFailure(e, requestId);
+    return json({ error: "INTERNAL" }, 500, requestId);
   }
 }
