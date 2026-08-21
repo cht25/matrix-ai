@@ -22,7 +22,7 @@ import { redactPII, containsCredentials, leakedPII } from "@/lib/ai/pii";
 import { classify } from "@/lib/ai/domain";
 import { createProvider, MODELS, type AIMessage, type AIProvider } from "@/lib/ai/groq";
 import { createCodingProvider, OPENROUTER_MODELS } from "@/lib/ai/openrouter";
-import { formatAttachmentContext, isCodingRequest, parseAgentResponse, safeAgentPath, type AgentFile, type ChatMode, type TextAttachment } from "@/lib/ai/agent";
+import { agentGenerationIncomplete, formatAttachmentContext, isCodingRequest, parseAgentResponse, safeAgentPath, type AgentFile, type ChatMode, type TextAttachment } from "@/lib/ai/agent";
 import { buildAgentSystemMessages, buildSystemMessages, validateOutput, buildSummaryPrompt } from "@/lib/ai/prompts";
 import { isThemeIntent, THEME_GALLERY_REPLY_BN, THEME_GALLERY_REPLY_EN } from "@/lib/theme-intent";
 import { validateImageUpload } from "@/lib/ai/upload-validation";
@@ -522,11 +522,43 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
       model: selectedModel,
       messages,
       temperature: mode === "agent" ? 0.25 : 0.5,
-      maxTokens: mode === "agent" ? 8192 : codingDetected ? 3200 : 1600,
+      maxTokens: mode === "agent" ? 16384 : codingDetected ? 4096 : 1600,
     });
     rawReply = result.content;
     usage = result.usage;
     if (!rawReply.trim()) throw new Error("EMPTY_AI_RESPONSE");
+
+    // Continue when the model hits the token cap mid-file so Agent does not
+    // return truncated HTML/JS. Up to 3 extra turns, concatenated.
+    if (mode === "agent") {
+      let incomplete = result.finishReason === "length" || agentGenerationIncomplete(rawReply);
+      let continuations = 0;
+      while (incomplete && continuations < 3) {
+        continuations += 1;
+        const cont = await provider.chat({
+          model: selectedModel,
+          messages: [
+            ...messages,
+            { role: "assistant", content: rawReply },
+            {
+              role: "user",
+              content:
+                "Continue from the exact character where you stopped. Do not restart the answer. Finish every open MATRIX_FILE block with complete file contents and <<<END_MATRIX_FILE>>>. No placeholders or omitted sections.",
+            },
+          ],
+          temperature: 0.2,
+          maxTokens: 16384,
+        });
+        if (!cont.content.trim()) break;
+        rawReply += cont.content;
+        usage = {
+          promptTokens: usage.promptTokens + cont.usage.promptTokens,
+          completionTokens: usage.completionTokens + cont.usage.completionTokens,
+          totalTokens: usage.totalTokens + cont.usage.totalTokens,
+        };
+        incomplete = cont.finishReason === "length" || agentGenerationIncomplete(rawReply);
+      }
+    }
   } catch {
     await logUsage(d, user.uid, selectedModel, "chat", {}, Date.now() - started, "error");
     return json({ error: "AI_GATEWAY_ERROR" }, 502);

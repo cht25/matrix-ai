@@ -13,6 +13,7 @@ const SECTIONS = [
   { href: "/admin/courses", label: "Courses" },
   { href: "/admin/scams", label: "Scam library" },
   { href: "/admin/security", label: "Security" },
+  { href: "/admin/ai", label: "AI usage" },
   { href: "/admin/audit-logs", label: "Audit logs" },
   { href: "/admin/sites", label: "Published sites" },
   { href: "/admin/setup", label: "Setup" },

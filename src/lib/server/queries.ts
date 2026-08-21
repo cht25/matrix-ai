@@ -381,13 +381,7 @@ export async function getScannerData(d: Db, uid: string) {
 // Admin pages: permission matrix for nav gating
 // ---------------------------------------------------------------------------
 export async function getAdminPermissions(d: Db, uid: string) {
-  if (!(await isAdmin(d, uid))) return [] as string[];
-  const assignment = await d.collection("admin_role_assignments").doc(uid).get();
-  if (!assignment.exists) return [];
-  const roleId = assignment.data()!.role_id as string;
-  const links = await d.collection("admin_role_permissions").where("role_id", "==", roleId).get();
-  const permIds = links.docs.map((l) => l.id.split("__")[1]).filter(Boolean);
-  if (permIds.length === 0) return [];
-  const docs = await d.getAll(...permIds.map((id) => d.collection("admin_permissions").doc(id)));
-  return docs.filter((p) => p.exists).map((p) => p.data()!.code as string);
+  // Same source of truth as RPC `has_permission` / `listAdminPermissionCodes`:
+  // super_admin always gets the full matrix even if `admin_role_permissions` was never seeded.
+  return listAdminPermissionCodes(d, uid);
 }

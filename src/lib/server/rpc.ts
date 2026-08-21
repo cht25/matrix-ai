@@ -358,10 +358,45 @@ export async function bootstrapAdmin(d: Db, user: SessionUser, key: string) {
     assigned_by: user.uid,
     created_at: nowTs(),
   });
+  await seedAdminRbac(d);
   const auth = (await import("firebase-admin/auth")).getAuth();
   await auth.setCustomUserClaims(user.uid, { admin: true, role: "super_admin" });
   await logAudit(d, user.uid, "admin_bootstrap", "admin_role_assignments", user.uid, "first super_admin");
   return { role: "super_admin" };
+}
+
+/** Idempotent seed of roles + permission codes so non-super roles have links. */
+export async function seedAdminRbac(d: Db) {
+  const roles = [
+    { id: "super_admin", name: "Super admin" },
+    { id: "support_admin", name: "Support" },
+    { id: "auditor", name: "Auditor" },
+  ];
+  for (const role of roles) {
+    await d.collection("admin_roles").doc(role.id).set({ name: role.name, updated_at: nowTs() }, { merge: true });
+  }
+  for (const code of ALL_ADMIN_PERMISSION_CODES) {
+    await d.collection("admin_permissions").doc(code).set({ code, updated_at: nowTs() }, { merge: true });
+    await d.collection("admin_role_permissions").doc(`super_admin__${code}`).set({
+      role_id: "super_admin",
+      permission_id: code,
+    }, { merge: true });
+  }
+  const support = ["users.view", "verification.review", "consent.review", "reports.view"];
+  for (const code of support) {
+    await d.collection("admin_role_permissions").doc(`support_admin__${code}`).set({
+      role_id: "support_admin",
+      permission_id: code,
+    }, { merge: true });
+  }
+  const audit = ["audit.view", "ai.view", "security.view"];
+  for (const code of audit) {
+    await d.collection("admin_role_permissions").doc(`auditor__${code}`).set({
+      role_id: "auditor",
+      permission_id: code,
+    }, { merge: true });
+  }
+  return true;
 }
 
 export async function adminSetUserRole(d: Db, actor: SessionUser, p: { uid: string; role: string }) {

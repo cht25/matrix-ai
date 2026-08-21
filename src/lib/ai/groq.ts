@@ -26,6 +26,7 @@ export type AIProviderResponse = {
   content: string;
   model: string;
   usage: { promptTokens: number; completionTokens: number; totalTokens: number };
+  finishReason?: string;
 };
 
 export interface AIProvider {
@@ -110,7 +111,7 @@ export class GroqProvider implements AIProvider {
     }
 
     const data = (await res.json()) as {
-      choices: { message: { content?: string | null } }[];
+      choices: { message: { content?: string | null }; finish_reason?: string }[];
       model: string;
       usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
     };
@@ -118,6 +119,7 @@ export class GroqProvider implements AIProvider {
     return {
       content: data.choices[0]?.message?.content ?? "",
       model: data.model,
+      finishReason: data.choices[0]?.finish_reason,
       usage: {
         promptTokens: data.usage?.prompt_tokens ?? 0,
         completionTokens: data.usage?.completion_tokens ?? 0,

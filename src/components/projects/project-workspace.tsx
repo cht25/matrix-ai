@@ -267,7 +267,27 @@ export function ProjectWorkspace({
           <div className="flex h-full flex-col">
             <div className="flex min-h-11 shrink-0 items-center justify-between gap-2 border-b border-border bg-surface-2/60 px-3">
               <p className="text-xs text-ink-3">{framework ? "Framework files detected — static preview uses index.html only." : preview.message}</p>
-              <button type="button" onClick={() => setPreviewKey((k) => k + 1)} className="inline-flex min-h-8 items-center gap-1.5 rounded-md px-2 text-xs text-ink-2 hover:bg-surface"><RefreshCcw size={12} /> Refresh</button>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const html = files.find((f) => /\.html?$/i.test(f.path))?.content ?? files[0]?.content ?? "";
+                    void navigator.clipboard.writeText(html).then(() => setMsg("Copied.")).catch(() => {});
+                  }}
+                  className="inline-flex min-h-8 items-center gap-1.5 rounded-md px-2 text-xs text-ink-2 hover:bg-surface"
+                >
+                  Copy
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void publish()}
+                  disabled={busy || !project}
+                  className="inline-flex min-h-8 items-center gap-1.5 rounded-md px-2 text-xs text-ink-2 hover:bg-surface disabled:opacity-40"
+                >
+                  Make public
+                </button>
+                <button type="button" onClick={() => setPreviewKey((k) => k + 1)} className="inline-flex min-h-8 items-center gap-1.5 rounded-md px-2 text-xs text-ink-2 hover:bg-surface"><RefreshCcw size={12} /> Refresh</button>
+              </div>
             </div>
             {project ? (
               <iframe key={previewKey} title="Project live preview" sandbox="allow-scripts allow-forms allow-modals" src={`${previewSrc}?v=${previewKey}`} className="h-full w-full border-0 bg-white" />

@@ -1,9 +1,10 @@
 "use client";
 
 // Safe renderer for AI replies: headings, bold, lists, inline code, fenced
-// code blocks with copy buttons, links (http/https only). No raw HTML.
+// code blocks with copy + make-public (no HTML upload required).
 
 import { useState } from "react";
+import { rpc, RpcCallError } from "@/lib/client/api";
 
 type Block =
   | { type: "p"; text: string }
@@ -85,6 +86,9 @@ function Inline({ text }: { text: string }) {
 
 function CodeBlock({ lang, code }: { lang: string; code: string }) {
   const [copied, setCopied] = useState(false);
+  const [pub, setPub] = useState<"idle" | "busy" | "done" | "err">("idle");
+  const [url, setUrl] = useState<string | null>(null);
+
   async function copy() {
     try {
       await navigator.clipboard.writeText(code);
@@ -94,18 +98,49 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
       /* clipboard unavailable */
     }
   }
+
+  async function makePublic() {
+    if (pub === "busy") return;
+    setPub("busy");
+    try {
+      const result = await rpc<{ public_url: string }>("snippet_publish", { lang, code });
+      setUrl(result.public_url);
+      setPub("done");
+    } catch (err) {
+      setPub("err");
+      setUrl(err instanceof RpcCallError ? err.code : "Publish failed");
+    }
+  }
+
   return (
     <div className="code-block my-2">
-      <div className="flex items-center justify-between border-b border-white/10 px-3 py-1.5">
+      <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-1.5">
         <span className="text-[10px] font-bold uppercase tracking-widest text-ink-3">{lang}</span>
-        <button
-          onClick={() => void copy()}
-          className="rounded-md px-2 py-1 text-[10px] font-semibold text-ink-3 transition-colors hover:bg-surface/10 hover:text-white"
-        >
-          {copied ? "✓ Copied" : "Copy"}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => void copy()}
+            className="rounded-md px-2 py-1 text-[10px] font-semibold text-ink-3 transition-colors hover:bg-surface/10 hover:text-white"
+          >
+            {copied ? "Copied" : "Copy"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void makePublic()}
+            disabled={pub === "busy"}
+            className="rounded-md px-2 py-1 text-[10px] font-semibold text-ink-3 transition-colors hover:bg-surface/10 hover:text-white disabled:opacity-50"
+          >
+            {pub === "busy" ? "Publishing…" : pub === "done" ? "Public" : "Make public"}
+          </button>
+        </div>
       </div>
       <pre><code>{code}</code></pre>
+      {url && pub === "done" ? (
+        <p className="border-t border-white/10 px-3 py-1.5 text-[11px]">
+          Live: <a href={url} target="_blank" rel="noreferrer" className="text-accent underline">{url}</a>
+        </p>
+      ) : null}
+      {pub === "err" && url ? <p className="border-t border-white/10 px-3 py-1.5 text-[11px] text-danger">{url}</p> : null}
     </div>
   );
 }

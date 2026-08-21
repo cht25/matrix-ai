@@ -41,7 +41,7 @@ export class OpenRouterProvider implements AIProvider {
       model: req.model,
       messages: req.messages,
       temperature: req.temperature ?? 0.35,
-      max_completion_tokens: req.maxTokens ?? 4096,
+      max_completion_tokens: req.maxTokens ?? 16384,
       stream,
       // OpenRouter normalises this for reasoning-capable providers. The model's
       // private reasoning is never shown to the user; only `content` is read.
