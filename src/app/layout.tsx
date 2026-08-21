@@ -58,17 +58,22 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 5,
   viewportFit: "cover",
+  // Light is the primary theme, so it is also the default (no media) chrome.
   themeColor: [
     { media: "(prefers-color-scheme: dark)", color: "#070B14" },
     { media: "(prefers-color-scheme: light)", color: "#F6F8FC" },
   ],
+  colorScheme: "light dark",
 };
 
-const THEME_SCRIPT = `try{var t=localStorage.getItem('matrix-theme')||'dark';var r=t==='system'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):t;document.documentElement.setAttribute('data-theme',r);var l=localStorage.getItem('matrix-lang');if(l==='bn'||l==='en')document.documentElement.setAttribute('lang',l);}catch(e){}`;
+// Runs before first paint so there is no theme flash. LIGHT is the default
+// for everyone who never picked a theme — only a stored preference or an
+// explicit "system" choice can land on dark.
+const THEME_SCRIPT = `try{var t=localStorage.getItem('matrix-theme')||'light';var r=t==='light'||t==='dark'?t:(t==='system'&&matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.setAttribute('data-theme',r);var l=localStorage.getItem('matrix-lang');if(l==='bn'||l==='en')document.documentElement.setAttribute('lang',l);}catch(e){document.documentElement.setAttribute('data-theme','light')}`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-theme="dark" suppressHydrationWarning>
+    <html lang="en" data-theme="light" suppressHydrationWarning>
       <head>
         <link rel="preconnect" href="https://res.cloudinary.com" crossOrigin="" />
         <link rel="icon" type="image/png" href={BRAND_ICON_URL} />

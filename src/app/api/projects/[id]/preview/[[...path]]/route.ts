@@ -8,11 +8,17 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function headersFor(type: string) {
+  // CSP `sandbox` on HTML forces an opaque origin: live-preview pages cannot
+  // trigger credentialed /api calls on behalf of whoever is viewing them
+  // outside the sandboxed iframe (e.g. a direct visit to the preview URL).
+  const sandbox = /^text\/html/i.test(type)
+    ? "; sandbox allow-scripts allow-forms allow-modals"
+    : "";
   return {
     "Content-Type": type,
     "X-Content-Type-Options": "nosniff",
     "Cache-Control": "private, no-store",
-    "Content-Security-Policy": "default-src 'self' 'unsafe-inline' data: blob:; object-src 'none'; base-uri 'none'",
+    "Content-Security-Policy": `default-src 'self' 'unsafe-inline' data: blob:; object-src 'none'; base-uri 'none'${sandbox}`,
   };
 }
 

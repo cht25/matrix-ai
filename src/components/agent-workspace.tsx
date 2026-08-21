@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { Code2, X } from "lucide-react";
 import type { AgentFile } from "@/lib/ai/agent";
 import { ProjectWorkspace } from "@/components/projects/project-workspace";
@@ -17,12 +18,31 @@ export function AgentWorkspace({
   conversationId?: string | null;
   projectId?: string;
 }) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open, onClose]);
+
   if (!open) return null;
 
   return (
     <>
       <button type="button" className="fixed inset-0 z-[69] bg-black/45 backdrop-blur-sm" onClick={onClose} aria-label="Close Agent workspace" />
-      <aside className="fixed inset-x-0 bottom-0 z-[70] flex h-[92dvh] w-full flex-col border-t border-border bg-bg shadow-[var(--shadow-pop)] sm:inset-y-0 sm:left-auto sm:right-0 sm:h-auto sm:w-[min(96vw,980px)] sm:border-l sm:border-t-0" aria-label="Agent workspace">
+      <aside
+        role="dialog"
+        aria-modal="true"
+        className="fixed inset-x-0 bottom-0 z-[70] flex h-[92dvh] w-full flex-col border-t border-border bg-bg shadow-[var(--shadow-pop)] sm:inset-y-0 sm:left-auto sm:right-0 sm:h-auto sm:w-[min(96vw,980px)] sm:border-l sm:border-t-0"
+        aria-label="Agent workspace"
+      >
         <header className="flex min-h-14 shrink-0 items-center justify-between gap-3 border-b border-border px-3 sm:px-4">
           <div className="flex min-w-0 items-center gap-2.5">
             <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent text-white"><Code2 size={16} /></span>

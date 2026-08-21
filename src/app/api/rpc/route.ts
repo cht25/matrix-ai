@@ -52,6 +52,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "BAD_REQUEST" }, { status: 400 });
   }
   const action = str(body.action);
+
+  // Same-origin enforcement (defense in depth alongside SameSite=Lax): a
+  // browser POST that presents an Origin pointing at another site is CSRF.
+  const origin = req.headers.get("origin");
+  if (origin) {
+    const allowed = req.headers.get("x-forwarded-host")?.split(",")[0].trim() || req.nextUrl.host;
+    let sameOrigin = false;
+    try {
+      sameOrigin = new URL(origin).host === allowed;
+    } catch {
+      sameOrigin = false;
+    }
+    if (!sameOrigin) return NextResponse.json({ error: "BAD_ORIGIN" }, { status: 403 });
+  }
+
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
 
@@ -64,8 +79,10 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     if (err instanceof RpcError) return NextResponse.json({ error: err.code }, { status: err.status });
     if (err instanceof z.ZodError) return NextResponse.json({ error: "VALIDATION_FAILED", detail: err.issues[0]?.message }, { status: 400 });
-    const msg = err instanceof Error ? err.message : "internal error";
-    return NextResponse.json({ error: "INTERNAL", detail: msg.slice(0, 300) }, { status: 500 });
+    // Never leak internal error text (stack, SQL, file paths, provider
+    // details) to the browser — log server-side, return a stable code.
+    console.error(`[MATRIX] /api/rpc action "${action}" failed`, err);
+    return NextResponse.json({ error: "INTERNAL" }, { status: 500 });
   }
 }
 

@@ -16,11 +16,18 @@
 // content.
 
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
-import { getAuth, onAuthStateChanged, type Auth, type User } from "firebase/auth";
-import { getFirestore, type Firestore } from "firebase/firestore";
+import { connectAuthEmulator, getAuth, onAuthStateChanged, type Auth, type User } from "firebase/auth";
+import { connectFirestoreEmulator, getFirestore, type Firestore } from "firebase/firestore";
 import { firebasePublic, isConfigured } from "@/lib/env-public";
 
 export const firebaseBrowserConfigured = isConfigured();
+
+// Optional emulator wiring for local QA (`npm run emulators` + `next dev`).
+// Activated exclusively by NEXT_PUBLIC_FIREBASE_EMULATOR_HOST (e.g.
+// "localhost") — never in a production build unless deliberately set. Example:
+//   NEXT_PUBLIC_FIREBASE_EMULATOR_HOST=localhost
+//   auth → http://$HOST:9099 · firestore → $HOST:8080
+const EMULATOR_HOST = (process.env.NEXT_PUBLIC_FIREBASE_EMULATOR_HOST ?? "").trim();
 
 function app(): FirebaseApp {
   return getApps().length ? getApp() : initializeApp(firebasePublic);
@@ -28,8 +35,26 @@ function app(): FirebaseApp {
 
 let cachedAuth: Auth | null = null;
 let cachedDb: Firestore | null = null;
+let emulatorsConnected = false;
+
+function connectEmulators(auth: Auth, db: Firestore) {
+  if (emulatorsConnected || !EMULATOR_HOST) return;
+  emulatorsConnected = true;
+  try {
+    connectAuthEmulator(auth, `http://${EMULATOR_HOST}:9099`, { disableWarnings: true });
+    connectFirestoreEmulator(db, EMULATOR_HOST, 8080);
+    console.warn(`[MATRIX] Firebase emulators enabled at ${EMULATOR_HOST} (local QA only).`);
+  } catch {
+    // connectAuthEmulator throws if called after the first auth op — harmless:
+    // the module-level caches keep this single-shot.
+  }
+}
+
 export function fbAuth(): Auth {
-  if (!cachedAuth) cachedAuth = getAuth(app());
+  if (!cachedAuth) {
+    cachedAuth = getAuth(app());
+    connectEmulators(cachedAuth, fbDb());
+  }
   return cachedAuth;
 }
 

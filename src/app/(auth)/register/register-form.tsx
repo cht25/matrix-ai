@@ -14,6 +14,7 @@ import { describeAuthError } from "@/lib/firebase/auth-errors";
 import { mintSessionCookie } from "@/lib/client/api";
 import { isValidEmail } from "@/lib/utils";
 import { Alert, Button, Field, Input, Spinner } from "@/components/ui";
+import { PasswordInput } from "@/components/password-input";
 import { AuthFooterLink, AuthUnavailable, Divider, OAuthButtons } from "@/components/auth/login-screen";
 import { consumeOAuthRedirect, postAuthPath, signInWithOAuth } from "@/lib/auth/oauth";
 
@@ -63,12 +64,13 @@ export function RegisterForm() {
   async function submitBasic(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!isValidEmail(email)) return setError("Please enter a valid email address.");
+    if (!fullName.trim()) return setError("Please enter your full name.");
+    if (!isValidEmail(email.trim())) return setError("Please enter a valid email address.");
     if (password.length < 8) return setError("Password must be at least 8 characters.");
     setBusy(true);
     try {
       const auth = fbAuth();
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
       if (fullName.trim()) await updateProfile(cred.user, { displayName: fullName.trim() });
       await sendEmailVerification(cred.user, { url: `${window.location.origin}/verify?next=/chat` });
       const session = await mintSessionCookie();
@@ -122,7 +124,7 @@ export function RegisterForm() {
           <Input id="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" required />
         </Field>
         <Field label="Password" htmlFor="password" hint="At least 8 characters. Make it a passphrase you can remember.">
-          <Input id="password" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
+          <PasswordInput id="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" required />
         </Field>
         {error ? <Alert tone="danger">{error}</Alert> : null}
         {sessionRetry ? (
