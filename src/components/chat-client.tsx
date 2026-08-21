@@ -39,6 +39,8 @@ type MessageMetadata = {
   mode?: ChatMode;
   model?: string;
   coding_detected?: boolean;
+  provider?: string;
+  fallback?: boolean;
   artifacts?: AgentFile[];
   attachment_names?: string[];
   action?: string;
@@ -87,6 +89,18 @@ async function parseErrorCode(res: Response): Promise<string | null> {
     return typeof data.error === "string" ? data.error : null;
   } catch {
     return null;
+  }
+}
+
+async function parseGatewayError(res: Response): Promise<{ code: string | null; conversationId: string | null }> {
+  try {
+    const data = (await res.json()) as { error?: unknown; conversation_id?: unknown };
+    return {
+      code: typeof data.error === "string" ? data.error : null,
+      conversationId: typeof data.conversation_id === "string" ? data.conversation_id : null,
+    };
+  } catch {
+    return { code: null, conversationId: null };
   }
 }
 
@@ -154,6 +168,9 @@ export function ChatClient({
     return null;
   });
   const abortRef = useRef<AbortController | null>(null);
+  // State updates are batched; this synchronous guard prevents a fast Enter +
+  // form-submit/click sequence from creating two provider requests.
+  const requestInFlightRef = useRef(false);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -322,7 +339,9 @@ export function ChatClient({
     setSpeakingId(ok ? "auto" : null);
   }
 
-  async function streamMessage(message: string, opts: { replaceLastAssistant?: boolean; reuseUser?: boolean; regenerate?: boolean; attachments?: PendingAttachment[] } = {}) {
+  async function streamMessage(message: string, opts: { replaceLastAssistant?: boolean; reuseUser?: boolean; regenerate?: boolean; preferFallback?: boolean; attachments?: PendingAttachment[] } = {}) {
+    if (requestInFlightRef.current) return;
+    requestInFlightRef.current = true;
     const replaceLastAssistant = opts.replaceLastAssistant === true;
     const sentAttachments = opts.attachments ?? [];
     setFailure(null);
@@ -338,6 +357,7 @@ export function ChatClient({
       setFailure({ ...failureCopy("not-configured"), detail: "The MATRIX backend is not configured on this deployment yet, so chat cannot start." });
       setStreaming(false);
       setStreamedText(null);
+      requestInFlightRef.current = false;
       return;
     }
 
@@ -345,6 +365,7 @@ export function ChatClient({
     // (it is often still null for a beat after a refresh, which used to fail every send).
     const controller = new AbortController();
     abortRef.current = controller;
+    const requestId = crypto.randomUUID();
     let collected = "";
     let committed = false;
     const streamMetadata: MessageMetadata = {};
@@ -366,6 +387,8 @@ export function ChatClient({
           language: locale,
           regenerate: opts.regenerate === true,
           reuse_user: opts.reuseUser === true || opts.regenerate === true,
+          prefer_fallback: opts.preferFallback === true,
+          request_id: requestId,
         }),
         signal: controller.signal,
       });
@@ -373,7 +396,9 @@ export function ChatClient({
 
       if (!res.ok) {
         clearIdleTimer();
-        setFailure(classifyGatewayResponse(res.status, await parseErrorCode(res)));
+        const gatewayError = await parseGatewayError(res);
+        if (gatewayError.conversationId) rememberConv(gatewayError.conversationId);
+        setFailure(classifyGatewayResponse(res.status, gatewayError.code));
         return;
       }
 
@@ -388,6 +413,8 @@ export function ChatClient({
           model?: string;
           mode?: ChatMode;
           coding_detected?: boolean;
+          provider?: string;
+          fallback?: boolean;
           theme_gallery?: boolean;
         };
         if (data.conversation_id) rememberConv(data.conversation_id);
@@ -401,6 +428,8 @@ export function ChatClient({
             model: data.model,
             mode: data.mode,
             coding_detected: data.coding_detected,
+            provider: data.provider,
+            fallback: data.fallback,
             action: data.theme_gallery ? "theme_gallery" : undefined,
           });
           committed = true;
@@ -442,10 +471,14 @@ export function ChatClient({
               model?: string;
               mode?: ChatMode;
               coding_detected?: boolean;
+              provider?: string;
+              fallback?: boolean;
             };
             if (data.model) streamMetadata.model = data.model;
             if (data.mode) streamMetadata.mode = data.mode;
             if (typeof data.coding_detected === "boolean") streamMetadata.coding_detected = data.coding_detected;
+            if (data.provider) streamMetadata.provider = data.provider;
+            if (typeof data.fallback === "boolean") streamMetadata.fallback = data.fallback;
             if (typeof data.delta === "string") {
               collected += data.delta;
               setStreamedText(collected);
@@ -465,6 +498,45 @@ export function ChatClient({
           }
         }
       }
+      // A proxy or provider may close immediately after a final SSE line
+      // without the usual blank delimiter. Consume that final buffered event
+      // instead of silently dropping the last delta/error.
+      if (buffer.trim().startsWith("data:")) {
+        try {
+          const data = JSON.parse(buffer.trim().slice(5).trim()) as {
+            delta?: string;
+            done?: boolean;
+            conversation_id?: string;
+            error?: string;
+            model?: string;
+            mode?: ChatMode;
+            coding_detected?: boolean;
+            provider?: string;
+            fallback?: boolean;
+          };
+          if (data.model) streamMetadata.model = data.model;
+          if (data.mode) streamMetadata.mode = data.mode;
+          if (typeof data.coding_detected === "boolean") streamMetadata.coding_detected = data.coding_detected;
+          if (data.provider) streamMetadata.provider = data.provider;
+          if (typeof data.fallback === "boolean") streamMetadata.fallback = data.fallback;
+          if (typeof data.delta === "string") {
+            collected += data.delta;
+            setStreamedText(collected);
+          }
+          if (data.conversation_id) {
+            gotConversationId = data.conversation_id;
+            rememberConv(data.conversation_id);
+          }
+          if (data.error) streamError = data.error;
+          if (data.done) {
+            commitPartial(collected, replaceLastAssistant, streamMetadata);
+            committed = true;
+            maybeAutoSpeak(collected);
+          }
+        } catch {
+          // Keep the partial response; the backend will log the malformed event.
+        }
+      }
       clearIdleTimer();
 
       if (!committed && collected.trim()) {
@@ -472,9 +544,14 @@ export function ChatClient({
         committed = true;
         maybeAutoSpeak(collected);
       }
-      if (streamError && !collected.trim()) {
-        setFailure({ ...failureCopy("server"), detail: "The response was interrupted. Your message is safe — try again." });
-        return;
+      if (streamError) {
+        if (!collected.trim()) {
+          setFailure(streamError === "STREAM_FAILED"
+            ? { ...failureCopy("server"), detail: "The response was interrupted. Your message is safe — try again." }
+            : classifyGatewayResponse(502, streamError));
+          return;
+        }
+        setNotice("The response was interrupted after a partial answer. You can retry safely.");
       }
       if (gotConversationId && !isTemporary && !initialConvId) {
         // Navigate only after the stream finished so we don't abort it.
@@ -497,6 +574,7 @@ export function ChatClient({
       setStreaming(false);
       setStreamedText(null);
       abortRef.current = null;
+      requestInFlightRef.current = false;
     }
   }
 
@@ -504,7 +582,7 @@ export function ChatClient({
     e?.preventDefault();
     const pending = messageOverride ? [] : attachments;
     let message = (messageOverride ?? input).trim() || (pending.length ? "Review these attached files and help me with them." : "");
-    if (!message || streaming) return;
+    if (!message || streaming || requestInFlightRef.current) return;
     if (!messageOverride) {
       if (webSearch) message = `Use up-to-date public knowledge where it helps.\n\n${message}`;
       if (codeHint) message = `Answer with complete, runnable code when it helps.\n\n${message}`;
@@ -536,6 +614,20 @@ export function ChatClient({
       setMessages((m) => [...m, { role: "user", content: msg, created_at: new Date().toISOString() }]);
     }
     void streamMessage(lastUserMessage, { reuseUser: Boolean(convIdRef.current), attachments: lastAttachmentsRef.current });
+  }
+
+  function tryAnotherModel() {
+    if (!lastUserMessage || streaming || requestInFlightRef.current) return;
+    setFailure(null);
+    const hasUser = messages.some((m) => m.role === "user" && m.content === lastUserMessage);
+    if (!hasUser) {
+      setMessages((m) => [...m, { role: "user", content: lastUserMessage, created_at: new Date().toISOString() }]);
+    }
+    void streamMessage(lastUserMessage, {
+      reuseUser: Boolean(convIdRef.current),
+      preferFallback: true,
+      attachments: lastAttachmentsRef.current,
+    });
   }
 
   async function handleFile(file: File | undefined | null) {
@@ -850,7 +942,7 @@ export function ChatClient({
             ) : null}
 
             {failure ? (
-              <ServerProblem failure={failure} onRetry={retry} onDismiss={() => setFailure(null)} />
+              <ServerProblem failure={failure} onRetry={retry} onTryAnotherModel={tryAnotherModel} onDismiss={() => setFailure(null)} />
             ) : null}
           </>
         )}

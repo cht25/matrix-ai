@@ -7,17 +7,27 @@
 // =============================================================================
 
 import type {
-  AIMessage,
   AIProvider,
   AIProviderRequest,
   AIProviderResponse,
 } from "@/lib/ai/groq";
+import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
 
+// The :free variant is intentional. A paid/custom model can still be selected
+// explicitly with OPENROUTER_CODING_MODEL; it is never silently rewritten.
 export const OPENROUTER_MODELS = {
-  coding: process.env.OPENROUTER_CODING_MODEL?.trim() || "nvidia/nemotron-3-ultra-550b-a55b",
+  coding: process.env.OPENROUTER_CODING_MODEL?.trim() || "nvidia/nemotron-3-ultra-550b-a55b:free",
 } as const;
 
 export const CODING_MODEL_LABEL = "NVIDIA Nemotron 3 Ultra";
+
+function textContent(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (!Array.isArray(value)) return "";
+  return value
+    .map((part) => part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string" ? (part as { text: string }).text : "")
+    .join("");
+}
 
 export class OpenRouterProvider implements AIProvider {
   private readonly baseUrl = "https://openrouter.ai/api/v1";
@@ -27,12 +37,13 @@ export class OpenRouterProvider implements AIProvider {
     private readonly appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://matrix-ai.app",
   ) {}
 
-  private headers(): Record<string, string> {
+  private headers(requestId?: string): Record<string, string> {
     return {
       "Content-Type": "application/json",
       Authorization: `Bearer ${this.apiKey}`,
       "HTTP-Referer": this.appUrl,
-      "X-Title": "MATRIX AI",
+      "X-OpenRouter-Title": "MATRIX AI",
+      ...(requestId ? { "X-Request-ID": requestId } : {}),
     };
   }
 
@@ -43,16 +54,19 @@ export class OpenRouterProvider implements AIProvider {
       temperature: req.temperature ?? 0.35,
       max_completion_tokens: req.maxTokens ?? 16384,
       stream,
-      // OpenRouter normalises this for reasoning-capable providers. The model's
-      // private reasoning is never shown to the user; only `content` is read.
-      reasoning: { effort: "high", exclude: true },
-      ...(stream ? { stream_options: { include_usage: true } } : {}),
+      // Nemotron 3 Ultra supports OpenRouter reasoning controls. Excluding
+      // reasoning keeps private chain-of-thought out of the user response;
+      // only the assistant's final `content` is consumed below.
+      reasoning: { effort: "medium", exclude: true },
     };
   }
 
   async healthCheck(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseUrl}/models`, {
+      const [author, ...slugParts] = OPENROUTER_MODELS.coding.split("/");
+      const slug = slugParts.join("/");
+      if (!author || !slug) return false;
+      const response = await fetch(`${this.baseUrl}/model/${encodeURIComponent(author)}/${encodeURIComponent(slug)}`, {
         headers: this.headers(),
         signal: AbortSignal.timeout(5000),
       });
@@ -63,26 +77,37 @@ export class OpenRouterProvider implements AIProvider {
   }
 
   async chat(req: AIProviderRequest): Promise<AIProviderResponse> {
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify(this.buildBody(req, false)),
-      signal: req.signal,
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: this.headers(req.requestId),
+        body: JSON.stringify(this.buildBody(req, false)),
+        signal: req.signal ?? AbortSignal.timeout(60_000),
+      });
+    } catch (error) {
+      throw providerErrorFromException("OpenRouter", req.model, error, req.requestId);
+    }
 
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
-      throw new Error(`OpenRouter error ${response.status}: ${detail.slice(0, 300)}`);
+      throw providerErrorFromResponse("OpenRouter", req.model, response, detail, req.requestId);
     }
 
-    const data = (await response.json()) as {
-      choices?: { message?: { content?: string | null } }[];
+    let data: {
+      choices?: { message?: { content?: unknown }; finish_reason?: string }[];
       model?: string;
       usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     };
+    try {
+      data = (await response.json()) as typeof data;
+    } catch (error) {
+      throw providerErrorFromException("OpenRouter", req.model, error, req.requestId);
+    }
     return {
-      content: data.choices?.[0]?.message?.content ?? "",
+      content: textContent(data.choices?.[0]?.message?.content),
       model: data.model ?? req.model,
+      finishReason: data.choices?.[0]?.finish_reason,
       usage: {
         promptTokens: data.usage?.prompt_tokens ?? 0,
         completionTokens: data.usage?.completion_tokens ?? 0,
@@ -92,50 +117,78 @@ export class OpenRouterProvider implements AIProvider {
   }
 
   async *streamChat(req: AIProviderRequest): AsyncGenerator<string> {
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify(this.buildBody(req, true)),
-      signal: req.signal,
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: this.headers(req.requestId),
+        body: JSON.stringify(this.buildBody(req, true)),
+        signal: req.signal ?? AbortSignal.timeout(60_000),
+      });
 
-    if (!response.ok || !response.body) {
-      const detail = await response.text().catch(() => "");
-      throw new Error(`OpenRouter error ${response.status}: ${detail.slice(0, 300)}`);
-    }
+      if (!response.ok || !response.body) {
+        const detail = await response.text().catch(() => "");
+        if (!response.ok) throw providerErrorFromResponse("OpenRouter", req.model, response, detail, req.requestId);
+        throw new Error("OpenRouter returned an empty stream");
+      }
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data:")) continue;
-        const payload = trimmed.slice(5).trim();
-        if (payload === "[DONE]") return;
-        try {
-          const event = JSON.parse(payload) as {
-            choices?: { delta?: { content?: string | null } }[];
-          };
-          const delta = event.choices?.[0]?.delta?.content;
-          if (delta) yield delta;
-        } catch {
-          // Keep-alive or malformed upstream line; skip it.
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let sawDone = false;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const payload = trimmed.slice(5).trim();
+          if (payload === "[DONE]") {
+            sawDone = true;
+            return;
+          }
+          try {
+            const event = JSON.parse(payload) as {
+              error?: { message?: string };
+              choices?: { delta?: { content?: unknown } }[];
+            };
+            if (event.error) {
+              throw new AIProviderError({
+                provider: "OpenRouter",
+                model: req.model,
+                type: "provider_unavailable",
+                detail: event.error.message ?? "OpenRouter stream error",
+                requestId: req.requestId,
+              });
+            }
+            const delta = textContent(event.choices?.[0]?.delta?.content);
+            if (delta) yield delta;
+          } catch (error) {
+            if (error instanceof SyntaxError) continue;
+            throw error;
+          }
         }
       }
+      if (!sawDone) {
+        throw new AIProviderError({
+          provider: "OpenRouter",
+          model: req.model,
+          type: "provider_unavailable",
+          detail: "provider stream ended before [DONE]",
+          requestId: req.requestId,
+        });
+      }
+    } catch (error) {
+      throw providerErrorFromException("OpenRouter", req.model, error, req.requestId);
     }
   }
 }
 
 export function createCodingProvider(): AIProvider | null {
   const key = process.env.OPENROUTER_API_KEY?.trim();
-  if (!key || key.endsWith("...")) return null;
+  if (!key || key.endsWith("...") || key.startsWith("YOUR-") || key.startsWith("replace-with")) return null;
   return new OpenRouterProvider(key);
 }
-
-export type { AIMessage };

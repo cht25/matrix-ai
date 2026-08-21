@@ -18,12 +18,12 @@
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
 import { getAuth, onAuthStateChanged, type Auth, type User } from "firebase/auth";
 import { getFirestore, type Firestore } from "firebase/firestore";
-import { env, isConfigured } from "@/lib/env";
+import { firebasePublic, isConfigured } from "@/lib/env-public";
 
 export const firebaseBrowserConfigured = isConfigured();
 
 function app(): FirebaseApp {
-  return getApps().length ? getApp() : initializeApp(env.firebasePublic);
+  return getApps().length ? getApp() : initializeApp(firebasePublic);
 }
 
 let cachedAuth: Auth | null = null;

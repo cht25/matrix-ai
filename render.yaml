@@ -47,7 +47,7 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_CODING_MODEL
-        value: nvidia/nemotron-3-ultra-550b-a55b
+        value: nvidia/nemotron-3-ultra-550b-a55b:free
       - key: GITHUB_CLIENT_ID
         sync: false
       - key: GITHUB_CLIENT_SECRET

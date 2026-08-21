@@ -8,6 +8,8 @@
 // official replacements (openai/gpt-oss-*); vision uses Qwen 3.6 (multimodal).
 // =============================================================================
 
+import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
+
 export type AIMessage = {
   role: "system" | "user" | "assistant";
   content: string;
@@ -20,6 +22,7 @@ export type AIProviderRequest = {
   maxTokens?: number;
   imageDataUrl?: string; // for vision-capable models
   signal?: AbortSignal;
+  requestId?: string;
 };
 
 export type AIProviderResponse = {
@@ -95,31 +98,41 @@ export class GroqProvider implements AIProvider {
   }
 
   async chat(req: AIProviderRequest): Promise<AIProviderResponse> {
-    const res = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify(this.buildBody(req, false)),
-      signal: req.signal,
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify(this.buildBody(req, false)),
+        signal: req.signal ?? AbortSignal.timeout(60_000),
+      });
+    } catch (error) {
+      throw providerErrorFromException("Groq", req.model, error, req.requestId);
+    }
 
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
-      throw new Error(`Groq error ${res.status}: ${detail.slice(0, 300)}`);
+      throw providerErrorFromResponse("Groq", req.model, res, detail, req.requestId);
     }
 
-    const data = (await res.json()) as {
-      choices: { message: { content?: string | null }; finish_reason?: string }[];
-      model: string;
-      usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+    let data: {
+      choices?: { message?: { content?: string | null }; finish_reason?: string }[];
+      model?: string;
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     };
+    try {
+      data = (await res.json()) as typeof data;
+    } catch (error) {
+      throw providerErrorFromException("Groq", req.model, error, req.requestId);
+    }
 
     return {
-      content: data.choices[0]?.message?.content ?? "",
-      model: data.model,
-      finishReason: data.choices[0]?.finish_reason,
+      content: data.choices?.[0]?.message?.content ?? "",
+      model: data.model ?? req.model,
+      finishReason: data.choices?.[0]?.finish_reason,
       usage: {
         promptTokens: data.usage?.prompt_tokens ?? 0,
         completionTokens: data.usage?.completion_tokens ?? 0,
@@ -129,45 +142,75 @@ export class GroqProvider implements AIProvider {
   }
 
   async *streamChat(req: AIProviderRequest): AsyncGenerator<string> {
-    const res = await fetch(`${this.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify(this.buildBody(req, true)),
-      signal: req.signal,
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify(this.buildBody(req, true)),
+        signal: req.signal ?? AbortSignal.timeout(60_000),
+      });
 
-    if (!res.ok || !res.body) {
-      const detail = await res.text().catch(() => "");
-      throw new Error(`Groq error ${res.status}: ${detail.slice(0, 300)}`);
-    }
+      if (!res.ok || !res.body) {
+        const detail = await res.text().catch(() => "");
+        if (!res.ok) throw providerErrorFromResponse("Groq", req.model, res, detail, req.requestId);
+        throw new Error("Groq returned an empty stream");
+      }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data:")) continue;
-        const payload = trimmed.slice(5).trim();
-        if (payload === "[DONE]") return;
-        try {
-          const json = JSON.parse(payload) as {
-            choices?: { delta?: { content?: string | null } }[];
-          };
-          const delta = json.choices?.[0]?.delta?.content;
-          if (delta) yield delta;
-        } catch {
-          // Ignore malformed keep-alive lines.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let sawDone = false;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const payload = trimmed.slice(5).trim();
+          if (payload === "[DONE]") {
+            sawDone = true;
+            return;
+          }
+          try {
+            const json = JSON.parse(payload) as {
+              error?: { message?: string; type?: string };
+              choices?: { delta?: { content?: string | null } }[];
+            };
+            if (json.error) {
+              throw new AIProviderError({
+                provider: "Groq",
+                model: req.model,
+                type: "provider_unavailable",
+                detail: json.error.message ?? "Groq stream error",
+                requestId: req.requestId,
+              });
+            }
+            const delta = json.choices?.[0]?.delta?.content;
+            if (delta) yield delta;
+          } catch (error) {
+            if (error instanceof SyntaxError) continue;
+            throw error;
+          }
         }
       }
+      if (!sawDone) {
+        throw new AIProviderError({
+          provider: "Groq",
+          model: req.model,
+          type: "provider_unavailable",
+          detail: "provider stream ended before [DONE]",
+          requestId: req.requestId,
+        });
+      }
+    } catch (error) {
+      throw providerErrorFromException("Groq", req.model, error, req.requestId);
     }
   }
 }

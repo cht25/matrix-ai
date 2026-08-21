@@ -9,10 +9,10 @@
 // misconfiguration) is reported even when the Admin SDK is also unset.
 
 import { NextResponse } from "next/server";
-import { isConfigured, isAiConfigured, isCloudinaryConfigured, isCodingAiConfigured } from "@/lib/env";
+import { isConfigured, isAiConfigured, isCloudinaryConfigured } from "@/lib/env";
 import { adminConfigured } from "@/lib/firebase/admin";
 import { createProvider } from "@/lib/ai/groq";
-import { createCodingProvider } from "@/lib/ai/openrouter";
+import { createAIRoutes, logAIConfiguration } from "@/lib/ai/config";
 import { ping as pingCloudinary } from "@/lib/server/cloudinary";
 import { checkWebFirebaseConfig } from "@/lib/server/identitytoolkit";
 
@@ -20,6 +20,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  logAIConfiguration();
   const checkedAt = new Date().toISOString();
 
   const webConfig = await checkWebFirebaseConfig();
@@ -36,7 +37,7 @@ export async function GET() {
         ...webConfigFields,
         cloudinary: isCloudinaryConfigured() ? "unknown" : "not-configured",
         ai: isAiConfigured() ? "unknown" : "not-configured",
-        codingAi: isCodingAiConfigured() ? "unknown" : "not-configured",
+        codingAi: createAIRoutes(true).length ? "unknown" : "not-configured",
         checkedAt,
       },
       { status: 503 },
@@ -65,11 +66,30 @@ export async function GET() {
   }
 
   let codingAi: "online" | "unavailable" | "unknown" | "not-configured" = "not-configured";
-  if (isCodingAiConfigured()) {
-    const provider = createCodingProvider();
-    codingAi = provider && (await provider.healthCheck()) ? "online" : "unavailable";
+  let codingProvider: string | undefined;
+  let codingModel: string | undefined;
+  let codingFallback = false;
+  const codingTargets = createAIRoutes(true);
+  for (let i = 0; i < codingTargets.length; i += 1) {
+    const target = codingTargets[i];
+    if (await target.client.healthCheck()) {
+      codingAi = "online";
+      codingProvider = target.provider;
+      codingModel = target.model;
+      codingFallback = i > 0;
+      break;
+    }
+    codingAi = "unavailable";
   }
 
   const ok = firebase === "reachable";
-  return NextResponse.json({ ok, firebase, cloudinary, ai, codingAi, checkedAt }, { status: ok ? 200 : 503 });
+  return NextResponse.json({
+    ok,
+    firebase,
+    cloudinary,
+    ai,
+    codingAi,
+    ...(codingProvider ? { codingProvider, codingModel, codingFallback } : {}),
+    checkedAt,
+  }, { status: ok ? 200 : 503 });
 }
