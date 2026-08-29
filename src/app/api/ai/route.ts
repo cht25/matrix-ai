@@ -24,7 +24,7 @@ import { classify } from "@/lib/ai/domain";
 import { type AIMessage, type AIProvider } from "@/lib/ai/groq";
 import { AI_CONFIG, createAIRoutesFromDb, createScanRoutesFromDb, logAIConfiguration, type AIRouteTarget } from "@/lib/ai/config";
 import { completeWithFallback, streamWithFallback } from "@/lib/ai/executor";
-import { AIProviderError, logProviderFailure, providerPublicCode } from "@/lib/ai/provider-error";
+import { AIProviderError, logGatewayFailure, logProviderFailure, providerPublicCode } from "@/lib/ai/provider-error";
 import { stripReasoningContent } from "@/lib/ai/reasoning";
 import { agentGenerationIncomplete, formatAttachmentContext, isCodingRequest, parseAgentResponse, safeAgentPath, type AgentFile, type ChatMode, type TextAttachment } from "@/lib/ai/agent";
 import { buildAgentSystemMessages, buildSystemMessages, validateOutput, buildSummaryPrompt } from "@/lib/ai/prompts";
@@ -155,18 +155,36 @@ async function logUsage(d: Db, userId: string, model: string, requestType: strin
 }
 
 async function logSafety(d: Db, userId: string | null, eventType: string, detail: string) {
-  await d.collection("ai_safety_events").add({
-    user_id: userId,
-    event_type: eventType,
-    detail: detail.slice(0, 500),
-    created_at: nowTs(),
-  });
+  // Observability only — a safety-log write failure must never fail (or
+  // misleadingly 500) the user's chat/scan request.
+  try {
+    await d.collection("ai_safety_events").add({
+      user_id: userId,
+      event_type: eventType,
+      detail: detail.slice(0, 500),
+      created_at: nowTs(),
+    });
+  } catch (error) {
+    logGatewayFailure("safety_log", { eventType }, error);
+  }
 }
 
 // ---------------------------------------------------------------------------
 // RAG context + memory + reporting grounding
 // ---------------------------------------------------------------------------
 async function buildRagContext(d: Db, message: string, country: string | null): Promise<string> {
+  // Retrieval context is an enhancement, never a hard dependency: a Firestore
+  // hiccup here used to escape as an unhandled exception and 500 the whole
+  // chat request with a misleading "could not connect to the AI service".
+  try {
+    return await buildRagContextInner(d, message, country);
+  } catch (error) {
+    logGatewayFailure("rag_context", {}, error);
+    return "";
+  }
+}
+
+async function buildRagContextInner(d: Db, message: string, country: string | null): Promise<string> {
   const parts: string[] = [];
   const chunks = await ragSearch(d, message.slice(0, 200), 4);
   for (const c of chunks.slice(0, 3)) {
@@ -191,9 +209,14 @@ async function buildRagContext(d: Db, message: string, country: string | null): 
 }
 
 async function loadSafeMemories(d: Db, userId: string): Promise<string> {
-  const snap = await d.collection("user_memories").where("user_id", "==", userId).limit(5).get();
-  if (snap.empty) return "";
-  return snap.docs.map((m) => `- ${m.data().memory}`).join("\n");
+  try {
+    const snap = await d.collection("user_memories").where("user_id", "==", userId).limit(5).get();
+    if (snap.empty) return "";
+    return snap.docs.map((m) => `- ${m.data().memory}`).join("\n");
+  } catch (error) {
+    logGatewayFailure("safe_memories", {}, error);
+    return "";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -255,12 +278,17 @@ async function finalizeChat(d: Db, opts: {
     });
     await convRef.set({ updated_at: nowTs(), mode }, { merge: true });
   } catch (err) {
-    console.error("[MATRIX] Failed to persist assistant message", err);
+    logGatewayFailure("persist_assistant_message", { requestId, conversationId }, err);
   }
 
   // Rolling summary for permanent chats (spec §21) — best-effort.
   if (!isTemporary) {
-    const count = await countUserMessages(d, conversationId);
+    let count = 0;
+    try {
+      count = await countUserMessages(d, conversationId);
+    } catch (error) {
+      logGatewayFailure("count_user_messages", { requestId, conversationId }, error);
+    }
     if (count >= 10 && count % 10 === 0) {
       try {
         const sum = await provider.chat({ model, messages: [{ role: "user", content: buildSummaryPrompt(history.slice(-6)) }], maxTokens: 300, requestId });
@@ -279,7 +307,12 @@ async function finalizeChat(d: Db, opts: {
 
   // Memory extraction — only safe, useful context (spec §20).
   if (!isTemporary && redaction.safe && !message.toLowerCase().includes("remember")) {
-    const count = await countUserMessages(d, conversationId);
+    let count = 0;
+    try {
+      count = await countUserMessages(d, conversationId);
+    } catch (error) {
+      logGatewayFailure("count_user_messages", { requestId, conversationId }, error);
+    }
     if (count % 5 === 0 && count > 0) {
       try {
         const mem = await provider.chat({
@@ -340,33 +373,39 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   let wantStream = requestedStream && mode !== "agent";
   const regenerate = body.regenerate === true;
   const reuseUser = body.reuse_user === true || regenerate;
+  let conversationPersistDegraded = false;
   const preferredLanguage: "en" | "bn" | undefined = body.language === "bn" ? "bn" : body.language === "en" ? "en" : undefined;
 
   if (mode !== "agent" && isThemeIntent(message)) {
-    let convId = conversationId;
-    if (!convId) {
-      const created = await d.collection("conversations").add({
-        user_id: user.uid,
-        title: message.replace(/\s+/g, " ").slice(0, 60),
-        mode: "general",
-        is_temporary: isTemporary,
-        summary: "",
-        archived_at: null,
-        deleted_at: null,
-        created_at: nowTs(),
-        updated_at: nowTs(),
-      });
-      convId = created.id;
-    }
     const reply = preferredLanguage === "bn" || /[\u0980-\u09ff]/.test(message) ? THEME_GALLERY_REPLY_BN : THEME_GALLERY_REPLY_EN;
-    if (!reuseUser) {
+    let convId = conversationId;
+    try {
+      if (!convId) {
+        const created = await d.collection("conversations").add({
+          user_id: user.uid,
+          title: message.replace(/\s+/g, " ").slice(0, 60),
+          mode: "general",
+          is_temporary: isTemporary,
+          summary: "",
+          archived_at: null,
+          deleted_at: null,
+          created_at: nowTs(),
+          updated_at: nowTs(),
+        });
+        convId = created.id;
+      }
+      if (!reuseUser) {
+        await d.collection("conversations").doc(convId).collection("messages").add({
+          role: "user", content: message, metadata: { mode: "general" }, created_at: nowTs(),
+        });
+      }
       await d.collection("conversations").doc(convId).collection("messages").add({
-        role: "user", content: message, metadata: { mode: "general" }, created_at: nowTs(),
+        role: "assistant", content: reply, metadata: { action: "theme_gallery" }, created_at: nowTs(),
       });
+    } catch (error) {
+      // The theme gallery is a static reply — never fail it over storage.
+      logGatewayFailure("theme_gallery_persist", { requestId }, error);
     }
-    await d.collection("conversations").doc(convId).collection("messages").add({
-      role: "assistant", content: reply, metadata: { action: "theme_gallery" }, created_at: nowTs(),
-    });
     return json({ reply, conversation_id: convId, theme_gallery: true, metadata: { action: "theme_gallery" } });
   }
 
@@ -387,41 +426,59 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   // --- conversation resolution -------------------------------------------------
   let convId = conversationId;
   if (convId) {
-    const conv = await d.collection("conversations").doc(convId).get();
+    let conv;
+    try {
+      conv = await d.collection("conversations").doc(convId).get();
+    } catch (error) {
+      logGatewayFailure("conversation_lookup", { requestId, userId: user.uid }, error);
+      return json({ error: "CHAT_STORAGE_UNAVAILABLE", conversation_id: convId }, 503, requestId);
+    }
     if (!conv.exists || conv.data()!.user_id !== user.uid) return json({ error: "CONVERSATION_NOT_FOUND" }, 404);
     mode = conv.data()!.mode === "agent" && !isTemporary ? "agent" : "general";
     wantStream = requestedStream && mode !== "agent";
   } else {
     const title = message.replace(/\s+/g, " ").slice(0, 60);
-    const created = await d.collection("conversations").add({
-      user_id: user.uid,
-      title,
-      mode,
-      is_temporary: isTemporary,
-      summary: "",
-      archived_at: null,
-      deleted_at: null,
-      created_at: nowTs(),
-      updated_at: nowTs(),
-    });
-    convId = created.id;
+    try {
+      const created = await d.collection("conversations").add({
+        user_id: user.uid,
+        title,
+        mode,
+        is_temporary: isTemporary,
+        summary: "",
+        archived_at: null,
+        deleted_at: null,
+        created_at: nowTs(),
+        updated_at: nowTs(),
+      });
+      convId = created.id;
+    } catch (error) {
+      logGatewayFailure("conversation_create", { requestId, userId: user.uid }, error);
+      return json({ error: "CHAT_STORAGE_UNAVAILABLE" }, 503, requestId);
+    }
   }
   const convRef = d.collection("conversations").doc(convId);
 
   // --- store original privately; only redacted text reaches AI providers ------
   const redaction = redactPII(message);
   if (!reuseUser) {
-    await convRef.collection("messages").add({
-      role: "user",
-      content: message,
-      metadata: {
-        pii_redacted: !redaction.safe,
-        detected: redaction.detected.map((x) => x.type),
-        mode,
-        attachment_names: attachments.map((file) => file.name),
-      },
-      created_at: nowTs(),
-    });
+    try {
+      await convRef.collection("messages").add({
+        role: "user",
+        content: message,
+        metadata: {
+          pii_redacted: !redaction.safe,
+          detected: redaction.detected.map((x) => x.type),
+          mode,
+          attachment_names: attachments.map((file) => file.name),
+        },
+        created_at: nowTs(),
+      });
+    } catch (error) {
+      // The user's message reached the gateway; a storage hiccup must not
+      // stop the assistant from answering. Flag the degradation in the reply.
+      logGatewayFailure("persist_user_message", { requestId, conversationId: convId }, error);
+      conversationPersistDegraded = true;
+    }
   }
 
   // --- classification ----------------------------------------------------------
@@ -459,15 +516,26 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     return json({ error: codingDetected ? "CODING_MODEL_NOT_CONFIGURED" : "AI_GATEWAY_NOT_CONFIGURED", conversation_id: convId }, 503, requestId);
   }
 
-  // Context: summary + recent messages + safe memory + RAG
-  const [summaryDoc, recentSnap, profileDoc] = await Promise.all([
-    d.collection("conversation_summaries").doc(convId).get(),
-    convRef.collection("messages").get(),
-    d.collection("profiles").doc(user.uid).get(),
-  ]);
+  // Context: summary + recent messages + safe memory + RAG.
+  // Every read is best-effort: the assistant answers with less context rather
+  // than the whole request failing.
+  let summaryText = "";
+  let recentDocs: { id: string; data: () => Record<string, unknown> }[] = [];
+  let profileCountry: string | null = null;
+  try {
+    const [summaryDoc, recentSnap, profileDoc] = await Promise.all([
+      d.collection("conversation_summaries").doc(convId).get(),
+      convRef.collection("messages").get(),
+      d.collection("profiles").doc(user.uid).get(),
+    ]);
+    summaryText = String(summaryDoc.data()?.summary ?? "");
+    recentDocs = recentSnap.docs.sort(descDoc("created_at")).slice(0, 10).reverse();
+    profileCountry = (profileDoc.data()?.country as string | undefined) ?? null;
+  } catch (error) {
+    logGatewayFailure("chat_context", { requestId, conversationId: convId }, error);
+  }
   const history: AIMessage[] = [];
-  if (summaryDoc.data()?.summary) history.push({ role: "system", content: "Summary of the earlier conversation:\n" + summaryDoc.data()!.summary });
-  const recentDocs = recentSnap.docs.sort(descDoc("created_at")).slice(0, 10).reverse();
+  if (summaryText) history.push({ role: "system", content: "Summary of the earlier conversation:\n" + summaryText });
   for (const m of recentDocs) {
     const role = m.data().role;
     if (role === "user") history.push({ role, content: redactPII(String(m.data().content ?? "")).redacted });
@@ -484,7 +552,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const memories = await loadSafeMemories(d, user.uid);
   if (memories) history.push({ role: "system", content: "Safe context about the user (never repeat back verbatim):\n" + memories });
 
-  const rag = mode === "agent" ? "" : await buildRagContext(d, redaction.redacted, profileDoc.data()?.country ?? null);
+  const rag = mode === "agent" ? "" : await buildRagContext(d, redaction.redacted, profileCountry);
   const safeAttachments = attachments.map((file) => {
     const result = redactPII(file.content);
     return { ...file, content: result.redacted };
@@ -549,11 +617,17 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
           }
           if (!full.trim()) throw new Error("EMPTY_AI_RESPONSE");
           done = true;
-          await finalizeChat(d, {
-            provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
-            redactedMessage: redaction.redacted, reply: full, history, redaction, started,
-            model: activeTarget.model, mode, codingDetected, requestId,
-          });
+          let degraded = conversationPersistDegraded;
+          try {
+            await finalizeChat(d, {
+              provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
+              redactedMessage: redaction.redacted, reply: full, history, redaction, started,
+              model: activeTarget.model, mode, codingDetected, requestId,
+            });
+          } catch (error) {
+            degraded = true;
+            logGatewayFailure("finalize_chat_stream", { requestId, conversationId: convId }, error);
+          }
           emit({
             done: true,
             conversation_id: convId,
@@ -563,6 +637,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
             provider: activeTarget.provider,
             fallback: usedFallback,
             coding_detected: codingDetected,
+            ...(degraded ? { storage_degraded: true } : {}),
           });
         } catch (e) {
           const msg = e instanceof Error ? e.message : "stream error";
@@ -707,11 +782,19 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     }
   }
 
-  await finalizeChat(d, {
-    provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
-    redactedMessage: redaction.redacted, reply, history, redaction, started,
-    model: activeTarget.model, mode, codingDetected, files, projectId, requestId,
-  });
+  let finalizeFailed = conversationPersistDegraded;
+  try {
+    await finalizeChat(d, {
+      provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
+      redactedMessage: redaction.redacted, reply, history, redaction, started,
+      model: activeTarget.model, mode, codingDetected, files, projectId, requestId,
+    });
+  } catch (error) {
+    // The AI answered — never convert that into a request failure. Surface the
+    // degraded persistence honestly instead.
+    finalizeFailed = true;
+    logGatewayFailure("finalize_chat", { requestId, conversationId: convId }, error);
+  }
   return json({
     reply,
     files,
@@ -725,6 +808,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     fallback: targets.length > 1 && (targets.indexOf(activeTarget) > 0 || (preferFallback && targets.indexOf(activeTarget) < targets.length - 1)),
     coding_detected: codingDetected,
     usage,
+    ...(finalizeFailed ? { storage_degraded: true } : {}),
     request_id: requestId,
   }, 200, requestId);
 }
@@ -800,17 +884,23 @@ async function handleScan(d: Db, user: SessionUser, body: Record<string, unknown
   const confMatch = reply.match(/(\d{1,3})\s*%/);
   const confidence = confMatch ? Math.min(100, parseInt(confMatch[1], 10)) / 100 : 0;
 
-  const analysis = await d.collection("security_analyses").add({
-    user_id: user.uid,
-    analysis_type: "screenshot",
-    input_reference: storagePath,
-    risk_level: risk,
-    confidence,
-    findings: { reply, width: check.width, height: check.height, mime: check.mime, size: check.size },
-    recommendation: reply.slice(0, 2000),
-    redaction_applied: false,
-    created_at: nowTs(),
-  });
+  let analysis;
+  try {
+    analysis = await d.collection("security_analyses").add({
+      user_id: user.uid,
+      analysis_type: "screenshot",
+      input_reference: storagePath,
+      risk_level: risk,
+      confidence,
+      findings: { reply, width: check.width, height: check.height, mime: check.mime, size: check.size },
+      recommendation: reply.slice(0, 2000),
+      redaction_applied: false,
+      created_at: nowTs(),
+    });
+  } catch (error) {
+    logGatewayFailure("scan_persist", { requestId }, error);
+    return json({ error: "SCAN_STORAGE_UNAVAILABLE" }, 503, requestId);
+  }
 
   await logUsage(d, user.uid, usedModel, "scan", usage, Date.now() - started, "ok", requestId);
   return json({ analysis_id: analysis.id, risk_level: risk, confidence, reply, request_id: requestId }, 200, requestId);
@@ -867,7 +957,8 @@ export async function POST(req: NextRequest) {
     if (action === "scan") return await handleScan(d, user, body);
     return json({ error: "UNKNOWN_ACTION" }, 400);
   } catch (e) {
-    logProviderFailure(e, requestId);
-    return json({ error: "INTERNAL" }, 500, requestId);
+    if (e instanceof AIProviderError) logProviderFailure(e, requestId);
+    else logGatewayFailure("route", { requestId }, e);
+    return json({ error: "INTERNAL", request_id: requestId }, 500, requestId);
   }
 }

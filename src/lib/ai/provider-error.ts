@@ -35,6 +35,12 @@ function typeForStatus(status: number): AIProviderErrorType {
   if (status === 408 || status === 409 || status === 425 || status === 429) return "rate_limit";
   if (status === 400 || status === 404 || status === 422) return "invalid_request";
   if (status >= 500) return "provider_unavailable";
+  // Unmapped 4xx (proxies/gateways answer with 405, 451, 460…) behave like
+  // request-level rejections: retrying verbatim cannot help, so treat them as
+  // invalid_request — which is fallback-eligible — instead of the catch-all
+  // "unknown" that used to surface to users as the generic "Server problem /
+  // could not connect to the AI service" message.
+  if (status >= 400) return "invalid_request";
   return "unknown";
 }
 
@@ -161,22 +167,48 @@ export function providerPublicCode(error: unknown): string {
 }
 
 export function logProviderFailure(error: unknown, requestId?: string): void {
+  // Structured, greppable provider-failure record. Never contains request
+  // contents or key material (detail is sanitized at construction time).
+  const record = {
+    event: "ai_provider_failure" as const,
+    timestamp: new Date().toISOString(),
+    route: "/api/ai",
+    requestId: requestId ?? "none",
+  };
   if (error instanceof AIProviderError) {
     console.error("[MATRIX] AI provider request failed", {
+      ...record,
       provider: error.provider,
       model: error.model,
       httpStatus: error.status,
       errorType: error.type,
       requestId: error.requestId ?? requestId ?? "none",
+      retryable: error.retryable,
+      fallbackEligible: error.fallbackEligible,
       detail: error.detail,
     });
     return;
   }
   console.error("[MATRIX] AI provider request failed", {
+    ...record,
     provider: "unknown",
+    model: null,
     httpStatus: null,
     errorType: "unknown",
-    requestId: requestId ?? "none",
     detail: sanitizeProviderDetail(error instanceof Error ? error.message : "unknown error"),
+  });
+}
+
+/** Structured record for NON-provider gateway failures (storage, config…). */
+export function logGatewayFailure(scope: string, meta: Record<string, unknown>, error: unknown): void {
+  console.error("[MATRIX] gateway failure", {
+    event: "ai_gateway_failure",
+    timestamp: new Date().toISOString(),
+    route: "/api/ai",
+    scope,
+    ...meta,
+    detail: sanitizeProviderDetail(
+      error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+    ),
   });
 }

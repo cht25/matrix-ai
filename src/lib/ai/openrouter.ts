@@ -53,11 +53,23 @@ export class OpenRouterProvider implements AIProvider {
   }
 
   async healthCheck(): Promise<boolean> {
+    // GET /models is PUBLIC on OpenRouter — it answers 200 without any valid
+    // key, so it cannot be used as a health signal (it used to report "AI
+    // Online" while every chat request failed with 401). /auth/key validates
+    // the actual key and reports quota/limits WITHOUT consuming the per-model
+    // free-tier request budget the way a probe completion would.
     try {
-      const response = await fetch(`${this.baseUrl}/models`, {
-        headers: this.headers(),
+      const response = await fetch(`${this.baseUrl}/auth/key`, {
+        headers: { Authorization: `Bearer ${this.apiKey}` },
         signal: AbortSignal.timeout(5000),
       });
+      if (!response.ok) {
+        console.error("[MATRIX] AI provider health check failed", {
+          provider: "OpenRouter",
+          httpStatus: response.status,
+          detail: response.status === 401 ? "API key rejected (401)" : `auth/key probe failed (${response.status})`,
+        });
+      }
       return response.ok;
     } catch {
       return false;

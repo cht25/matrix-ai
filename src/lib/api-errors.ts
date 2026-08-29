@@ -14,6 +14,7 @@ export type ApiFailureKind =
   | "provider-unavailable"
   | "billing"
   | "invalid-request"
+  | "storage" // MATRIX backend (Firestore) unavailable — NOT an AI problem
   | "server";
 
 export type ApiFailure = {
@@ -25,6 +26,11 @@ export type ApiFailure = {
 };
 
 const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retryable: boolean; action?: "sign-in" | "try-model" }> = {
+  storage: {
+    title: "Chat storage unavailable",
+    detail: "MATRIX's chat database is temporarily unreachable, so this message cannot be saved or answered right now. Nothing is wrong on your side — please try again shortly.",
+    retryable: true,
+  },
   "not-configured": {
     title: "AI service not configured",
     detail: "The AI service is not configured on the server yet. The site administrator needs to finish the backend setup — this is not a problem on your side.",
@@ -89,7 +95,7 @@ const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retr
   },
   server: {
     title: "Server problem",
-    detail: "MATRIX could not connect to the AI service right now. Please try again in a moment.",
+    detail: "Something went wrong on MATRIX's server while handling this request. The error has been logged. Please try again in a moment.",
     retryable: true,
   },
 };
@@ -101,6 +107,8 @@ export function failureCopy(kind: ApiFailureKind): ApiFailure {
 const CODE_TO_KIND: Record<string, ApiFailureKind> = {
   AI_GATEWAY_NOT_CONFIGURED: "not-configured",
   CODING_MODEL_NOT_CONFIGURED: "not-configured",
+  CHAT_STORAGE_UNAVAILABLE: "storage",
+  SCAN_STORAGE_UNAVAILABLE: "storage",
   AI_PROVIDER_AUTH_FAILED: "provider-auth",
   AI_PROVIDER_RATE_LIMITED: "provider-rate-limit",
   AI_PROVIDER_BILLING_REQUIRED: "billing",
@@ -141,4 +149,13 @@ export function classifyRequestException(err: unknown): ApiFailure {
   }
   if (err instanceof TypeError) return failureCopy("network");
   return failureCopy("server");
+}
+
+/** Attach a short correlation reference so an operator can find the exact
+ * structured log entry (server logs never contain secrets or message text). */
+export function withRequestReference(failure: ApiFailure, requestId: string | null | undefined): ApiFailure {
+  if (!requestId) return failure;
+  const short = requestId.length > 12 ? requestId.slice(0, 12) : requestId;
+  if (failure.detail.includes(short)) return failure;
+  return { ...failure, detail: `${failure.detail} (reference ${short})` };
 }

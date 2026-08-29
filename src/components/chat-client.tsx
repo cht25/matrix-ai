@@ -29,7 +29,7 @@ import { Markdown } from "@/components/markdown";
 import { MatrixMark, MatrixWordmark } from "@/components/logo";
 import { useToast } from "@/components/toast";
 import { ServerProblem } from "@/components/server-problem";
-import { classifyGatewayResponse, classifyRequestException, failureCopy, type ApiFailure } from "@/lib/api-errors";
+import { classifyGatewayResponse, classifyRequestException, failureCopy, withRequestReference, type ApiFailure } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n/client";
 import { cn } from "@/lib/utils";
 import type { AgentFile, ChatMode, TextAttachment } from "@/lib/ai/agent";
@@ -95,15 +95,17 @@ async function parseErrorCode(res: Response): Promise<string | null> {
   }
 }
 
-async function parseGatewayError(res: Response): Promise<{ code: string | null; conversationId: string | null }> {
+async function parseGatewayError(res: Response): Promise<{ code: string | null; conversationId: string | null; requestId: string | null }> {
   try {
     const data = (await res.json()) as { error?: unknown; conversation_id?: unknown };
     return {
       code: typeof data.error === "string" ? data.error : null,
       conversationId: typeof data.conversation_id === "string" ? data.conversation_id : null,
+      requestId: res.headers.get("X-MATRIX-Request-ID"),
     };
   } catch {
-    return { code: null, conversationId: null };
+    // Non-JSON error body (proxy/host interstitial) — still surface the id.
+    return { code: null, conversationId: null, requestId: res.headers.get("X-MATRIX-Request-ID") };
   }
 }
 
@@ -415,7 +417,7 @@ export function ChatClient({
         clearIdleTimer();
         const gatewayError = await parseGatewayError(res);
         if (gatewayError.conversationId) rememberConv(gatewayError.conversationId);
-        setFailure(classifyGatewayResponse(res.status, gatewayError.code));
+        setFailure(withRequestReference(classifyGatewayResponse(res.status, gatewayError.code), gatewayError.requestId));
         return;
       }
 
@@ -433,6 +435,7 @@ export function ChatClient({
           provider?: string;
           fallback?: boolean;
           theme_gallery?: boolean;
+          storage_degraded?: boolean;
         };
         if (data.conversation_id) rememberConv(data.conversation_id);
         // The project is created and files are persisted server-side; the
@@ -452,17 +455,19 @@ export function ChatClient({
           });
           committed = true;
           maybeAutoSpeak(data.reply);
+          if (data.storage_degraded) setNotice("The assistant replied, but the chat could not be saved to storage right now.");
           if (data.conversation_id && !isTemporary) router.replace(`/chat/${data.conversation_id}`);
           return;
         }
-        setFailure(failureCopy("server"));
+        setFailure(withRequestReference(failureCopy("server"), res.headers.get("X-MATRIX-Request-ID")));
         return;
       }
 
+      const sseRequestId = res.headers.get("X-MATRIX-Request-ID");
       const reader = res.body?.getReader();
       if (!reader) {
         clearIdleTimer();
-        setFailure(failureCopy("server"));
+        setFailure(withRequestReference(failureCopy("server"), res.headers.get("X-MATRIX-Request-ID")));
         return;
       }
       const decoder = new TextDecoder();
@@ -491,6 +496,7 @@ export function ChatClient({
               coding_detected?: boolean;
               provider?: string;
               fallback?: boolean;
+              storage_degraded?: boolean;
             };
             if (data.model) { streamMetadata.model = data.model; setActiveModel(data.model); }
             if (data.mode) streamMetadata.mode = data.mode;
@@ -510,6 +516,7 @@ export function ChatClient({
               commitPartial(collected, replaceLastAssistant, streamMetadata);
               committed = true;
               maybeAutoSpeak(collected);
+              if (data.storage_degraded) setNotice("The assistant replied, but the chat could not be saved to storage right now.");
             }
           } catch {
             // malformed event — skip
@@ -564,9 +571,12 @@ export function ChatClient({
       }
       if (streamError) {
         if (!collected.trim()) {
-          setFailure(streamError === "STREAM_FAILED"
-            ? { ...failureCopy("server"), detail: "The response was interrupted. Your message is safe — try again." }
-            : classifyGatewayResponse(502, streamError));
+          setFailure(withRequestReference(
+            streamError === "STREAM_FAILED"
+              ? { ...failureCopy("server"), detail: "The response was interrupted. Your message is safe — try again." }
+              : classifyGatewayResponse(502, streamError),
+            sseRequestId,
+          ));
           return;
         }
         setNotice("The response was interrupted after a partial answer. You can retry safely.");

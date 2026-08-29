@@ -87,11 +87,22 @@ export class GroqProvider implements AIProvider {
   }
 
   async healthCheck(): Promise<boolean> {
+    // Groq's /models requires a valid Bearer key (401 otherwise), so unlike a
+    // public model list this is an honest key+reachability probe that does not
+    // consume per-model chat quota. Never "simplify" this to an unauthenticated
+    // endpoint — that is how the health indicator ends up lying.
     try {
       const res = await fetch(`${this.baseUrl}/models`, {
         headers: { Authorization: `Bearer ${this.apiKey}` },
         signal: AbortSignal.timeout(5000),
       });
+      if (!res.ok) {
+        console.error("[MATRIX] AI provider health check failed", {
+          provider: "Groq",
+          httpStatus: res.status,
+          detail: res.status === 401 ? "API key rejected (401)" : `/models probe failed (${res.status})`,
+        });
+      }
       return res.ok;
     } catch {
       return false;
