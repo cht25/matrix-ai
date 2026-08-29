@@ -53,7 +53,7 @@ export class GroqProvider implements AIProvider {
   }
 
   private buildBody(req: AIProviderRequest, stream: boolean): Record<string, unknown> {
-    const maxTokens = req.maxTokens ?? 1024;
+    const maxTokens = Math.min(req.maxTokens ?? 1024, 8192);
     const body: Record<string, unknown> = {
       model: req.model,
       messages: req.messages,

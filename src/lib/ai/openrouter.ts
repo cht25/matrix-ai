@@ -3,7 +3,7 @@
 //
 // The API key is server-only. OpenRouter exposes an OpenAI-compatible API, but
 // lives behind its own provider so general chat can keep using Groq while code
-// requests are routed to NVIDIA Nemotron 3 Ultra automatically.
+// requests are routed to NVIDIA Nemotron 3 Ultra / Qwen Coder automatically.
 // =============================================================================
 
 import type {
@@ -48,25 +48,20 @@ export class OpenRouterProvider implements AIProvider {
   }
 
   private buildBody(req: AIProviderRequest, stream: boolean): Record<string, unknown> {
+    const maxTokens = req.maxTokens ?? 16384;
     return {
       model: req.model,
       messages: req.messages,
       temperature: req.temperature ?? 0.35,
-      max_completion_tokens: req.maxTokens ?? 16384,
+      max_tokens: maxTokens,
+      max_completion_tokens: maxTokens,
       stream,
-      // Nemotron 3 Ultra supports OpenRouter reasoning controls. Excluding
-      // reasoning keeps private chain-of-thought out of the user response;
-      // only the assistant's final `content` is consumed below.
-      reasoning: { effort: "medium", exclude: true },
     };
   }
 
   async healthCheck(): Promise<boolean> {
     try {
-      const [author, ...slugParts] = OPENROUTER_MODELS.coding.split("/");
-      const slug = slugParts.join("/");
-      if (!author || !slug) return false;
-      const response = await fetch(`${this.baseUrl}/model/${encodeURIComponent(author)}/${encodeURIComponent(slug)}`, {
+      const response = await fetch(`${this.baseUrl}/models`, {
         headers: this.headers(),
         signal: AbortSignal.timeout(5000),
       });

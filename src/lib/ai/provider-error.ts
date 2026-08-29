@@ -91,11 +91,11 @@ export class AIProviderError extends Error {
     this.type = type;
     this.detail = sanitizeProviderDetail(opts.detail);
     this.requestId = opts.requestId;
-    this.retryable = opts.retryable ?? ["rate_limit", "billing", "provider_unavailable", "timeout", "network"].includes(type);
-    // Authentication and malformed/model requests are configuration problems;
-    // switching providers would hide the operator error. Billing, capacity,
-    // rate limits and network failures can safely use the configured fallback.
-    this.fallbackEligible = opts.fallbackEligible ?? ["rate_limit", "billing", "provider_unavailable", "timeout", "network"].includes(type);
+    this.retryable = opts.retryable ?? ["rate_limit", "billing", "provider_unavailable", "timeout", "network", "empty_response"].includes(type);
+    // Authentication is a configuration problem; switching providers would
+    // hide the operator credential error. Rate limits, billing, capacity,
+    // model errors, timeouts and network failures can safely use the configured fallback.
+    this.fallbackEligible = opts.fallbackEligible ?? (type !== "authentication");
   }
 }
 

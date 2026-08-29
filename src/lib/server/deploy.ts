@@ -261,15 +261,25 @@ export async function listLiveSites(d: Db) {
 export async function loadPublishedFile(d: Db, slug: string, path: string) {
   const site = await d.collection("published_sites").doc(slug).get();
   if (!site.exists || site.data()?.status !== "live") return null;
-  const raw = (path || "").replace(/^\/+/, "");
+  const raw = (path || "").replace(/^\.?\/+/, "");
   const wanted = !raw ? "index.html" : raw.endsWith("/") ? `${raw}index.html` : raw;
   const files = await site.ref.collection("files").get();
+  if (files.empty) return null;
+
+  const normalizedWanted = wanted.toLowerCase();
+  const baseName = wanted.split("/").pop()?.toLowerCase() ?? "";
+
   const match =
     files.docs.find((doc) => doc.data().path === wanted) ??
+    files.docs.find((doc) => (doc.data().path || "").replace(/^\.?\/+/, "").toLowerCase() === normalizedWanted) ??
     // Extensionless URLs resolve to the matching .html file (e.g. /about → about.html).
-    files.docs.find((doc) => doc.data().path === `${wanted}.html`) ??
-    files.docs.find((doc) => doc.data().path === `${wanted}/index.html`) ??
-    files.docs.find((doc) => doc.data().path === "index.html" && (raw === "" || raw === "index.html"));
+    files.docs.find((doc) => {
+      const p = (doc.data().path || "").replace(/^\.?\/+/, "").toLowerCase();
+      return p === `${normalizedWanted}.html` || p === `${normalizedWanted}/index.html`;
+    }) ??
+    files.docs.find((doc) => (doc.data().path || "").split("/").pop()?.toLowerCase() === baseName) ??
+    ((!raw || raw === "index.html") ? files.docs.find((doc) => /(^|\/)index\.html?$/i.test(doc.data().path)) : null);
+
   if (!match) return null;
   return {
     path: match.data().path as string,
