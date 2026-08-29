@@ -6,7 +6,7 @@ import { RpcError } from "@/lib/server/errors";
 import { loadProjectFiles } from "@/lib/server/projects";
 import { contentTypeForPath, isValidDeploySlug, slugify, type ProjectFile } from "@/lib/projects/paths";
 import { buildPublishedFiles } from "@/lib/projects/bundle";
-import { env } from "@/lib/env";
+import { siteOrigin } from "@/lib/seo";
 
 const iso = (v: unknown): string => {
   const ts = v as { toDate?: () => Date } | null | undefined;
@@ -14,8 +14,12 @@ const iso = (v: unknown): string => {
   return typeof v === "string" ? v : "";
 };
 
+// Centralised production-safe origin for all generated public URLs (published
+// sites, deployment records, notifications). Uses the same siteOrigin() as
+// sitemap/robots so every public link honours NEXT_PUBLIC_APP_URL and never
+// leaks localhost or a bare Render domain.
 function origin(): string {
-  return (env.appUrl || "http://localhost:3000").replace(/\/$/, "");
+  return siteOrigin();
 }
 
 async function ownedProject(d: Db, user: SessionUser, projectId: string) {

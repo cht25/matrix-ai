@@ -57,6 +57,9 @@ export const env = {
   },
   // Links / emails only. Middleware never redirects here — pointing this at an
   // unbound apex (e.g. https://thamjj13.top) must not bounce the custom domain.
+  // NOTE: deploy.ts, sitemap.ts and robots.ts now use siteOrigin() from seo.ts
+  // as the single source of truth for public URL generation. This field is
+  // retained for backwards compatibility but should not be used for new code.
   appUrl: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
   cloudinary: {
     cloudName: clean(process.env.CLOUDINARY_CLOUD_NAME ?? ""),

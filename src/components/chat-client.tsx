@@ -456,7 +456,19 @@ export function ChatClient({
           committed = true;
           maybeAutoSpeak(data.reply);
           if (data.storage_degraded) setNotice("The assistant replied, but the chat could not be saved to storage right now.");
-          if (data.conversation_id && !isTemporary) router.replace(`/chat/${data.conversation_id}`);
+          // Update the URL to the conversation WITHOUT triggering a full Next.js
+          // navigation. Using router.replace here would unmount and recreate the
+          // ChatClient from the server component, discarding the state updates
+          // from commitPartial (the assistant reply and agent artifacts). Using
+          // history.replaceState keeps the component mounted so the result is
+          // visible immediately. On a later manual refresh the server component
+          // loads the same messages from Firestore — no duplicates.
+          if (data.conversation_id && !isTemporary) {
+            const targetUrl = `/chat/${data.conversation_id}`;
+            if (!window.location.pathname.startsWith(targetUrl)) {
+              window.history.replaceState(null, "", targetUrl);
+            }
+          }
           return;
         }
         setFailure(withRequestReference(failureCopy("server"), res.headers.get("X-MATRIX-Request-ID")));
@@ -582,8 +594,14 @@ export function ChatClient({
         setNotice("The response was interrupted after a partial answer. You can retry safely.");
       }
       if (gotConversationId && !isTemporary && !initialConvId) {
-        // Navigate only after the stream finished so we don't abort it.
-        router.replace(`/chat/${gotConversationId}`);
+        // Update the URL to the new conversation without triggering a full
+        // Next.js navigation (which would unmount ChatClient and discard the
+        // just-committed streaming state). history.replaceState keeps the
+        // component mounted so the streamed reply is visible immediately.
+        const targetUrl = `/chat/${gotConversationId}`;
+        if (!window.location.pathname.startsWith(targetUrl)) {
+          window.history.replaceState(null, "", targetUrl);
+        }
       }
     } catch (err) {
       clearIdleTimer();
