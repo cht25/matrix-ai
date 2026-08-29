@@ -48,6 +48,7 @@ describe("listAdminPermissionCodes", () => {
     expect(codes).toEqual([...ALL_ADMIN_PERMISSION_CODES]);
     expect(codes).toContain("users.view");
     expect(codes).toContain("content.manage");
+    expect(codes).toContain("system.settings");
   });
 
   it("reads permission_id from role links for other roles", async () => {

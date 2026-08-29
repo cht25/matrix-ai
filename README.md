@@ -4,14 +4,15 @@
 
 MATRIX AI is a production-ready, multilingual workspace that combines a broadly useful assistant with
 cyber-safety tools, learning, and a dedicated software Agent. General Chat helps with writing, study,
-planning, research, technology and safe digital life. Obvious coding requests are automatically routed
-to **NVIDIA Nemotron 3 Ultra through OpenRouter**. Explicit Agent mode adds text/code attachments,
+planning, research, technology and safe digital life. Obvious coding requests are routed to the
+**server-configured AI provider and model**. Explicit Agent mode adds text/code attachments,
 reviewable file artifacts, a sandboxed static live preview, and encrypted GitHub OAuth with
 review-before-push atomic commits. Existing screenshot scanning, scam reporting, courses, certificates,
 security dashboard and RBAC administration remain available.
 
-The platform uses **Firebase (Auth + Firestore)**, **Cloudinary** for private images, **Groq** for general
-chat/vision and **OpenRouter** for the coding model. Provider keys and GitHub OAuth tokens never reach
+The platform uses **Firebase (Auth + Firestore)**, **Cloudinary** for private images, and an
+**admin-configurable OpenAI-compatible provider** (endpoint, model and API key) for all AI work, with
+**Groq / OpenRouter environment fallbacks**. Provider keys and GitHub OAuth tokens never reach
 the browser or an AI prompt.
 
 > Previously branded "THAMJJ13.TOP Cyber Safety AI" — rebranded to **MATRIX AI** (developer: THAMJJ13.TOP).
@@ -54,7 +55,7 @@ the browser or an AI prompt.
 | Storage | **Cloudinary** (free tier) — server-signed uploads, private (authenticated) assets only |
 | Authorization | Firestore **security rules** + a server-side RPC layer (`src/lib/server/rpc.ts`) that ports every Postgres `SECURITY DEFINER` function |
 | Backend/API | Next.js route handlers (Node runtime, Admin SDK) |
-| AI | **Groq** for general chat/vision + **OpenRouter NVIDIA Nemotron 3 Ultra** (`nvidia/nemotron-3-ultra-550b-a55b:free`; override with `OPENROUTER_CODING_MODEL` for a paid/custom route) for auto-detected coding and Agent mode; both behind `/api/ai` |
+| AI | **Admin-configurable OpenAI-compatible endpoint/model/API key** (Admin → AI usage) for chat, Agent/coding and screenshot analysis. Groq (general/vision) and OpenRouter Nemotron (`nvidia/nemotron-3-ultra-550b-a55b:free`; override with `OPENROUTER_CODING_MODEL`) remain as environment fallbacks. All traffic is behind `/api/ai` |
 | i18n | English + Bangla dictionaries (architecture ready for more) |
 | Tests | Vitest (AI pipeline, PII, classification, file validation, age rules, env config) |
 
@@ -97,8 +98,9 @@ Key invariants (unchanged from the Supabase edition):
 - **Every write goes through the server.** Browser Firestore rules deny all writes; `quiz_answers`,
   `audit_logs`, `ai_*` collections are not even client-readable. Clients can never fake a quiz score,
   an assistant message, or an audit entry.
-- **The AI gateway is the only path to Groq or OpenRouter.** PII is redacted before anything leaves the server;
-  coding is auto-routed to Nemotron; failures return honest error codes — never a fabricated reply.
+- **The AI gateway is the only path to an AI provider.** PII is redacted before anything leaves the server.
+  The endpoint/model/key can be changed by an admin at runtime (Admin → AI usage) or by environment fallback
+  variables; failures return honest error codes — never a fabricated reply.
 - **GitHub never auto-pushes.** Agent output becomes a reviewable file set; the user chooses a repository,
   branch and commit message, confirms review, and then one atomic commit is created. OAuth tokens are
   AES-256-GCM encrypted at rest and never sent to an AI provider.
@@ -121,8 +123,9 @@ src/
   lib/
     firebase/              client SDK (Auth/Firestore), Admin SDK, session cookies
     server/                rpc.ts (Postgres function ports) + queries.ts (page reads)
-    ai/                    Groq + OpenRouter providers, coding detection, Agent
-                           artifact parser, PII redaction, safety prompts, uploads
+    ai/                    Admin OpenAI-compatible provider, Groq + OpenRouter
+                           fallbacks, coding detection, Agent artifact parser,
+                           PII redaction, safety prompts, uploads
     server/github.ts       encrypted OAuth token store + atomic Git push
     server/cloudinary.ts   signed upload grants, private downloads, user asset wipe
     client/api.ts          browser helper: rpc(), mintSessionCookie(), uploads
@@ -239,8 +242,8 @@ Whichever you choose, remember to:
 | `FIREBASE_CLIENT_EMAIL` | server only | Admin SDK service account |
 | `FIREBASE_PRIVATE_KEY` | server only | Admin SDK private key |
 | `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | server only | Private image storage (screenshots, ID docs) |
-| `GROQ_API_KEY` | server only | General chat + vision gateway → Groq |
-| `OPENROUTER_API_KEY` | server only | Coding auto-routing + Agent → OpenRouter |
+| `GROQ_API_KEY` | server only | General chat + vision environment fallback → Groq |
+| `OPENROUTER_API_KEY` | server only | Coding auto-routing + Agent environment fallback → OpenRouter |
 | `OPENROUTER_CODING_MODEL` | server only | Optional coding-model override; defaults to `nvidia/nemotron-3-ultra-550b-a55b:free` |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | server only | GitHub OAuth App for Agent-mode repository access |
 | `GITHUB_TOKEN_ENCRYPTION_KEY` | server only | Encrypts GitHub tokens at rest (32+ random characters) |
@@ -277,7 +280,8 @@ Auth → Rate limit (ai_usage_logs: 20/min · 300/day chat; 5/min · 50/day scan
      → Broad task/coding detection + cyber-safety classification
      → Prompt construction (system + rolling summary + last 8 messages + safe memories)
      → RAG retrieval (document_chunks + scam articles + lessons + reporting resources)
-     → Groq (general/vision) or OpenRouter Nemotron (coding/Agent)
+     → Admin-configured OpenAI-compatible provider, else Groq (general/vision)
+       or OpenRouter Nemotron (coding/Agent)
      → streaming or structured Agent artifacts + output validation + PII-leak filter
      → Store allowed response → usage/safety logs
 ```
@@ -324,6 +328,16 @@ Promote/demote with `npm run set-admin <email> [role|none]`. The Firestore
 assignment applies immediately; the `admin` custom claim (used by rules +
 middleware) activates on the user's next sign-in/token refresh.
 
+### AI provider configuration
+
+`super_admin` accounts can configure the AI provider from **Admin → AI provider
+& usage**. The endpoint (OpenAI-compatible base URL or a full
+`.../chat/completions` URL), model ID and API key are saved server-side in
+Firestore `system_settings/ai_provider` and take effect on the next request —
+no code deploy or restart. Only a masked key status (last four characters) is
+returned to the browser. If nothing is saved, or the provider is disabled, the
+existing `GROQ_API_KEY` / `OPENROUTER_API_KEY` environment fallbacks are used.
+
 ## Testing
 
 ```bash
@@ -347,7 +361,8 @@ npm run typecheck
 If Firebase env vars are missing/invalid, the app renders honest
 "Server problem — service not configured" screens and `/api/health` returns
 `503 {"ok":false,"firebase":"not-configured",...}`. With credentials present it
-performs live checks (Firestore, Cloudinary, Groq and OpenRouter reachability) — never a cached lie.
+performs live checks (Firestore, Cloudinary, configured AI provider and environment fallback
+reachability) — never a cached lie.
 
 ## SEO & Google Search Console
 

@@ -1,9 +1,10 @@
 "use client";
 
-// Real AI service status. Polls the ai-gateway edge function's `health`
-// action (which performs a live Groq reachability check). Never claims
-// "Online" without a successful response — failures show "AI Unavailable"
-// and clicking the indicator retries the check immediately.
+// Real AI service status. Polls the AI gateway's `health` action (which
+// performs a live reachability check against the configured OpenAI-compatible
+// provider, or the environment fallback provider). Never claims "Online"
+// without a successful response — failures show "AI Unavailable" and clicking
+// the indicator retries the check immediately.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { firebaseBrowserConfigured } from "@/lib/firebase/client";

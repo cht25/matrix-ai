@@ -4,8 +4,10 @@
 
 import "server-only";
 
+import type { Db } from "@/lib/firebase/admin";
 import { MODELS, createProvider, type AIProvider } from "@/lib/ai/groq";
 import { OPENROUTER_MODELS, createCodingProvider } from "@/lib/ai/openrouter";
+import { createRuntimeAIRoute, readAIProviderConfig, type RuntimeAIRoute } from "@/lib/ai/runtime-config";
 import type { AIProviderName } from "@/lib/ai/provider-error";
 
 export type AIRouteTarget = {
@@ -56,7 +58,7 @@ export function logAIConfiguration(): void {
   });
 }
 
-/** OpenRouter is primary for Agent/coding; Groq is only its safe fallback. */
+/** Environment-keyed fallback routes: OpenRouter for Agent/coding, Groq for general chat. */
 export function createAIRoutes(coding: boolean, preferFallback = false): AIRouteTarget[] {
   const openRouter = coding ? createCodingProvider() : null;
   const groq = createProvider();
@@ -73,6 +75,73 @@ export function createAIRoutes(coding: boolean, preferFallback = false): AIRoute
 
 export function aiProviderConfigured(coding: boolean): boolean {
   return createAIRoutes(coding).length > 0;
+}
+
+/**
+ * Build the route order for a request, giving an admin-configured
+ * OpenAI-compatible provider priority when one is saved in Firestore.
+ *
+ * `d` may be `null` when the Firestore accessor is unavailable (for example
+ * the unauthenticated health probe before the app is configured); in that case
+ * the environment fallback providers are the only routes considered.
+ */
+export async function createAIRoutesFromDb(
+  d: Db | null,
+  coding: boolean,
+  preferFallback = false,
+): Promise<AIRouteTarget[]> {
+  const envTargets = createAIRoutes(coding, false);
+  let runtimeRoute: RuntimeAIRoute | null = null;
+
+  if (d) {
+    try {
+      const config = await readAIProviderConfig(d);
+      runtimeRoute = createRuntimeAIRoute(config);
+    } catch (error) {
+      console.error(
+        "[MATRIX] Admin AI provider settings could not be read; using environment fallbacks.",
+        error instanceof Error ? error.message.slice(0, 160) : "unknown",
+      );
+    }
+  }
+
+  if (!runtimeRoute) return createAIRoutes(coding, preferFallback);
+
+  const runtimeTargets: AIRouteTarget[] = [runtimeRoute];
+  // `preferFallback` is used by retry/probe flows; it deliberately puts the
+  // environment provider first so the admin config is only used after the
+  // fallback has been checked.
+  return preferFallback ? [...envTargets, ...runtimeTargets] : [...runtimeTargets, ...envTargets];
+}
+
+/**
+ * Routes used by the screenshot scanner. The admin OpenAI-compatible provider
+ * is primary when configured (it should be a multimodal model), otherwise the
+ * environment Groq vision model is used.
+ */
+export async function createScanRoutesFromDb(d: Db | null): Promise<AIRouteTarget[]> {
+  const groq = createProvider();
+  const envTarget: AIRouteTarget | null = groq
+    ? { provider: "Groq", model: MODELS.vision, client: groq }
+    : null;
+
+  let runtimeRoute: RuntimeAIRoute | null = null;
+  if (d) {
+    try {
+      const config = await readAIProviderConfig(d);
+      runtimeRoute = createRuntimeAIRoute(config);
+    } catch (error) {
+      console.error(
+        "[MATRIX] Admin AI provider settings could not be read; using environment vision fallback.",
+        error instanceof Error ? error.message.slice(0, 160) : "unknown",
+      );
+    }
+  }
+
+  const routes: AIRouteTarget[] = [];
+  if (runtimeRoute) routes.push(runtimeRoute);
+  if (envTarget) routes.push(envTarget);
+  return routes;
 }
 
 export class AIConfigurationError extends Error {

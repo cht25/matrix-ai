@@ -9,10 +9,9 @@
 // misconfiguration) is reported even when the Admin SDK is also unset.
 
 import { NextResponse } from "next/server";
-import { isConfigured, isAiConfigured, isCloudinaryConfigured } from "@/lib/env";
-import { adminConfigured } from "@/lib/firebase/admin";
-import { createProvider } from "@/lib/ai/groq";
-import { createAIRoutes, logAIConfiguration } from "@/lib/ai/config";
+import { isConfigured, isCloudinaryConfigured } from "@/lib/env";
+import { adminConfigured, adminDb } from "@/lib/firebase/admin";
+import { createAIRoutes, createAIRoutesFromDb, logAIConfiguration } from "@/lib/ai/config";
 import { ping as pingCloudinary } from "@/lib/server/cloudinary";
 import { checkWebFirebaseConfig } from "@/lib/server/identitytoolkit";
 
@@ -36,7 +35,7 @@ export async function GET() {
         firebase: "not-configured",
         ...webConfigFields,
         cloudinary: isCloudinaryConfigured() ? "unknown" : "not-configured",
-        ai: isAiConfigured() ? "unknown" : "not-configured",
+        ai: createAIRoutes(false).length ? "unknown" : "not-configured",
         codingAi: createAIRoutes(true).length ? "unknown" : "not-configured",
         checkedAt,
       },
@@ -46,7 +45,6 @@ export async function GET() {
 
   let firebase: "reachable" | "unreachable" = "unreachable";
   try {
-    const { adminDb } = await import("@/lib/firebase/admin");
     // Minimal live read (also proves the service account works).
     await adminDb().collection("countries").limit(1).get();
     firebase = "reachable";
@@ -59,17 +57,30 @@ export async function GET() {
     cloudinary = (await pingCloudinary()) ? "reachable" : "unreachable";
   }
 
-  let ai: "online" | "unavailable" | "unknown" = "unknown";
-  if (isAiConfigured()) {
-    const provider = createProvider();
-    ai = provider && (await provider.healthCheck()) ? "online" : "unavailable";
+  let runtimeDb: ReturnType<typeof adminDb> | null = null;
+  try {
+    runtimeDb = adminDb();
+  } catch {
+    /* not configurable yet — env fallback only */
+  }
+
+  let ai: "online" | "unavailable" | "unknown" | "not-configured" = "not-configured";
+  const generalTargets = await createAIRoutesFromDb(runtimeDb, false);
+  if (generalTargets.length) {
+    ai = "unavailable";
+    for (const target of generalTargets) {
+      if (await target.client.healthCheck()) {
+        ai = "online";
+        break;
+      }
+    }
   }
 
   let codingAi: "online" | "unavailable" | "unknown" | "not-configured" = "not-configured";
   let codingProvider: string | undefined;
   let codingModel: string | undefined;
   let codingFallback = false;
-  const codingTargets = createAIRoutes(true);
+  const codingTargets = await createAIRoutesFromDb(runtimeDb, true);
   for (let i = 0; i < codingTargets.length; i += 1) {
     const target = codingTargets[i];
     if (await target.client.healthCheck()) {

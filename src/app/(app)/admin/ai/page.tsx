@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { rpc } from "@/lib/client/api";
 import { Card, Spinner } from "@/components/ui";
+import { AiProviderSettings } from "@/components/admin/ai-provider-settings";
 
 type Row = {
   id: string;
@@ -22,7 +23,9 @@ export default function AdminAiPage() {
   }, []);
 
   return (
-    <Card>
+    <div className="space-y-6">
+      <AiProviderSettings />
+      <Card>
       <h1 className="font-display text-xl font-semibold text-ink">AI usage</h1>
       <p className="mt-1 text-sm text-ink-2">Recent gateway calls. Super admins can also seed RBAC from Setup.</p>
       {!rows ? <div className="mt-4 flex items-center gap-2 text-ink-3"><Spinner /> Loading…</div> : (
@@ -35,6 +38,7 @@ export default function AdminAiPage() {
           ))}
         </ul>
       )}
-    </Card>
+      </Card>
+    </div>
   );
 }
