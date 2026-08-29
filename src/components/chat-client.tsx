@@ -35,6 +35,7 @@ import { cn } from "@/lib/utils";
 import type { AgentFile, ChatMode, TextAttachment } from "@/lib/ai/agent";
 import { AgentWorkspace } from "@/components/agent-workspace";
 import { ThemeGallery } from "@/components/theme-gallery";
+import { ThinkingIndicator, ThinkingSummary } from "@/components/thinking-indicator";
 
 type MessageMetadata = {
   mode?: ChatMode;
@@ -46,6 +47,7 @@ type MessageMetadata = {
   attachment_names?: string[];
   action?: string;
   project_id?: string;
+  thinking_ms?: number;
 };
 
 export type ChatMessage = {
@@ -156,6 +158,8 @@ export function ChatClient({
   const [convId, setConvId] = useState<string | null>(initialConvId);
   const [streaming, setStreaming] = useState(false);
   const [streamedText, setStreamedText] = useState<string | null>(null);
+  const [activeModel, setActiveModel] = useState<string | null>(null);
+  const [activeStartedAt, setActiveStartedAt] = useState<number | null>(null);
   const [failure, setFailure] = useState<ApiFailure | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [lastUserMessage, setLastUserMessage] = useState<string | null>(lastUserContent(initialMessages));
@@ -288,9 +292,13 @@ export function ChatClient({
     if (metadata.model) setLastModel(metadata.model);
     if (metadata.provider) setLastProvider(metadata.provider);
     if (metadata.project_id) setAgentProjectId(metadata.project_id);
+    if (metadata.thinking_ms === undefined && activeStartedAt) {
+      metadata.thinking_ms = Date.now() - activeStartedAt;
+    }
     if (metadata.artifacts?.length) {
       setAgentFiles(metadata.artifacts);
-      setWorkspaceOpen(true);
+      // The workspace no longer pops open over the finished answer — the
+      // "Open Agent workspace" card and the Workspace button surface it.
     }
     setMessages((m) => {
       const base = replaceLastAssistant && m[m.length - 1]?.role === "assistant" ? m.slice(0, -1) : m;
@@ -354,6 +362,9 @@ export function ChatClient({
     setNotice(null);
     setStreaming(true);
     setLastUserMessage(message);
+    const startedAt = Date.now();
+    setActiveStartedAt(startedAt);
+    setActiveModel(lastModel);
     setStreamedText("");
     stopSpeech();
     setSpeakingId(null);
@@ -427,6 +438,7 @@ export function ChatClient({
         // The project is created and files are persisted server-side; the
         // workspace reuses it via project_id (or the conversation id).
         if (data.project_id) setAgentProjectId(data.project_id);
+        if (data.model) setActiveModel(data.model);
         if (data.reply) {
           commitPartial(data.reply, replaceLastAssistant, {
             artifacts: data.files,
@@ -480,7 +492,7 @@ export function ChatClient({
               provider?: string;
               fallback?: boolean;
             };
-            if (data.model) streamMetadata.model = data.model;
+            if (data.model) { streamMetadata.model = data.model; setActiveModel(data.model); }
             if (data.mode) streamMetadata.mode = data.mode;
             if (typeof data.coding_detected === "boolean") streamMetadata.coding_detected = data.coding_detected;
             if (data.provider) streamMetadata.provider = data.provider;
@@ -520,7 +532,7 @@ export function ChatClient({
             provider?: string;
             fallback?: boolean;
           };
-          if (data.model) streamMetadata.model = data.model;
+          if (data.model) { streamMetadata.model = data.model; setActiveModel(data.model); }
           if (data.mode) streamMetadata.mode = data.mode;
           if (typeof data.coding_detected === "boolean") streamMetadata.coding_detected = data.coding_detected;
           if (data.provider) streamMetadata.provider = data.provider;
@@ -579,6 +591,7 @@ export function ChatClient({
       clearIdleTimer();
       setStreaming(false);
       setStreamedText(null);
+      setActiveStartedAt(null);
       abortRef.current = null;
       requestInFlightRef.current = false;
     }
@@ -877,6 +890,13 @@ export function ChatClient({
                     </div>
                   ) : (
                     <div className="border-l border-border pl-4">
+                      {typeof m.metadata?.thinking_ms === "number" && i === messages.length - 1 && !streaming ? (
+                        <ThinkingSummary
+                          durationMs={m.metadata.thinking_ms}
+                          mode={m.metadata.mode ?? mode}
+                          model={m.metadata.model ? [m.metadata.provider, m.metadata.model].filter(Boolean).join(" · ") : (lastProvider ?? lastModel)}
+                        />
+                      ) : null}
                       <Markdown text={m.content} />
                       {m.metadata?.action === "theme_gallery" ? (
                         <div className="mt-3 rounded-xl border border-border bg-surface p-3">
@@ -929,21 +949,13 @@ export function ChatClient({
                   <MatrixMark className="h-5 w-5 text-ink-3" />
                 </span>
                 <div className="min-w-0 flex-1 border-l border-border pl-4">
+                  <ThinkingIndicator mode={mode} model={activeModel ?? lastModel} />
                   {streamedText ? (
                     <div className="ai-reply">
-                      <p className="mb-2 text-[10.5px] font-medium uppercase tracking-[0.16em] text-ink-3">MATRIX is responding…</p>
                       <Markdown text={streamedText} />
                       <span className="ml-0.5 inline-block h-3.5 w-px animate-pulse bg-ink align-middle" aria-hidden="true" />
                     </div>
-                  ) : (
-                    <div className="flex items-center gap-2.5 py-2 text-[13px] text-ink-3" role="status" aria-label="MATRIX is thinking">
-                      <BrainCircuit size={15} strokeWidth={1.7} className="animate-pulse text-accent" aria-hidden="true" />
-                      <span className="typing-dot h-1.5 w-1.5 rounded-full bg-accent" />
-                      <span className="typing-dot h-1.5 w-1.5 rounded-full bg-accent" />
-                      <span className="typing-dot h-1.5 w-1.5 rounded-full bg-accent" />
-                      <span className="ml-1">MATRIX is thinking…</span>
-                    </div>
-                  )}
+                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -1071,6 +1083,7 @@ export function ChatClient({
           onClose={() => setWorkspaceOpen(false)}
           conversationId={convId}
           projectId={agentProjectId ?? undefined}
+          model={activeModel ?? lastModel}
         />
       ) : null}
     </div>

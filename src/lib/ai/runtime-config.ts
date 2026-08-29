@@ -32,6 +32,8 @@ export type StoredAIProviderConfig = {
   enabled: boolean;
   base_url: string;
   model: string;
+  /** Optional separate model ID for Agent/coding requests. Falls back to `model` when blank. */
+  agent_model?: string;
   api_key: string;
   label?: string;
   updated_by?: string;
@@ -43,6 +45,7 @@ export type PublicAIProviderConfig = {
   enabled: boolean;
   base_url: string;
   model: string;
+  agent_model: string;
   api_key_set: boolean;
   api_key_last4: string;
   updated_by: string;
@@ -85,6 +88,7 @@ export async function readAIProviderConfig(d: Db): Promise<StoredAIProviderConfi
     enabled: record.enabled !== false,
     base_url: baseUrl,
     model,
+    agent_model: typeof record.agent_model === "string" ? record.agent_model.trim() : "",
     api_key: apiKey,
     label: typeof record.label === "string" && record.label.trim() ? record.label.trim() : "OpenAI-compatible",
     updated_by: typeof record.updated_by === "string" ? record.updated_by : "",
@@ -92,16 +96,34 @@ export async function readAIProviderConfig(d: Db): Promise<StoredAIProviderConfi
   };
 }
 
+function clientFor(config: StoredAIProviderConfig): AIProvider {
+  return createOpenAICompatibleProvider({
+    apiKey: config.api_key,
+    baseUrl: config.base_url,
+    label: config.label,
+  });
+}
+
 export function createRuntimeAIRoute(config: StoredAIProviderConfig | null): RuntimeAIRoute | null {
   if (!config || !config.enabled) return null;
   return {
     provider: "OpenAI",
     model: config.model,
-    client: createOpenAICompatibleProvider({
-      apiKey: config.api_key,
-      baseUrl: config.base_url,
-      label: config.label,
-    }),
+    client: clientFor(config),
+  };
+}
+
+/**
+ * Route for Agent / coding requests. Uses the dedicated Agent model when one
+ * is saved, otherwise the shared chat model. The client is constructed lazily
+ * so a bad Agent model ID never affects general chat.
+ */
+export function createRuntimeAgentRoute(config: StoredAIProviderConfig | null): RuntimeAIRoute | null {
+  if (!config || !config.enabled) return null;
+  return {
+    provider: "OpenAI",
+    model: config.agent_model?.trim() || config.model,
+    client: clientFor(config),
   };
 }
 
@@ -116,6 +138,7 @@ export async function getAIProviderConfigPublic(d: Db): Promise<PublicAIProvider
     enabled: record.enabled !== false,
     base_url: baseUrl,
     model,
+    agent_model: typeof record.agent_model === "string" ? record.agent_model.trim() : "",
     api_key_set: configured,
     api_key_last4: configured ? apiKey.slice(-4) : "",
     updated_by: typeof record.updated_by === "string" ? record.updated_by : "",
@@ -127,7 +150,7 @@ export async function getAIProviderConfigPublic(d: Db): Promise<PublicAIProvider
 export async function saveAIProviderConfig(
   d: Db,
   updaterUid: string,
-  input: { base_url: string; model: string; api_key?: string; enabled?: boolean; label?: string },
+  input: { base_url: string; model: string; agent_model?: string; api_key?: string; enabled?: boolean; label?: string },
 ): Promise<PublicAIProviderConfig> {
   const normalizedBase = normalizeCompatibleBaseUrl(input.base_url);
   if (!normalizedBase || !isCompatibleBaseUrl(normalizedBase)) {
@@ -135,6 +158,11 @@ export async function saveAIProviderConfig(
   }
   const model = input.model.trim();
   if (!model || model.length > 220) {
+    throw new RpcError("AI_PROVIDER_MODEL_INVALID", 400);
+  }
+  // Blank = "use the chat model for Agent too". A value must be a sane model ID.
+  const agentModel = (input.agent_model ?? "").trim();
+  if (agentModel.length > 220) {
     throw new RpcError("AI_PROVIDER_MODEL_INVALID", 400);
   }
   const label = input.label?.trim().slice(0, 80) || "OpenAI-compatible";
@@ -152,6 +180,7 @@ export async function saveAIProviderConfig(
       enabled: input.enabled !== false,
       base_url: normalizedBase,
       model,
+      agent_model: agentModel,
       label,
       api_key: apiKey,
       updated_by: updaterUid,
@@ -163,9 +192,9 @@ export async function saveAIProviderConfig(
   return getAIProviderConfigPublic(d);
 }
 
-export async function testAIProviderConfig(d: Db): Promise<{ ok: boolean; provider: AIProviderName; model: string; base_url: string; detail: string }> {
+export async function testAIProviderConfig(d: Db, mode: "general" | "agent" = "general"): Promise<{ ok: boolean; provider: AIProviderName; model: string; base_url: string; mode: "general" | "agent"; detail: string }> {
   const config = await readAIProviderConfig(d);
-  const route = createRuntimeAIRoute(config);
+  const route = mode === "agent" ? createRuntimeAgentRoute(config) : createRuntimeAIRoute(config);
   if (!route) throw new RpcError("AI_PROVIDER_NOT_CONFIGURED", 400);
   const ok = await route.client.healthCheck();
   return {
@@ -173,8 +202,9 @@ export async function testAIProviderConfig(d: Db): Promise<{ ok: boolean; provid
     provider: route.provider,
     model: route.model,
     base_url: config?.base_url ?? "",
+    mode,
     detail: ok
-      ? "The endpoint answered a live provider check."
-      : "The endpoint did not pass the live check. Confirm the base URL points at an OpenAI-compatible /models endpoint and that the key/model are correct.",
+      ? `The endpoint answered a live ${mode === "agent" ? "Agent" : "chat"} model check (${route.model}).`
+      : `The endpoint did not pass the live check for model "${route.model}". Confirm the base URL points at an OpenAI-compatible /models endpoint and that the key and model ID are correct.`,
   };
 }
