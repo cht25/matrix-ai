@@ -60,14 +60,31 @@ export function logAIConfiguration(): void {
 
 /** Environment-keyed fallback routes: OpenRouter for Agent/coding, Groq for general chat. */
 export function createAIRoutes(coding: boolean, preferFallback = false): AIRouteTarget[] {
-  const openRouter = coding ? createCodingProvider() : null;
+  const openRouter = createCodingProvider();
   const groq = createProvider();
-  const primary: AIRouteTarget | null = coding
-    ? openRouter ? { provider: "OpenRouter", model: AI_CONFIG.coding.model, client: openRouter } : null
-    : groq ? { provider: "Groq", model: AI_CONFIG.general.model, client: groq } : null;
-  const fallback: AIRouteTarget | null = coding
-    ? groq ? { provider: "Groq", model: AI_CONFIG.coding.fallbackModel, client: groq } : null
-    : null;
+
+  let primary: AIRouteTarget | null = null;
+  let fallback: AIRouteTarget | null = null;
+
+  if (coding) {
+    if (openRouter) {
+      primary = { provider: "OpenRouter", model: AI_CONFIG.coding.model, client: openRouter };
+      if (groq) {
+        fallback = { provider: "Groq", model: AI_CONFIG.coding.fallbackModel, client: groq };
+      }
+    } else if (groq) {
+      primary = { provider: "Groq", model: AI_CONFIG.coding.fallbackModel, client: groq };
+    }
+  } else {
+    if (groq) {
+      primary = { provider: "Groq", model: AI_CONFIG.general.model, client: groq };
+      if (openRouter) {
+        fallback = { provider: "OpenRouter", model: AI_CONFIG.coding.model, client: openRouter };
+      }
+    } else if (openRouter) {
+      primary = { provider: "OpenRouter", model: AI_CONFIG.coding.model, client: openRouter };
+    }
+  }
 
   const targets = preferFallback ? [fallback, primary] : [primary, fallback];
   return targets.filter((target): target is AIRouteTarget => target !== null);

@@ -230,20 +230,32 @@ async function finalizeChat(d: Db, opts: {
   } = opts;
   const convRef = d.collection("conversations").doc(conversationId);
 
-  await convRef.collection("messages").add({
-    role: "assistant",
-    content: reply,
-    metadata: {
-      mode,
-      model,
-      ...(providerName ? { provider: providerName } : {}),
-      coding_detected: codingDetected,
-      ...(files.length ? { artifacts: files } : {}),
-      ...(projectId ? { project_id: projectId } : {}),
-    },
-    created_at: nowTs(),
-  });
-  await convRef.set({ updated_at: nowTs(), mode }, { merge: true });
+  // Firestore has a 1 MiB document limit. If files are large, keep a compact version in message metadata
+  // since the complete files are already safely stored in the project files collection.
+  const safeArtifacts = files.map((file) => ({
+    path: file.path,
+    language: file.language,
+    content: file.content.length > 60_000 ? file.content.slice(0, 60_000) : file.content,
+  }));
+
+  try {
+    await convRef.collection("messages").add({
+      role: "assistant",
+      content: reply,
+      metadata: {
+        mode,
+        model,
+        ...(providerName ? { provider: providerName } : {}),
+        coding_detected: codingDetected,
+        ...(safeArtifacts.length ? { artifacts: safeArtifacts } : {}),
+        ...(projectId ? { project_id: projectId } : {}),
+      },
+      created_at: nowTs(),
+    });
+    await convRef.set({ updated_at: nowTs(), mode }, { merge: true });
+  } catch (err) {
+    console.error("[MATRIX] Failed to persist assistant message", err);
+  }
 
   // Rolling summary for permanent chats (spec §21) — best-effort.
   if (!isTemporary) {
@@ -616,33 +628,38 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
       let continuations = 0;
       while (incomplete && continuations < 3) {
         continuations += 1;
-        const continuation = await completeWithFallback(
-          [activeTarget, ...targets.filter((target) => target !== activeTarget)],
-          {
-            messages: [
-              ...messages,
-              { role: "assistant", content: rawReply },
-              {
-                role: "user",
-                content:
-                  "Continue from the exact character where you stopped. Do not restart the answer. Finish every open MATRIX_FILE block with complete file contents and <<<END_MATRIX_FILE>>>. No placeholders or omitted sections.",
-              },
-            ],
-            temperature: 0.2,
-            maxTokens: 16384,
-            requestId,
-          },
-        );
-        activeTarget = continuation.target;
-        const cont = continuation.response;
-        if (!cont.content.trim()) break;
-        rawReply += cont.content;
-        usage = {
-          promptTokens: usage.promptTokens + cont.usage.promptTokens,
-          completionTokens: usage.completionTokens + cont.usage.completionTokens,
-          totalTokens: usage.totalTokens + cont.usage.totalTokens,
-        };
-        incomplete = cont.finishReason === "length" || agentGenerationIncomplete(rawReply);
+        try {
+          const continuation = await completeWithFallback(
+            [activeTarget, ...targets.filter((target) => target !== activeTarget)],
+            {
+              messages: [
+                ...messages,
+                { role: "assistant", content: rawReply },
+                {
+                  role: "user",
+                  content:
+                    "Continue from the exact character where you stopped. Do not restart the answer. Finish every open MATRIX_FILE block with complete file contents and <<<END_MATRIX_FILE>>>. No placeholders or omitted sections.",
+                },
+              ],
+              temperature: 0.2,
+              maxTokens: 8192,
+              requestId,
+            },
+          );
+          activeTarget = continuation.target;
+          const cont = continuation.response;
+          if (!cont.content.trim()) break;
+          rawReply += cont.content;
+          usage = {
+            promptTokens: usage.promptTokens + cont.usage.promptTokens,
+            completionTokens: usage.completionTokens + cont.usage.completionTokens,
+            totalTokens: usage.totalTokens + cont.usage.totalTokens,
+          };
+          incomplete = cont.finishReason === "length" || agentGenerationIncomplete(rawReply);
+        } catch (contErr) {
+          console.warn("[MATRIX] Agent continuation step failed; keeping current reply.", contErr);
+          break;
+        }
       }
     }
   } catch (error) {
