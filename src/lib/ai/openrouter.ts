@@ -12,6 +12,7 @@ import type {
   AIProviderResponse,
 } from "@/lib/ai/groq";
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
+import { assistantContentOnly } from "@/lib/ai/reasoning";
 
 // The :free variant is intentional. A paid/custom model can still be selected
 // explicitly with OPENROUTER_CODING_MODEL; it is never silently rewritten.
@@ -20,14 +21,6 @@ export const OPENROUTER_MODELS = {
 } as const;
 
 export const CODING_MODEL_LABEL = "NVIDIA Nemotron 3 Ultra";
-
-function textContent(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (!Array.isArray(value)) return "";
-  return value
-    .map((part) => part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string" ? (part as { text: string }).text : "")
-    .join("");
-}
 
 export class OpenRouterProvider implements AIProvider {
   private readonly baseUrl = "https://openrouter.ai/api/v1";
@@ -100,7 +93,7 @@ export class OpenRouterProvider implements AIProvider {
       throw providerErrorFromException("OpenRouter", req.model, error, req.requestId);
     }
     return {
-      content: textContent(data.choices?.[0]?.message?.content),
+      content: assistantContentOnly(data.choices?.[0]?.message),
       model: data.model ?? req.model,
       finishReason: data.choices?.[0]?.finish_reason,
       usage: {
@@ -148,7 +141,7 @@ export class OpenRouterProvider implements AIProvider {
           try {
             const event = JSON.parse(payload) as {
               error?: { message?: string };
-              choices?: { delta?: { content?: unknown } }[];
+              choices?: { delta?: { content?: unknown; reasoning?: unknown; reasoning_content?: unknown } }[];
             };
             if (event.error) {
               throw new AIProviderError({
@@ -159,7 +152,9 @@ export class OpenRouterProvider implements AIProvider {
                 requestId: req.requestId,
               });
             }
-            const delta = textContent(event.choices?.[0]?.delta?.content);
+            // Drop reasoning deltas (OpenRouter sends them as `delta.reasoning`)
+            // so only the real answer reaches the user.
+            const delta = assistantContentOnly(event.choices?.[0]?.delta);
             if (delta) yield delta;
           } catch (error) {
             if (error instanceof SyntaxError) continue;

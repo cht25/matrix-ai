@@ -25,6 +25,7 @@ import { type AIMessage, type AIProvider } from "@/lib/ai/groq";
 import { AI_CONFIG, createAIRoutesFromDb, createScanRoutesFromDb, logAIConfiguration, type AIRouteTarget } from "@/lib/ai/config";
 import { completeWithFallback, streamWithFallback } from "@/lib/ai/executor";
 import { AIProviderError, logProviderFailure, providerPublicCode } from "@/lib/ai/provider-error";
+import { stripReasoningContent } from "@/lib/ai/reasoning";
 import { agentGenerationIncomplete, formatAttachmentContext, isCodingRequest, parseAgentResponse, safeAgentPath, type AgentFile, type ChatMode, type TextAttachment } from "@/lib/ai/agent";
 import { buildAgentSystemMessages, buildSystemMessages, validateOutput, buildSummaryPrompt } from "@/lib/ai/prompts";
 import { isThemeIntent, THEME_GALLERY_REPLY_BN, THEME_GALLERY_REPLY_EN } from "@/lib/theme-intent";
@@ -669,6 +670,10 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   }
 
   let files: AgentFile[] = [];
+  // Never persist or render the model's chain-of-thought. Providers already
+  // drop reasoning, but scrub once more here as a safety net (some mirrors
+  // return thinking inside `content`).
+  rawReply = stripReasoningContent(rawReply);
   const check = validateOutput(rawReply);
   if (!check.ok) {
     await logSafety(d, user.uid, "output_blocked", check.reason ?? "unknown");
