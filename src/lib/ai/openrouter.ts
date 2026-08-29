@@ -12,7 +12,7 @@ import type {
   AIProviderResponse,
 } from "@/lib/ai/groq";
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
-import { assistantContentOnly } from "@/lib/ai/reasoning";
+import { assistantContentOnly, assistantDeltaContent, createReasoningStreamFilter } from "@/lib/ai/reasoning";
 
 // The :free variant is intentional. A paid/custom model can still be selected
 // explicitly with OPENROUTER_CODING_MODEL; it is never silently rewritten.
@@ -124,6 +124,11 @@ export class OpenRouterProvider implements AIProvider {
       const decoder = new TextDecoder();
       let buffer = "";
       let sawDone = false;
+      // Reasoning deltas (OpenRouter sends them as `delta.reasoning`) are
+      // dropped via assistantDeltaContent, and inline <think> blocks that span
+      // several deltas are removed by the stateful filter — without trimming a
+      // single space or newline off the visible text.
+      const reasoningFilter = createReasoningStreamFilter();
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -136,6 +141,8 @@ export class OpenRouterProvider implements AIProvider {
           const payload = trimmed.slice(5).trim();
           if (payload === "[DONE]") {
             sawDone = true;
+            const tail = reasoningFilter.flush();
+            if (tail) yield tail;
             return;
           }
           try {
@@ -154,8 +161,8 @@ export class OpenRouterProvider implements AIProvider {
             }
             // Drop reasoning deltas (OpenRouter sends them as `delta.reasoning`)
             // so only the real answer reaches the user.
-            const delta = assistantContentOnly(event.choices?.[0]?.delta);
-            if (delta) yield delta;
+            const visible = reasoningFilter.push(assistantDeltaContent(event.choices?.[0]?.delta));
+            if (visible) yield visible;
           } catch (error) {
             if (error instanceof SyntaxError) continue;
             throw error;
