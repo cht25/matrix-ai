@@ -9,7 +9,7 @@
 // =============================================================================
 
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
-import { assistantContentOnly } from "@/lib/ai/reasoning";
+import { ReasoningStreamScrubber, assistantContentOnly, deltaContentOnly } from "@/lib/ai/reasoning";
 
 export type AIMessage = {
   role: "system" | "user" | "assistant";
@@ -165,6 +165,11 @@ export class GroqProvider implements AIProvider {
       const decoder = new TextDecoder();
       let buffer = "";
       let sawDone = false;
+      // Reasoning markers (e.g. Qwen's <think>) arrive split across deltas, so
+      // scrubbing is stateful across the whole stream. Kept deltas are emitted
+      // verbatim — trimming per delta would delete the leading space that
+      // tokenizers attach to the next token and glue words together.
+      const scrubber = new ReasoningStreamScrubber();
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -176,6 +181,8 @@ export class GroqProvider implements AIProvider {
           if (!trimmed.startsWith("data:")) continue;
           const payload = trimmed.slice(5).trim();
           if (payload === "[DONE]") {
+            const tail = scrubber.flush();
+            if (tail) yield tail;
             sawDone = true;
             return;
           }
@@ -195,7 +202,7 @@ export class GroqProvider implements AIProvider {
             }
             // Drop reasoning deltas (Groq sends them as `delta.reasoning_content`)
             // so only the real answer reaches the user.
-            const delta = assistantContentOnly(json.choices?.[0]?.delta);
+            const delta = scrubber.push(deltaContentOnly(json.choices?.[0]?.delta));
             if (delta) yield delta;
           } catch (error) {
             if (error instanceof SyntaxError) continue;

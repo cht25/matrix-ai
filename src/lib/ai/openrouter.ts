@@ -12,7 +12,7 @@ import type {
   AIProviderResponse,
 } from "@/lib/ai/groq";
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
-import { assistantContentOnly } from "@/lib/ai/reasoning";
+import { assistantContentOnly, ReasoningStreamScrubber, deltaContentOnly } from "@/lib/ai/reasoning";
 
 // The :free variant is intentional. A paid/custom model can still be selected
 // explicitly with OPENROUTER_CODING_MODEL; it is never silently rewritten.
@@ -124,6 +124,11 @@ export class OpenRouterProvider implements AIProvider {
       const decoder = new TextDecoder();
       let buffer = "";
       let sawDone = false;
+      // Reasoning markers (e.g. <think>) arrive split across deltas, so
+      // scrubbing is stateful across the whole stream. Kept deltas are emitted
+      // verbatim — trimming per delta would delete the leading space that
+      // tokenizers attach to the next token and glue words together.
+      const scrubber = new ReasoningStreamScrubber();
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -135,6 +140,8 @@ export class OpenRouterProvider implements AIProvider {
           if (!trimmed.startsWith("data:")) continue;
           const payload = trimmed.slice(5).trim();
           if (payload === "[DONE]") {
+            const tail = scrubber.flush();
+            if (tail) yield tail;
             sawDone = true;
             return;
           }
@@ -154,7 +161,7 @@ export class OpenRouterProvider implements AIProvider {
             }
             // Drop reasoning deltas (OpenRouter sends them as `delta.reasoning`)
             // so only the real answer reaches the user.
-            const delta = assistantContentOnly(event.choices?.[0]?.delta);
+            const delta = scrubber.push(deltaContentOnly(event.choices?.[0]?.delta));
             if (delta) yield delta;
           } catch (error) {
             if (error instanceof SyntaxError) continue;
