@@ -101,6 +101,8 @@ function clientFor(config: StoredAIProviderConfig): AIProvider {
     apiKey: config.api_key,
     baseUrl: config.base_url,
     label: config.label,
+    // The honest health probe runs a one-token completion against THIS model.
+    model: config.model,
   });
 }
 

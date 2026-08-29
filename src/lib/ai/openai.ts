@@ -18,6 +18,7 @@ import type {
 } from "@/lib/ai/groq";
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
 import { assistantContentOnly, assistantDeltaContent, createReasoningStreamFilter } from "@/lib/ai/reasoning";
+import { cachedRealHealthCheck, healthCacheKey } from "@/lib/ai/provider-health";
 
 /** Strip a full chat-completions URL down to the API base URL. */
 export function normalizeCompatibleBaseUrl(input: string): string {
@@ -56,6 +57,8 @@ export class OpenAICompatibleProvider implements AIProvider {
     baseUrl: string,
     private readonly label = "OpenAI-compatible",
     private readonly appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://matrix-ai.app",
+    /** Model used for the honest one-token health probe (the admin chat model). */
+    private readonly healthCheckModel?: string,
   ) {
     this.baseUrl = normalizeCompatibleBaseUrl(baseUrl);
     if (!this.baseUrl) throw new Error("OpenAI-compatible base URL is required");
@@ -104,15 +107,47 @@ export class OpenAICompatibleProvider implements AIProvider {
   }
 
   async healthCheck(): Promise<boolean> {
-    try {
-      const response = await fetch(`${this.baseUrl}/models`, {
-        headers: this.headers(),
-        signal: AbortSignal.timeout(5000),
+    // A real one-token completion against the configured model. GET /models is
+    // answered 200 by OpenRouter and most proxies WITHOUT a valid key, which
+    // used to report "AI Online" while every actual chat request failed.
+    // The body mirrors buildBody() (max_completion_tokens only for reasoning
+    // models) so the probe can never pass while the real chat shape fails.
+    const model = this.healthCheckModel ?? "";
+    const probe = async () => {
+      try {
+        const body: Record<string, unknown> = {
+          model,
+          messages: [{ role: "user", content: "ping" }],
+          max_tokens: 1,
+          stream: false,
+        };
+        if (isReasoningModel(model)) body.max_completion_tokens = 1;
+        const response = await fetch(`${this.baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: this.headers(),
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (response.ok) return { ok: true, status: response.status, detail: "ok" };
+        const detail = await response.text().catch(() => "");
+        return { ok: false, status: response.status, detail };
+      } catch (error) {
+        return { ok: false, status: null, detail: error instanceof Error ? error.message : "network error" };
+      }
+    };
+    const result = await cachedRealHealthCheck(healthCacheKey(["openai", this.baseUrl, this.healthCheckModel, this.apiKey.slice(-4)]), probe);
+    if (!result.ok && result.status) {
+      // Operators need the REAL reason the provider is down. Sanitized: no key
+      // material, no large upstream payloads.
+      console.error("[MATRIX] AI provider health check failed", {
+        provider: "OpenAI-compatible",
+        baseUrl: this.baseUrl,
+        model: this.healthCheckModel ?? "(chat model)",
+        httpStatus: result.status,
+        detail: result.detail.replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "[redacted]").slice(0, 240),
       });
-      return response.ok;
-    } catch {
-      return false;
     }
+    return result.ok;
   }
 
   async chat(req: AIProviderRequest): Promise<AIProviderResponse> {
@@ -244,6 +279,7 @@ export function createOpenAICompatibleProvider(settings: {
   apiKey: string;
   baseUrl: string;
   label?: string;
+  model?: string;
 }): OpenAICompatibleProvider {
-  return new OpenAICompatibleProvider(settings.apiKey, settings.baseUrl, settings.label ?? "OpenAI-compatible");
+  return new OpenAICompatibleProvider(settings.apiKey, settings.baseUrl, settings.label ?? "OpenAI-compatible", undefined, settings.model);
 }
