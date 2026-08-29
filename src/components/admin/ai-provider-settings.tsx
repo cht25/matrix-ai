@@ -127,11 +127,11 @@ export function AiProviderSettings() {
         </div>
         <div className="flex items-center gap-2">
           {config?.configured ? (
-            <Badge className={config.enabled ? "border-success/40 text-success" : "border-warning/40 text-warning"}>
+            <Badge className={config.enabled ? "!border-success/40 !text-success" : "!border-warning/40 !text-warning"}>
               {config.enabled ? (config.api_key_set ? "Configured" : "Not configured") : "Disabled"}
             </Badge>
           ) : (
-            <Badge className="border-warning/40 text-warning">Using environment fallback</Badge>
+            <Badge className="!border-warning/40 !text-warning">Using environment fallback</Badge>
           )}
         </div>
       </div>
