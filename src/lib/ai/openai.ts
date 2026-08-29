@@ -17,6 +17,7 @@ import type {
   AIProviderResponse,
 } from "@/lib/ai/groq";
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
+import { assistantContentOnly } from "@/lib/ai/reasoning";
 
 /** Strip a full chat-completions URL down to the API base URL. */
 export function normalizeCompatibleBaseUrl(input: string): string {
@@ -40,16 +41,6 @@ export function isCompatibleBaseUrl(value: string): boolean {
   } catch {
     return false;
   }
-}
-
-function textContent(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (!Array.isArray(value)) return "";
-  return value
-    .map((part) => part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string"
-      ? (part as { text: string }).text
-      : "")
-    .join("");
 }
 
 function isReasoningModel(model: string): boolean {
@@ -153,7 +144,7 @@ export class OpenAICompatibleProvider implements AIProvider {
       throw providerErrorFromException("OpenAI", req.model, error, req.requestId);
     }
     return {
-      content: textContent(data.choices?.[0]?.message?.content),
+      content: assistantContentOnly(data.choices?.[0]?.message),
       model: data.model ?? req.model,
       finishReason: data.choices?.[0]?.finish_reason,
       usage: {
@@ -201,7 +192,7 @@ export class OpenAICompatibleProvider implements AIProvider {
           try {
             const event = JSON.parse(payload) as {
               error?: { message?: string };
-              choices?: { delta?: { content?: unknown } }[];
+              choices?: { delta?: { content?: unknown; reasoning_content?: unknown; reasoning?: unknown } }[];
             };
             if (event.error) {
               throw new AIProviderError({
@@ -212,7 +203,9 @@ export class OpenAICompatibleProvider implements AIProvider {
                 requestId: req.requestId,
               });
             }
-            const delta = textContent(event.choices?.[0]?.delta?.content);
+            // Drop reasoning/chain-of-thought deltas so the user only ever sees
+            // the real answer; the client shows an animated thinking indicator.
+            const delta = assistantContentOnly(event.choices?.[0]?.delta);
             if (delta) yield delta;
           } catch (error) {
             if (error instanceof SyntaxError) continue;

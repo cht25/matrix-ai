@@ -936,11 +936,12 @@ export function ChatClient({
                       <span className="ml-0.5 inline-block h-3.5 w-px animate-pulse bg-ink align-middle" aria-hidden="true" />
                     </div>
                   ) : (
-                    <div className="flex items-center gap-2 py-2 text-[13px] text-ink-3" role="status" aria-label="MATRIX is connecting">
-                      <span className="typing-dot h-1 w-1 rounded-full bg-ink-2" />
-                      <span className="typing-dot h-1 w-1 rounded-full bg-ink-2" />
-                      <span className="typing-dot h-1 w-1 rounded-full bg-ink-2" />
-                      <span className="ml-1">MATRIX is connecting…</span>
+                    <div className="flex items-center gap-2.5 py-2 text-[13px] text-ink-3" role="status" aria-label="MATRIX is thinking">
+                      <BrainCircuit size={15} strokeWidth={1.7} className="animate-pulse text-accent" aria-hidden="true" />
+                      <span className="typing-dot h-1.5 w-1.5 rounded-full bg-accent" />
+                      <span className="typing-dot h-1.5 w-1.5 rounded-full bg-accent" />
+                      <span className="typing-dot h-1.5 w-1.5 rounded-full bg-accent" />
+                      <span className="ml-1">MATRIX is thinking…</span>
                     </div>
                   )}
                 </div>

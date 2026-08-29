@@ -9,6 +9,7 @@
 // =============================================================================
 
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
+import { assistantContentOnly } from "@/lib/ai/reasoning";
 
 export type AIMessage = {
   role: "system" | "user" | "assistant";
@@ -130,7 +131,7 @@ export class GroqProvider implements AIProvider {
     }
 
     return {
-      content: data.choices?.[0]?.message?.content ?? "",
+      content: assistantContentOnly(data.choices?.[0]?.message),
       model: data.model ?? req.model,
       finishReason: data.choices?.[0]?.finish_reason,
       usage: {
@@ -181,7 +182,7 @@ export class GroqProvider implements AIProvider {
           try {
             const json = JSON.parse(payload) as {
               error?: { message?: string; type?: string };
-              choices?: { delta?: { content?: string | null } }[];
+              choices?: { delta?: { content?: string | null; reasoning_content?: string | null } }[];
             };
             if (json.error) {
               throw new AIProviderError({
@@ -192,7 +193,9 @@ export class GroqProvider implements AIProvider {
                 requestId: req.requestId,
               });
             }
-            const delta = json.choices?.[0]?.delta?.content;
+            // Drop reasoning deltas (Groq sends them as `delta.reasoning_content`)
+            // so only the real answer reaches the user.
+            const delta = assistantContentOnly(json.choices?.[0]?.delta);
             if (delta) yield delta;
           } catch (error) {
             if (error instanceof SyntaxError) continue;

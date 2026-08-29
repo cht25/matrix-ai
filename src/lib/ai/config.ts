@@ -5,10 +5,10 @@
 import "server-only";
 
 import type { Db } from "@/lib/firebase/admin";
-import { MODELS, createProvider, type AIProvider } from "@/lib/ai/groq";
+import { MODELS, createProvider, type AIProvider, type AIProviderRequest, type AIProviderResponse } from "@/lib/ai/groq";
 import { OPENROUTER_MODELS, createCodingProvider } from "@/lib/ai/openrouter";
 import { createRuntimeAIRoute, readAIProviderConfig, type RuntimeAIRoute } from "@/lib/ai/runtime-config";
-import type { AIProviderName } from "@/lib/ai/provider-error";
+import { AIProviderError, type AIProviderName } from "@/lib/ai/provider-error";
 
 export type AIRouteTarget = {
   provider: AIProviderName;
@@ -29,6 +29,46 @@ export const AI_CONFIG = {
     fallbackModel: MODELS.chat,
   },
 } as const;
+
+/**
+ * The admin OpenAI-compatible provider is operator-entered (base URL, model,
+ * key) and is the most likely thing to be misconfigured. A wrong key or model
+ * must never take the whole assistant offline: we treat its hard errors
+ * (authentication, invalid_request) as fallback-eligible so the environment
+ * providers (OpenRouter / Groq) can serve the request. The failure is still
+ * logged, so the operator can see and fix it from the Admin panel.
+ */
+class FallbackSafeProvider implements AIProvider {
+  constructor(private readonly inner: AIProvider) {}
+
+  async chat(req: AIProviderRequest): Promise<AIProviderResponse> {
+    try {
+      return await this.inner.chat(req);
+    } catch (error) {
+      throw reclassifyAsFallbackEligible(error);
+    }
+  }
+
+  async *streamChat(req: AIProviderRequest): AsyncGenerator<string> {
+    try {
+      if (!this.inner.streamChat) throw new Error("provider does not support streaming");
+      yield* this.inner.streamChat(req);
+    } catch (error) {
+      throw reclassifyAsFallbackEligible(error);
+    }
+  }
+
+  async healthCheck(): Promise<boolean> {
+    return this.inner.healthCheck();
+  }
+}
+
+function reclassifyAsFallbackEligible(error: unknown): unknown {
+  if (error instanceof AIProviderError && (error.type === "authentication" || error.type === "invalid_request")) {
+    return new AIProviderError({ ...error, retryable: true, fallbackEligible: true });
+  }
+  return error;
+}
 
 const CONFIG_LOGGED = "__matrixAiConfigurationLogged";
 
@@ -124,7 +164,7 @@ export async function createAIRoutesFromDb(
 
   if (!runtimeRoute) return createAIRoutes(coding, preferFallback);
 
-  const runtimeTargets: AIRouteTarget[] = [runtimeRoute];
+  const runtimeTargets: AIRouteTarget[] = [{ ...runtimeRoute, client: new FallbackSafeProvider(runtimeRoute.client) }];
   // `preferFallback` is used by retry/probe flows; it deliberately puts the
   // environment provider first so the admin config is only used after the
   // fallback has been checked.
@@ -156,7 +196,7 @@ export async function createScanRoutesFromDb(d: Db | null): Promise<AIRouteTarge
   }
 
   const routes: AIRouteTarget[] = [];
-  if (runtimeRoute) routes.push(runtimeRoute);
+  if (runtimeRoute) routes.push({ ...runtimeRoute, client: new FallbackSafeProvider(runtimeRoute.client) });
   if (envTarget) routes.push(envTarget);
   return routes;
 }
