@@ -218,6 +218,7 @@ const ACTIONS: Record<string, Handler> = {
     const result = await aiRuntime.saveAIProviderConfig(d, u.uid, {
       base_url: str(b.base_url),
       model: str(b.model),
+      agent_model: str(b.agent_model),
       api_key: typeof b.api_key === "string" ? b.api_key : "",
       enabled: bool(b.enabled, true),
       label: str(b.label, "OpenAI-compatible"),
@@ -225,10 +226,11 @@ const ACTIONS: Record<string, Handler> = {
     await rpc.logAudit(d, u.uid, "ai_provider_settings_updated", "system_settings", "ai_provider", "");
     return result;
   },
-  admin_ai_provider_test: async (d, u) => {
+  admin_ai_provider_test: async (d, u, b) => {
     if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
-    const result = await aiRuntime.testAIProviderConfig(d);
-    await rpc.logAudit(d, u.uid, "ai_provider_settings_tested", "system_settings", "ai_provider", "");
+    const mode = b?.mode === "agent" ? "agent" : "general";
+    const result = await aiRuntime.testAIProviderConfig(d, mode);
+    await rpc.logAudit(d, u.uid, "ai_provider_settings_tested", "system_settings", "ai_provider", mode);
     return result;
   },
   admin_live_sites: async (d, u) => {

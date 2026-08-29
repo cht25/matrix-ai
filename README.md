@@ -55,7 +55,7 @@ the browser or an AI prompt.
 | Storage | **Cloudinary** (free tier) — server-signed uploads, private (authenticated) assets only |
 | Authorization | Firestore **security rules** + a server-side RPC layer (`src/lib/server/rpc.ts`) that ports every Postgres `SECURITY DEFINER` function |
 | Backend/API | Next.js route handlers (Node runtime, Admin SDK) |
-| AI | **Admin-configurable OpenAI-compatible endpoint/model/API key** (Admin → AI usage) for chat, Agent/coding and screenshot analysis. Groq (general/vision) and OpenRouter Nemotron (`nvidia/nemotron-3-ultra-550b-a55b:free`; override with `OPENROUTER_CODING_MODEL`) remain as environment fallbacks. All traffic is behind `/api/ai` |
+| AI | **Admin-configurable OpenAI-compatible endpoint/model/API key** (Admin → AI usage) for chat, Agent/coding and screenshot analysis — with a separate **Chat model** and **Agent/coding model** field (each independently testable). Groq (general/vision) and OpenRouter Nemotron (`nvidia/nemotron-3-ultra-550b-a55b:free`; override with `OPENROUTER_CODING_MODEL`) remain as environment fallbacks. All traffic is behind `/api/ai` |
 | i18n | English + Bangla dictionaries (architecture ready for more) |
 | Tests | Vitest (AI pipeline, PII, classification, file validation, age rules, env config) |
 

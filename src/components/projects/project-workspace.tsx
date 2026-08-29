@@ -49,6 +49,8 @@ export function ProjectWorkspace({
   const [versions, setVersions] = useState<{ id: string; summary: string; created_at: string; source: string }[]>([]);
   const [deploy, setDeploy] = useState<{ live_url: string | null; deployments: { id: string; status: string; public_url: string; log: { step: string; detail: string }[] }[] } | null>(null);
   const [previewKey, setPreviewKey] = useState(0);
+  const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
+  const [publishing, setPublishing] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const active = files.find((f) => f.path === activePath) ?? files[0];
@@ -62,6 +64,7 @@ export function ProjectWorkspace({
     setActivePath((cur) => data.files.some((f) => f.path === cur) ? cur : (data.files[0]?.path ?? ""));
     setSlug(data.project.live_slug ?? "");
     setDomain(data.project.custom_domain ?? "");
+    setPublishedUrl(data.project.live_url ?? null);
     onTitle?.(data.project.title);
     const vers = await rpc<{ id: string; summary: string; created_at: string; source: string }[]>("project_version_list", { project_id: id }).catch(() => []);
     setVersions(vers ?? []);
@@ -170,17 +173,36 @@ export function ProjectWorkspace({
     }
   }
 
+  const PUBLISH_ERRORS: Record<string, string> = {
+    NO_FILES: "Add at least one file before publishing.",
+    INDEX_REQUIRED: "The site needs an index.html file as its entry page.",
+    SLUG_TAKEN: "That public address is already taken. Choose a different slug.",
+    SLUG_INVALID: "The slug can only use lowercase letters, numbers and dashes.",
+    PUBLISH_RATE_LIMITED: "Too many publishes in the last hour — wait a moment and try again.",
+    PROJECT_LIMIT: "You have reached the project limit for your account.",
+  };
+
   async function publish() {
     if (!project) return;
+    const hasHtml = files.some((f) => /\.html?$/i.test(f.path) && f.encoding !== "base64");
+    if (!hasHtml) {
+      setMsg("INDEX_REQUIRED: Your project needs an index.html entry page before it can go public.");
+      return;
+    }
+    setPublishing(true);
     setBusy(true);
     setMsg(null);
     try {
-      const result = await rpc<{ public_url: string; slug: string }>("project_publish", { project_id: project.id, slug });
-      setMsg(`Live at ${result.public_url}`);
+      const result = await rpc<{ public_url: string; slug: string; status: string }>("project_publish", { project_id: project.id, slug });
+      setPublishedUrl(result.public_url);
       await load(project.id);
+      setTab("publish");
+      setMsg(`PUBLISHED:${result.public_url}`);
     } catch (err) {
-      setMsg(err instanceof RpcCallError ? err.code : "Publish failed.");
+      const code = err instanceof RpcCallError ? err.code : "Publish failed.";
+      setMsg(PUBLISH_ERRORS[code] ?? `Publish failed (${code}). Check the model created a complete index.html and try again.`);
     } finally {
+      setPublishing(false);
       setBusy(false);
     }
   }
@@ -190,8 +212,9 @@ export function ProjectWorkspace({
     setBusy(true);
     try {
       await rpc("project_unpublish", { project_id: project.id });
+      setPublishedUrl(null);
       await load(project.id);
-      setMsg("Unpublished.");
+      setMsg("Site unpublished.");
     } finally {
       setBusy(false);
     }
@@ -260,7 +283,21 @@ export function ProjectWorkspace({
         ))}
         <span className="ml-auto text-[11px] text-ink-3">{dirty ? "Saving…" : project ? `${files.length} files` : ""}</span>
       </div>
-      {msg ? <div className="px-3 pt-2"><Alert tone="info">{msg}</Alert></div> : null}
+      {msg ? (
+        <div className="px-3 pt-2">
+          {msg.startsWith("PUBLISHED:") ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-success/40 bg-success/10 px-3 py-2.5 text-sm">
+              <Globe size={15} className="shrink-0 text-success" />
+              <span className="font-medium text-ink">Your site is live and public — all CSS and JavaScript are baked into the page.</span>
+              <a href={msg.slice("PUBLISHED:".length)} target="_blank" rel="noreferrer" className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover">
+                Open live site
+              </a>
+            </div>
+          ) : (
+            <Alert tone={msg.includes("failed") || msg.includes("INDEX_REQUIRED") ? "warning" : "info"}>{msg}</Alert>
+          )}
+        </div>
+      ) : null}
 
       <div className="min-h-0 flex-1 overflow-hidden">
         {tab === "preview" ? (
@@ -281,11 +318,16 @@ export function ProjectWorkspace({
                 <button
                   type="button"
                   onClick={() => void publish()}
-                  disabled={busy || !project}
-                  className="inline-flex min-h-8 items-center gap-1.5 rounded-md px-2 text-xs text-ink-2 hover:bg-surface disabled:opacity-40"
+                  disabled={publishing || busy || !project}
+                  className="inline-flex min-h-8 items-center gap-1.5 rounded-md bg-accent px-2.5 text-xs font-medium text-white hover:bg-accent-hover disabled:opacity-40"
                 >
-                  Make public
+                  {publishing ? <Spinner /> : <Globe size={12} />} {publishing ? "Publishing…" : publishedUrl ? "Update live site" : "Make public"}
                 </button>
+                {publishedUrl ? (
+                  <a href={publishedUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-accent hover:bg-surface">
+                    View live
+                  </a>
+                ) : null}
                 <button type="button" onClick={() => setPreviewKey((k) => k + 1)} className="inline-flex min-h-8 items-center gap-1.5 rounded-md px-2 text-xs text-ink-2 hover:bg-surface"><RefreshCcw size={12} /> Refresh</button>
               </div>
             </div>
@@ -330,17 +372,33 @@ export function ProjectWorkspace({
             <div className="mx-auto max-w-lg space-y-4">
               <div>
                 <p className="eyebrow">First-party hosting</p>
-                <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Publish this site</h2>
-                <p className="mt-2 text-sm leading-relaxed text-ink-2">MATRIX snapshots your static files and serves them at a public URL. This is a real publish — not a simulated one.</p>
+                <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Make this site public</h2>
+                <p className="mt-2 text-sm leading-relaxed text-ink-2">
+                  MATRIX bundles your project into a single, ready-to-open public page — all local CSS, JavaScript and
+                  images are inlined into the HTML, so the live site renders completely with nothing else to upload.
+                  This is a real publish at a shareable public URL, not a simulation.
+                </p>
               </div>
-              <label className="block text-xs font-medium text-ink-2">Slug
+              {publishedUrl ? (
+                <div className="rounded-lg border border-success/40 bg-success/10 p-3">
+                  <p className="text-sm font-semibold text-ink">Currently public</p>
+                  <p className="mt-1 break-all font-mono text-xs text-ink-2">{publishedUrl}</p>
+                </div>
+              ) : null}
+              <label className="block text-xs font-medium text-ink-2">Public address (slug)
                 <Input className="mt-1" value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="my-site" />
               </label>
               <div className="flex flex-wrap gap-2">
-                <Button onClick={() => void publish()} disabled={busy}>{busy ? <Spinner /> : "Publish"}</Button>
-                <Button variant="outline" onClick={() => void unpublish()} disabled={busy || !project?.live_url}>Unpublish</Button>
-                {project?.live_url ? <a href={project.live_url} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center text-sm font-medium text-accent">Open live site</a> : null}
+                <Button onClick={() => void publish()} disabled={publishing || busy}>
+                  {publishing ? <><Spinner /> Publishing…</> : <><Globe size={15} /> {publishedUrl ? "Publish update" : "Make public"}</>}
+                </Button>
+                <Button variant="outline" onClick={() => void unpublish()} disabled={busy || !publishedUrl}>Unpublish</Button>
+                {publishedUrl ? <a href={publishedUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center gap-1.5 text-sm font-medium text-accent">Open live site</a> : null}
               </div>
+              <p className="text-xs leading-relaxed text-ink-3">
+                Publishing is limited to 10 times per hour. The public page runs in a sandboxed iframe with scripts
+                enabled — forms, interactions and animations work exactly as in the live preview.
+              </p>
               {deploy?.deployments?.[0] ? (
                 <div className="rounded-lg border border-border bg-surface-2 p-3 text-xs text-ink-2">
                   <p className="font-semibold text-ink">Latest: {deploy.deployments[0].status}</p>

@@ -4,7 +4,8 @@ import { Db, nowTs } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
 import { RpcError } from "@/lib/server/errors";
 import { loadProjectFiles } from "@/lib/server/projects";
-import { contentTypeForPath, isValidDeploySlug, slugify } from "@/lib/projects/paths";
+import { contentTypeForPath, isValidDeploySlug, slugify, type ProjectFile } from "@/lib/projects/paths";
+import { buildPublishedFiles } from "@/lib/projects/bundle";
 import { env } from "@/lib/env";
 
 const iso = (v: unknown): string => {
@@ -89,7 +90,14 @@ export async function publishProject(
   await Promise.all(oldFiles.map((file) => file.delete()));
 
   const envPublic = (data.env_public ?? {}) as Record<string, string>;
-  const publishFiles = [...files];
+
+  // The root page is published as ONE self-contained HTML document: every
+  // local CSS/JS file is inlined and images/fonts become data: URIs, so the
+  // public site at /s/<slug>/ renders completely with no extra requests.
+  // Deeper pages and other assets are published unchanged alongside it.
+  const bundled = buildPublishedFiles(files, envPublic);
+  const publishFiles: ProjectFile[] = bundled.outFiles;
+  // Non-root pages and standalone scripts can still load window.MATRIX_ENV.
   if (Object.keys(envPublic).length) {
     publishFiles.push({
       path: "env.js",
@@ -107,7 +115,12 @@ export async function publishProject(
       content_type: contentTypeForPath(file.path),
     });
   }
-  logs.push({ at: stamp(), step: "write", detail: `Wrote ${publishFiles.length} files.` });
+  logs.push({
+    at: stamp(),
+    step: "write",
+    detail: `Wrote ${publishFiles.length} files` +
+      (bundled.standalone ? ` — ${bundled.standalone.path} is a self-contained page (${bundled.standalone.inlined} CSS/JS/asset references inlined).` : "."),
+  });
 
   await siteRef.set({
     deployment_id: deployment.id,

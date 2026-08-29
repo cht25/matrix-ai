@@ -9,6 +9,7 @@ type PublicConfig = {
   enabled: boolean;
   base_url: string;
   model: string;
+  agent_model: string;
   api_key_set: boolean;
   api_key_last4: string;
   updated_by: string;
@@ -31,10 +32,11 @@ export function AiProviderSettings() {
   const [loading, setLoading] = useState(true);
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
+  const [agentModel, setAgentModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
+  const [testing, setTesting] = useState<"general" | "agent" | null>(null);
   const [message, setMessage] = useState<Message>(null);
 
   async function load() {
@@ -45,6 +47,7 @@ export function AiProviderSettings() {
       setConfig(value);
       setBaseUrl(value.base_url);
       setModel(value.model);
+      setAgentModel(value.agent_model ?? "");
       setApiKey("");
       setEnabled(value.enabled);
     } catch (error) {
@@ -69,13 +72,14 @@ export function AiProviderSettings() {
       const value = await rpc<PublicConfig>("admin_ai_provider_save", {
         base_url: baseUrl,
         model,
+        agent_model: agentModel,
         api_key: apiKey,
         enabled,
         label: "OpenAI-compatible",
       });
       setConfig(value);
       setApiKey("");
-      setMessage({ tone: "success", text: "AI provider settings saved. New chat requests will use this endpoint and model." });
+      setMessage({ tone: "success", text: "AI provider settings saved. New chat and Agent requests will use this endpoint and model." });
     } catch (error) {
       const code = error instanceof RpcCallError ? error.code : "SAVE_FAILED";
       setMessage({ tone: "danger", text: ERROR_MAP[code] ?? "Could not save AI provider settings." });
@@ -84,26 +88,26 @@ export function AiProviderSettings() {
     }
   }
 
-  async function test() {
+  async function test(mode: "general" | "agent") {
     if (!config?.configured) {
       setMessage({ tone: "warning", text: ERROR_MAP.AI_PROVIDER_NOT_CONFIGURED });
       return;
     }
-    setTesting(true);
+    setTesting(mode);
     setMessage(null);
     try {
-      const result = await rpc<{ ok: boolean; provider: string; model: string; base_url: string; detail: string }>("admin_ai_provider_test");
+      const result = await rpc<{ ok: boolean; provider: string; model: string; base_url: string; detail: string }>("admin_ai_provider_test", { mode });
       setMessage({
         tone: result.ok ? "success" : "danger",
         text: result.ok
-          ? `Connection OK · ${result.provider} · ${result.model}`
+          ? `${mode === "agent" ? "Agent model" : "Chat model"} OK · ${result.provider} · ${result.model}`
           : result.detail,
       });
     } catch (error) {
       const code = error instanceof RpcCallError ? error.code : "TEST_FAILED";
       setMessage({ tone: "danger", text: ERROR_MAP[code] ?? "Connection test failed." });
     } finally {
-      setTesting(false);
+      setTesting(null);
     }
   }
 
@@ -149,12 +153,23 @@ export function AiProviderSettings() {
           />
         </Field>
 
-        <Field label="Model" htmlFor="ai-model" hint="The model ID the endpoint accepts, for example gpt-4o-mini, gpt-4.1-mini, qwen/qwen3-... or nvidia/nemotron-3-ultra-550b-a55b:free.">
+        <Field label="Chat model" htmlFor="ai-model" hint="The model ID used for everyday chat, for example gpt-4o-mini, gpt-4.1-mini or qwen/qwen3-coder.">
           <Input
             id="ai-model"
             value={model}
             onChange={(e) => setModel(e.target.value)}
             placeholder="gpt-4o-mini"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </Field>
+
+        <Field label="Agent / coding model (optional)" htmlFor="ai-agent-model" hint="Used only for Agent mode — building and fixing projects. Leave blank to use the chat model. Pick a larger, long-output coding model here, for example gpt-4.1, qwen/qwen3-coder, claude-sonnet-4 or deepseek/deepseek-chat.">
+          <Input
+            id="ai-agent-model"
+            value={agentModel}
+            onChange={(e) => setAgentModel(e.target.value)}
+            placeholder="Same as chat model (leave blank)"
             autoComplete="off"
             spellCheck={false}
           />
@@ -189,19 +204,23 @@ export function AiProviderSettings() {
       {message ? <Alert tone={message.tone}>{message.text}</Alert> : null}
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" onClick={save} disabled={saving || testing}>
+        <Button type="button" onClick={save} disabled={saving || testing !== null}>
           {saving ? <Spinner /> : "Save provider settings"}
         </Button>
-        <Button type="button" variant="outline" onClick={test} disabled={testing || saving}>
-          {testing ? <Spinner /> : "Test connection"}
+        <Button type="button" variant="outline" onClick={() => void test("general")} disabled={testing !== null || saving}>
+          {testing === "general" ? <Spinner /> : "Test chat model"}
+        </Button>
+        <Button type="button" variant="outline" onClick={() => void test("agent")} disabled={testing !== null || saving}>
+          {testing === "agent" ? <Spinner /> : "Test Agent model"}
         </Button>
         <Button type="button" variant="ghost" onClick={load}>Reload</Button>
       </div>
 
       <p className="text-xs leading-relaxed text-ink-3">
-        If this provider cannot be reached or returns an authentication/billing error, the gateway falls back to the
-        environment-configured providers (Groq for general chat, OpenRouter/Groq for coding and Agent). Admin changes are applied
-        to the next request — no restart is needed.
+        Chat uses the <strong>chat model</strong>; Agent mode uses the <strong>Agent/coding model</strong> when one is set
+        (it falls back to the chat model, then to the environment providers: OpenRouter/Nemotron for Agent, Groq for chat).
+        Use the two test buttons to confirm each model ID is accepted by the endpoint. Admin changes apply to the next
+        request — no restart is needed. The API key stays on the server and is never sent to the browser.
       </p>
     </Card>
   );

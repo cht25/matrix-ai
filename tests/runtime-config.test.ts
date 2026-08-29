@@ -54,6 +54,38 @@ describe("admin-configured OpenAI provider routing", () => {
     });
     expect(route).toBeNull();
   });
+
+  it("uses the dedicated Agent/coding model for coding routes when one is saved", async () => {
+    delete process.env.GROQ_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    const db = fakeDb({
+      enabled: true,
+      base_url: "https://provider.example/v1",
+      model: "gpt-4o-mini",
+      agent_model: "qwen/qwen3-coder",
+      api_key: "sk-real-key",
+    }) as never;
+
+    const chatTargets = await createAIRoutesFromDb(db, false);
+    expect(chatTargets[0].model).toBe("gpt-4o-mini");
+
+    const agentTargets = await createAIRoutesFromDb(db, true);
+    expect(agentTargets[0].model).toBe("qwen/qwen3-coder");
+  });
+
+  it("falls back to the chat model for coding when no Agent model is set", async () => {
+    delete process.env.GROQ_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    const db = fakeDb({
+      enabled: true,
+      base_url: "https://provider.example/v1",
+      model: "gpt-4.1-mini",
+      api_key: "sk-real-key",
+    }) as never;
+
+    const agentTargets = await createAIRoutesFromDb(db, true);
+    expect(agentTargets[0].model).toBe("gpt-4.1-mini");
+  });
 });
 
 describe("runtime provider normalization", () => {

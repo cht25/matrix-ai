@@ -7,7 +7,7 @@ import "server-only";
 import type { Db } from "@/lib/firebase/admin";
 import { MODELS, createProvider, type AIProvider, type AIProviderRequest, type AIProviderResponse } from "@/lib/ai/groq";
 import { OPENROUTER_MODELS, createCodingProvider } from "@/lib/ai/openrouter";
-import { createRuntimeAIRoute, readAIProviderConfig, type RuntimeAIRoute } from "@/lib/ai/runtime-config";
+import { createRuntimeAgentRoute, createRuntimeAIRoute, readAIProviderConfig, type RuntimeAIRoute } from "@/lib/ai/runtime-config";
 import { AIProviderError, type AIProviderName } from "@/lib/ai/provider-error";
 
 export type AIRouteTarget = {
@@ -149,11 +149,12 @@ export async function createAIRoutesFromDb(
 ): Promise<AIRouteTarget[]> {
   const envTargets = createAIRoutes(coding, false);
   let runtimeRoute: RuntimeAIRoute | null = null;
+  let runtimeConfig: Awaited<ReturnType<typeof readAIProviderConfig>> = null;
 
   if (d) {
     try {
-      const config = await readAIProviderConfig(d);
-      runtimeRoute = createRuntimeAIRoute(config);
+      runtimeConfig = await readAIProviderConfig(d);
+      runtimeRoute = createRuntimeAIRoute(runtimeConfig);
     } catch (error) {
       console.error(
         "[MATRIX] Admin AI provider settings could not be read; using environment fallbacks.",
@@ -164,7 +165,13 @@ export async function createAIRoutesFromDb(
 
   if (!runtimeRoute) return createAIRoutes(coding, preferFallback);
 
-  const runtimeTargets: AIRouteTarget[] = [{ ...runtimeRoute, client: new FallbackSafeProvider(runtimeRoute.client) }];
+  // Agent / coding requests use the dedicated Agent model when the admin has
+  // saved one; otherwise they share the chat model.
+  const effectiveRoute = coding && runtimeConfig?.agent_model
+    ? (createRuntimeAgentRoute(runtimeConfig) ?? runtimeRoute)
+    : runtimeRoute;
+
+  const runtimeTargets: AIRouteTarget[] = [{ ...effectiveRoute, client: new FallbackSafeProvider(effectiveRoute.client) }];
   // `preferFallback` is used by retry/probe flows; it deliberately puts the
   // environment provider first so the admin config is only used after the
   // fallback has been checked.
