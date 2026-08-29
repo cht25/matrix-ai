@@ -17,7 +17,7 @@ import type {
   AIProviderResponse,
 } from "@/lib/ai/groq";
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
-import { assistantContentOnly } from "@/lib/ai/reasoning";
+import { assistantContentOnly, assistantDeltaContent, createReasoningStreamFilter } from "@/lib/ai/reasoning";
 
 /** Strip a full chat-completions URL down to the API base URL. */
 export function normalizeCompatibleBaseUrl(input: string): string {
@@ -175,6 +175,12 @@ export class OpenAICompatibleProvider implements AIProvider {
       const decoder = new TextDecoder();
       let buffer = "";
       let sawDone = false;
+      // Reasoning deltas are dropped via assistantDeltaContent, and inline
+      // <think> blocks (Qwen3 & friends) that span several deltas are removed
+      // by the stateful filter — without trimming a single space or newline
+      // off the visible text. Per-delta trimming is what used to glue every
+      // word together into unreadable output.
+      const reasoningFilter = createReasoningStreamFilter();
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -187,6 +193,8 @@ export class OpenAICompatibleProvider implements AIProvider {
           const payload = trimmed.slice(5).trim();
           if (payload === "[DONE]") {
             sawDone = true;
+            const tail = reasoningFilter.flush();
+            if (tail) yield tail;
             return;
           }
           try {
@@ -205,8 +213,8 @@ export class OpenAICompatibleProvider implements AIProvider {
             }
             // Drop reasoning/chain-of-thought deltas so the user only ever sees
             // the real answer; the client shows an animated thinking indicator.
-            const delta = assistantContentOnly(event.choices?.[0]?.delta);
-            if (delta) yield delta;
+            const visible = reasoningFilter.push(assistantDeltaContent(event.choices?.[0]?.delta));
+            if (visible) yield visible;
           } catch (error) {
             if (error instanceof SyntaxError) continue;
             throw error;

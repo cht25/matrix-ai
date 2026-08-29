@@ -9,7 +9,7 @@
 // =============================================================================
 
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
-import { assistantContentOnly } from "@/lib/ai/reasoning";
+import { assistantContentOnly, assistantDeltaContent, createReasoningStreamFilter } from "@/lib/ai/reasoning";
 
 export type AIMessage = {
   role: "system" | "user" | "assistant";
@@ -165,6 +165,11 @@ export class GroqProvider implements AIProvider {
       const decoder = new TextDecoder();
       let buffer = "";
       let sawDone = false;
+      // Reasoning deltas (Groq sends them as `delta.reasoning_content`) are
+      // dropped via assistantDeltaContent, and inline <think> blocks that span
+      // several deltas are removed by the stateful filter — without trimming a
+      // single space or newline off the visible text.
+      const reasoningFilter = createReasoningStreamFilter();
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -177,6 +182,8 @@ export class GroqProvider implements AIProvider {
           const payload = trimmed.slice(5).trim();
           if (payload === "[DONE]") {
             sawDone = true;
+            const tail = reasoningFilter.flush();
+            if (tail) yield tail;
             return;
           }
           try {
@@ -195,8 +202,8 @@ export class GroqProvider implements AIProvider {
             }
             // Drop reasoning deltas (Groq sends them as `delta.reasoning_content`)
             // so only the real answer reaches the user.
-            const delta = assistantContentOnly(json.choices?.[0]?.delta);
-            if (delta) yield delta;
+            const visible = reasoningFilter.push(assistantDeltaContent(json.choices?.[0]?.delta));
+            if (visible) yield visible;
           } catch (error) {
             if (error instanceof SyntaxError) continue;
             throw error;

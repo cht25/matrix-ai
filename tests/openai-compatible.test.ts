@@ -62,3 +62,59 @@ describe("OpenAICompatibleProvider", () => {
     expect(body.messages[0].content[1]).toMatchObject({ type: "image_url", image_url: { url: "data:image/png;base64,abc" } });
   });
 });
+
+describe("OpenAICompatibleProvider streaming", () => {
+  const encode = (text: string) => new TextEncoder().encode(text);
+  const sse = (delta: string) => `data: ${JSON.stringify({ choices: [{ delta: { content: delta } }] })}\n\n`;
+
+  function sseBody(events: string[]): ReadableStream<Uint8Array> {
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const event of events) controller.enqueue(encode(event));
+        controller.close();
+      },
+    });
+  }
+
+  it("keeps spaces between deltas and removes split <think> blocks (regression)", async () => {
+    // Regression for the "Here'salean,repeatableframework" bug: every streamed
+    // delta used to be .trim()'d, gluing all words together, and Qwen3's
+    // <think> chain-of-thought leaked straight into the chat.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      body: sseBody([
+        sse("<th"),
+        sse("ink>Here's a thinking process: 1. analyse 2. plan</th"),
+        sse("ink>Here's a "),
+        sse("lean, "),
+        sse("repeatable "),
+        sse("framework you can use right now.\n\n"),
+        sse("1. Step "),
+        sse("one.\n"),
+        "data: [DONE]\n\n",
+      ]),
+    }) as unknown as typeof fetch;
+
+    const provider = new OpenAICompatibleProvider("sk-private", "https://provider.example/v1");
+    let out = "";
+    for await (const delta of provider.streamChat({ model: "qwen/qwen3.6-27b", messages: [{ role: "user", content: "hi" }] })) {
+      out += delta;
+    }
+
+    expect(out).toBe("Here's a lean, repeatable framework you can use right now.\n\n1. Step one.\n");
+  });
+
+  it("yields nothing for a reasoning-only stream", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      body: sseBody([sse("<think>only private reasoning, never shown</think>"), "data: [DONE]\n\n"]),
+    }) as unknown as typeof fetch;
+
+    const provider = new OpenAICompatibleProvider("sk-private", "https://provider.example/v1");
+    const chunks: string[] = [];
+    for await (const delta of provider.streamChat({ model: "qwen/qwen3.6-27b", messages: [{ role: "user", content: "hi" }] })) {
+      chunks.push(delta);
+    }
+    expect(chunks).toEqual([]);
+  });
+});
