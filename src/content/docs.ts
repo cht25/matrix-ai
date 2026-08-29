@@ -29,7 +29,7 @@ export const DOC_SECTIONS: DocSection[] = [
       { t: "h2", text: "What MATRIX does" },
       { t: "ul", items: [
         "Helps with writing, explanations, study, planning, research, brainstorming, technology, digital life and coding.",
-        "Automatically routes obvious coding requests to NVIDIA Nemotron 3 Ultra through OpenRouter.",
+        "Automatically routes obvious coding requests to the server-configured AI provider and model.",
         "Builds reviewable project files in Agent mode, with a sandboxed static preview and explicit GitHub push.",
         "Accepts images, text documents and common source-code files as task context.",
         "Analyses suspicious screenshots and provides calm defensive guidance.",
@@ -39,7 +39,7 @@ export const DOC_SECTIONS: DocSection[] = [
       { t: "p", text: "MATRIX is designed for users aged 11 to 17. Registration enforces this age range server-side, and age verification is reviewed by the security team. In some countries, guardian consent is required and collected during onboarding." },
       { t: "callout", tone: "info", text: "MATRIX helps broadly with digital life: computers, phones, apps, the internet, IT, coding and AI, alongside privacy, scam and cybersecurity guidance. It understands English, বাংলা and Banglish." },
       { t: "h2", text: "How privacy works" },
-      { t: "p", text: "Personal records are owner-scoped in Firebase and every write goes through authenticated server routes. Personal information and secrets are redacted before content is sent to an AI provider. GitHub tokens are AES-256-GCM encrypted at rest and are never sent to Groq, OpenRouter or the browser." },
+      { t: "p", text: "Personal records are owner-scoped in Firebase and every write goes through authenticated server routes. Personal information and secrets are redacted before content is sent to an AI provider. GitHub tokens are AES-256-GCM encrypted at rest and are never sent to an AI provider or the browser." },
     ],
   },
   {
@@ -92,7 +92,7 @@ export const DOC_SECTIONS: DocSection[] = [
     title: "AI Assistant",
     icon: "💬",
     blocks: [
-      { t: "p", text: "MATRIX Chat is a broadly useful assistant for writing, learning, planning, research, technology and safe digital life. Every request goes through a secure server-side gateway. General tasks use Groq; coding is automatically detected and routed to NVIDIA Nemotron 3 Ultra through OpenRouter." },
+      { t: "p", text: "MATRIX Chat is a broadly useful assistant for writing, learning, planning, research, technology and safe digital life. Every request goes through a secure server-side gateway using the OpenAI-compatible endpoint, model and API key configured by the admin, with environment fallbacks when that is not available." },
       { t: "h2", text: "What it can do" },
       { t: "ul", items: [
         "Explain difficult topics, improve writing, summarise material and build practical plans.",
@@ -143,7 +143,7 @@ export const DOC_SECTIONS: DocSection[] = [
     title: "Agent Mode",
     icon: "⌨️",
     blocks: [
-      { t: "p", text: "Agent mode is the coding workspace. It uses NVIDIA Nemotron 3 Ultra through OpenRouter and is separate from General Chat so file generation, preview and GitHub actions are deliberate." },
+      { t: "p", text: "Agent mode is the coding workspace. It uses the server-configured AI provider and model and is separate from General Chat so file generation, preview and GitHub actions are deliberate." },
       { t: "h2", text: "Build and review" },
       { t: "ol", items: [
         "Choose Agent in the sidebar or Chat/Agent switcher.",

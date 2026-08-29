@@ -3,7 +3,7 @@
 // client only receives a small public error code. Provider response bodies are
 // never sent to the browser and are sanitized before they reach logs.
 
-export type AIProviderName = "OpenRouter" | "Groq";
+export type AIProviderName = "OpenRouter" | "Groq" | "OpenAI";
 
 export type AIProviderErrorType =
   | "authentication"

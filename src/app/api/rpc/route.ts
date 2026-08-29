@@ -11,6 +11,7 @@ import { adminDb } from "@/lib/firebase/admin";
 import { getSessionUser, type SessionUser } from "@/lib/firebase/session";
 import { RpcError } from "@/lib/server/rpc";
 import * as rpc from "@/lib/server/rpc";
+import * as aiRuntime from "@/lib/ai/runtime-config";
 import * as projects from "@/lib/server/projects";
 import * as deploy from "@/lib/server/deploy";
 import { nowTs } from "@/lib/firebase/admin";
@@ -205,6 +206,30 @@ const ACTIONS: Record<string, Handler> = {
         latency_ms: e.data().latency_ms ?? 0,
         created_at: e.data().created_at?.toDate?.().toISOString() ?? "",
       }));
+  },
+  admin_ai_provider_get: async (d, u) => {
+    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
+    const config = await aiRuntime.getAIProviderConfigPublic(d);
+    await rpc.logAudit(d, u.uid, "ai_provider_settings_viewed", "system_settings", "ai_provider", "");
+    return config;
+  },
+  admin_ai_provider_save: async (d, u, b) => {
+    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
+    const result = await aiRuntime.saveAIProviderConfig(d, u.uid, {
+      base_url: str(b.base_url),
+      model: str(b.model),
+      api_key: typeof b.api_key === "string" ? b.api_key : "",
+      enabled: bool(b.enabled, true),
+      label: str(b.label, "OpenAI-compatible"),
+    });
+    await rpc.logAudit(d, u.uid, "ai_provider_settings_updated", "system_settings", "ai_provider", "");
+    return result;
+  },
+  admin_ai_provider_test: async (d, u) => {
+    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
+    const result = await aiRuntime.testAIProviderConfig(d);
+    await rpc.logAudit(d, u.uid, "ai_provider_settings_tested", "system_settings", "ai_provider", "");
+    return result;
   },
   admin_live_sites: async (d, u) => {
     if (!(await rpc.isAdmin(d, u.uid))) throw new RpcError("PERMISSION_DENIED", 403);

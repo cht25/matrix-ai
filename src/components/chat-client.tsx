@@ -1,9 +1,10 @@
 "use client";
 
 // MATRIX chat — minimal, editorial, premium. Real streaming responses from
-// the AI gateway (Groq for general chat; OpenRouter Nemotron for code),
-// stop/retry/regenerate, file attachments, Agent artifacts, live preview,
-// explicit GitHub push, temporary chat and task-focused empty states.
+// the AI gateway (admin-configurable OpenAI-compatible provider, with Groq /
+// OpenRouter environment fallbacks), stop/retry/regenerate, file attachments,
+// Agent artifacts, live preview, explicit GitHub push, temporary chat and
+// task-focused empty states.
 //
 // Fakes-free contract (product spec): every assistant message comes from the
 // real gateway. Any failure renders "Server problem" (or the appropriate
@@ -167,6 +168,10 @@ export function ChatClient({
     for (let i = initialMessages.length - 1; i >= 0; i--) if (initialMessages[i].metadata?.model) return initialMessages[i].metadata!.model!;
     return null;
   });
+  const [lastProvider, setLastProvider] = useState<string | null>(() => {
+    for (let i = initialMessages.length - 1; i >= 0; i--) if (initialMessages[i].metadata?.provider) return initialMessages[i].metadata!.provider!;
+    return null;
+  });
   const abortRef = useRef<AbortController | null>(null);
   // State updates are batched; this synchronous guard prevents a fast Enter +
   // form-submit/click sequence from creating two provider requests.
@@ -281,6 +286,7 @@ export function ChatClient({
     const reply = text.trim();
     if (!reply) return;
     if (metadata.model) setLastModel(metadata.model);
+    if (metadata.provider) setLastProvider(metadata.provider);
     if (metadata.project_id) setAgentProjectId(metadata.project_id);
     if (metadata.artifacts?.length) {
       setAgentFiles(metadata.artifacts);
@@ -772,8 +778,8 @@ export function ChatClient({
             </button>
           </div>
           <div className="flex min-w-0 items-center gap-1 sm:gap-2">
-            <span title="Coding requests are automatically routed to NVIDIA Nemotron 3 Ultra through OpenRouter" className="hidden max-w-52 truncate text-[11px] font-medium text-ink-3 lg:block">
-              {mode === "agent" ? "Nemotron 3 Ultra · OpenRouter" : lastModel?.includes("nemotron") ? "Coding detected · Nemotron" : "Automatic model routing"}
+            <span title="Requests use the AI provider and model configured on the server (Admin → AI usage)." className="hidden max-w-52 truncate text-[11px] font-medium text-ink-3 lg:block">
+              {lastProvider || lastModel ? [lastProvider, lastModel].filter(Boolean).join(" · ") : "Automatic model routing"}
             </span>
             {mode === "agent" ? (
               <button
@@ -892,7 +898,7 @@ export function ChatClient({
                   <div className={cn("mt-1.5 flex items-center gap-3 px-0.5 text-[10.5px] text-ink-3", m.role === "user" ? "justify-end" : "")}>
                     <span>{m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span>
                     {m.role === "assistant" && m.metadata?.model ? (
-                      <span className="hidden sm:inline">{m.metadata.model.includes("nemotron") ? "Nemotron 3 Ultra" : "MATRIX model"}</span>
+                      <span className="hidden sm:inline">{(m.metadata.provider ?? "AI") + " · " + m.metadata.model}</span>
                     ) : null}
                     {m.role === "assistant" ? (
                       <button

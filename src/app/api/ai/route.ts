@@ -3,7 +3,8 @@
 //
 // The ONLY way the frontend talks to an AI provider. Pipeline:
 //   Auth → rate limit → PII redaction → safety classification → prompt/RAG
-//   → automatic routing (Groq general, OpenRouter Nemotron coding/Agent)
+//   → automatic routing (admin-configured OpenAI-compatible provider first,
+//     then Groq general / OpenRouter Nemotron coding/Agent fallbacks)
 //   → output validation → artifact parsing → store allowed response → return
 //
 // Actions:
@@ -20,8 +21,8 @@ import { adminDb, adminAuth, nowTs } from "@/lib/firebase/admin";
 import { verifySession, type SessionUser } from "@/lib/firebase/session";
 import { redactPII, containsCredentials, leakedPII } from "@/lib/ai/pii";
 import { classify } from "@/lib/ai/domain";
-import { createProvider, MODELS, type AIMessage, type AIProvider } from "@/lib/ai/groq";
-import { AI_CONFIG, createAIRoutes, logAIConfiguration, type AIRouteTarget } from "@/lib/ai/config";
+import { type AIMessage, type AIProvider } from "@/lib/ai/groq";
+import { AI_CONFIG, createAIRoutesFromDb, createScanRoutesFromDb, logAIConfiguration, type AIRouteTarget } from "@/lib/ai/config";
 import { completeWithFallback, streamWithFallback } from "@/lib/ai/executor";
 import { AIProviderError, logProviderFailure, providerPublicCode } from "@/lib/ai/provider-error";
 import { agentGenerationIncomplete, formatAttachmentContext, isCodingRequest, parseAgentResponse, safeAgentPath, type AgentFile, type ChatMode, type TextAttachment } from "@/lib/ai/agent";
@@ -431,12 +432,14 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   }
 
   // --- prompt construction + automatic model routing --------------------------
-  // Agent mode and obvious coding work use OpenRouter first. A transient
-  // OpenRouter failure is retried once, then safely moved to Groq. General
-  // conversation remains Groq-only so routing is deterministic.
+  // When an admin has saved an OpenAI-compatible endpoint/model/key it is the
+  // primary route (for both general and coding/Agent work). If it fails
+  // transiently, the environment-keyed providers (Groq / OpenRouter) are used
+  // as fallbacks. Without a saved admin configuration the previous Groq /
+  // OpenRouter automatic routing is unchanged.
   const codingDetected = mode === "agent" || isCodingRequest(message, attachments);
   const preferFallback = body.prefer_fallback === true;
-  const targets = createAIRoutes(codingDetected, preferFallback);
+  const targets = await createAIRoutesFromDb(d, codingDetected, preferFallback);
   const selectedModel = targets[0]?.model ?? (codingDetected ? AI_CONFIG.coding.model : AI_CONFIG.general.model);
   if (!targets.length) {
     await logUsage(d, user.uid, "none", "chat", {}, Date.now() - started, "error", requestId);
@@ -491,6 +494,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     let done = false;
     let full = "";
     let activeTarget: AIRouteTarget = targets[0];
+    let usedFallback = false;
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         const emit = (obj: Record<string, unknown>) => {
@@ -513,7 +517,10 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
             },
             (target, fallback) => {
               activeTarget = target;
-              if (fallback) emit({ model: target.model, provider: target.provider, fallback: true });
+              if (fallback) {
+                usedFallback = true;
+                emit({ model: target.model, provider: target.provider, fallback: true });
+              }
             },
           )) {
             const delta = item.delta;
@@ -541,6 +548,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
             mode,
             model: activeTarget.model,
             provider: activeTarget.provider,
+            fallback: usedFallback,
             coding_detected: codingDetected,
           });
         } catch (e) {
@@ -692,7 +700,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     mode,
     model: activeTarget.model,
     provider: activeTarget.provider,
-    fallback: codingDetected && activeTarget.provider === "Groq",
+    fallback: targets.length > 1 && (targets.indexOf(activeTarget) > 0 || (preferFallback && targets.indexOf(activeTarget) < targets.length - 1)),
     coding_detected: codingDetected,
     usage,
     request_id: requestId,
@@ -728,8 +736,9 @@ async function handleScan(d: Db, user: SessionUser, body: Record<string, unknown
     return json({ error: check.error }, 400);
   }
 
-  const provider = createProvider();
-  if (!provider) return json({ error: "AI_GATEWAY_NOT_CONFIGURED" }, 503, requestId);
+  const targets = await createScanRoutesFromDb(d);
+  if (!targets.length) return json({ error: "AI_GATEWAY_NOT_CONFIGURED" }, 503, requestId);
+  const model = targets[0].model;
 
   const dataUrl = `data:${check.mime};base64,${Buffer.from(bytes).toString("base64")}`;
 
@@ -742,24 +751,25 @@ async function handleScan(d: Db, user: SessionUser, body: Record<string, unknown
 
   let reply = "";
   let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  let usedModel = model;
   try {
-    const result = await provider.chat({
-      model: MODELS.vision,
+    const completed = await completeWithFallback(targets, {
       messages: [{ role: "user", content: prompt }],
       imageDataUrl: dataUrl,
       maxTokens: 1200,
       requestId,
     });
-    reply = result.content;
-    usage = result.usage;
+    usedModel = completed.target.model;
+    reply = completed.response.content;
+    usage = completed.response.usage;
   } catch (e) {
     logProviderFailure(e, requestId);
-    await logUsage(d, user.uid, MODELS.vision, "scan", {}, Date.now() - started, "error", requestId);
+    await logUsage(d, user.uid, usedModel, "scan", {}, Date.now() - started, "error", requestId);
     return json({ error: providerPublicCode(e) }, providerStatus(e), requestId);
   }
 
   if (agentReference) {
-    await logUsage(d, user.uid, MODELS.vision, "scan", usage, Date.now() - started, "ok", requestId);
+    await logUsage(d, user.uid, usedModel, "scan", usage, Date.now() - started, "ok", requestId);
     return json({ reply, reference: true, request_id: requestId }, 200, requestId);
   }
 
@@ -780,7 +790,7 @@ async function handleScan(d: Db, user: SessionUser, body: Record<string, unknown
     created_at: nowTs(),
   });
 
-  await logUsage(d, user.uid, MODELS.vision, "scan", usage, Date.now() - started, "ok", requestId);
+  await logUsage(d, user.uid, usedModel, "scan", usage, Date.now() - started, "ok", requestId);
   return json({ analysis_id: analysis.id, risk_level: risk, confidence, reply, request_id: requestId }, 200, requestId);
 }
 
@@ -789,7 +799,15 @@ async function handleScan(d: Db, user: SessionUser, body: Record<string, unknown
 // reach the AI provider. Used by the UI status indicator and /api/health.
 // ---------------------------------------------------------------------------
 async function handleHealth(mode: ChatMode = "general") {
-  const targets = createAIRoutes(mode === "agent");
+  // Firestore may be unavailable during initial setup; in that case only the
+  // environment-keyed providers are available, so the health probe stays sane.
+  let d: Db | null = null;
+  try {
+    d = adminDb();
+  } catch {
+    /* not configured yet */
+  }
+  const targets = await createAIRoutesFromDb(d, mode === "agent");
   if (!targets.length) return json({ status: "unconfigured", mode }, 503);
   for (let i = 0; i < targets.length; i += 1) {
     const target = targets[i];
