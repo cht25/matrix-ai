@@ -1,31 +1,35 @@
 "use client";
 
-import type { PipelineAnalytics } from "@/lib/ai/pipeline";
-import { emptyAnalytics } from "@/lib/ai/pipeline";
+// Pipeline performance numbers (product spec §22).
+// Never rendered on its own: it lives inside the [Performance ▾] toggle of the
+// Activity panel, or in the Agent execution view — analytics are opt-in.
 
-export function PipelineAnalyticsPanel({ analytics }: { analytics: PipelineAnalytics | null }) {
-  const a = analytics ?? emptyAnalytics();
+import type { PipelineAnalytics } from "@/lib/ai/pipeline";
+import { cn } from "@/lib/utils";
+
+export function PipelineAnalyticsPanel({ analytics, compact = false }: { analytics: PipelineAnalytics | null; compact?: boolean }) {
+  if (!analytics) return null;
   const rows: Array<[string, string]> = [
-    ["Tokens/sec", a.tokensPerSec == null ? "—" : String(a.tokensPerSec)],
-    ["Input tokens", a.inputTokens.toLocaleString()],
-    ["Output tokens", a.outputTokens.toLocaleString()],
-    ["Total tokens", a.totalTokens.toLocaleString()],
-    ["Time to first", a.timeToFirstMs == null ? "—" : `${(a.timeToFirstMs / 1000).toFixed(2)}s`],
-    ["Total latency", `${(a.totalLatencyMs / 1000).toFixed(2)}s`],
-    ["Agent steps", String(a.agentSteps)],
-    ["Tools executed", String(a.toolsExecuted)],
+    ["Tokens/sec", analytics.tokensPerSec == null ? "—" : String(analytics.tokensPerSec)],
+    ["Total tokens", analytics.totalTokens.toLocaleString()],
+    ["Total latency", `${(analytics.totalLatencyMs / 1000).toFixed(2)}s`],
   ];
+  const detail: Array<[string, string]> = [
+    ["Input tokens", analytics.inputTokens.toLocaleString()],
+    ["Output tokens", analytics.outputTokens.toLocaleString()],
+    ["Time to first", analytics.timeToFirstMs == null ? "—" : `${(analytics.timeToFirstMs / 1000).toFixed(2)}s`],
+    ["Agent steps", String(analytics.agentSteps)],
+    ["Tools executed", String(analytics.toolsExecuted)],
+  ];
+
   return (
-    <div className="rounded-xl border border-border bg-surface p-3">
-      <p className="eyebrow mb-2">Pipeline performance</p>
-      <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 font-mono text-[11px]">
-        {rows.map(([k, v]) => (
-          <div key={k} className="flex items-baseline justify-between gap-2">
-            <dt className="text-ink-3">{k}</dt>
-            <dd className="text-ink">{v}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
+    <dl className={cn("grid gap-x-4 gap-y-1 font-mono text-[11px]", compact ? "mt-1.5 grid-cols-2" : "grid-cols-2")}>
+      {[...rows, ...(compact ? detail : [])].map(([key, value]) => (
+        <div key={key} className="flex items-baseline justify-between gap-2">
+          <dt className="text-ink-3">{key}</dt>
+          <dd className="text-ink">{value}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }

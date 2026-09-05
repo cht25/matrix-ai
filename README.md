@@ -33,14 +33,15 @@ the browser or an AI prompt.
 7. [Environment variables](#environment-variables)
 8. [Firestore data model](#firestore-data-model)
 9. [AI pipeline](#ai-pipeline)
-10. [Security model](#security-model)
-11. [Admin roles & permissions](#admin-roles--permissions)
-12. [Testing](#testing)
-13. [Production security checklist](#production-security-checklist)
-14. [Fakes-free behavior & health](#fakes-free-behavior--health)
-15. [Troubleshooting deployments](#troubleshooting-deployments)
-16. [Internationalization](#internationalization)
-17. [Migration notes (Supabase → Firebase)](#migration-notes-supabase--firebase)
+10. [Context-aware UI & intent-driven responses](#context-aware-ui--intent-driven-responses)
+11. [Security model](#security-model)
+12. [Admin roles & permissions](#admin-roles--permissions)
+13. [Testing](#testing)
+14. [Production security checklist](#production-security-checklist)
+15. [Fakes-free behavior & health](#fakes-free-behavior--health)
+16. [Troubleshooting deployments](#troubleshooting-deployments)
+17. [Internationalization](#internationalization)
+18. [Migration notes (Supabase → Firebase)](#migration-notes-supabase--firebase)
 
 ---
 
@@ -288,6 +289,52 @@ Auth → Rate limit (ai_usage_logs: 20/min · 300/day chat; 5/min · 50/day scan
 
 `POST { action: "health", mode?: "agent" }` is unauthenticated and performs a real reachability check for the selected provider. `/api/health` reports general and coding AI separately.
 
+## Context-aware UI & intent-driven responses
+
+The chat surface is **minimal by default, intelligent when needed, powerful on
+demand**. Capabilities exist in the system, but the interface only reveals the
+ones the user's message actually asked for:
+
+```
+USER INTENT → CAPABILITY SELECTION → EXECUTION → CONTEXTUAL UI
+```
+
+| Layer | Module | Responsibility |
+| --- | --- | --- |
+| Intent detection | `src/lib/ai/intent.ts` | `detectIntent()` classifies one message into `CHAT · EXPORT · IMAGE_GENERATION · AGENT_TASK · CODE · RESEARCH · STUDY · HEALTH · FORMAT_CLARIFY`, plus the requested artifact (`NONE · PDF · DOCX · CSV · XLSX · JSON · TXT · MARKDOWN · CODE · IMAGE · …`). `analyzeContent()` reads the reply (code fence, table, JSON, sources, flashcards) and `planResponseActions()` decides which actions are valid for it. |
+| Capability selection | `selectCapability()` / `effectiveMode()` | Chooses the gateway action (`chat · image · agent · orchestrate`) and the mode sent for that one message — an explicit image or agent request in General mode upgrades only that request, never the whole UI. |
+| Artifact lifecycle | `src/lib/ai/artifacts.ts` | `Not Requested → Requested → Generating → Ready → Available`. The transition helpers refuse to skip a step, so an artifact can never be shown as available before it was asked for. Also holds the execution state and the **whitelisted** activity lines (no chain-of-thought is ever rendered). |
+| File building | `src/lib/export/response-export.ts` + `src/lib/export/zip.ts` | Real PDF pages (paginated, correct xref), zipped OOXML `.docx` and `.xlsx`, CSV from detected tabular data, JSON extraction, Markdown/TXT. A format that the content cannot honestly produce returns `null` instead of an empty file. |
+| Rendering | `src/components/assistant-message.tsx`, `chat-client.tsx` | Every panel is mounted conditionally from that state — nothing is painted and then hidden with CSS. |
+
+What the user sees:
+
+- **Normal chat** — the message, the reply, and `Copy · Regenerate · More ▾`. No
+  export bar, no sandbox, no analytics, no reasoning panel.
+- **`More ▾`** — only actions valid for that reply (Listen, Export, Report, …).
+  `Export` opens an inline *Export as* row listing formats that fit the content:
+  CSV appears only for tabular data, JSON only for structured data.
+- **Explicit export** ("turn this into a PDF") — `PDF requested → Generating PDF…
+  → ✓ PDF ready [Open] [Save]`. `pickArtifactContent()` resolves what "this"
+  refers to (the previous answer for an acknowledgement, the reply's own table
+  for a CSV request).
+- **Ambiguous request** ("make a report") — a normal answer plus a minimal
+  `What format would you like? [PDF] [DOCX] [Markdown]`. Never four files at once.
+- **`don't export`** — export is removed from the actions and the More menu.
+- **Image request** — `Preparing image… → Together AI → ✓ Image ready` with
+  `Save · Regenerate · Edit prompt`. Ordinary messages never trigger generation.
+- **Agent task** — the stage list while it runs, then one collapsed line
+  (`Agent task completed [View]`). Performance numbers live behind
+  `Activity ▾ → Performance ▾`, and plain chat records no execution trace at all.
+- **Code answer** — `Copy code · Run · Explain` (Run only when a workspace or
+  project really exists); the full workspace opens only for real project files.
+- **Top bar** — `[Mode ▾] [Model ▾] … ● Ready [Settings ▾]`; strategy, auto-read,
+  demo mode and routing detail are inside Settings.
+- **Mobile** — one visible action plus `More ▾`, collapsed agent/activity panels.
+
+Review it without credentials at `/dev-preview/chat` (dev builds only, mocked
+gateway, same components and same intent logic; 404 in production).
+
 ## Security model
 
 - **Session cookies**: the browser signs in with the Firebase client SDK, then the
@@ -345,6 +392,22 @@ npm test         # vitest: AI pipeline, PII redaction, domain/safety classificat
                  #        file validation, age rules, API failure taxonomy, env config
 npm run typecheck
 ```
+
+The context-aware UI is covered by four suites:
+
+- `tests/intent.test.ts` — the spec's intent examples (`hi` → `CHAT/NONE`, "turn
+  this into a PDF" → `EXPORT/PDF`, "generate an image…" → `IMAGE_GENERATION`,
+  multi-step requests → `AGENT_TASK`, ambiguous "make a report" → format choice)
+  plus content analysis and action planning.
+- `tests/artifacts.test.ts` — the artifact lifecycle refuses to skip a step,
+  activity lines never leak un-whitelisted text, and `pickArtifactContent()`
+  resolves what an export request refers to.
+- `tests/response-export.test.ts` — the built files are real: PDF pagination and
+  xref offsets, zipped DOCX/XLSX packages readable entry by entry, CSV quoting,
+  and "no spreadsheet out of prose".
+- `tests/chat-render.test.ts` / `tests/contextual-ui.test.ts` — render the real
+  component tree and assert what a user sees for each spec test case, and that
+  the panels stay unmounted (not CSS-hidden) by default.
 
 ## Production security checklist
 

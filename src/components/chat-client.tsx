@@ -1,24 +1,29 @@
 "use client";
 
-// MATRIX chat — minimal, editorial, premium. Real streaming responses from
-// the AI gateway (admin-configurable OpenAI-compatible provider, with Groq /
-// OpenRouter environment fallbacks), stop/retry/regenerate, file attachments,
-// Agent artifacts, live preview, explicit GitHub push, temporary chat and
-// task-focused empty states.
+// =============================================================================
+// MATRIX chat — context-aware, intent-driven.
 //
-// Fakes-free contract (product spec): every assistant message comes from the
-// real gateway. Any failure renders "Server problem" (or the appropriate
-// category) with a [Retry] — never a canned reply, never an endless loader.
+//   USER INTENT → CAPABILITY SELECTION → EXECUTION → CONTEXTUAL UI
+//
+// A normal conversation renders exactly four things: the user message, the
+// Matrix reply, its contextual actions (Copy · Regenerate · More ▾) and the
+// composer. Export, Agent execution, image generation, analytics and activity
+// are real capabilities, but each one is mounted only when the user's intent
+// (or the content of the reply) makes it relevant.
+//
+// Fakes-free contract: every assistant message comes from the real gateway.
+// Any failure renders "Server problem" with a [Retry] — never a canned reply,
+// never an endless loader, and never a simulated reasoning trace.
+// =============================================================================
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Bot, BrainCircuit, Code2, FileCode2, FileSearch, Github, Globe, GraduationCap,
-  Image as ImageIcon, Lock, MonitorPlay, Paperclip, RefreshCcw, Send, ShieldAlert,
-  Sparkles, Square, WandSparkles, X, Zap,
+  BrainCircuit, Code2, Download, ExternalLink, FileSearch, Globe, GraduationCap, Image as ImageIcon,
+  Lock, MonitorPlay, Paperclip, Play, RefreshCcw, Send, ShieldAlert, Sparkles, Square,
+  WandSparkles, X, Zap,
 } from "lucide-react";
-import { AutoSpeakToggle, ListenButton } from "@/components/chat-speech-controls";
-import { NotificationsBell } from "@/components/notifications-bell";
+import { AutoSpeakToggle } from "@/components/chat-speech-controls";
 import {
   primeSpeech, readAutoSpeakPreference, speakMarkdown, stopSpeech, writeAutoSpeakPreference,
 } from "@/lib/chat-speech";
@@ -31,46 +36,41 @@ import { useToast } from "@/components/toast";
 import { ServerProblem } from "@/components/server-problem";
 import { classifyGatewayResponse, classifyRequestException, failureCopy, withRequestReference, type ApiFailure } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n/client";
+import { useIsCompact } from "@/lib/client/use-media-query";
 import { cn } from "@/lib/utils";
-import type { AgentFile, ChatMode, TextAttachment } from "@/lib/ai/agent";
-import { MATRIX_MODES, MODEL_LANES, modeMeta, suggestMode, type ExplainStyle, type ModelLane, type ResponseStrategy, type StudyLevel } from "@/lib/ai/modes";
+import type { AgentFile, TextAttachment } from "@/lib/ai/agent";
+import { modeMeta, suggestMode, type ChatMode, type ExplainStyle, type ModelLane, type ResponseStrategy, type StudyLevel } from "@/lib/ai/modes";
+import {
+  DEFAULT_INTENT, analyzeContent, availableExportFormats, classifyResponseKind, detectIntent,
+  effectiveMode, planResponseActions, selectCapability, type ContentSignals, type ExportFormat,
+  type IntentResult, type ResponseActionId,
+} from "@/lib/ai/intent";
+import {
+  advanceExecution, beginArtifact, completeArtifact, emptyArtifactState, emptyExecution,
+  failArtifact, finishExecution, fromSnapshot, pickArtifactContent, requestArtifact, startExecution,
+  type ArtifactState, type ExecutionState,
+} from "@/lib/ai/artifacts";
+import { buildArtifact, extractJson, type BuiltArtifact } from "@/lib/export/response-export";
+import { intentForMessage, latestArtifacts, latestProjectId, lastUserContent, messageKey, type ChatMessage, type MessageMetadata } from "@/lib/chat-messages";
+import { ChatTopBar } from "@/components/chat-topbar";
+import { AssistantMessage } from "@/components/assistant-message";
 import { AgentWorkspace } from "@/components/agent-workspace";
-import { AgentSandbox } from "@/components/agent-sandbox";
-import { ExecutionConsole } from "@/components/execution-console";
-import { PipelineAnalyticsPanel } from "@/components/pipeline-analytics";
-import { ExportDesk } from "@/components/export-desk";
-import { FlashcardDeck, LiveTaskGraph, ModeTools, type GraphNode } from "@/components/mode-workspace";
+import { AgentActivityCard } from "@/components/agent-sandbox";
+import { ArtifactCard } from "@/components/artifact-panel";
+import { ResponseProgress } from "@/components/response-status";
+import { ModeQuickActions, LiveTaskGraph, type GraphNode } from "@/components/mode-workspace";
 import { planOrchestrator } from "@/lib/ai/router";
-import { ThemeGallery } from "@/components/theme-gallery";
-import { ThinkingIndicator, ThinkingSummary } from "@/components/thinking-indicator";
-import type { AgentStageId, PipelineAnalytics, PipelineEvent } from "@/lib/ai/pipeline";
+import type { AgentStageId, PipelineAnalytics } from "@/lib/ai/pipeline";
 
-type MessageMetadata = {
-  mode?: ChatMode;
-  model?: string;
-  coding_detected?: boolean;
-  provider?: string;
-  fallback?: boolean;
-  artifacts?: AgentFile[];
-  attachment_names?: string[];
-  action?: string;
-  project_id?: string;
-  thinking_ms?: number;
-  image_data_url?: string;
-};
-
-export type ChatMessage = {
-  id?: string;
-  role: "user" | "assistant";
-  content: string;
-  created_at?: string;
-  metadata?: MessageMetadata;
-};
+export type { ChatMessage, MessageMetadata };
 
 type PendingAttachment = TextAttachment & { size: number };
 
 const CONNECT_TIMEOUT_MS = 25_000;
 const STREAM_IDLE_TIMEOUT_MS = 45_000;
+
+/** Formats a browser can open inline; the rest are download-only. */
+const OPENABLE: ExportFormat[] = ["pdf", "markdown", "txt", "json", "csv"];
 
 const SUGGESTIONS = [
   { icon: <Sparkles size={16} strokeWidth={1.6} />, label: "Plan or brainstorm", desc: "Turn an idea into steps", prompt: "Help me turn an idea into a clear step-by-step plan." },
@@ -90,9 +90,9 @@ const FEATURES = [
 
 const AGENT_SUGGESTIONS = [
   { icon: <Code2 size={15} strokeWidth={1.5} />, label: "Build a responsive website", prompt: "Build a polished responsive website from my description. Start by asking only for the one most important missing requirement." },
-  { icon: <FileCode2 size={15} strokeWidth={1.5} />, label: "Fix an attached project", prompt: "Review the attached project files, identify the root cause, and return complete corrected files." },
+  { icon: <FileSearch size={15} strokeWidth={1.5} />, label: "Fix an attached project", prompt: "Review the attached project files, identify the root cause, and return complete corrected files." },
   { icon: <MonitorPlay size={15} strokeWidth={1.5} />, label: "Create a live prototype", prompt: "Create a self-contained HTML, CSS and JavaScript prototype that I can open in Live Preview." },
-  { icon: <Github size={15} strokeWidth={1.5} />, label: "Prepare a GitHub change", prompt: "Prepare a focused, production-ready code change with complete files and a verification checklist." },
+  { icon: <Code2 size={15} strokeWidth={1.5} />, label: "Prepare a GitHub change", prompt: "Prepare a focused, production-ready code change with complete files and a verification checklist." },
 ];
 
 async function parseErrorCode(res: Response): Promise<string | null> {
@@ -118,27 +118,18 @@ async function parseGatewayError(res: Response): Promise<{ code: string | null; 
   }
 }
 
-function lastUserContent(list: ChatMessage[]): string | null {
+/** The most recent assistant answer before the current turn. */
+function lastAssistantContent(list: ChatMessage[]): string | null {
   for (let i = list.length - 1; i >= 0; i--) {
-    if (list[i].role === "user") return list[i].content;
+    if (list[i].role === "assistant" && list[i].content.trim()) return list[i].content;
   }
   return null;
 }
 
-function latestArtifacts(list: ChatMessage[]): AgentFile[] {
-  for (let i = list.length - 1; i >= 0; i--) {
-    const files = list[i].metadata?.artifacts;
-    if (Array.isArray(files) && files.length) return files;
-  }
-  return [];
-}
-
-function latestProjectId(list: ChatMessage[]): string | null {
-  for (let i = list.length - 1; i >= 0; i--) {
-    const pid = list[i].metadata?.project_id;
-    if (typeof pid === "string" && pid) return pid;
-  }
-  return null;
+function firstHeading(content: string, fallback: string): string {
+  const heading = content.match(/^#{1,4}\s+(.+)$/m)?.[1]?.trim();
+  const line = (heading ?? content.trim().split("\n")[0] ?? "").replace(/[#*_`]/g, "").trim();
+  return (line || fallback).slice(0, 60);
 }
 
 export function ChatClient({
@@ -157,12 +148,20 @@ export function ChatClient({
   const router = useRouter();
   const toast = useToast();
   const { t, locale } = useI18n();
+  const compact = useIsCompact();
+
+  // --- conversation -------------------------------------------------------
   const [mode, setMode] = useState<ChatMode>(isTemporary ? "general" : initialMode);
-  const [pipelineEvents, setPipelineEvents] = useState<PipelineEvent[]>([]);
-  const [pipelineStage, setPipelineStage] = useState<AgentStageId | "complete" | null>(null);
-  const [pipelineTool, setPipelineTool] = useState<string | null>(null);
-  const [analytics, setAnalytics] = useState<PipelineAnalytics | null>(null);
-  const [streamStatus, setStreamStatus] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const [input, setInput] = useState("");
+  const [convId, setConvId] = useState<string | null>(initialConvId);
+  const [lastUserMessage, setLastUserMessage] = useState<string | null>(lastUserContent(initialMessages));
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [failure, setFailure] = useState<ApiFailure | null>(null);
+
+  // --- capability selection (secondary; lives in the top bar / settings) ---
   const [lane, setLane] = useState<ModelLane>("auto");
   const [strategy, setStrategy] = useState<ResponseStrategy>("balanced");
   const [studyLevel, setStudyLevel] = useState<StudyLevel>("college");
@@ -170,28 +169,32 @@ export function ChatClient({
   const [demoMode, setDemoMode] = useState(false);
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [modeHint, setModeHint] = useState<ChatMode | null>(null);
+  const [webSearch, setWebSearch] = useState(false);
+  const [codeHint, setCodeHint] = useState(false);
 
-  const suggestions = mode === "agent" ? AGENT_SUGGESTIONS : locale === "bn" ? [
-    { icon: <Sparkles size={15} strokeWidth={1.5} />, label: "পরিকল্পনা বা আইডিয়া", prompt: "আমার একটি আইডিয়াকে পরিষ্কার ধাপে ধাপে পরিকল্পনায় সাজাতে সাহায্য করুন।" },
-    { icon: <BrainCircuit size={15} strokeWidth={1.5} />, label: "সহজভাবে বুঝিয়ে দিন", prompt: "একটি কঠিন বিষয় সহজভাবে বুঝিয়ে একটি বাস্তব উদাহরণ দিন।" },
-    { icon: <FileSearch size={15} strokeWidth={1.5} />, label: "ফাইল বা ছবি বিশ্লেষণ", prompt: null, action: "attach" },
-    { icon: <Code2 size={15} strokeWidth={1.5} />, label: "Agent দিয়ে তৈরি করুন", prompt: null, href: "/chat?mode=agent" },
-  ] : SUGGESTIONS;
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
-  const [input, setInput] = useState("");
-  const [convId, setConvId] = useState<string | null>(initialConvId);
+  // --- run state ----------------------------------------------------------
   const [streaming, setStreaming] = useState(false);
   const [streamedText, setStreamedText] = useState<string | null>(null);
+  const [streamStatus, setStreamStatus] = useState<string | null>(null);
   const [activeModel, setActiveModel] = useState<string | null>(null);
   const [activeStartedAt, setActiveStartedAt] = useState<number | null>(null);
-  const [failure, setFailure] = useState<ApiFailure | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [lastUserMessage, setLastUserMessage] = useState<string | null>(lastUserContent(initialMessages));
-  const [keyboardInset, setKeyboardInset] = useState(0);
-  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [runMode, setRunMode] = useState<ChatMode>(mode);
+  const [runIntent, setRunIntent] = useState<IntentResult>(DEFAULT_INTENT);
+
+  // --- intent-driven UI state (spec §27) ----------------------------------
+  /** Execution detail for the current/last run. Empty for plain chat. */
+  const [execution, setExecution] = useState<ExecutionState>(emptyExecution());
+  /** Artifact lifecycle per message key. Absent = Not Requested. */
+  const [artifacts, setArtifacts] = useState<Record<string, ArtifactState>>({});
+  /** Which message has the inline "Export as" row open (More ▾ → Export). */
+  const [exportPickerKey, setExportPickerKey] = useState<string | null>(null);
+
+  // --- agent workspace ----------------------------------------------------
   const [agentFiles, setAgentFiles] = useState<AgentFile[]>(latestArtifacts(initialMessages));
   const [agentProjectId, setAgentProjectId] = useState<string | null>(latestProjectId(initialMessages));
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+
+  // --- routing metadata (tertiary) ---------------------------------------
   const [lastModel, setLastModel] = useState<string | null>(() => {
     for (let i = initialMessages.length - 1; i >= 0; i--) if (initialMessages[i].metadata?.model) return initialMessages[i].metadata!.model!;
     return null;
@@ -200,6 +203,11 @@ export function ChatClient({
     for (let i = initialMessages.length - 1; i >= 0; i--) if (initialMessages[i].metadata?.provider) return initialMessages[i].metadata!.provider!;
     return null;
   });
+
+  // --- speech -------------------------------------------------------------
+  const [autoSpeak, setAutoSpeak] = useState(true);
+  const [speakingId, setSpeakingId] = useState<string | null>(null);
+
   const abortRef = useRef<AbortController | null>(null);
   // State updates are batched; this synchronous guard prevents a fast Enter +
   // form-submit/click sequence from creating two provider requests.
@@ -209,18 +217,26 @@ export function ChatClient({
   const fileRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [webSearch, setWebSearch] = useState(false);
-  const [codeHint, setCodeHint] = useState(false);
   const convIdRef = useRef<string | null>(initialConvId);
+  /** Latest committed conversation, read while a request is in flight. */
+  const messagesRef = useRef<ChatMessage[]>(initialMessages);
   const lastAttachmentsRef = useRef<PendingAttachment[]>([]);
-  const [autoSpeak, setAutoSpeak] = useState(true);
-  const [speakingId, setSpeakingId] = useState<string | null>(null);
   const autoSpeakRef = useRef(true);
   const localeRef = useRef(locale);
+  /** Built artifacts, kept so Open/Save never rebuilds twice. */
+  const builtRef = useRef<Map<string, BuiltArtifact>>(new Map());
+  /** Prompt text behind an image reply, for [Edit prompt]. */
+  const imagePromptRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    convIdRef.current = convId;
-  }, [convId]);
+  const suggestions = mode === "agent" ? AGENT_SUGGESTIONS : locale === "bn" ? [
+    { icon: <Sparkles size={15} strokeWidth={1.5} />, label: "পরিকল্পনা বা আইডিয়া", prompt: "আমার একটি আইডিয়াকে পরিষ্কার ধাপে ধাপে পরিকল্পনায় সাজাতে সাহায্য করুন।" },
+    { icon: <BrainCircuit size={15} strokeWidth={1.5} />, label: "সহজভাবে বুঝিয়ে দিন", prompt: "একটি কঠিন বিষয় সহজভাবে বুঝিয়ে একটি বাস্তব উদাহরণ দিন।" },
+    { icon: <FileSearch size={15} strokeWidth={1.5} />, label: "ফাইল বা ছবি বিশ্লেষণ", prompt: null, action: "attach" },
+    { icon: <Code2 size={15} strokeWidth={1.5} />, label: "Agent দিয়ে তৈরি করুন", prompt: null, href: "/chat?mode=agent" },
+  ] : SUGGESTIONS;
+
+  useEffect(() => { convIdRef.current = convId; }, [convId]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   useEffect(() => {
     const preferred = readAutoSpeakPreference(true);
@@ -228,13 +244,8 @@ export function ChatClient({
     autoSpeakRef.current = preferred;
   }, []);
 
-  useEffect(() => {
-    autoSpeakRef.current = autoSpeak;
-  }, [autoSpeak]);
-
-  useEffect(() => {
-    localeRef.current = locale;
-  }, [locale]);
+  useEffect(() => { autoSpeakRef.current = autoSpeak; }, [autoSpeak]);
+  useEffect(() => { localeRef.current = locale; }, [locale]);
 
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -267,6 +278,38 @@ export function ChatClient({
     };
   }, []);
 
+  // Restore an explicitly requested artifact for the latest exchange after a
+  // reload. Only the last turn — history never grows artifact panels.
+  useEffect(() => {
+    if (!initialMessages.length) return;
+    let assistantIndex = -1;
+    for (let i = initialMessages.length - 1; i >= 0; i--) {
+      if (initialMessages[i].role === "assistant") { assistantIndex = i; break; }
+    }
+    if (assistantIndex < 0) return;
+    const message = initialMessages[assistantIndex];
+    if (message.metadata?.artifact) {
+      setArtifacts({ [messageKey(message, assistantIndex)]: fromSnapshot(message.metadata.artifact) });
+      return;
+    }
+    const intent = intentForMessage(initialMessages, assistantIndex);
+    if (!intent.artifactRequested || intent.artifact === "NONE" || !intent.formats.length) return;
+    setArtifacts({
+      [messageKey(message, assistantIndex)]: requestArtifact(emptyArtifactState(), {
+        format: intent.formats[0],
+        title: firstHeading(message.content, "MATRIX response"),
+      }),
+    });
+    // Runs once per mounted conversation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** Content signals per message — recomputed only when messages change. */
+  const signalsByIndex = useMemo<(ContentSignals | null)[]>(
+    () => messages.map((message) => (message.role === "assistant" ? analyzeContent(message.content) : null)),
+    [messages],
+  );
+
   function autosize() {
     const el = textareaRef.current;
     if (!el) return;
@@ -293,6 +336,8 @@ export function ChatClient({
     setAttachments([]);
     setFailure(null);
     setNotice(null);
+    setExecution(emptyExecution());
+    setArtifacts({});
     router.replace(`/chat?mode=${next}`);
   }
 
@@ -310,26 +355,136 @@ export function ChatClient({
     }, ms);
   }
 
-  function commitPartial(text: string, replaceLastAssistant: boolean, metadata: MessageMetadata = {}) {
+  // -------------------------------------------------------------------------
+  // Artifacts — real builds, only after a request
+  // -------------------------------------------------------------------------
+
+  function updateArtifact(key: string, next: (current: ArtifactState) => ArtifactState) {
+    setArtifacts((current) => ({ ...current, [key]: next(current[key] ?? emptyArtifactState()) }));
+  }
+
+  /** Requested → Generating → Ready (or Failed) for one message. */
+  function buildArtifactFor(key: string, format: ExportFormat, content: string, title: string) {
+    updateArtifact(key, (current) => beginArtifact(requestArtifact(current, { format, title })));
+    // One frame later so the "Generating…" state is real, not skipped.
+    window.setTimeout(() => {
+      try {
+        const built = buildArtifact(format, content, title);
+        if (!built) {
+          updateArtifact(key, (current) =>
+            failArtifact(current, format === "csv" || format === "xlsx"
+              ? "This answer has no tabular data to export yet."
+              : "There is nothing to export in this answer yet."),
+          );
+          return;
+        }
+        builtRef.current.set(key, built);
+        updateArtifact(key, (current) => completeArtifact(current, built.filename));
+      } catch {
+        updateArtifact(key, (current) => failArtifact(current, "The file could not be built. Try again."));
+      }
+    }, 80);
+  }
+
+  function artifactSource(key: string, content: string, title: string, format: ExportFormat) {
+    const cached = builtRef.current.get(key);
+    if (cached && cached.filename.endsWith(`.${format === "markdown" ? "md" : format}`)) return cached;
+    const built = buildArtifact(format, content, title);
+    if (built) builtRef.current.set(key, built);
+    return built;
+  }
+
+  function downloadBuilt(key: string, content: string, title: string, format: ExportFormat) {
+    const built = artifactSource(key, content, title, format);
+    if (!built) {
+      toast("Nothing to download yet");
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([built.data], { type: built.mime }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = built.filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    toast(`${format.toUpperCase()} saved`);
+  }
+
+  function openBuilt(key: string, content: string, title: string, format: ExportFormat) {
+    const built = artifactSource(key, content, title, format);
+    if (!built) {
+      toast("Nothing to open yet");
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([built.data], { type: built.mime }));
+    const tab = window.open(url, "_blank", "noopener,noreferrer");
+    if (!tab) toast("Allow pop-ups to open this file");
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }
+
+  function saveDataUrl(dataUrl: string, filename: string) {
+    const anchor = document.createElement("a");
+    anchor.href = dataUrl;
+    anchor.download = filename;
+    anchor.click();
+    toast("Image saved");
+  }
+
+  function requestArtifactFromIntent(key: string, intent: IntentResult, reply: string) {
+    if (!intent.artifactRequested || intent.suppressExport) return;
+    if (intent.artifact === "IMAGE") {
+      // The image itself arrives with the reply; mark the artifact ready.
+      updateArtifact(key, (current) =>
+        completeArtifact(beginArtifact(requestArtifact(current, { type: "IMAGE", title: "Matrix image" })), "matrix-image.png"),
+      );
+      return;
+    }
+    const format = intent.formats[0];
+    if (!format) return;
+    // "Turn THIS answer into a PDF" refers to the previous answer; "create a
+    // CSV from this table" refers to the table in the reply that just arrived.
+    const previous = lastAssistantContent(messagesRef.current);
+    const content = pickArtifactContent({ format, reply, previous });
+    buildArtifactFor(key, format, content, firstHeading(content, "MATRIX response"));
+  }
+
+  // -------------------------------------------------------------------------
+  // Sending
+  // -------------------------------------------------------------------------
+
+  function commitPartial(
+    text: string,
+    opts: { replaceLastAssistant?: boolean; turnId?: string; intent?: IntentResult } = {},
+    metadata: MessageMetadata = {},
+  ) {
     const reply = text.trim();
-    if (!reply) return;
+    if (!reply) return null;
     if (metadata.model) setLastModel(metadata.model);
     if (metadata.provider) setLastProvider(metadata.provider);
     if (metadata.project_id) setAgentProjectId(metadata.project_id);
-    if (metadata.thinking_ms === undefined && activeStartedAt) {
-      metadata.thinking_ms = Date.now() - activeStartedAt;
+    if (metadata.duration_ms === undefined && activeStartedAt) metadata.duration_ms = Date.now() - activeStartedAt;
+    if (opts.turnId) metadata.turn_id = opts.turnId;
+    if (opts.intent) {
+      metadata.intent = opts.intent.intent;
+      metadata.artifact_type = opts.intent.artifact;
     }
     if (metadata.artifacts?.length) {
       setAgentFiles(metadata.artifacts);
       // The workspace no longer pops open over the finished answer — the
-      // "Open Agent workspace" card and the Workspace button surface it.
+      // contextual "Open Agent workspace" card and the top-bar button do that.
     }
-    setMessages((m) => {
-      const base = replaceLastAssistant && m[m.length - 1]?.role === "assistant" ? m.slice(0, -1) : m;
+    const key = `t:${opts.turnId ?? crypto.randomUUID()}`;
+    setMessages((current) => {
+      const base = opts.replaceLastAssistant && current[current.length - 1]?.role === "assistant" ? current.slice(0, -1) : current;
       const last = base[base.length - 1];
-      if (last?.role === "assistant" && last.content === reply) return base;
+      if (last?.role === "assistant" && last.content === reply) {
+        // Identical reply (a retry that produced the same text): keep one
+        // message but stamp this turn's metadata so its key still matches the
+        // artifact/execution state built for it.
+        return [...base.slice(0, -1), { ...last, metadata: { ...last.metadata, ...metadata } }];
+      }
       return [...base, { role: "assistant", content: reply, created_at: new Date().toISOString(), metadata }];
     });
+    return key;
   }
 
   function stop() {
@@ -377,27 +532,59 @@ export function ChatClient({
     setSpeakingId(ok ? "auto" : null);
   }
 
-  async function streamMessage(message: string, opts: { replaceLastAssistant?: boolean; reuseUser?: boolean; regenerate?: boolean; preferFallback?: boolean; attachments?: PendingAttachment[] } = {}) {
+  async function streamMessage(
+    message: string,
+    opts: {
+      replaceLastAssistant?: boolean;
+      reuseUser?: boolean;
+      regenerate?: boolean;
+      preferFallback?: boolean;
+      attachments?: PendingAttachment[];
+      intent?: IntentResult;
+      turnId?: string;
+    } = {},
+  ) {
     if (requestInFlightRef.current) return;
     requestInFlightRef.current = true;
     const replaceLastAssistant = opts.replaceLastAssistant === true;
     const sentAttachments = opts.attachments ?? [];
+    const turnId = opts.turnId ?? crypto.randomUUID();
+
+    // --- intent detection → capability selection -------------------------
+    const intent = opts.intent ?? detectIntent(message, { mode, codeCapability: codeHint, agentMode: mode === "agent" });
+    const capability = selectCapability(intent, mode);
+    const messageMode = effectiveMode(intent, mode);
+    const isImage = capability === "image";
+    const isOrchestrator = capability === "orchestrate";
+    const isAgentRun = capability === "agent";
+    // Plain chat keeps no execution trace at all: no activity, no analytics.
+    const trackExecution = isAgentRun || isImage || isOrchestrator || demoMode;
+
     setFailure(null);
     setNotice(null);
     setStreaming(true);
-    setPipelineEvents([{ at: Date.now(), type: "info", message: mode === "agent" ? "Agent initialized" : mode === "image" ? "Image generation started" : "Connecting" }]);
-    setPipelineStage(mode === "agent" ? "understanding" : null);
-    setPipelineTool(null);
-    setAnalytics(null);
+    setRunIntent(intent);
+    setRunMode(messageMode);
     setStreamStatus("connecting");
     setLastUserMessage(message);
+    if (isImage) imagePromptRef.current = message;
     const startedAt = Date.now();
     setActiveStartedAt(startedAt);
     setActiveModel(lastModel);
     setStreamedText("");
+    setExportPickerKey(null);
+    if (replaceLastAssistant) {
+      builtRef.current.clear();
+      setArtifacts({});
+    }
+    setExecution(
+      trackExecution
+        ? startExecution(emptyExecution(), isAgentRun ? "Agent initialized" : isImage ? "Image generation started" : "Connecting")
+        : emptyExecution(),
+    );
     stopSpeech();
     setSpeakingId(null);
-    if (mode !== "agent" && autoSpeakRef.current) primeSpeech();
+    if (!isAgentRun && autoSpeakRef.current) primeSpeech();
 
     if (!firebaseBrowserConfigured) {
       setFailure({ ...failureCopy("not-configured"), detail: "The MATRIX backend is not configured on this deployment yet, so chat cannot start." });
@@ -414,20 +601,34 @@ export function ChatClient({
     const requestId = crypto.randomUUID();
     let collected = "";
     let committed = false;
+    let committedKey: string | null = null;
     const streamMetadata: MessageMetadata = {};
 
+    const commit = (text: string) => {
+      const key = commitPartial(text, { replaceLastAssistant, turnId, intent }, streamMetadata);
+      if (key) committedKey = key;
+      committed = true;
+      // An artifact the user explicitly asked for is built once the reply lands.
+      if (key && !isImage) requestArtifactFromIntent(key, intent, text);
+      if (key && isImage && streamMetadata.image_data_url) {
+        updateArtifact(key, (current) =>
+          completeArtifact(beginArtifact(requestArtifact(current, { type: "IMAGE", title: "Matrix image" })), "matrix-image.png"),
+        );
+      }
+    };
+
     try {
-      armIdleTimer(mode === "agent" ? 180_000 : CONNECT_TIMEOUT_MS, controller);
+      armIdleTimer(isAgentRun ? 180_000 : CONNECT_TIMEOUT_MS, controller);
       const res = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
         body: JSON.stringify({
-          action: mode === "image" ? "image" : mode === "orchestrator" ? "orchestrate" : "chat",
-          stream: mode !== "image" && mode !== "orchestrator",
+          action: isImage ? "image" : isOrchestrator ? "orchestrate" : "chat",
+          stream: !isImage && !isOrchestrator,
           conversation_id: convIdRef.current,
           is_temporary: isTemporary,
-          mode,
+          mode: messageMode,
           lane,
           strategy,
           study_level: studyLevel,
@@ -449,6 +650,7 @@ export function ChatClient({
         const gatewayError = await parseGatewayError(res);
         if (gatewayError.conversationId) rememberConv(gatewayError.conversationId);
         setFailure(withRequestReference(classifyGatewayResponse(res.status, gatewayError.code), gatewayError.requestId));
+        if (trackExecution) setExecution((current) => finishExecution(advanceExecution(current, { event: { at: Date.now(), type: "error", message: "Request failed" } }), "failed"));
         return;
       }
 
@@ -471,53 +673,45 @@ export function ChatClient({
           analytics?: PipelineAnalytics;
           tasks?: Array<{ id: string; title: string; error?: string; image_data_url?: string }>;
         };
-        if (data.analytics) setAnalytics(data.analytics);
+        if (trackExecution && data.analytics) setExecution((current) => advanceExecution(current, { analytics: data.analytics! }));
         if (data.tasks) {
-          setGraphNodes(data.tasks.map((t) => ({ id: t.id, title: t.title, status: t.error ? "failed" : "completed" })));
-        }
-        if (data.image?.data_url) {
-          commitPartial(data.reply || "Image ready.", replaceLastAssistant, {
-            mode: "image",
-            image_data_url: data.image.data_url,
-            model: data.model,
-            provider: data.provider,
-          });
-          committed = true;
-          setStreamStatus("complete");
-          if (data.conversation_id) rememberConv(data.conversation_id);
-          return;
+          setGraphNodes(data.tasks.map((task) => ({ id: task.id, title: task.title, status: task.error ? "failed" : "completed" })));
         }
         if (data.conversation_id) rememberConv(data.conversation_id);
-        // The project is created and files are persisted server-side; the
-        // workspace reuses it via project_id (or the conversation id).
         if (data.project_id) setAgentProjectId(data.project_id);
         if (data.model) setActiveModel(data.model);
+
+        if (data.image?.data_url) {
+          streamMetadata.mode = "image";
+          streamMetadata.image_data_url = data.image.data_url;
+          streamMetadata.model = data.model;
+          streamMetadata.provider = data.provider ?? "Together";
+          commit(data.reply || "Image ready.");
+          if (trackExecution) setExecution((current) => finishExecution(advanceExecution(current, { event: { at: Date.now(), type: "complete", message: "Response ready" } }), "complete"));
+          setStreamStatus("complete");
+          return;
+        }
+
         if (data.reply) {
-          commitPartial(data.reply, replaceLastAssistant, {
-            artifacts: data.files,
-            project_id: data.project_id ?? undefined,
-            model: data.model,
-            mode: data.mode,
-            coding_detected: data.coding_detected,
-            provider: data.provider,
-            fallback: data.fallback,
-            action: data.theme_gallery ? "theme_gallery" : undefined,
-          });
-          committed = true;
+          streamMetadata.artifacts = data.files;
+          streamMetadata.project_id = data.project_id ?? undefined;
+          streamMetadata.model = data.model;
+          streamMetadata.mode = data.mode;
+          streamMetadata.coding_detected = data.coding_detected;
+          streamMetadata.provider = data.provider;
+          streamMetadata.fallback = data.fallback;
+          streamMetadata.action = data.theme_gallery ? "theme_gallery" : undefined;
+          commit(data.reply);
           maybeAutoSpeak(data.reply);
           if (data.storage_degraded) setNotice("The assistant replied, but the chat could not be saved to storage right now.");
+          if (trackExecution) setExecution((current) => finishExecution(advanceExecution(current, { event: { at: Date.now(), type: "complete", message: "Response ready" } }), "complete"));
           // Update the URL to the conversation WITHOUT triggering a full Next.js
-          // navigation. Using router.replace here would unmount and recreate the
-          // ChatClient from the server component, discarding the state updates
-          // from commitPartial (the assistant reply and agent artifacts). Using
-          // history.replaceState keeps the component mounted so the result is
-          // visible immediately. On a later manual refresh the server component
-          // loads the same messages from Firestore — no duplicates.
+          // navigation: router.replace here would unmount ChatClient and discard
+          // the state updates from commitPartial. history.replaceState keeps the
+          // component mounted so the result is visible immediately.
           if (data.conversation_id && !isTemporary) {
             const targetUrl = `/chat/${data.conversation_id}`;
-            if (!window.location.pathname.startsWith(targetUrl)) {
-              window.history.replaceState(null, "", targetUrl);
-            }
+            if (!window.location.pathname.startsWith(targetUrl)) window.history.replaceState(null, "", targetUrl);
           }
           return;
         }
@@ -537,6 +731,65 @@ export function ChatClient({
       let streamError: string | null = null;
       let gotConversationId: string | null = null;
 
+      type StreamEvent = {
+        delta?: string;
+        done?: boolean;
+        conversation_id?: string;
+        error?: string;
+        model?: string;
+        mode?: ChatMode;
+        coding_detected?: boolean;
+        provider?: string;
+        fallback?: boolean;
+        storage_degraded?: boolean;
+        stage?: AgentStageId;
+        label?: string;
+        tool?: string;
+        stream_status?: string;
+        files?: AgentFile[];
+        project_id?: string | null;
+        analytics?: PipelineAnalytics;
+      };
+
+      const handleEvent = (data: StreamEvent) => {
+        if (data.stream_status) setStreamStatus(data.stream_status);
+        if (trackExecution && data.stage) {
+          setExecution((current) =>
+            advanceExecution(current, {
+              stage: data.stage!,
+              event: { at: Date.now(), type: "stage", message: data.label || data.stage!, stage: data.stage },
+            }),
+          );
+        }
+        if (trackExecution && data.tool) {
+          setExecution((current) =>
+            advanceExecution(current, { tool: data.tool!, event: { at: Date.now(), type: "tool", message: "Tool selected", tool: data.tool } }),
+          );
+        }
+        if (trackExecution && data.analytics) setExecution((current) => advanceExecution(current, { analytics: data.analytics! }));
+        if (data.files?.length) streamMetadata.artifacts = data.files;
+        if (data.project_id) streamMetadata.project_id = data.project_id;
+        if (data.model) { streamMetadata.model = data.model; setActiveModel(data.model); }
+        if (data.mode) streamMetadata.mode = data.mode;
+        if (typeof data.coding_detected === "boolean") streamMetadata.coding_detected = data.coding_detected;
+        if (data.provider) streamMetadata.provider = data.provider;
+        if (typeof data.fallback === "boolean") streamMetadata.fallback = data.fallback;
+        if (typeof data.delta === "string") {
+          collected += data.delta;
+          setStreamedText(collected);
+        }
+        if (data.conversation_id) {
+          gotConversationId = data.conversation_id;
+          rememberConv(data.conversation_id);
+        }
+        if (data.error) streamError = data.error;
+        if (data.done) {
+          commit(collected);
+          maybeAutoSpeak(collected);
+          if (data.storage_degraded) setNotice("The assistant replied, but the chat could not be saved to storage right now.");
+        }
+      };
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -548,107 +801,30 @@ export function ChatClient({
           const line = ev.trim();
           if (!line.startsWith("data:")) continue;
           try {
-            const data = JSON.parse(line.slice(5).trim()) as {
-              delta?: string;
-              done?: boolean;
-              conversation_id?: string;
-              error?: string;
-              model?: string;
-              mode?: ChatMode;
-              coding_detected?: boolean;
-              provider?: string;
-              fallback?: boolean;
-              storage_degraded?: boolean;
-              stage?: AgentStageId;
-              label?: string;
-              tool?: string;
-              stream_status?: string;
-              files?: AgentFile[];
-              project_id?: string | null;
-              analytics?: PipelineAnalytics;
-            };
-            if (data.stream_status) setStreamStatus(data.stream_status);
-            if (data.stage) {
-              setPipelineStage(data.stage);
-              setPipelineEvents((ev) => [...ev, { at: Date.now(), type: "stage", message: data.label || data.stage!, stage: data.stage }]);
-            }
-            if (data.tool) {
-              setPipelineTool(data.tool);
-              setPipelineEvents((ev) => [...ev, { at: Date.now(), type: "tool", message: "Tool selected", tool: data.tool }]);
-            }
-            if (data.analytics) setAnalytics(data.analytics);
-            if (data.files?.length) streamMetadata.artifacts = data.files;
-            if (data.project_id) streamMetadata.project_id = data.project_id;
-            if (data.model) { streamMetadata.model = data.model; setActiveModel(data.model); }
-            if (data.mode) streamMetadata.mode = data.mode;
-            if (typeof data.coding_detected === "boolean") streamMetadata.coding_detected = data.coding_detected;
-            if (data.provider) streamMetadata.provider = data.provider;
-            if (typeof data.fallback === "boolean") streamMetadata.fallback = data.fallback;
-            if (typeof data.delta === "string") {
-              collected += data.delta;
-              setStreamedText(collected);
-            }
-            if (data.conversation_id) {
-              gotConversationId = data.conversation_id;
-              rememberConv(data.conversation_id);
-            }
-            if (data.error) streamError = data.error;
-            if (data.done) {
-              commitPartial(collected, replaceLastAssistant, streamMetadata);
-              committed = true;
-              maybeAutoSpeak(collected);
-              if (data.storage_degraded) setNotice("The assistant replied, but the chat could not be saved to storage right now.");
-            }
+            handleEvent(JSON.parse(line.slice(5).trim()) as StreamEvent);
           } catch {
             // malformed event — skip
           }
         }
       }
-      // A proxy or provider may close immediately after a final SSE line
-      // without the usual blank delimiter. Consume that final buffered event
-      // instead of silently dropping the last delta/error.
+      // A proxy or provider may close immediately after a final SSE line without
+      // the usual blank delimiter. Consume that final buffered event instead of
+      // silently dropping the last delta/error.
       if (buffer.trim().startsWith("data:")) {
         try {
-          const data = JSON.parse(buffer.trim().slice(5).trim()) as {
-            delta?: string;
-            done?: boolean;
-            conversation_id?: string;
-            error?: string;
-            model?: string;
-            mode?: ChatMode;
-            coding_detected?: boolean;
-            provider?: string;
-            fallback?: boolean;
-          };
-          if (data.model) { streamMetadata.model = data.model; setActiveModel(data.model); }
-          if (data.mode) streamMetadata.mode = data.mode;
-          if (typeof data.coding_detected === "boolean") streamMetadata.coding_detected = data.coding_detected;
-          if (data.provider) streamMetadata.provider = data.provider;
-          if (typeof data.fallback === "boolean") streamMetadata.fallback = data.fallback;
-          if (typeof data.delta === "string") {
-            collected += data.delta;
-            setStreamedText(collected);
-          }
-          if (data.conversation_id) {
-            gotConversationId = data.conversation_id;
-            rememberConv(data.conversation_id);
-          }
-          if (data.error) streamError = data.error;
-          if (data.done) {
-            commitPartial(collected, replaceLastAssistant, streamMetadata);
-            committed = true;
-            maybeAutoSpeak(collected);
-          }
+          handleEvent(JSON.parse(buffer.trim().slice(5).trim()) as StreamEvent);
         } catch {
-          // Keep the partial response; the backend will log the malformed event.
+          // Keep the partial response; the backend logs the malformed event.
         }
       }
       clearIdleTimer();
 
       if (!committed && collected.trim()) {
-        commitPartial(collected, replaceLastAssistant, streamMetadata);
-        committed = true;
+        commit(collected);
         maybeAutoSpeak(collected);
+      }
+      if (trackExecution) {
+        setExecution((current) => finishExecution(current, streamError && !collected.trim() ? "failed" : "complete"));
       }
       if (streamError) {
         if (!collected.trim()) {
@@ -663,26 +839,27 @@ export function ChatClient({
         setNotice("The response was interrupted after a partial answer. You can retry safely.");
       }
       if (gotConversationId && !isTemporary && !initialConvId) {
-        // Update the URL to the new conversation without triggering a full
-        // Next.js navigation (which would unmount ChatClient and discard the
-        // just-committed streaming state). history.replaceState keeps the
-        // component mounted so the streamed reply is visible immediately.
+        // Same reasoning as above: keep the component mounted so the streamed
+        // reply and its artifact state stay visible.
         const targetUrl = `/chat/${gotConversationId}`;
-        if (!window.location.pathname.startsWith(targetUrl)) {
-          window.history.replaceState(null, "", targetUrl);
-        }
+        if (!window.location.pathname.startsWith(targetUrl)) window.history.replaceState(null, "", targetUrl);
       }
     } catch (err) {
       clearIdleTimer();
       const userStopped = err instanceof DOMException && err.name === "AbortError";
-      if (collected.trim()) {
-        commitPartial(collected, replaceLastAssistant, streamMetadata);
-        committed = true;
+      if (collected.trim() && !committed) {
+        commit(collected);
       }
       if (userStopped) {
         setNotice(collected.trim() ? "Generation stopped." : "Generation stopped. Your message is safe.");
+        if (trackExecution) setExecution((current) => finishExecution(current, "failed"));
       } else {
         setFailure(classifyRequestException(err));
+        if (trackExecution) setExecution((current) => finishExecution(advanceExecution(current, { event: { at: Date.now(), type: "error", message: "Request failed" } }), "failed"));
+      }
+      if (committedKey) {
+        // An artifact can never be left "generating" after a failed run.
+        updateArtifact(committedKey, (current) => (current.status === "generating" || current.status === "requested" ? failArtifact(current, "The response did not finish.") : current));
       }
     } finally {
       clearIdleTimer();
@@ -691,6 +868,7 @@ export function ChatClient({
       setActiveStartedAt(null);
       abortRef.current = null;
       requestInFlightRef.current = false;
+      setStreamStatus(null);
     }
   }
 
@@ -699,6 +877,8 @@ export function ChatClient({
     const pending = messageOverride ? [] : attachments;
     let message = (messageOverride ?? input).trim() || (pending.length ? "Review these attached files and help me with them." : "");
     if (!message || streaming || requestInFlightRef.current) return;
+    // Composer capabilities are opt-in hints, never automatic invocations.
+    const rawMessage = message;
     if (!messageOverride) {
       if (webSearch) message = `Use up-to-date public knowledge where it helps.\n\n${message}`;
       if (codeHint) message = `Answer with complete, runnable code when it helps.\n\n${message}`;
@@ -707,30 +887,49 @@ export function ChatClient({
     lastAttachmentsRef.current = pending;
     setAttachments([]);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
-    setMessages((m) => [...m, {
+
+    // --- intent detection happens on the user's own words -----------------
+    const intent = detectIntent(rawMessage, {
+      mode,
+      codeCapability: codeHint || mode === "code",
+      agentMode: mode === "agent",
+    });
+    const turnId = crypto.randomUUID();
+    setMessages((current) => [...current, {
       role: "user",
       content: message,
       created_at: new Date().toISOString(),
-      metadata: { mode, attachment_names: pending.map((file) => file.name) },
+      metadata: {
+        mode,
+        attachment_names: pending.map((file) => file.name),
+        intent: intent.intent,
+        artifact_type: intent.artifact,
+        turn_id: turnId,
+      },
     }]);
-    const hinted = suggestMode(message, mode);
-    if (hinted) setModeHint(hinted);
-    if (mode === "orchestrator") setGraphNodes(planOrchestrator(message).map((t) => ({ id: t.id, title: t.title, status: "running" as const })));
-    await streamMessage(message, { attachments: pending });
+    const hinted = suggestMode(rawMessage, mode);
+    if (hinted && hinted !== effectiveMode(intent, mode)) setModeHint(hinted);
+    if (mode === "orchestrator") setGraphNodes(planOrchestrator(rawMessage).map((task) => ({ id: task.id, title: task.title, status: "running" as const })));
+    await streamMessage(message, { attachments: pending, intent, turnId });
   }
 
   function regenerate() {
     if (!lastUserMessage || streaming) return;
-    void streamMessage(lastUserMessage, { replaceLastAssistant: true, regenerate: true, reuseUser: true, attachments: lastAttachmentsRef.current });
+    void streamMessage(lastUserMessage, {
+      replaceLastAssistant: true,
+      regenerate: true,
+      reuseUser: true,
+      attachments: lastAttachmentsRef.current,
+    });
   }
 
   function retry() {
     if (!lastUserMessage || streaming) return;
     setFailure(null);
-    const hasUser = messages.some((m) => m.role === "user" && m.content === lastUserMessage);
+    const hasUser = messages.some((message) => message.role === "user" && message.content === lastUserMessage);
     if (!hasUser) {
       const msg = lastUserMessage;
-      setMessages((m) => [...m, { role: "user", content: msg, created_at: new Date().toISOString() }]);
+      setMessages((current) => [...current, { role: "user", content: msg, created_at: new Date().toISOString() }]);
     }
     void streamMessage(lastUserMessage, { reuseUser: Boolean(convIdRef.current), attachments: lastAttachmentsRef.current });
   }
@@ -738,15 +937,21 @@ export function ChatClient({
   function tryAnotherModel() {
     if (!lastUserMessage || streaming || requestInFlightRef.current) return;
     setFailure(null);
-    const hasUser = messages.some((m) => m.role === "user" && m.content === lastUserMessage);
+    const hasUser = messages.some((message) => message.role === "user" && message.content === lastUserMessage);
     if (!hasUser) {
-      setMessages((m) => [...m, { role: "user", content: lastUserMessage, created_at: new Date().toISOString() }]);
+      setMessages((current) => [...current, { role: "user", content: lastUserMessage, created_at: new Date().toISOString() }]);
     }
     void streamMessage(lastUserMessage, {
       reuseUser: Boolean(convIdRef.current),
       preferFallback: true,
       attachments: lastAttachmentsRef.current,
     });
+  }
+
+  /** Follow-up prompt used by contextual actions (Explain, Sources, …). */
+  function askFollowUp(prompt: string) {
+    if (streaming) return;
+    void send(undefined, prompt);
   }
 
   async function handleFile(file: File | undefined | null) {
@@ -792,7 +997,7 @@ export function ChatClient({
     }
 
     if (mode !== "agent") {
-      setMessages((m) => [...m, { role: "user", content: `Attachment: ${file.name}`, created_at: new Date().toISOString() }]);
+      setMessages((current) => [...current, { role: "user", content: `Attachment: ${file.name}`, created_at: new Date().toISOString() }]);
       if (autoSpeakRef.current) primeSpeech();
     }
     setStreaming(true);
@@ -845,7 +1050,7 @@ export function ChatClient({
         ]);
         setNotice(`${file.name} was inspected and is ready as Agent context. Add an instruction, then send.`);
       } else {
-        setMessages((m) => [...m, { role: "assistant", content: data.reply!, created_at: new Date().toISOString() }]);
+        setMessages((current) => [...current, { role: "assistant", content: data.reply!, created_at: new Date().toISOString() }]);
         maybeAutoSpeak(data.reply!);
       }
     } catch (err) {
@@ -863,94 +1068,126 @@ export function ChatClient({
     navigator.clipboard?.writeText(text).then(() => toast("Copied to clipboard")).catch(() => {});
   }
 
+  // -------------------------------------------------------------------------
+  // Contextual actions (spec §15/§16) — built per reply, never all at once
+  // -------------------------------------------------------------------------
+
+  const actionRegistry = (index: number, message: ChatMessage, signals: ContentSignals, intent: IntentResult, artifact: ArtifactState) => {
+    const key = messageKey(message, index);
+    const title = firstHeading(message.content, "MATRIX response");
+    const canRun = Boolean(agentFiles.length || agentProjectId);
+    const handlers: Partial<Record<ResponseActionId, () => void>> = {
+      copy: () => copyMessage(message.content),
+      regenerate: () => regenerate(),
+      copyCode: () => {
+        const block = message.content.match(/```[^\n]*\n([\s\S]*?)```/);
+        copyMessage(block ? block[1].trim() : message.content);
+      },
+      run: () => setWorkspaceOpen(true),
+      explain: () => askFollowUp("Explain the code above step by step, then list what could go wrong."),
+      save: () => {
+        if (message.metadata?.image_data_url) saveDataUrl(message.metadata.image_data_url, `matrix-image-${key.slice(-6)}.png`);
+        else if (artifact.format) downloadBuilt(key, message.content, title, artifact.format);
+      },
+      editPrompt: () => {
+        const prompt = imagePromptRef.current ?? lastUserMessage ?? "";
+        setInput(prompt);
+        textareaRef.current?.focus();
+        requestAnimationFrame(autosize);
+      },
+      sources: () => askFollowUp("List the sources and evidence behind that answer, and mark anything you could not verify."),
+      export: () => setExportPickerKey((current) => (current === key ? null : key)),
+      open: () => artifact.format && openBuilt(key, message.content, title, artifact.format),
+      copyJson: () => copyMessage(extractJson(message.content) ?? message.content),
+      listen: () => listenTo(key, message.content, index === latestAssistantIndex),
+      workspace: () => setWorkspaceOpen(true),
+      report: () => router.push("/report"),
+      flashcards: () => askFollowUp("Turn the answer above into 8 flashcards in this format:\nQ: ...\nA: ..."),
+    };
+    const labels: Record<ResponseActionId, { label: string; icon?: ReactNode }> = {
+      copy: { label: "Copy" },
+      regenerate: { label: "Regenerate", icon: <RefreshCcw size={11} strokeWidth={1.8} /> },
+      listen: { label: speakingId === key || speakingId === "auto" ? t("chat.stopSpeech") : t("chat.listen") },
+      more: { label: "More" },
+      copyCode: { label: "Copy code" },
+      run: { label: "Run", icon: <Play size={11} strokeWidth={1.8} /> },
+      explain: { label: "Explain" },
+      save: { label: "Save", icon: <Download size={11} strokeWidth={1.8} /> },
+      editPrompt: { label: "Edit prompt" },
+      sources: { label: "Sources" },
+      export: { label: "Export" },
+      open: { label: "Open", icon: <ExternalLink size={11} strokeWidth={1.8} /> },
+      copyJson: { label: "Copy JSON" },
+      activity: { label: "Activity" },
+      performance: { label: "Performance" },
+      flashcards: { label: "Make flashcards" },
+      workspace: { label: "Open workspace", icon: <MonitorPlay size={11} strokeWidth={1.8} /> },
+      report: { label: "Report a problem" },
+    };
+
+    const plan = planResponseActions({
+      intent: intent.intent,
+      mode: (message.metadata?.mode ?? mode) as ChatMode,
+      signals,
+      artifactType: artifact.requested ? artifact.type : intent.artifact,
+      artifactReady: artifact.status === "ready",
+      artifactOpenable: artifact.format ? OPENABLE.includes(artifact.format) : true,
+      hasExecution: execution.status !== "idle" && index === latestAssistantIndex,
+      hasAnalytics: execution.analytics !== null && index === latestAssistantIndex,
+      canRun,
+      canListen: mode !== "agent" && !message.metadata?.image_data_url,
+      canExport: !intent.suppressExport && Boolean(message.content.trim()),
+      compact,
+    });
+
+    const build = (ids: ResponseActionId[]) =>
+      ids
+        .filter((id) => id !== "more" && id !== "activity" && id !== "performance")
+        .map((id) => ({
+          id: `${key}-${id}`,
+          label: labels[id].label,
+          icon: labels[id].icon,
+          onClick: handlers[id] ?? (() => {}),
+          disabled: id === "regenerate" ? streaming : false,
+        }));
+
+    return { primary: build(plan.primary), overflow: build(plan.overflow) };
+  };
+
+  const routingLabel = lastProvider || lastModel ? [lastProvider, lastModel].filter(Boolean).join(" · ") : null;
+  const latestAssistantIndex = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === "assistant") return i;
+    return -1;
+  }, [messages]);
+  const latestSignals = latestAssistantIndex >= 0 ? signalsByIndex[latestAssistantIndex] : null;
+  const imageRun = streaming && runIntent.intent === "IMAGE_GENERATION";
+
   return (
-    <div
-      className="flex min-h-0 flex-1 flex-col"
-      style={keyboardInset ? { paddingBottom: keyboardInset } : undefined}
-    >
+    <div className="flex min-h-0 flex-1 flex-col" style={keyboardInset ? { paddingBottom: keyboardInset } : undefined}>
       {!isTemporary ? (
-        <div className="mb-2 flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border py-1.5">
-          {/* Primary controls: what the conversation IS. Provider/model detail
-              stays visually secondary; Demo mode is a session toggle, not a
-              model control, so it lives in the overflow menu. */}
-          <div className="flex min-w-0 items-center gap-2" aria-label="Conversation mode">
-            <label className="sr-only" htmlFor="matrix-mode">Matrix mode</label>
-            <select
-              id="matrix-mode"
-              value={mode}
-              disabled={streaming}
-              onChange={(e) => switchMode(e.target.value as ChatMode)}
-              className="input-base !w-auto !min-h-9 !rounded-[10px] !py-1.5 text-xs font-medium"
-            >
-              {MATRIX_MODES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-            </select>
-            <span aria-hidden className="hidden h-4 w-px bg-border sm:block" />
-            <label className="sr-only" htmlFor="matrix-lane">Model</label>
-            <select id="matrix-lane" value={lane} disabled={streaming} onChange={(e) => setLane(e.target.value as ModelLane)} className="input-base !w-auto !min-h-9 !rounded-[10px] !py-1.5 text-xs text-ink-2">
-              {MODEL_LANES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-            </select>
-            <select value={strategy} disabled={streaming} onChange={(e) => setStrategy(e.target.value as ResponseStrategy)} className="hidden input-base !w-auto !min-h-9 !rounded-[10px] !py-1.5 text-xs text-ink-2 sm:block" aria-label="Response strategy">
-              <option value="fast">Fast</option>
-              <option value="balanced">Balanced</option>
-              <option value="quality">Quality</option>
-              <option value="efficient">Efficient</option>
-            </select>
-          </div>
-
-          <div className="flex min-w-0 items-center gap-1 sm:gap-2">
-            <span
-              role="status"
-              aria-live="polite"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2 py-1 text-[11px] font-medium text-ink-2"
-            >
-              <span aria-hidden className={cn("h-1.5 w-1.5 rounded-full", streaming ? "bg-accent pulse-dot" : "bg-success")} />
-              {streaming ? "Responding" : "Ready"}
-            </span>
-            <span
-              title="Requests use the AI provider and model configured on the server (Admin → AI configuration)."
-              className="hidden max-w-48 truncate font-mono text-[10px] text-ink-3 xl:block"
-            >
-              {lastProvider || lastModel ? [lastProvider, lastModel].filter(Boolean).join(" · ") : "auto routing"}
-            </span>
-            {demoMode ? (
-              <span className="rounded-lg border border-accent/40 bg-accent-soft px-2 py-1 text-[11px] font-medium text-accent">Demo mode</span>
-            ) : null}
-            {mode === "agent" ? (
-              <button
-                type="button"
-                onClick={() => setWorkspaceOpen(true)}
-                className="inline-flex min-h-9 items-center gap-1.5 rounded-[10px] border border-border px-2.5 text-xs font-medium text-ink-2 transition-colors hover:border-border-strong hover:bg-surface-2 hover:text-ink"
-              >
-                <MonitorPlay size={13} /> Workspace{agentFiles.length ? ` · ${agentFiles.length}` : ""}
-              </button>
-            ) : (
-              <AutoSpeakToggle on={autoSpeak} onToggle={toggleAutoSpeak} onLabel={t("chat.autoSpeakOn")} offLabel={t("chat.autoSpeakOff")} />
-            )}
-            <button
-              type="button"
-              onClick={() => setDemoMode((v) => !v)}
-              aria-pressed={demoMode}
-              title="Demo mode replays a scripted answer instead of calling the AI provider."
-              className={cn(
-                "inline-flex min-h-9 items-center rounded-[10px] border px-2.5 text-xs font-medium transition-colors",
-                demoMode ? "border-accent/40 bg-accent-soft text-accent" : "border-border text-ink-3 hover:border-border-strong hover:text-ink",
-              )}
-            >
-              Demo
-            </button>
-            <div className="hidden lg:block">
-              <NotificationsBell placement="down" />
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {isTemporary ? (
+        <ChatTopBar
+          mode={mode}
+          onModeChange={switchMode}
+          lane={lane}
+          onLaneChange={setLane}
+          strategy={strategy}
+          onStrategyChange={setStrategy}
+          streaming={streaming}
+          autoSpeak={autoSpeak}
+          onToggleAutoSpeak={toggleAutoSpeak}
+          demoMode={demoMode}
+          onToggleDemo={() => setDemoMode((value) => !value)}
+          routingLabel={routingLabel}
+          workspaceCount={mode === "agent" ? agentFiles.length : 0}
+          onOpenWorkspace={() => setWorkspaceOpen(true)}
+          autoSpeakLabels={{ on: t("chat.autoSpeakOn"), off: t("chat.autoSpeakOff") }}
+        />
+      ) : (
         <div className="mb-3 flex shrink-0 items-center justify-between gap-3 border-b border-border pb-3 text-[13px] text-ink-2">
           <p><span className="eyebrow">Temporary</span> — {t("chat.tempNotice").replace(/^Temporary Chat — /, "")}</p>
           <AutoSpeakToggle on={autoSpeak} onToggle={toggleAutoSpeak} onLabel={t("chat.autoSpeakOn")} offLabel={t("chat.autoSpeakOff")} />
         </div>
-      ) : null}
+      )}
 
       <div className="no-scrollbar min-h-0 flex-1 space-y-7 overflow-y-auto overscroll-contain px-0.5 py-2 sm:px-2">
         {messages.length === 0 && !streaming ? (
@@ -972,31 +1209,31 @@ export function ChatClient({
             </div>
             {mode !== "agent" ? (
               <div className="mb-5 hidden w-full max-w-2xl grid-cols-2 gap-2 sm:grid lg:grid-cols-4">
-                {FEATURES.map((f) => (
-                  <div key={f.title} className="rounded-[16px] border border-border bg-surface px-3 py-3 text-left">
-                    <span className="text-accent">{f.icon}</span>
-                    <p className="mt-2 text-[13px] font-medium text-ink">{f.title}</p>
-                    <p className="mt-0.5 text-[11px] text-ink-3">{f.desc}</p>
+                {FEATURES.map((feature) => (
+                  <div key={feature.title} className="rounded-[16px] border border-border bg-surface px-3 py-3 text-left">
+                    <span className="text-accent">{feature.icon}</span>
+                    <p className="mt-2 text-[13px] font-medium text-ink">{feature.title}</p>
+                    <p className="mt-0.5 text-[11px] text-ink-3">{feature.desc}</p>
                   </div>
                 ))}
               </div>
             ) : null}
             <div className="no-scrollbar grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
-              {suggestions.map((s) => (
+              {suggestions.map((suggestion) => (
                 <button
-                  key={s.label}
+                  key={suggestion.label}
                   type="button"
                   onClick={() => {
-                    if ("href" in s && s.href) router.push(s.href);
-                    else if ("action" in s && s.action === "attach") fileRef.current?.click();
-                    else if (s.prompt) void send(undefined, s.prompt);
+                    if ("href" in suggestion && suggestion.href) router.push(suggestion.href);
+                    else if ("action" in suggestion && suggestion.action === "attach") fileRef.current?.click();
+                    else if (suggestion.prompt) void send(undefined, suggestion.prompt);
                   }}
                   className="suggest-card"
                 >
-                  <span className="mt-0.5 text-accent" aria-hidden="true">{s.icon}</span>
+                  <span className="mt-0.5 text-accent" aria-hidden="true">{suggestion.icon}</span>
                   <span className="min-w-0">
-                    <span className="block text-[13px] font-medium text-ink">{s.label}</span>
-                    {"desc" in s && s.desc ? <span className="mt-0.5 block text-[11px] text-ink-3">{s.desc}</span> : null}
+                    <span className="block text-[13px] font-medium text-ink">{suggestion.label}</span>
+                    {"desc" in suggestion && suggestion.desc ? <span className="mt-0.5 block text-[11px] text-ink-3">{suggestion.desc}</span> : null}
                   </span>
                 </button>
               ))}
@@ -1004,97 +1241,102 @@ export function ChatClient({
           </div>
         ) : (
           <>
-            {messages.map((m, i) => (
-              <div key={m.id ?? i} className={cn("msg-in flex gap-3.5", m.role === "user" ? "justify-end" : "justify-start")}>
-                {m.role === "assistant" ? (
+            {messages.map((message, index) => {
+              const key = messageKey(message, index);
+              if (message.role === "user") {
+                return (
+                  <div key={key} className="msg-in flex justify-end gap-3.5">
+                    <div className="min-w-0 max-w-[88%] sm:max-w-[75%]">
+                      <div className="rounded-[16px] border border-border bg-surface-2 px-4 py-2.5 text-[14.5px] leading-relaxed text-ink">
+                        <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                        {message.metadata?.attachment_names?.length ? (
+                          <div className="mt-2 flex flex-wrap gap-1.5 border-t border-border pt-2">
+                            {message.metadata.attachment_names.map((name) => (
+                              <span key={name} className="inline-flex items-center gap-1 rounded border border-border bg-surface px-2 py-1 font-mono text-[10px] text-ink-2">
+                                <Code2 size={10} aria-hidden="true" />{name}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="mt-1.5 flex justify-end px-0.5">
+                        <span className="font-mono text-[10px] text-ink-3">
+                          {message.created_at ? new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
+              const signals = signalsByIndex[index] ?? analyzeContent(message.content);
+              const intent = intentForMessage(messages, index);
+              const artifact = artifacts[key] ?? fromSnapshot(message.metadata?.artifact);
+              const isLatest = index === latestAssistantIndex;
+              const kind = classifyResponseKind({
+                intent: intent.intent,
+                mode: (message.metadata?.mode ?? mode) as ChatMode,
+                signals,
+                artifactType: artifact.requested ? artifact.type : intent.artifact,
+              });
+              const format = artifact.format;
+              const actions = actionRegistry(index, message, signals, intent, artifact);
+
+              return (
+                <div key={key} className="msg-in flex justify-start gap-3.5">
                   <span className="mt-0.5 hidden shrink-0 sm:block" aria-hidden="true">
                     <MatrixMark className="h-5 w-5 text-ink-3" />
                   </span>
-                ) : null}
-                <div className={cn("min-w-0", m.role === "user" ? "max-w-[88%] sm:max-w-[75%]" : "max-w-[96%] flex-1 sm:max-w-none")}>
-                  {m.role === "user" ? (
-                    <div className="rounded-[16px] border border-border bg-surface-2 px-4 py-2.5 text-[14.5px] leading-relaxed text-ink">
-                      <p className="whitespace-pre-wrap break-words">{m.content}</p>
-                      {m.metadata?.attachment_names?.length ? (
-                        <div className="mt-2 flex flex-wrap gap-1.5 border-t border-border pt-2">
-                          {m.metadata.attachment_names.map((name) => <span key={name} className="inline-flex items-center gap-1 rounded border border-border bg-surface px-2 py-1 font-mono text-[10px] text-ink-2"><FileCode2 size={10} />{name}</span>)}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <div className="border-l border-border pl-4">
-                      {typeof m.metadata?.thinking_ms === "number" && i === messages.length - 1 && !streaming ? (
-                        <ThinkingSummary
-                          durationMs={m.metadata.thinking_ms}
-                          mode={m.metadata.mode ?? mode}
-                          model={m.metadata.model ? [m.metadata.provider, m.metadata.model].filter(Boolean).join(" · ") : (lastProvider ?? lastModel)}
-                        />
-                      ) : null}
-                      <Markdown text={m.content} />
-                      {m.metadata?.image_data_url ? (
-                        <div className="mt-3 overflow-hidden rounded-xl border border-border">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={m.metadata.image_data_url} alt="Generated image" className="max-h-[480px] w-full object-contain bg-[#070B14]" />
-                        </div>
-                      ) : null}
-                      {m.role === "assistant" && i === messages.length - 1 && !streaming ? (
-                        <>
-                          {mode === "study" ? <FlashcardDeck text={m.content} /> : null}
-                          <ExportDesk content={m.content} />
-                        </>
-                      ) : null}
-                      {m.metadata?.action === "theme_gallery" ? (
-                        <div className="mt-3 rounded-xl border border-border bg-surface p-3">
-                          <ThemeGallery compact />
-                        </div>
-                      ) : null}
-                      {m.metadata?.artifacts?.length ? (
-                        <button
-                          type="button"
-                          onClick={() => { setAgentFiles(m.metadata!.artifacts!); setAgentProjectId(m.metadata?.project_id ?? null); setWorkspaceOpen(true); }}
-                          className="mt-3 flex w-full items-center justify-between gap-3 rounded-xl border border-accent/30 bg-accent-soft px-3.5 py-3 text-left transition-colors hover:border-accent/60"
-                        >
-                          <span className="flex min-w-0 items-center gap-2.5"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent text-white"><MonitorPlay size={15} /></span><span><span className="block text-xs font-semibold text-ink">Open Agent workspace</span><span className="block text-[11px] text-ink-3">{m.metadata.artifacts.length} file{m.metadata.artifacts.length === 1 ? "" : "s"} · Live preview · GitHub push</span></span></span>
-                          <span className="text-xs font-medium text-accent">Review</span>
-                        </button>
-                      ) : null}
-                    </div>
-                  )}
-                  <div className={cn("mt-1.5 flex items-center gap-3 px-0.5 text-[10.5px] text-ink-3", m.role === "user" ? "justify-end" : "")}>
-                    <span>{m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span>
-                    {m.role === "assistant" && m.metadata?.model ? (
-                      <span className="hidden sm:inline">{(m.metadata.provider ?? "AI") + " · " + m.metadata.model}</span>
-                    ) : null}
-                    {m.role === "assistant" ? (
-                      <button
-                        type="button"
-                        onClick={() => copyMessage(m.content)}
-                        className="min-h-8 min-w-8 font-medium uppercase tracking-wide transition-colors hover:text-ink-2"
-                      >
-                        Copy
-                      </button>
-                    ) : null}
-                    {m.role === "assistant" && mode !== "agent" ? (
-                      <ListenButton
-                        speaking={speakingId === (m.id ?? `msg-${i}`) || (speakingId === "auto" && i === messages.length - 1)}
-                        onClick={() => listenTo(m.id ?? `msg-${i}`, m.content)}
-                        disabled={streaming}
-                        listenLabel={t("chat.listen")}
-                        stopLabel={t("chat.stopSpeech")}
-                      />
-                    ) : null}
+                  <div className="min-w-0 max-w-[96%] flex-1 sm:max-w-none">
+                    <AssistantMessage
+                      message={message}
+                      isLatest={isLatest}
+                      streaming={streaming}
+                      kind={kind}
+                      signals={signals}
+                      intent={intent}
+                      artifact={artifact}
+                      execution={isLatest ? execution : null}
+                      timeLabel={message.created_at ? new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                      actions={actions}
+                      exportFormats={availableExportFormats(signals, intent.suppressExport ? [] : intent.formats)}
+                      exportPickerOpen={exportPickerKey === key && !intent.suppressExport}
+                      onCloseExportPicker={() => setExportPickerKey(null)}
+                      onPickFormat={(next) => {
+                        setExportPickerKey(null);
+                        buildArtifactFor(key, next, message.content, firstHeading(message.content, "MATRIX response"));
+                      }}
+                      onGenerateArtifact={() => format && buildArtifactFor(key, format, message.content, firstHeading(message.content, "MATRIX response"))}
+                      onDismissArtifact={() => {
+                        builtRef.current.delete(key);
+                        setArtifacts((current) => {
+                          const next = { ...current };
+                          delete next[key];
+                          return next;
+                        });
+                      }}
+                      onOpenArtifact={() => format && openBuilt(key, message.content, firstHeading(message.content, "MATRIX response"), format)}
+                      onSaveArtifact={() => {
+                        if (message.metadata?.image_data_url) saveDataUrl(message.metadata.image_data_url, `matrix-image-${key.slice(-6)}.png`);
+                        else if (format) downloadBuilt(key, message.content, firstHeading(message.content, "MATRIX response"), format);
+                      }}
+                      onCopyArtifact={() => copyMessage(extractJson(message.content) ?? message.content)}
+                      onOpenWorkspace={() => {
+                        if (message.metadata?.artifacts?.length) {
+                          setAgentFiles(message.metadata.artifacts);
+                          setAgentProjectId(message.metadata.project_id ?? null);
+                        }
+                        setWorkspaceOpen(true);
+                      }}
+                      artifactActions={{
+                        canOpen: Boolean(format && OPENABLE.includes(format)),
+                        provider: kind === "image" ? "Together AI" : null,
+                      }}
+                    />
                   </div>
                 </div>
-              </div>
-            ))}
-
-            {mode === "agent" && (streaming || pipelineEvents.length > 0) ? (
-              <div className="space-y-2">
-                <AgentSandbox activeStage={pipelineStage} tool={pipelineTool} />
-                {analytics ? <PipelineAnalyticsPanel analytics={analytics} /> : null}
-                <ExecutionConsole events={pipelineEvents} />
-              </div>
-            ) : null}
+              );
+            })}
 
             {streaming ? (
               <div className="msg-in flex gap-3.5">
@@ -1102,12 +1344,21 @@ export function ChatClient({
                   <MatrixMark className="h-5 w-5 text-ink-3" />
                 </span>
                 <div className="min-w-0 flex-1 border-l border-border pl-4">
-                  <ThinkingIndicator mode={mode} model={activeModel ?? lastModel} />
+                  {imageRun ? (
+                    <ArtifactCard
+                      state={beginArtifact(requestArtifact(emptyArtifactState(), { type: "IMAGE", title: "Matrix image" }))}
+                      provider="Together AI"
+                    />
+                  ) : null}
+                  <ResponseProgress mode={runMode} streamStatus={streamStatus} />
                   {streamedText ? (
                     <div className="ai-reply">
                       <Markdown text={streamedText} />
                       <span className="ml-0.5 inline-block h-3.5 w-px animate-pulse bg-ink align-middle" aria-hidden="true" />
                     </div>
+                  ) : null}
+                  {runIntent.intent === "AGENT_TASK" && execution.status !== "idle" ? (
+                    <AgentActivityCard execution={execution} />
                   ) : null}
                 </div>
               </div>
@@ -1121,31 +1372,54 @@ export function ChatClient({
         <div ref={bottomRef} />
       </div>
 
-      {notice ? (
-        <p className="mt-2 shrink-0 text-[13px] text-ink-2">{notice}</p>
-      ) : null}
+      {notice ? <p className="mt-2 shrink-0 text-[13px] text-ink-2">{notice}</p> : null}
 
       <div className="shrink-0 pt-3">
         <div className="mx-auto max-w-2xl">
-          <ModeTools mode={mode} onPrompt={(text) => void send(undefined, text)} studyLevel={studyLevel} setStudyLevel={setStudyLevel} explainStyle={explainStyle} setExplainStyle={setExplainStyle} />
-          {demoMode || mode === "orchestrator" || mode === "agent" ? <LiveTaskGraph nodes={graphNodes} /> : null}
+          <ModeQuickActions
+            mode={mode}
+            signals={latestSignals}
+            hasConversation={latestAssistantIndex >= 0 && !streaming}
+            hasArtifacts={agentFiles.length > 0}
+            onPrompt={(text) => void send(undefined, text)}
+            onOpenWorkspace={() => setWorkspaceOpen(true)}
+            studyLevel={studyLevel}
+            setStudyLevel={setStudyLevel}
+            explainStyle={explainStyle}
+            setExplainStyle={setExplainStyle}
+            compact={compact}
+          />
+          {graphNodes.length > 0 && (demoMode || mode === "orchestrator") ? <LiveTaskGraph nodes={graphNodes} /> : null}
           {modeHint ? (
-            <p className="mb-2 text-[12px] text-ink-2">This may fit {modeHint} mode. <button type="button" className="font-semibold text-accent" onClick={() => { const next = modeHint; setModeHint(null); switchMode(next); }}>Continue in {modeHint}</button></p>
+            <p className="mb-2 text-[12px] text-ink-2">
+              This may fit {modeHint} mode.{" "}
+              <button type="button" className="font-semibold text-accent" onClick={() => { const next = modeHint; setModeHint(null); switchMode(next); }}>
+                Continue in {modeHint}
+              </button>
+            </p>
           ) : null}
         </div>
+
         {attachments.length ? (
           <div className="mx-auto mb-2 flex max-w-2xl flex-wrap gap-1.5" aria-label="Attached files">
             {attachments.map((file) => (
               <span key={file.name} className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border bg-surface-2 py-1 pl-2.5 pr-1 text-[11px] text-ink-2">
-                <FileCode2 size={11} className="shrink-0" /><span className="truncate font-mono">{file.name}</span><span className="text-ink-3">{Math.max(1, Math.round(file.size / 1024))} KB</span>
-                <button type="button" onClick={() => setAttachments((current) => current.filter((item) => item.name !== file.name))} className="grid h-7 w-7 shrink-0 place-items-center rounded-md hover:bg-surface hover:text-danger" aria-label={`Remove ${file.name}`}><X size={11} /></button>
+                <Code2 size={11} className="shrink-0" aria-hidden="true" />
+                <span className="truncate font-mono">{file.name}</span>
+                <span className="text-ink-3">{Math.max(1, Math.round(file.size / 1024))} KB</span>
+                <button
+                  type="button"
+                  onClick={() => setAttachments((current) => current.filter((item) => item.name !== file.name))}
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-md hover:bg-surface hover:text-danger"
+                  aria-label={`Remove ${file.name}`}
+                >
+                  <X size={11} />
+                </button>
               </span>
             ))}
           </div>
         ) : null}
-        {mode === "agent" ? <p className="mode-pill mx-auto mb-2 max-w-2xl">Agent Mode Active</p> : null}
-        {mode === "image" ? <p className="mode-pill mx-auto mb-2 max-w-2xl" style={{ color: "#8B5CF6" }}>Image Generation Active</p> : null}
-        {streamStatus ? <p className="mx-auto mb-1 max-w-2xl font-mono text-[11px] text-ink-3">● {streamStatus}</p> : null}
+
         <form onSubmit={(e) => void send(e)} className="composer-shell mx-auto max-w-2xl p-3">
           <input
             ref={fileRef}
@@ -1181,6 +1455,8 @@ export function ChatClient({
             className="max-h-36 min-h-11 w-full !border-0 !bg-transparent !px-1 !py-1.5 !shadow-none focus:!shadow-none focus:!outline-none focus:!ring-0"
           />
           <div className="mt-2 flex items-center justify-between gap-2">
+            {/* Lightweight capability switches — clicking one activates the
+                capability, it never invokes it on its own. */}
             <div className="flex min-w-0 items-center gap-0.5">
               <button type="button" onClick={() => fileRef.current?.click()} disabled={streaming} aria-label="Attach a file" title="Attach a file" className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] text-ink-3 transition-colors duration-150 hover:bg-surface-2 hover:text-ink disabled:opacity-40">
                 <Paperclip size={16} strokeWidth={1.7} />
@@ -1188,19 +1464,26 @@ export function ChatClient({
               <button type="button" onClick={() => imageRef.current?.click()} disabled={streaming} aria-label="Attach an image" title="Attach an image" className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] text-ink-3 transition-colors duration-150 hover:bg-surface-2 hover:text-ink disabled:opacity-40">
                 <ImageIcon size={16} strokeWidth={1.7} />
               </button>
-              <button type="button" onClick={() => setWebSearch((v) => !v)} aria-pressed={webSearch} aria-label="Web search" title="Web search" className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors duration-150", webSearch ? "bg-accent-soft text-accent" : "text-ink-3 hover:bg-surface-2 hover:text-ink")}>
+              <button
+                type="button"
+                onClick={() => setWebSearch((value) => !value)}
+                aria-pressed={webSearch}
+                aria-label="Use web knowledge"
+                title="Use up-to-date web knowledge in the next answer"
+                className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors duration-150", webSearch ? "bg-accent-soft text-accent" : "text-ink-3 hover:bg-surface-2 hover:text-ink")}
+              >
                 <Globe size={16} strokeWidth={1.7} />
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  if (mode === "agent") setCodeHint((v) => !v);
-                  else switchMode("agent");
+                  if (mode === "code") setCodeHint((value) => !value);
+                  else switchMode("code");
                 }}
-                aria-pressed={mode === "agent" || codeHint}
-                aria-label="Code"
-                title={mode === "agent" ? "Code hint" : "Build with Agent"}
-                className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors duration-150", mode === "agent" || codeHint ? "bg-accent-soft text-accent" : "text-ink-3 hover:bg-surface-2 hover:text-ink")}
+                aria-pressed={mode === "code" || codeHint}
+                aria-label="Code mode"
+                title={mode === "code" ? "Ask for complete, runnable code" : "Switch to Code mode"}
+                className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors duration-150", mode === "code" || codeHint ? "bg-accent-soft text-accent" : "text-ink-3 hover:bg-surface-2 hover:text-ink")}
               >
                 <Code2 size={16} strokeWidth={1.7} />
               </button>
@@ -1224,22 +1507,13 @@ export function ChatClient({
             )}
           </div>
         </form>
-        <div className="mx-auto mt-2 flex max-w-2xl items-center justify-between gap-2 px-1 pb-1">
-          <p className="hidden text-[11px] text-ink-3 sm:block">{mode === "agent" ? "Agent may make mistakes · review files before preview or push" : "MATRIX may make mistakes · verify important information"}</p>
-          <p className="text-[11px] text-ink-3 sm:hidden">{mode === "agent" ? "Review before preview or push" : "Verify important information"}</p>
-          {!streaming && messages.length >= 2 && lastUserMessage ? (
-            <button
-              type="button"
-              onClick={regenerate}
-              className="flex min-h-8 items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-3 transition-colors hover:text-ink"
-            >
-              <RefreshCcw size={11} strokeWidth={1.7} /> Regenerate
-            </button>
-          ) : null}
-        </div>
+
+        <p className="mx-auto mt-2 max-w-2xl px-1 pb-1 text-[11px] text-ink-3">
+          {mode === "agent" ? "Review files before preview or push" : "MATRIX may make mistakes · verify important information"}
+        </p>
       </div>
 
-      {mode === "agent" ? (
+      {mode === "agent" || agentFiles.length > 0 ? (
         <AgentWorkspace
           files={agentFiles}
           open={workspaceOpen}
