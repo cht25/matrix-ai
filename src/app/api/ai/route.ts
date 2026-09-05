@@ -29,7 +29,9 @@ import { stripReasoningContent } from "@/lib/ai/reasoning";
 import { agentGenerationIncomplete, formatAttachmentContext, isCodingRequest, parseAgentResponse, safeAgentPath, type AgentFile, type ChatMode, type TextAttachment } from "@/lib/ai/agent";
 import { AGENT_STAGES, computeAnalytics, detectAgentTool } from "@/lib/ai/pipeline";
 import { generateTogetherImage, isTogetherConfigured } from "@/lib/ai/together";
-import { buildAgentSystemMessages, buildSystemMessages, validateOutput, buildSummaryPrompt } from "@/lib/ai/prompts";
+import { buildModeSystemMessages, validateOutput, buildSummaryPrompt } from "@/lib/ai/prompts";
+import { isChatMode, isModelLane, isStrategy, type ExplainStyle, type StudyLevel } from "@/lib/ai/modes";
+import { decideRoute, planOrchestrator } from "@/lib/ai/router";
 import { isThemeIntent, THEME_GALLERY_REPLY_BN, THEME_GALLERY_REPLY_EN } from "@/lib/theme-intent";
 import { validateImageUpload } from "@/lib/ai/upload-validation";
 import { ragSearch } from "@/lib/server/rpc";
@@ -41,10 +43,12 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+// High ceilings so MATRIX does not invent a product quota. Real provider
+// 429s still surface as AI_PROVIDER_RATE_LIMITED.
 const RATE_LIMITS: Record<string, { perMinute: number; perDay: number }> = {
-  chat: { perMinute: 20, perDay: 300 },
-  scan: { perMinute: 5, perDay: 50 },
-  summary: { perMinute: 10, perDay: 100 },
+  chat: { perMinute: 120, perDay: 5000 },
+  scan: { perMinute: 30, perDay: 500 },
+  summary: { perMinute: 40, perDay: 1000 },
 };
 
 type Db = ReturnType<typeof adminDb>;
@@ -370,12 +374,14 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const isTemporary = body.is_temporary === true;
   const requestedMode: ChatMode = isTemporary
     ? "general"
-    : body.mode === "agent"
-      ? "agent"
-      : body.mode === "image"
-        ? "image"
-        : "general";
+    : isChatMode(body.mode)
+      ? body.mode
+      : "general";
   let mode: ChatMode = requestedMode === "image" ? "general" : requestedMode;
+  const lane = isModelLane(body.lane) ? body.lane : "auto";
+  const strategy = isStrategy(body.strategy) ? body.strategy : "balanced";
+  const studyLevel = (["beginner", "school", "college", "university", "professional"] as StudyLevel[]).includes(body.study_level as StudyLevel) ? body.study_level as StudyLevel : "college";
+  const explainStyle = (["simple", "detailed", "exam", "intuitive", "technical"] as ExplainStyle[]).includes(body.explain_style as ExplainStyle) ? body.explain_style as ExplainStyle : "simple";
   const attachments = normaliseTextAttachments(body.attachments);
   const requestedStream = body.stream === true;
   let wantStream = requestedStream;
@@ -444,8 +450,12 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     if (!conv.exists || conv.data()!.user_id !== user.uid) return json({ error: "CONVERSATION_NOT_FOUND" }, 404);
     // Honor an explicit Agent request even if the stored conversation was general.
     // The previous overwrite (`stored mode or general`) silently dropped Agent Mode.
-    if (requestedMode === "agent") mode = "agent";
-    else mode = conv.data()!.mode === "agent" && !isTemporary ? "agent" : "general";
+    if (requestedMode !== "general") mode = requestedMode === "image" ? "general" : requestedMode;
+    else {
+      const stored = conv.data()!.mode;
+      mode = isChatMode(stored) && stored !== "image" ? stored : "general";
+      if (isTemporary) mode = "general";
+    }
     wantStream = requestedStream;
   } else {
     const title = message.replace(/\s+/g, " ").slice(0, 60);
@@ -518,7 +528,8 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   // transiently, the environment-keyed providers (Groq / OpenRouter) are used
   // as fallbacks. Without a saved admin configuration the previous Groq /
   // OpenRouter automatic routing is unchanged.
-  const codingDetected = mode === "agent" || isCodingRequest(message, attachments);
+  const route = decideRoute({ mode, message, attachments, lane, strategy });
+  const codingDetected = route.coding || mode === "agent" || isCodingRequest(message, attachments);
   const preferFallback = body.prefer_fallback === true;
   const targets = await createAIRoutesFromDb(d, codingDetected, preferFallback);
   const selectedModel = targets[0]?.model ?? (codingDetected ? AI_CONFIG.coding.model : AI_CONFIG.general.model);
@@ -560,7 +571,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     while (history.length && history[history.length - 1]?.role === "assistant") history.pop();
     while (history.length && history[history.length - 1]?.role === "user") history.pop();
   }
-  const memories = await loadSafeMemories(d, user.uid);
+  const memories = mode === "health" || mode === "code" ? "" : await loadSafeMemories(d, user.uid);
   if (memories) history.push({ role: "system", content: "Safe context about the user (never repeat back verbatim):\n" + memories });
 
   const rag = mode === "agent" ? "" : await buildRagContext(d, redaction.redacted, profileCountry);
@@ -571,7 +582,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const attachmentContext = formatAttachmentContext(safeAttachments);
 
   const messages: AIMessage[] = [
-    ...(mode === "agent" ? buildAgentSystemMessages(preferredLanguage) : buildSystemMessages(rag, false, preferredLanguage)),
+    ...buildModeSystemMessages(mode, rag, preferredLanguage, { studyLevel, explainStyle }),
     ...history,
     ...(attachmentContext ? [{ role: "system" as const, content: attachmentContext }] : []),
     ...(codingDetected && mode === "general" ? [{
@@ -938,6 +949,79 @@ async function handleImage(d: Db, user: SessionUser, body: Record<string, unknow
   }
 }
 
+async function handleOrchestrate(d: Db, user: SessionUser, body: Record<string, unknown>) {
+  const started = Date.now();
+  const requestId = requestIdFrom(body);
+  const message = typeof body.message === "string" ? body.message.trim() : "";
+  if (!message) return json({ error: "MESSAGE_REQUIRED" }, 400, requestId);
+  const tasks = planOrchestrator(message);
+  const sections: Array<{ id: string; title: string; mode: string; reply?: string; error?: string; image_data_url?: string }> = [];
+  for (const task of tasks) {
+    if (task.mode === "image") {
+      if (!isTogetherConfigured()) {
+        sections.push({ id: task.id, title: task.title, mode: task.mode, error: "TOGETHER_NOT_CONFIGURED" });
+        continue;
+      }
+      try {
+        const image = await generateTogetherImage(task.prompt);
+        sections.push({ id: task.id, title: task.title, mode: task.mode, reply: "Image ready.", image_data_url: `data:${image.mime};base64,${image.b64}` });
+      } catch (error) {
+        sections.push({ id: task.id, title: task.title, mode: task.mode, error: error instanceof Error ? error.message : "TOGETHER_UNAVAILABLE" });
+      }
+      continue;
+    }
+    const coding = task.mode === "code" || task.mode === "agent";
+    const targets = await createAIRoutesFromDb(d, coding, false);
+    if (!targets.length) {
+      sections.push({ id: task.id, title: task.title, mode: task.mode, error: "AI_GATEWAY_NOT_CONFIGURED" });
+      continue;
+    }
+    try {
+      const completed = await completeWithFallback(targets, {
+        messages: [
+          ...buildModeSystemMessages(task.mode, "", undefined),
+          { role: "user", content: task.prompt },
+        ],
+        temperature: 0.4,
+        maxTokens: 1800,
+        requestId,
+      });
+      sections.push({ id: task.id, title: task.title, mode: task.mode, reply: stripReasoningContent(completed.response.content) });
+    } catch (error) {
+      sections.push({ id: task.id, title: task.title, mode: task.mode, error: providerPublicCode(error) });
+    }
+  }
+  const reply = sections.map((s) => {
+    if (s.error) return `## ${s.title}\n\n_${s.error}_`;
+    return `## ${s.title}\n\n${s.reply ?? ""}`;
+  }).join("\n\n");
+  let convId = typeof body.conversation_id === "string" ? body.conversation_id : null;
+  try {
+    if (!convId) {
+      const created = await d.collection("conversations").add({
+        user_id: user.uid, title: message.slice(0, 60), mode: "orchestrator", is_temporary: false,
+        summary: "", archived_at: null, deleted_at: null, created_at: nowTs(), updated_at: nowTs(),
+      });
+      convId = created.id;
+    }
+    await d.collection("conversations").doc(convId).collection("messages").add({ role: "user", content: message, metadata: { mode: "orchestrator" }, created_at: nowTs() });
+    await d.collection("conversations").doc(convId).collection("messages").add({
+      role: "assistant", content: reply, metadata: { mode: "orchestrator", orchestrator: sections.map((s) => ({ id: s.id, title: s.title, status: s.error ? "failed" : "completed", image_data_url: s.image_data_url })) }, created_at: nowTs(),
+    });
+  } catch (error) {
+    logGatewayFailure("orchestrate_persist", { requestId }, error);
+  }
+  await logUsage(d, user.uid, "orchestrator", "chat", {}, Date.now() - started, "ok", requestId);
+  return json({
+    reply,
+    conversation_id: convId,
+    mode: "orchestrator",
+    tasks: sections,
+    analytics: computeAnalytics({ started, agentSteps: tasks.length, toolsExecuted: sections.filter((s) => !s.error).length }),
+    request_id: requestId,
+  }, 200, requestId);
+}
+
 // ---------------------------------------------------------------------------
 // Scan action (screenshot analysis, spec §14)
 // ---------------------------------------------------------------------------
@@ -1080,6 +1164,8 @@ export async function POST(req: NextRequest) {
     const d = adminDb();
     if (action === "chat") return await handleChat(d, user, body);
     if (action === "scan") return await handleScan(d, user, body);
+    if (action === "image") return await handleImage(d, user, body);
+    if (action === "orchestrate") return await handleOrchestrate(d, user, body);
     return json({ error: "UNKNOWN_ACTION" }, 400);
   } catch (e) {
     if (e instanceof AIProviderError) logProviderFailure(e, requestId);

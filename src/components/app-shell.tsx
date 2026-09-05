@@ -264,6 +264,9 @@ function SidebarBody({
           <Link href="/chat?mode=agent" onClick={onNavigate} className={cn("nav-item", agentActive && "is-active")}>
             <Code2 size={16} strokeWidth={1.7} /> Agent
           </Link>
+          <Link href="/workspace" onClick={onNavigate} className={cn("nav-item", pathname.startsWith("/workspace") && "is-active")}>
+            <LayoutGrid size={16} strokeWidth={1.7} /> Workspace
+          </Link>
           <Link href="/temporary-chat" onClick={onNavigate} className={cn("nav-item", pathname.startsWith("/temporary-chat") && "is-active")}>
             <History size={16} strokeWidth={1.7} /> Private
           </Link>

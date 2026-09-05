@@ -1,7 +1,7 @@
 // Agent-mode intent detection and artifact parsing.
 // Kept independent of React/Firestore so it can be tested and reused safely.
 
-export type ChatMode = "general" | "agent" | "image";
+export type { ChatMode } from "@/lib/ai/modes";
 
 export type AgentFile = {
   path: string;

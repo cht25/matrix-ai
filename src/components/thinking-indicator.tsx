@@ -59,7 +59,7 @@ export function ThinkingIndicator({
   mode = "general",
   model,
 }: {
-  mode?: "general" | "agent" | "image";
+  mode?: string;
   model?: string | null;
 }) {
   const stages = mode === "agent" ? AGENT_STAGES : CHAT_STAGES;
@@ -120,7 +120,7 @@ export function ThinkingSummary({
   model,
 }: {
   durationMs: number;
-  mode?: "general" | "agent" | "image";
+  mode?: string;
   model?: string | null;
 }) {
   const [open, setOpen] = useState(false);

@@ -33,11 +33,14 @@ import { classifyGatewayResponse, classifyRequestException, failureCopy, withReq
 import { useI18n } from "@/lib/i18n/client";
 import { cn } from "@/lib/utils";
 import type { AgentFile, ChatMode, TextAttachment } from "@/lib/ai/agent";
+import { MATRIX_MODES, MODEL_LANES, modeMeta, suggestMode, type ExplainStyle, type ModelLane, type ResponseStrategy, type StudyLevel } from "@/lib/ai/modes";
 import { AgentWorkspace } from "@/components/agent-workspace";
 import { AgentSandbox } from "@/components/agent-sandbox";
 import { ExecutionConsole } from "@/components/execution-console";
 import { PipelineAnalyticsPanel } from "@/components/pipeline-analytics";
 import { ExportDesk } from "@/components/export-desk";
+import { FlashcardDeck, LiveTaskGraph, ModeTools, type GraphNode } from "@/components/mode-workspace";
+import { planOrchestrator } from "@/lib/ai/router";
 import { ThemeGallery } from "@/components/theme-gallery";
 import { ThinkingIndicator, ThinkingSummary } from "@/components/thinking-indicator";
 import type { AgentStageId, PipelineAnalytics, PipelineEvent } from "@/lib/ai/pipeline";
@@ -160,6 +163,13 @@ export function ChatClient({
   const [pipelineTool, setPipelineTool] = useState<string | null>(null);
   const [analytics, setAnalytics] = useState<PipelineAnalytics | null>(null);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
+  const [lane, setLane] = useState<ModelLane>("auto");
+  const [strategy, setStrategy] = useState<ResponseStrategy>("balanced");
+  const [studyLevel, setStudyLevel] = useState<StudyLevel>("college");
+  const [explainStyle, setExplainStyle] = useState<ExplainStyle>("simple");
+  const [demoMode, setDemoMode] = useState(false);
+  const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
+  const [modeHint, setModeHint] = useState<ChatMode | null>(null);
 
   const suggestions = mode === "agent" ? AGENT_SUGGESTIONS : locale === "bn" ? [
     { icon: <Sparkles size={15} strokeWidth={1.5} />, label: "পরিকল্পনা বা আইডিয়া", prompt: "আমার একটি আইডিয়াকে পরিষ্কার ধাপে ধাপে পরিকল্পনায় সাজাতে সাহায্য করুন।" },
@@ -413,11 +423,15 @@ export function ChatClient({
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
         body: JSON.stringify({
-          action: "chat",
-          stream: mode !== "agent",
+          action: mode === "image" ? "image" : mode === "orchestrator" ? "orchestrate" : "chat",
+          stream: mode !== "image" && mode !== "orchestrator",
           conversation_id: convIdRef.current,
           is_temporary: isTemporary,
           mode,
+          lane,
+          strategy,
+          study_level: studyLevel,
+          explain_style: explainStyle,
           message,
           attachments: sentAttachments.map(({ name, content, type }) => ({ name, content, type })),
           language: locale,
@@ -455,8 +469,12 @@ export function ChatClient({
           storage_degraded?: boolean;
           image?: { data_url?: string };
           analytics?: PipelineAnalytics;
+          tasks?: Array<{ id: string; title: string; error?: string; image_data_url?: string }>;
         };
         if (data.analytics) setAnalytics(data.analytics);
+        if (data.tasks) {
+          setGraphNodes(data.tasks.map((t) => ({ id: t.id, title: t.title, status: t.error ? "failed" : "completed" })));
+        }
         if (data.image?.data_url) {
           commitPartial(data.reply || "Image ready.", replaceLastAssistant, {
             mode: "image",
@@ -695,6 +713,9 @@ export function ChatClient({
       created_at: new Date().toISOString(),
       metadata: { mode, attachment_names: pending.map((file) => file.name) },
     }]);
+    const hinted = suggestMode(message, mode);
+    if (hinted) setModeHint(hinted);
+    if (mode === "orchestrator") setGraphNodes(planOrchestrator(message).map((t) => ({ id: t.id, title: t.title, status: "running" as const })));
     await streamMessage(message, { attachments: pending });
   }
 
@@ -849,34 +870,28 @@ export function ChatClient({
     >
       {!isTemporary ? (
         <div className="mb-2 flex min-h-12 shrink-0 items-center justify-between gap-3 border-b border-border py-1.5">
-          <div className="inline-flex items-center rounded-[12px] border border-border bg-surface p-1" aria-label="Conversation mode">
-            <button
-              type="button"
-              onClick={() => switchMode("general")}
+          <div className="flex min-w-0 flex-wrap items-center gap-2" aria-label="Conversation mode">
+            <label className="sr-only" htmlFor="matrix-mode">Matrix mode</label>
+            <select
+              id="matrix-mode"
+              value={mode}
               disabled={streaming}
-              className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-[8px] px-3 text-xs font-medium transition-colors duration-150 ease-out", mode === "general" ? "bg-surface-2 text-ink shadow-sm" : "text-ink-3 hover:text-ink")}
-              aria-pressed={mode === "general"}
+              onChange={(e) => switchMode(e.target.value as ChatMode)}
+              className="input-base !w-auto !rounded-[10px] !py-1.5 text-xs"
             >
-              <Bot size={13} /> Chat
-            </button>
-            <button
-              type="button"
-              onClick={() => switchMode("agent")}
-              disabled={streaming}
-              className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-[8px] px-3 text-xs font-medium transition-colors duration-150 ease-out", mode === "agent" ? "bg-accent text-[#0B0F19] shadow-sm" : "text-ink-3 hover:text-ink")}
-              aria-pressed={mode === "agent"}
-            >
-              <Code2 size={13} /> Agent
-            </button>
-            <button
-              type="button"
-              onClick={() => switchMode("image")}
-              disabled={streaming}
-              className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-[8px] px-3 text-xs font-medium transition-colors duration-150 ease-out", mode === "image" ? "bg-[#8B5CF6] text-white shadow-sm" : "text-ink-3 hover:text-ink")}
-              aria-pressed={mode === "image"}
-            >
-              <ImageIcon size={13} /> Image
-            </button>
+              {MATRIX_MODES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+            </select>
+            <label className="sr-only" htmlFor="matrix-lane">Model</label>
+            <select id="matrix-lane" value={lane} disabled={streaming} onChange={(e) => setLane(e.target.value as ModelLane)} className="input-base !w-auto !rounded-[10px] !py-1.5 text-xs">
+              {MODEL_LANES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+            </select>
+            <select value={strategy} disabled={streaming} onChange={(e) => setStrategy(e.target.value as ResponseStrategy)} className="hidden input-base !w-auto !rounded-[10px] !py-1.5 text-xs sm:block" aria-label="Response strategy">
+              <option value="fast">Fast</option>
+              <option value="balanced">Balanced</option>
+              <option value="quality">Quality</option>
+              <option value="efficient">Efficient</option>
+            </select>
+            <button type="button" onClick={() => setDemoMode((v) => !v)} className={cn("export-btn", demoMode && "!border-accent")} aria-pressed={demoMode}>Demo</button>
           </div>
           <div className="flex min-w-0 items-center gap-1 sm:gap-2">
             <span title="Requests use the AI provider and model configured on the server (Admin → AI usage)." className="hidden max-w-52 truncate text-[11px] font-medium text-ink-3 lg:block">
@@ -992,7 +1007,12 @@ export function ChatClient({
                           <img src={m.metadata.image_data_url} alt="Generated image" className="max-h-[480px] w-full object-contain bg-[#070B14]" />
                         </div>
                       ) : null}
-                      {m.role === "assistant" && i === messages.length - 1 && !streaming ? <ExportDesk content={m.content} /> : null}
+                      {m.role === "assistant" && i === messages.length - 1 && !streaming ? (
+                        <>
+                          {mode === "study" ? <FlashcardDeck text={m.content} /> : null}
+                          <ExportDesk content={m.content} />
+                        </>
+                      ) : null}
                       {m.metadata?.action === "theme_gallery" ? (
                         <div className="mt-3 rounded-xl border border-border bg-surface p-3">
                           <ThemeGallery compact />
@@ -1038,6 +1058,14 @@ export function ChatClient({
               </div>
             ))}
 
+            {mode === "agent" && (streaming || pipelineEvents.length > 0) ? (
+              <div className="space-y-2">
+                <AgentSandbox activeStage={pipelineStage} tool={pipelineTool} />
+                {analytics ? <PipelineAnalyticsPanel analytics={analytics} /> : null}
+                <ExecutionConsole events={pipelineEvents} />
+              </div>
+            ) : null}
+
             {streaming ? (
               <div className="msg-in flex gap-3.5">
                 <span className="mt-0.5 hidden shrink-0 sm:block" aria-hidden="true">
@@ -1068,6 +1096,13 @@ export function ChatClient({
       ) : null}
 
       <div className="shrink-0 pt-3">
+        <div className="mx-auto max-w-2xl">
+          <ModeTools mode={mode} onPrompt={(text) => void send(undefined, text)} studyLevel={studyLevel} setStudyLevel={setStudyLevel} explainStyle={explainStyle} setExplainStyle={setExplainStyle} />
+          {demoMode || mode === "orchestrator" || mode === "agent" ? <LiveTaskGraph nodes={graphNodes} /> : null}
+          {modeHint ? (
+            <p className="mb-2 text-[12px] text-ink-2">This may fit {modeHint} mode. <button type="button" className="font-semibold text-accent" onClick={() => { const next = modeHint; setModeHint(null); switchMode(next); }}>Continue in {modeHint}</button></p>
+          ) : null}
+        </div>
         {attachments.length ? (
           <div className="mx-auto mb-2 flex max-w-2xl flex-wrap gap-1.5" aria-label="Attached files">
             {attachments.map((file) => (
@@ -1109,7 +1144,7 @@ export function ChatClient({
                 void send(e);
               }
             }}
-            placeholder={t("chat.placeholder")}
+            placeholder={modeMeta(mode).placeholder}
             rows={1}
             aria-label="Message MATRIX"
             disabled={streaming}
