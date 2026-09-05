@@ -1,0 +1,247 @@
+/* =============================================================================
+   MATRIX V3 — design tokens.
+   Single source of truth for colour, type, space, radius, elevation, motion.
+   Dark = "Tech AI / Dark Neon". Light = "Minimalist Futuristic" (independently
+   designed, NOT an inversion of dark).
+   ============================================================================= */
+
+:root {
+  /* --- type ------------------------------------------------------------- */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Noto Sans", "Noto Sans Bengali", sans-serif;
+  --font-display: var(--font-sans);
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-lg: 1.0625rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.25rem;
+
+  /* --- space (4pt grid) -------------------------------------------------- */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  /* --- radius ------------------------------------------------------------ */
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-pill: 999px;
+
+  /* --- motion ------------------------------------------------------------ */
+  --ease: 150ms cubic-bezier(0.2, 0.8, 0.3, 1);
+  --ease-slow: 240ms cubic-bezier(0.2, 0.8, 0.3, 1);
+
+  /* --- layout metrics ---------------------------------------------------- */
+  --app-header: 3.5rem;
+  --app-bottom-nav: 3.75rem;
+  --sidebar-width: 264px;
+  --sidebar-width-collapsed: 68px;
+  --content-max: 56rem;
+  --tap: 44px;
+}
+
+/* -----------------------------------------------------------------------------
+   DARK — Tech AI / Dark Neon. Deep blue-black ground, flat surfaces, one
+   strategic neon accent (mint) plus blue (information) and purple (AI).
+   -------------------------------------------------------------------------- */
+[data-theme="dark"] {
+  --bg: #070b12;
+  --bg-grad:
+    radial-gradient(900px 420px at 50% -18%, rgba(0, 245, 160, 0.05), transparent 60%),
+    radial-gradient(700px 340px at 92% 4%, rgba(139, 92, 246, 0.05), transparent 58%);
+  --grid-line: rgba(148, 163, 184, 0.045);
+
+  --surface: #0d131d;
+  --surface-2: #121a26;
+  --surface-3: #182232;
+  --sidebar: #090e17;
+
+  --text: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-muted: #7c8a9e;
+
+  --border: rgba(148, 163, 184, 0.14);
+  --border-strong: rgba(148, 163, 184, 0.26);
+
+  --primary: #00f5a0;
+  --primary-hover: #00d98d;
+  --primary-contrast: #04140d;
+  --primary-soft: rgba(0, 245, 160, 0.12);
+
+  --blue: #38bdf8;
+  --blue-soft: rgba(56, 189, 248, 0.12);
+  --purple: #8b5cf6;
+  --purple-soft: rgba(139, 92, 246, 0.14);
+
+  --success: #00f5a0;
+  --success-soft: rgba(0, 245, 160, 0.12);
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.12);
+  --danger: #fb7185;
+  --danger-soft: rgba(251, 113, 133, 0.12);
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.45);
+  --brand-blend: screen;
+  color-scheme: dark;
+}
+
+/* -----------------------------------------------------------------------------
+   LIGHT — Minimalist Futuristic. Cool paper white, crisp hairlines, a deeper
+   teal/emerald primary that holds contrast on light surfaces (neon mint does
+   not), blue for information, violet for AI.
+   -------------------------------------------------------------------------- */
+[data-theme="light"] {
+  --bg: #f7f9fc;
+  --bg-grad:
+    radial-gradient(900px 420px at 50% -18%, rgba(0, 137, 94, 0.05), transparent 60%),
+    radial-gradient(700px 340px at 92% 4%, rgba(99, 102, 241, 0.04), transparent 58%);
+  --grid-line: rgba(15, 23, 42, 0.035);
+
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+  --surface-3: #e6ecf3;
+  --sidebar: #f1f5f9;
+
+  --text: #0b1220;
+  --text-secondary: #475569;
+  --text-muted: #71809a;
+
+  --border: rgba(15, 23, 42, 0.1);
+  --border-strong: rgba(15, 23, 42, 0.18);
+
+  --primary: #00895e;
+  --primary-hover: #00714d;
+  --primary-contrast: #ffffff;
+  --primary-soft: rgba(0, 137, 94, 0.1);
+
+  --blue: #0284c7;
+  --blue-soft: rgba(2, 132, 199, 0.1);
+  --purple: #6d28d9;
+  --purple-soft: rgba(109, 40, 217, 0.1);
+
+  --success: #00895e;
+  --success-soft: rgba(0, 137, 94, 0.1);
+  --warning: #a16207;
+  --warning-soft: rgba(161, 98, 7, 0.1);
+  --danger: #be123c;
+  --danger-soft: rgba(190, 18, 60, 0.09);
+
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-pop: 0 12px 40px rgba(15, 23, 42, 0.14);
+  --brand-blend: multiply;
+  color-scheme: light;
+}
+
+/* -----------------------------------------------------------------------------
+   Optional palettes (theme gallery). Each only re-points the accent + ground
+   tones; every component keeps reading the same token names.
+   -------------------------------------------------------------------------- */
+[data-theme-template="midnight"][data-theme="dark"] {
+  --bg: #04070f; --surface: #0a1020; --surface-2: #101a30; --surface-3: #16233f;
+  --sidebar: #060b16; --primary: #818cf8; --primary-hover: #a5b4fc;
+  --primary-contrast: #0b1020; --primary-soft: rgba(129, 140, 248, 0.14);
+}
+[data-theme-template="midnight"][data-theme="light"] {
+  --bg: #f4f5ff; --surface-2: #eef0ff; --surface-3: #e2e6ff;
+  --sidebar: #eef0ff; --primary: #4338ca; --primary-hover: #3730a3;
+  --primary-contrast: #ffffff; --primary-soft: rgba(67, 56, 202, 0.1);
+}
+
+[data-theme-template="ivory"][data-theme="dark"] {
+  --bg: #100e0a; --surface: #191510; --surface-2: #221c14; --surface-3: #2d251a;
+  --sidebar: #131009; --primary: #f0c040; --primary-hover: #ffd76a;
+  --primary-contrast: #1a1405; --primary-soft: rgba(240, 192, 64, 0.14);
+}
+[data-theme-template="ivory"][data-theme="light"] {
+  --bg: #faf5ec; --surface: #fffcf6; --surface-2: #f3ecdd; --surface-3: #e8dcc5;
+  --sidebar: #f3ecdd; --primary: #96690f; --primary-hover: #7a530b;
+  --primary-contrast: #ffffff; --primary-soft: rgba(150, 105, 15, 0.1);
+}
+
+[data-theme-template="carbon"][data-theme="dark"] {
+  --bg: #08090b; --surface: #111317; --surface-2: #191c22; --surface-3: #22262e;
+  --sidebar: #0c0e11; --primary: #cbd5e1; --primary-hover: #e2e8f0;
+  --primary-contrast: #0b0d10; --primary-soft: rgba(203, 213, 225, 0.14);
+}
+[data-theme-template="carbon"][data-theme="light"] {
+  --bg: #eef0f3; --surface-2: #f1f5f9; --surface-3: #e2e8f0;
+  --sidebar: #f1f5f9; --primary: #334155; --primary-hover: #1e293b;
+  --primary-contrast: #ffffff; --primary-soft: rgba(51, 65, 85, 0.1);
+}
+
+[data-theme-template="aurora"][data-theme="dark"] {
+  --bg: #030e14; --surface: #08181f; --surface-2: #0d2530; --surface-3: #133240;
+  --sidebar: #05121a; --primary: #22d3ee; --primary-hover: #67e8f9;
+  --primary-contrast: #041318; --primary-soft: rgba(34, 211, 238, 0.14);
+}
+[data-theme-template="aurora"][data-theme="light"] {
+  --bg: #f0fbfd; --surface-2: #e0f5fa; --surface-3: #c8ecf4;
+  --sidebar: #e0f5fa; --primary: #0e7490; --primary-hover: #155e75;
+  --primary-contrast: #ffffff; --primary-soft: rgba(14, 116, 144, 0.1);
+}
+
+[data-theme-template="forest"][data-theme="dark"] {
+  --bg: #05110b; --surface: #0b1a11; --surface-2: #112418; --surface-3: #173021;
+  --sidebar: #071510; --primary: #4ade80; --primary-hover: #86efac;
+  --primary-contrast: #04140b; --primary-soft: rgba(74, 222, 128, 0.14);
+}
+[data-theme-template="forest"][data-theme="light"] {
+  --bg: #f2f9f4; --surface-2: #e3f5e9; --surface-3: #cdead7;
+  --sidebar: #e3f5e9; --primary: #15803d; --primary-hover: #166534;
+  --primary-contrast: #ffffff; --primary-soft: rgba(21, 128, 61, 0.1);
+}
+
+/* -----------------------------------------------------------------------------
+   Tailwind v4 theme bridge — the utility classes used across the app map onto
+   the tokens above, so a token change repaints the whole product.
+   -------------------------------------------------------------------------- */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-sidebar: var(--sidebar);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  /* Ink scale = text scale (kept as the app-wide naming for text colours). */
+  --color-ink: var(--text);
+  --color-ink-2: var(--text-secondary);
+  --color-ink-3: var(--text-muted);
+
+  --color-accent: var(--primary);
+  --color-accent-hover: var(--primary-hover);
+  --color-accent-2: var(--purple);
+  --color-accent-soft: var(--primary-soft);
+  --color-blue: var(--blue);
+  --color-purple: var(--purple);
+
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+
+  --font-sans: var(--font-sans);
+  --font-display: var(--font-display);
+  --font-mono: var(--font-mono);
+
+  --shadow-card: var(--shadow-card);
+  --shadow-pop: var(--shadow-pop);
+
+  --radius-sm: var(--radius-sm);
+  --radius: var(--radius);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+}

@@ -1,14 +1,17 @@
 "use client";
 
-// MATRIX application shell — compact workspace with a 276px sidebar on desktop
-// and a slide-out drawer on mobile. Chat / Agent / Private stay first-class.
+// MATRIX application shell.
+//
+// Desktop: a fixed, collapsible sidebar next to a wide workspace.
+// Mobile:   a minimal top bar + a fixed bottom navigation bar + a "More"
+//           bottom sheet. There is NO hamburger menu and no slide-out drawer.
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
-  ChevronDown, Code2, FileSearch, GraduationCap, History, LayoutGrid, Menu,
-  MessageSquare, MoreVertical, Plus, Search, Shield, ShieldAlert, Sliders, User, X,
+  ChevronDown, Code2, FileSearch, GraduationCap, History, LayoutGrid, MessageSquare,
+  MoreVertical, PanelLeft, Plus, Search, Shield, ShieldAlert, Sliders, User,
 } from "lucide-react";
 import { rpc } from "@/lib/client/api";
 import { Logo } from "@/components/logo";
@@ -18,6 +21,7 @@ import { ToastProvider } from "@/components/toast";
 import { SignOutButton } from "@/components/sign-out-button";
 import { NotificationsBell } from "@/components/notifications-bell";
 import { UserAvatar } from "@/components/avatar";
+import { MobileNav } from "@/components/mobile-nav";
 import { groupConversations, groupLabel, formatTime, type SidebarConversation } from "@/lib/chat-utils";
 import { useI18n } from "@/lib/i18n/client";
 import { cn } from "@/lib/utils";
@@ -244,7 +248,7 @@ function SidebarBody({
             {collapsed ? <Logo size="sm" href="/chat" /> : <div className="sidebar-brand min-w-0"><Logo size="md" href="/chat" /></div>}
             {onToggleCollapsed ? (
               <button type="button" onClick={onToggleCollapsed} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink" aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
-                <Menu size={14} />
+                <PanelLeft size={14} strokeWidth={1.7} />
               </button>
             ) : null}
           </div>
@@ -404,37 +408,23 @@ export function AppShell({
   isAdmin: boolean;
   children: ReactNode;
 }) {
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const online = useOnline();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const agentActive = pathname === "/chat" && searchParams.get("mode") === "agent";
   const { t } = useI18n();
   const immersive = isImmersivePath(pathname);
 
-  useEffect(() => {
-    setDrawerOpen(false);
-  }, [pathname]);
-
-  useEffect(() => {
-    if (!drawerOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setDrawerOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.body.style.overflow = prev;
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [drawerOpen]);
-
   return (
     <ToastProvider>
-      <div className="min-h-dvh overflow-x-hidden lg:flex">
-        <aside className={cn("app-sidebar fixed inset-y-0 left-0 z-40 hidden transition-[width] duration-200 lg:block", sidebarCollapsed ? "w-[72px]" : "w-[276px]")}>
+      <div className="app-shell lg:flex">
+        {/* Desktop: fixed, collapsible sidebar. Never rendered on mobile — the
+            bottom navigation is the only mobile navigation surface. */}
+        <aside
+          className={cn(
+            "app-sidebar fixed inset-y-0 left-0 z-40 hidden transition-[width] duration-200 lg:block",
+            sidebarCollapsed ? "w-[var(--sidebar-width-collapsed)]" : "w-[var(--sidebar-width)]",
+          )}
+        >
           <SidebarBody
             conversations={conversations}
             isAdmin={isAdmin}
@@ -444,90 +434,43 @@ export function AppShell({
           />
         </aside>
 
-        {drawerOpen ? (
-          <>
-            <button
-              type="button"
-              className="fade-in fixed inset-0 z-40 bg-[#070B14]/50 backdrop-blur-sm lg:hidden"
-              aria-label="Close menu"
-              onClick={() => setDrawerOpen(false)}
-            />
-            <aside
-              className="app-sidebar drawer-in fixed inset-y-0 left-0 z-50 flex w-[min(88vw,20rem)] flex-col pt-[env(safe-area-inset-top)] lg:hidden"
-              role="dialog"
-              aria-modal="true"
-              aria-label="Navigation menu"
-            >
-              <div className="flex shrink-0 items-center justify-between px-3 pb-2 pt-3">
-                <div className="sidebar-brand min-w-0">
-                  <Logo size="md" href="/chat" />
-                </div>
-                <button type="button" onClick={() => setDrawerOpen(false)} aria-label="Close menu" className="grid h-11 w-11 place-items-center rounded-[10px] text-ink-2 hover:bg-surface-2">
-                  <X size={16} strokeWidth={1.6} />
-                </button>
+        {/* Mobile top bar — brand, live AI status, notifications. Nothing else,
+            and explicitly no hamburger. */}
+        <header className="app-topbar sticky top-0 z-30 flex h-[calc(var(--app-header)+env(safe-area-inset-top))] items-end pt-[env(safe-area-inset-top)] lg:hidden">
+          <div className="flex h-14 w-full items-center justify-between gap-2 px-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="sidebar-brand">
+                <Logo size="sm" href="/chat" />
               </div>
-              <div className="min-h-0 flex-1">
-                <SidebarBody
-                  conversations={conversations}
-                  isAdmin={isAdmin}
-                  hideBrand
-                  onNavigate={() => setDrawerOpen(false)}
-                  footer={<ShellFooter user={user} onNavigate={() => setDrawerOpen(false)} />}
-                />
-              </div>
-            </aside>
-          </>
-        ) : null}
-
-        <header className="app-glass sticky top-0 z-30 flex h-[calc(3.5rem+env(safe-area-inset-top))] items-end lg:hidden">
-          <div className="flex h-14 w-full items-center justify-between gap-2 px-2">
-          <div className="flex min-w-0 items-center gap-0.5">
-            <button
-              type="button"
-              onClick={() => setDrawerOpen(true)}
-              aria-label="Open menu"
-              className="grid h-11 w-11 place-items-center rounded-[10px] text-ink-2 hover:bg-surface-2"
-            >
-              <Menu size={18} strokeWidth={1.6} />
-            </button>
-            <div className="sidebar-brand">
-              <Logo size="sm" href="/chat" />
+              <AiStatus className="hidden xs:inline-flex sm:inline-flex" />
             </div>
-            <AiStatus className="hidden sm:inline-flex" />
-          </div>
-          <div className="flex items-center gap-0.5">
-            <NotificationsBell placement="down" />
-            <Link
-              href="/temporary-chat"
-              aria-label={t("nav.tempChat")}
-              className={cn(
-                "grid h-11 w-11 place-items-center rounded-[10px]",
-                pathname.startsWith("/temporary-chat") ? "bg-surface-2 text-ink" : "text-ink-2 hover:bg-surface-2",
-              )}
-            >
-              <History size={16} strokeWidth={1.6} />
-            </Link>
-            <NewChatButton
-              ariaLabel={t("chat.new")}
-              className="grid h-11 w-11 place-items-center rounded-[10px] text-ink-2 hover:bg-surface-2"
-            >
-              <Plus size={16} strokeWidth={1.6} />
-            </NewChatButton>
-          </div>
+            <div className="flex items-center gap-0.5">
+              <NotificationsBell placement="down" />
+              <NewChatButton
+                ariaLabel={t("chat.new")}
+                className="grid h-11 w-11 place-items-center rounded-[8px] text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+              >
+                <Plus size={17} strokeWidth={1.7} />
+              </NewChatButton>
+            </div>
           </div>
         </header>
 
         {!online ? (
-          <div className="fixed inset-x-0 top-14 z-[60] border-b border-danger/40 bg-danger-soft px-4 py-2 text-center text-sm font-medium text-danger lg:top-0" role="alert">
+          <div
+            className="fixed inset-x-0 top-[calc(var(--app-header)+env(safe-area-inset-top))] z-[60] border-b border-danger/40 bg-danger-soft px-4 py-2 text-center text-sm font-medium text-danger lg:top-0"
+            role="status"
+          >
             You&apos;re offline — reconnecting…
           </div>
         ) : null}
 
         <div
           className={cn(
-            sidebarCollapsed ? "min-w-0 flex-1 lg:pl-[72px]" : "min-w-0 flex-1 lg:pl-[276px]",
+            "min-w-0 flex-1",
+            sidebarCollapsed ? "lg:pl-[var(--sidebar-width-collapsed)]" : "lg:pl-[var(--sidebar-width)]",
             immersive
-              ? "flex h-[calc(100dvh-3.5rem-env(safe-area-inset-top))] flex-col overflow-hidden pb-[calc(var(--app-bottom-nav)+env(safe-area-inset-bottom))] lg:h-dvh lg:pb-0"
+              ? "flex h-[calc(100dvh-var(--app-header)-env(safe-area-inset-top))] flex-col overflow-hidden pb-[calc(var(--app-bottom-nav)+env(safe-area-inset-bottom))] lg:h-dvh lg:pb-0"
               : "pb-[calc(var(--app-bottom-nav)+env(safe-area-inset-bottom))] lg:pb-0",
           )}
         >
@@ -538,7 +481,7 @@ export function AppShell({
               <Link
                 href="/settings?tab=account"
                 aria-label="Edit profile"
-                className="ml-1 grid h-11 w-11 place-items-center rounded-[10px] text-ink-2 transition-colors hover:bg-surface-2"
+                className="ml-1 grid h-11 w-11 place-items-center rounded-[8px] text-ink-2 transition-colors hover:bg-surface-2"
               >
                 <UserAvatar src={user?.avatarUrl} name={user?.fullName || user?.email} size={28} />
               </Link>
@@ -550,43 +493,14 @@ export function AppShell({
                 ? pathname.startsWith("/projects/")
                   ? "mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col px-2 sm:px-4"
                   : "mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col px-3 sm:px-6"
-                : "mx-auto max-w-4xl px-4 py-5 sm:px-6 lg:py-7",
+                : "mx-auto w-full max-w-[var(--content-max)] px-4 py-5 sm:px-6 lg:py-7",
             )}
           >
             {children}
           </div>
         </div>
 
-        <nav
-          className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/92 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl lg:hidden"
-          aria-label="Bottom navigation"
-        >
-          <div className="mx-auto grid max-w-lg grid-cols-5">
-            {[
-              { href: "/chat", label: t("nav.chat"), icon: <MessageSquare size={17} strokeWidth={1.6} /> },
-              { href: "/chat?mode=agent", label: "Agent", icon: <Code2 size={17} strokeWidth={1.6} /> },
-              { href: "/scanner", label: t("nav.scanner"), icon: <FileSearch size={17} strokeWidth={1.6} /> },
-              { href: "/courses", label: t("nav.courses"), icon: <GraduationCap size={17} strokeWidth={1.6} /> },
-              { href: "/settings", label: t("nav.settings"), icon: <User size={17} strokeWidth={1.6} /> },
-            ].map((n) => (
-              <Link
-                key={n.href}
-                href={n.href}
-                className={cn(
-                  "flex min-h-14 flex-col items-center justify-center gap-0.5 px-1 text-[10px] font-medium transition-colors",
-                  n.href.includes("mode=agent")
-                    ? agentActive ? "text-accent" : "text-ink-3 hover:text-ink"
-                    : n.href === "/chat"
-                      ? (pathname === "/chat" || pathname.startsWith("/chat/")) && !agentActive ? "text-ink" : "text-ink-3 hover:text-ink"
-                      : pathname === n.href ? "text-ink" : "text-ink-3 hover:text-ink",
-                )}
-              >
-                <span aria-hidden="true">{n.icon}</span>
-                <span className="max-w-full truncate">{n.label}</span>
-              </Link>
-            ))}
-          </div>
-        </nav>
+        <MobileNav isAdmin={isAdmin} />
       </div>
     </ToastProvider>
   );

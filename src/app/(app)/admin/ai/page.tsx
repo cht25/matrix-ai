@@ -4,7 +4,7 @@ import { db, getCurrentUser } from "@/lib/data";
 import { getAdminPermissions } from "@/lib/server/queries";
 import { adminRoleOf } from "@/lib/server/rpc";
 import { AdminShell } from "@/components/admin/admin-shell";
-import { AiUsagePanel } from "@/components/admin/ai-usage-panel";
+import { AiConfigTabs } from "@/components/admin/ai-config-tabs";
 
 export const metadata: Metadata = { title: "Admin \u00b7 AI configuration" };
 
@@ -17,11 +17,11 @@ export default async function AdminAiPage() {
   return (
     <AdminShell
       title="AI configuration"
-      subtitle="Configure providers and models, and inspect real gateway usage."
+      subtitle="Text models, image generation, agent providers and API keys — with live health checks."
       role={role}
       codes={codes}
     >
-      <AiUsagePanel />
+      <AiConfigTabs />
     </AdminShell>
   );
 }

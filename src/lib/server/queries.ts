@@ -91,11 +91,27 @@ export async function getDashboardData(d: Db, user: SessionUser) {
 // ---------------------------------------------------------------------------
 // Chat / history
 // ---------------------------------------------------------------------------
-export async function getConversation(d: Db, uid: string, id: string) {
+/** How many messages the chat page ships in its first payload. */
+export const CHAT_PAGE_SIZE = 30;
+
+/**
+ * Load a conversation with only its MOST RECENT messages.
+ *
+ * A long-running conversation used to send every message to the browser and
+ * mount all of them at once. We now read the newest `limit` messages (ordered
+ * by the index Firestore already maintains) and report whether older ones
+ * exist; the client fetches those on demand as the user scrolls up.
+ */
+export async function getConversation(d: Db, uid: string, id: string, limit = CHAT_PAGE_SIZE) {
   const ref = d.collection("conversations").doc(id);
   const conv = await ref.get();
   if (!conv.exists || conv.data()!.user_id !== uid) return null;
-  const messages = await ref.collection("messages").get();
+
+  // Fetch one extra row to detect "there is more history" without a count query.
+  const recent = await ref.collection("messages").orderBy("created_at", "desc").limit(limit + 1).get();
+  const hasMore = recent.size > limit;
+  const docs = (hasMore ? recent.docs.slice(0, limit) : recent.docs).reverse();
+
   return {
     conversation: {
       id: conv.id,
@@ -103,7 +119,45 @@ export async function getConversation(d: Db, uid: string, id: string) {
       is_temporary: conv.data()!.is_temporary ?? false,
       mode: conv.data()!.mode === "agent" ? "agent" as const : "general" as const,
     },
-    messages: messages.docs.sort(ascDoc("created_at")).map((m) => ({
+    hasMore,
+    messages: docs.map((m) => ({
+      id: m.id,
+      role: m.data().role,
+      content: m.data().content,
+      created_at: iso(m.data().created_at),
+      metadata: m.data().metadata ?? {},
+    })),
+  };
+}
+
+/**
+ * Older messages for infinite upward scroll: everything strictly before
+ * `beforeIso`, newest-first, capped at `limit`.
+ */
+export async function getConversationHistoryPage(
+  d: Db,
+  uid: string,
+  id: string,
+  beforeIso: string,
+  limit = CHAT_PAGE_SIZE,
+) {
+  const ref = d.collection("conversations").doc(id);
+  const conv = await ref.get();
+  if (!conv.exists || conv.data()!.user_id !== uid) return null;
+
+  const before = beforeIso ? new Date(beforeIso) : new Date();
+  const snap = await ref
+    .collection("messages")
+    .orderBy("created_at", "desc")
+    .startAfter(before)
+    .limit(limit + 1)
+    .get();
+  const hasMore = snap.size > limit;
+  const docs = (hasMore ? snap.docs.slice(0, limit) : snap.docs).reverse();
+
+  return {
+    hasMore,
+    messages: docs.map((m) => ({
       id: m.id,
       role: m.data().role,
       content: m.data().content,
@@ -216,18 +270,28 @@ export async function getLessonPage(d: Db, uid: string, slug: string, lessonId: 
   };
 }
 
-export async function getQuizPage(d: Db, slug: string, quizId: string) {
+export async function getQuizPage(d: Db, slug: string, quizId: string, uid?: string) {
   const course = await getCourseBySlug(d, slug);
   if (!course) return null;
-  const quiz = await d.collection("quizzes").doc(quizId).get();
+  const [quiz, questions, attempts] = await Promise.all([
+    d.collection("quizzes").doc(quizId).get(),
+    d.collection("quiz_questions").where("quiz_id", "==", quizId).get(),
+    // The learner's own history for this quiz — used for "your best score".
+    uid
+      ? d.collection("quiz_attempts").where("user_id", "==", uid).where("quiz_id", "==", quizId).get()
+      : Promise.resolve(null),
+  ]);
   if (!quiz.exists) return null;
-  const questions = await d.collection("quiz_questions").where("quiz_id", "==", quizId).get();
+  const bestScore = attempts
+    ? attempts.docs.reduce((best, a) => Math.max(best, Number(a.data().score_percent ?? 0)), 0)
+    : 0;
   const sortedQuestions = questions.docs.sort(ascDoc("sort_order"));
   // Options are stored on the question WITHOUT the correct flag; correct
   // answers live in the server-only quiz_answers collection.
   return {
     quiz: { id: quiz.id, title: String(quiz.data()!.title ?? ""), pass_percent: quiz.data()!.pass_percent ?? 60 },
     course: { id: course.id, slug: course.slug, title: course.title },
+    bestScore,
     questions: sortedQuestions.flatMap((q) =>
       ((q.data().options ?? []) as { id: string; option_text: string }[]).map((o) => ({
         id: o.id,

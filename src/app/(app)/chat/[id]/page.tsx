@@ -23,6 +23,7 @@ export default async function ChatPage({ params }: { params: Promise<{ id: strin
         conversationId={id}
         isTemporary={false}
         initialMode={data.conversation.mode}
+        initialHasMore={data.hasMore}
       />
     </div>
   );

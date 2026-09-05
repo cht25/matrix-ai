@@ -19,6 +19,7 @@ import { ADMIN_ROLES, NO_ROLE, normalizeRoleInput } from "@/lib/roles";
 
 export { RpcError } from "@/lib/server/errors";
 import { RpcError } from "@/lib/server/errors";
+import { issueCertificateFor, lookupCertificate, recordVerification } from "@/lib/server/certificates";
 
 // ---------------------------------------------------------------------------
 // 1. HELPERS — DOB validation (registration requires 11 <= age <= 17)
@@ -978,55 +979,24 @@ export async function checkCertificateEligibility(d: Db, userId: string, courseI
 }
 
 export async function issueCertificate(d: Db, user: SessionUser, courseId: string) {
-  const eligibility = await checkCertificateEligibility(d, user.uid, courseId);
-  if (!eligibility.eligible) throw new RpcError(`NOT_ELIGIBLE: ${eligibility.reason}`, 403);
-  const suffix = crypto.randomBytes(6).toString("hex").slice(0, 8).toUpperCase();
-  const certificateId = `MATRIX-${new Date().getFullYear()}-${suffix}`;
-  const course = await d.collection("courses").doc(courseId).get();
-  await d.collection("certificates").doc(`${user.uid}_${courseId}`).set({
-    user_id: user.uid,
-    course_id: courseId,
-    certificate_id: certificateId,
-    issued_at: nowTs(),
-    verification_status: "valid",
-    revoked_at: null,
-    created_at: nowTs(),
-  });
-  await d.collection("notifications").add({
-    user_id: user.uid,
-    type: "certificate",
-    title: "Certificate earned!",
-    body: `You completed "${course.data()?.title ?? "the course"}" and earned a certificate.`,
-    link: "/certificate",
-    read_at: null,
-    created_at: nowTs(),
-  });
-  return { certificate_id: certificateId, course: course.data()?.title ?? "" };
+  const cert = await issueCertificateFor(d, { userId: user.uid, courseId }, (uid, cid) =>
+    checkCertificateEligibility(d, uid, cid),
+  );
+  return {
+    certificate_id: cert.certificate_id,
+    course: cert.course_title,
+    display_name: cert.display_name,
+    score_percent: cert.score_percent,
+    issued_at: cert.issued_at,
+    already_issued: cert.already_issued,
+  };
 }
 
 /** Public verification — returns ONLY public-safe fields. */
 export async function verifyCertificateLookup(d: Db, certificateId: string) {
-  const snap = await d.collection("certificates").where("certificate_id", "==", certificateId).limit(1).get();
-  if (snap.empty) return { valid: false, certificate_id: certificateId };
-  const cert = snap.docs[0];
-  const [course, profile] = await Promise.all([
-    d.collection("courses").doc(cert.data().course_id as string).get(),
-    d.collection("profiles").doc(cert.data().user_id as string).get(),
-  ]);
-  await d.collection("certificate_verification").add({
-    certificate_id: certificateId,
-    verified_at: nowTs(),
-    ip_hash: "",
-  });
-  return {
-    valid: true,
-    certificate_id: certificateId,
-    course: course.data()?.title ?? "",
-    display_name: profile.data()?.full_name ?? "",
-    issued_at: cert.data().issued_at?.toDate?.().toISOString() ?? "",
-    issued_by: "MATRIX AI — THAMJJ13.TOP White Hat Team",
-    verification_status: cert.data().verification_status ?? "valid",
-  };
+  const result = await lookupCertificate(d, certificateId);
+  if (result.verification_status !== "not_found") await recordVerification(d, result.certificate_id);
+  return result;
 }
 
 // ---------------------------------------------------------------------------

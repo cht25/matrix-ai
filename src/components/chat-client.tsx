@@ -142,12 +142,15 @@ export function ChatClient({
   conversationId: initialConvId,
   isTemporary,
   initialMode = "general",
+  /** True when the conversation has messages older than `initialMessages`. */
+  initialHasMore = false,
   onConversationCreated,
 }: {
   initialMessages: ChatMessage[];
   conversationId: string | null;
   isTemporary: boolean;
   initialMode?: ChatMode;
+  initialHasMore?: boolean;
   onConversationCreated?: (id: string) => void;
 }) {
   const router = useRouter();
@@ -158,6 +161,11 @@ export function ChatClient({
   // --- conversation -------------------------------------------------------
   const [mode, setMode] = useState<ChatMode>(isTemporary ? "general" : initialMode);
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  // Incremental history: only the newest page is mounted; older messages are
+  // prepended on demand so a long conversation never floods the DOM.
+  const [hasMoreHistory, setHasMoreHistory] = useState(initialHasMore);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const preserveScrollRef = useRef(false);
   const [input, setInput] = useState("");
   const [convId, setConvId] = useState<string | null>(initialConvId);
   const [lastUserMessage, setLastUserMessage] = useState<string | null>(lastUserContent(initialMessages));
@@ -227,6 +235,7 @@ export function ChatClient({
   const requestInFlightRef = useRef(false);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -265,8 +274,44 @@ export function ChatClient({
   }, []);
 
   useEffect(() => {
+    // Prepending older history must NOT yank the view to the bottom.
+    if (preserveScrollRef.current) {
+      preserveScrollRef.current = false;
+      return;
+    }
     scrollToBottom();
   }, [messages, streamedText, streaming, scrollToBottom]);
+
+  /** Fetch the previous page of messages and prepend it, keeping the reading
+      position stable. */
+  const loadOlderMessages = useCallback(async () => {
+    const id = convIdRef.current;
+    if (!id || loadingHistory || !hasMoreHistory) return;
+    const oldest = messagesRef.current[0]?.created_at;
+    if (!oldest) return;
+
+    setLoadingHistory(true);
+    const viewport = scrollAreaRef.current;
+    const previousHeight = viewport?.scrollHeight ?? 0;
+    try {
+      const page = await rpc<{ hasMore: boolean; messages: ChatMessage[] }>("conversation_messages_page", {
+        id,
+        before: oldest,
+        limit: 30,
+      });
+      preserveScrollRef.current = true;
+      setMessages((current) => [...page.messages, ...current]);
+      setHasMoreHistory(page.hasMore);
+      // Restore the scroll offset after the taller list paints.
+      requestAnimationFrame(() => {
+        if (viewport) viewport.scrollTop += viewport.scrollHeight - previousHeight;
+      });
+    } catch {
+      setNotice("Older messages could not be loaded. Please try again.");
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, [hasMoreHistory, loadingHistory]);
 
   useEffect(() => () => {
     abortRef.current?.abort();
@@ -1408,7 +1453,20 @@ export function ChatClient({
         </div>
       )}
 
-      <div className="no-scrollbar min-h-0 flex-1 space-y-7 overflow-y-auto overscroll-contain px-0.5 py-2 sm:px-2">
+      <div ref={scrollAreaRef} className="no-scrollbar min-h-0 flex-1 space-y-7 overflow-y-auto overscroll-contain px-0.5 py-2 sm:px-2">
+        {hasMoreHistory && messages.length > 0 ? (
+          <div className="flex justify-center pb-1">
+            <button
+              type="button"
+              onClick={() => void loadOlderMessages()}
+              disabled={loadingHistory}
+              className="chip"
+              aria-busy={loadingHistory}
+            >
+              {loadingHistory ? "Loading earlier messages…" : "Load earlier messages"}
+            </button>
+          </div>
+        ) : null}
         {messages.length === 0 && !streaming ? (
           <div className="flex flex-col items-center px-1 py-6 text-center sm:py-8">
             <div className="mb-5">

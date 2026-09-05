@@ -12,7 +12,7 @@ export default async function QuizPage({ params }: { params: Promise<{ slug: str
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const data = await getQuizPage(db(), slug, quizId);
+  const data = await getQuizPage(db(), slug, quizId, user.uid);
   if (!data) notFound();
 
   // Options are stored without the correct flag (public-safe, like the old
@@ -28,6 +28,8 @@ export default async function QuizPage({ params }: { params: Promise<{ slug: str
         options={data.questions.map((o) => ({ id: o.id, question_id: o.question_id, option_text: o.option_text }))}
         courseId={data.course.id}
         courseSlug={slug}
+        courseTitle={data.course.title}
+        bestScore={data.bestScore}
       />
     </div>
   );

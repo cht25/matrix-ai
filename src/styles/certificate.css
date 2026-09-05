@@ -1,0 +1,204 @@
+/* =============================================================================
+   MATRIX V3 — certificate document + print layout.
+
+   The certificate is a real document, not a decorated card: fixed A4 landscape
+   proportions, printable on its own, with every piece of application chrome
+   removed by the print stylesheet.
+   ============================================================================= */
+
+.certificate {
+  /* A4 landscape ratio (297 x 210). Scales down fluidly on small screens. */
+  container-type: inline-size;
+  position: relative;
+  width: 100%;
+  max-width: 1000px;
+  margin-inline: auto;
+  aspect-ratio: 297 / 210;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.2cqw;
+  padding: 6cqw 7cqw;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+/* Inner rule frame. */
+.certificate::before {
+  content: "";
+  position: absolute;
+  inset: 2.2cqw;
+  border: 1px solid var(--border);
+  pointer-events: none;
+}
+
+.certificate-brand {
+  font-family: var(--font-display);
+  font-size: 3.4cqw;
+  font-weight: 700;
+  letter-spacing: 0.34em;
+  text-indent: 0.34em;
+  color: var(--text);
+}
+
+.certificate-title {
+  font-size: 1.5cqw;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+  text-indent: 0.3em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.certificate-lede {
+  font-size: 1.5cqw;
+  color: var(--text-secondary);
+}
+
+.certificate-name {
+  font-family: var(--font-display);
+  font-size: 4.4cqw;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--text);
+}
+
+.certificate-course {
+  font-size: 2.3cqw;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.certificate-rule {
+  width: 34%;
+  height: 1px;
+  margin: 1cqw 0;
+  border: 0;
+  background: var(--border-strong);
+}
+
+.certificate-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2cqw;
+  width: 100%;
+  max-width: 74%;
+}
+
+.certificate-meta dt {
+  font-size: 1.05cqw;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.certificate-meta dd {
+  margin: 0.5cqw 0 0;
+  font-size: 1.6cqw;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.certificate-meta dd.mono {
+  font-family: var(--font-mono);
+  font-size: 1.3cqw;
+  font-weight: 500;
+}
+
+.certificate-footer {
+  font-size: 1.15cqw;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* Very small screens: the container-query sizing keeps proportions, but let
+   the document grow taller than A4 so text never collides. */
+@media (max-width: 520px) {
+  .certificate {
+    aspect-ratio: auto;
+    min-height: 62vh;
+    gap: 2.5cqw;
+    padding: 8cqw;
+  }
+  .certificate-meta {
+    grid-template-columns: 1fr;
+    gap: 3cqw;
+    max-width: 100%;
+  }
+  .certificate-brand { font-size: 6.5cqw; }
+  .certificate-title { font-size: 3cqw; }
+  .certificate-lede { font-size: 3.2cqw; }
+  .certificate-name { font-size: 8cqw; }
+  .certificate-course { font-size: 4.6cqw; }
+  .certificate-meta dt { font-size: 2.4cqw; }
+  .certificate-meta dd { font-size: 3.6cqw; }
+  .certificate-meta dd.mono { font-size: 3.2cqw; }
+  .certificate-footer { font-size: 2.6cqw; }
+}
+
+/* -----------------------------------------------------------------------------
+   PRINT — only the certificate reaches the paper.
+   -------------------------------------------------------------------------- */
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+
+  html, body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  body::before, body::after { display: none !important; }
+
+  /* Hide every piece of application chrome. */
+  .app-sidebar,
+  .app-topbar,
+  .bottom-nav,
+  .sheet,
+  .sheet-scrim,
+  nav,
+  header,
+  footer,
+  .no-print {
+    display: none !important;
+  }
+
+  main, #main, .print-root {
+    display: block !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: none !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .certificate {
+    /* Print in a neutral, ink-friendly palette regardless of the UI theme. */
+    --surface: #ffffff;
+    --text: #0b1220;
+    --text-secondary: #334155;
+    --text-muted: #64748b;
+    --border: #cbd5e1;
+    --border-strong: #94a3b8;
+    --primary: #04624a;
+
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    border-radius: 0;
+    border-color: #0f172a;
+    box-shadow: none;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

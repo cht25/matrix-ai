@@ -1,15 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Bell } from "lucide-react";
 import { rpc } from "@/lib/client/api";
+import { cachedRequest, invalidate, peekCache, subscribe } from "@/lib/client/cache";
+
+// The bell renders in both the mobile top bar and the desktop chrome. Sharing
+// one cached request keeps that to a single /api/rpc call per page.
+const CACHE_KEY = "notifications:list";
 
 type Item = { id: string; title: string; body: string; link: string; read_at: string | null; created_at: string };
 
 export function NotificationsBell({ placement = "auto" }: { placement?: "up" | "down" | "auto" }) {
   const [open, setOpen] = useState(false);
-  const [items, setItems] = useState<Item[]>([]);
+  const [items, setItems] = useState<Item[]>(() => peekCache<Item[]>(CACHE_KEY) ?? []);
 
   useEffect(() => {
     if (!open) return;
@@ -20,18 +25,27 @@ export function NotificationsBell({ placement = "auto" }: { placement?: "up" | "
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  async function load() {
-    const data = await rpc<Item[]>("notifications_list").catch(() => []);
+  const load = useCallback(async (force = false) => {
+    const data = await cachedRequest(
+      CACHE_KEY,
+      () => rpc<Item[]>("notifications_list").catch(() => [] as Item[]),
+      { ttlMs: 60_000, force },
+    );
     setItems(data ?? []);
-  }
+  }, []);
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    const unsubscribe = subscribe<Item[]>(CACHE_KEY, setItems);
+    void load();
+    return unsubscribe;
+  }, [load]);
 
   const unread = items.filter((i) => !i.read_at).length;
 
   async function markAll() {
     await rpc("notifications_mark_read", { all: true }).catch(() => {});
-    await load();
+    invalidate(CACHE_KEY);
+    await load(true);
   }
 
   return (
