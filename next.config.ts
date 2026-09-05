@@ -8,6 +8,14 @@ const nextConfig: NextConfig = {
   experimental: {
     serverActions: { bodySizeLimit: "8mb" },
   },
+  // PDFKit is a CommonJS/Node library with its own binary assets; bundling it
+  // breaks its `fs` reads. Keep it external on the server.
+  serverExternalPackages: ["pdfkit"],
+  // The PDF engine reads its embedded Unicode fonts from disk at runtime, so
+  // they must be traced into the deployment output.
+  outputFileTracingIncludes: {
+    "/api/**/*": ["./src/lib/pdf/fonts/**"],
+  },
   async headers() {
     return [
       {

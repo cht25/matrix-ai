@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AGENT_STAGES, computeAnalytics, detectAgentTool, emptyAnalytics } from "../src/lib/ai/pipeline";
-import { exportMarkdown, exportPdfBytes, toPlainText } from "../src/lib/export/response-export";
+import { exportMarkdown, toPlainText } from "../src/lib/export/response-export";
 import { isRealSecret } from "../src/lib/ai/image/provider";
 
 describe("agent pipeline", () => {
@@ -21,7 +21,6 @@ describe("export desk", () => {
   it("preserves headings in markdown export", () => {
     expect(exportMarkdown("# Hello\n\n- one", "T")).toContain("# Hello");
     expect(toPlainText("**bold**")).toContain("bold");
-    expect(exportPdfBytes("hello").length).toBeGreaterThan(20);
   });
 });
 

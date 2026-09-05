@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatCertificateId, isCertificateIdShape } from "../src/lib/server/certificates";
 import { certificateFilename, renderCertificatePdf } from "../src/lib/server/certificate-pdf";
+import { extractPdfText } from "./helpers/pdf-text";
 import type { PublicCertificate } from "../src/lib/server/certificates";
 
 const CERT: PublicCertificate = {
@@ -32,43 +33,45 @@ describe("certificate IDs", () => {
 });
 
 describe("certificate PDF", () => {
-  const pdf = renderCertificatePdf(CERT);
-  const text = Buffer.from(pdf).toString("latin1");
-
-  it("produces a structurally valid single-page PDF", () => {
-    expect(text.startsWith("%PDF-1.4")).toBe(true);
-    expect(text.trimEnd().endsWith("%%EOF")).toBe(true);
-    expect(text).toContain("/Type /Catalog");
-    expect(text).toContain("/Count 1");
-    expect(text).toContain("xref");
-    expect(text).toContain("startxref");
-    // A4 landscape.
-    expect(text).toContain("/MediaBox [0 0 842 595]");
+  // Rendered by the shared MATRIX PDF engine: one A4 landscape page, real
+  // embedded Unicode fonts, certificate content only.
+  it("produces a structurally valid single-page A4 landscape PDF", async () => {
+    const pdf = await renderCertificatePdf(CERT);
+    const raw = Buffer.from(pdf).toString("latin1");
+    expect(raw.startsWith("%PDF-")).toBe(true);
+    expect(raw).toContain("%%EOF");
+    expect(raw).toContain("/Catalog");
+    expect(raw).toContain("/MediaBox [0 0 842 595]");
+    // Real embedded font programs, not the Latin-1-only standard 14.
+    expect(raw).toContain("/FontFile2");
+    expect(raw).toContain("/ToUnicode");
+    expect(raw).not.toContain("WinAnsiEncoding");
+    // A certificate is a few tens of KB once fonts are subset in.
+    expect(pdf.byteLength).toBeGreaterThan(5000);
   });
 
-  it("contains the real certificate data, not placeholders", () => {
+  it("contains the real certificate data, not placeholders", async () => {
+    const text = await extractPdfText(await renderCertificatePdf(CERT));
     expect(text).toContain("John Doe");
     expect(text).toContain("Python Fundamentals");
     expect(text).toContain("MTRX-CERT-2026-000123");
     expect(text).toContain("100%");
+    expect(text).toContain("CERTIFICATE OF COMPLETION");
   });
 
-  it("has a byte-accurate xref table so viewers can open it", () => {
-    const startxref = Number(text.match(/startxref\n(\d+)/)?.[1]);
-    expect(Number.isFinite(startxref)).toBe(true);
-    expect(text.slice(startxref, startxref + 4)).toBe("xref");
-    const offsets = [...text.matchAll(/^(\d{10}) 00000 n $/gm)].map((m) => Number(m[1]));
-    expect(offsets.length).toBeGreaterThan(4);
-    offsets.forEach((offset, index) => {
-      expect(text.slice(offset)).toMatch(new RegExp(`^${index + 1} 0 obj`));
-    });
+  it("renders a Bangla learner name and course without dropping characters", async () => {
+    const text = await extractPdfText(
+      await renderCertificatePdf({ ...CERT, display_name: "রাফিদ হাসান", course: "সাইবার নিরাপত্তা মৌলিক" }),
+    );
+    expect(text).toContain("রাফিদ হাসান");
+    expect(text).toContain("সাইবার নিরাপত্তা মৌলিক");
+    // The old writer replaced unsupported characters with "?" or nothing.
+    expect(text).not.toContain("?");
   });
 
-  it("escapes characters that would corrupt a PDF string", () => {
-    const risky = renderCertificatePdf({ ...CERT, display_name: "A (B) \\ C" });
-    const out = Buffer.from(risky).toString("latin1");
-    expect(out).toContain("A \\(B\\) \\\\ C");
-    expect(out.trimEnd().endsWith("%%EOF")).toBe(true);
+  it("keeps characters that would corrupt a PDF string", async () => {
+    const text = await extractPdfText(await renderCertificatePdf({ ...CERT, display_name: "A (B) \\ C" }));
+    expect(text).toContain("A (B) \\ C");
   });
 
   it("builds a safe download filename", () => {

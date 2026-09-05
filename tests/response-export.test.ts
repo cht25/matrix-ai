@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
-  buildArtifact, exportCsv, exportDocxBytes, exportFilename, exportPdfBytes, exportXlsxBytes,
+  buildArtifact, exportCsv, exportDocxBytes, exportFilename, exportXlsxBytes,
   extractJson, extractTableRows, rowsToCsv, toPlainText,
 } from "../src/lib/export/response-export";
 import { crc32, zipEntries, zipRead, zipStore } from "../src/lib/export/zip";
@@ -68,45 +68,44 @@ describe("json extraction", () => {
 });
 
 describe("buildArtifact — only honest formats", () => {
-  it("builds a real PDF for prose", () => {
-    const built = buildArtifact("pdf", PROSE, "About Python");
+  it("builds a real PDF for prose through the shared engine", async () => {
+    // PDFs are rendered server-side (embedded Unicode fonts + shaping), so the
+    // exporter posts to /api/export/pdf. Stub the transport and assert the
+    // request, not a hand-rolled byte layout.
+    const calls: Array<{ url: string; body: unknown }> = [];
+    const pdf = new TextEncoder().encode("%PDF-1.7\nstub\n%%EOF" + "x".repeat(2000));
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      calls.push({ url, body: JSON.parse(String(init.body)) });
+      return new Response(pdf, { status: 200, headers: { "Content-Type": "application/pdf" } });
+    });
+
+    const built = await buildArtifact("pdf", PROSE, "About Python");
     expect(built).not.toBeNull();
     expect(built!.filename).toBe("about-python.pdf");
     expect(built!.mime).toBe("application/pdf");
-    const bytes = built!.data as Uint8Array;
-    const text = new TextDecoder().decode(bytes);
-    expect(text.startsWith("%PDF-1.4")).toBe(true);
-    expect(text.trimEnd().endsWith("%%EOF")).toBe(true);
-    expect(text).toContain("/Type /Catalog");
-    expect(text).toContain("(About Python) Tj");
-    expect(text).toContain("programming language");
+    expect(new TextDecoder().decode(built!.data as Uint8Array).startsWith("%PDF")).toBe(true);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe("/api/export/pdf");
+    expect(calls[0].body).toMatchObject({ title: "About Python" });
+    expect((calls[0].body as { content: string }).content).toContain("programming language");
+    vi.unstubAllGlobals();
   });
 
-  it("paginates long PDFs and keeps the xref table honest", () => {
-    const long = Array.from({ length: 400 }, (_, i) => `Line ${i} of a very long report that must span several pages.`).join("\n");
-    const bytes = exportPdfBytes(long, "Long report");
-    const text = new TextDecoder().decode(bytes);
-    const pageCount = (text.match(/\/Type \/Page\b/g) ?? []).length;
-    expect(pageCount).toBeGreaterThan(1);
-
-    // Every xref offset must point at the start of its object.
-    const startxref = Number(text.match(/startxref\n(\d+)/)![1]);
-    expect(text.slice(startxref, startxref + 4)).toBe("xref");
-    const entries = text.slice(startxref).match(/(\d{10}) 00000 n /g) ?? [];
-    expect(entries.length).toBeGreaterThan(3);
-    entries.forEach((entry, index) => {
-      const offset = Number(entry.slice(0, 10));
-      expect(text.slice(offset, offset + `${index + 1} 0 obj`.length)).toBe(`${index + 1} 0 obj`);
-    });
+  it("never hands back a suspiciously empty PDF", async () => {
+    vi.stubGlobal("fetch", async () => new Response(new Uint8Array(12), { status: 200 }));
+    await expect(buildArtifact("pdf", PROSE, "Tiny")).rejects.toThrow(/PDF_EXPORT_EMPTY/);
+    vi.unstubAllGlobals();
   });
 
-  it("breaks lines instead of printing one long run", () => {
-    const text = new TextDecoder().decode(exportPdfBytes("word ".repeat(300), "Wrapped"));
-    expect((text.match(/T\*/g) ?? []).length).toBeGreaterThan(5);
+  it("surfaces a failed PDF render instead of writing a broken file", async () => {
+    vi.stubGlobal("fetch", async () => new Response("nope", { status: 500 }));
+    await expect(buildArtifact("pdf", PROSE, "Broken")).rejects.toThrow(/PDF_EXPORT_FAILED_500/);
+    vi.unstubAllGlobals();
   });
 
-  it("builds a zipped DOCX package", () => {
-    const built = buildArtifact("docx", `# Title\n\nSome **bold** text.\n\n- one\n- two\n\n\`\`\`py\nprint(1)\n\`\`\``, "Field Notes");
+  it("builds a zipped DOCX package", async () => {
+    const built = await buildArtifact("docx", `# Title\n\nSome **bold** text.\n\n- one\n- two\n\n\`\`\`py\nprint(1)\n\`\`\``, "Field Notes");
     expect(built!.filename).toBe("field-notes.docx");
     const archive = built!.data as Uint8Array;
     const names = zipEntries(archive).map((entry) => entry.name);
@@ -121,8 +120,8 @@ describe("buildArtifact — only honest formats", () => {
     expect(document).toContain("<w:numPr>");
   });
 
-  it("builds a real XLSX workbook from a table", () => {
-    const built = buildArtifact("xlsx", TABLE, "Users");
+  it("builds a real XLSX workbook from a table", async () => {
+    const built = await buildArtifact("xlsx", TABLE, "Users");
     expect(built).not.toBeNull();
     expect(built!.filename).toBe("users.xlsx");
     const archive = built!.data as Uint8Array;
@@ -136,30 +135,30 @@ describe("buildArtifact — only honest formats", () => {
     expect(workbook).toContain('name="Users"');
   });
 
-  it("never builds a spreadsheet out of prose", () => {
-    expect(buildArtifact("csv", PROSE)).toBeNull();
-    expect(buildArtifact("xlsx", PROSE)).toBeNull();
+  it("never builds a spreadsheet out of prose", async () => {
+    expect(await buildArtifact("csv", PROSE)).toBeNull();
+    expect(await buildArtifact("xlsx", PROSE)).toBeNull();
   });
 
-  it("builds CSV only from tabular data", () => {
-    const built = buildArtifact("csv", TABLE, "Users");
+  it("builds CSV only from tabular data", async () => {
+    const built = await buildArtifact("csv", TABLE, "Users");
     expect(built!.filename).toBe("users.csv");
     expect(built!.mime).toBe("text/csv;charset=utf-8");
     expect(built!.preview).toContain("Name,Age,City");
   });
 
-  it("builds markdown, txt and json", () => {
-    expect(buildArtifact("markdown", PROSE, "Python")!.preview).toBe(`# Python\n\n${PROSE}\n`);
-    expect(buildArtifact("txt", "# Heading\n\n**bold** text", "Doc")!.preview).toBe("Heading\n\nbold text");
-    const json = buildArtifact("json", JSON_REPLY, "Payload")!;
+  it("builds markdown, txt and json", async () => {
+    expect((await buildArtifact("markdown", PROSE, "Python"))!.preview).toBe(`# Python\n\n${PROSE}\n`);
+    expect((await buildArtifact("txt", "# Heading\n\n**bold** text", "Doc"))!.preview).toBe("Heading\n\nbold text");
+    const json = (await buildArtifact("json", JSON_REPLY, "Payload"))!;
     expect(JSON.parse(json.preview!).users).toHaveLength(2);
     expect(json.filename).toBe("payload.json");
     // Prose still exports as a JSON envelope rather than failing.
-    expect(JSON.parse(buildArtifact("json", PROSE, "Notes")!.preview!).content).toContain("high-level");
+    expect(JSON.parse((await buildArtifact("json", PROSE, "Notes"))!.preview!).content).toContain("high-level");
   });
 
-  it("rejects empty content", () => {
-    expect(buildArtifact("pdf", "   ", "Nothing")).toBeNull();
+  it("rejects empty content", async () => {
+    expect(await buildArtifact("pdf", "   ", "Nothing")).toBeNull();
   });
 
   it("names files predictably", () => {

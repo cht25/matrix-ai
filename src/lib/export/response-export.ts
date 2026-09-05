@@ -291,84 +291,27 @@ export function exportDocxBytes(markdown: string, title = "MATRIX response"): Ui
 }
 
 // ---------------------------------------------------------------------------
-// PDF — paginated, real line breaks
+// PDF — produced by the one shared MATRIX PDF engine
 // ---------------------------------------------------------------------------
+//
+// PDFs are NOT built in the browser. Real Unicode output needs embedded
+// TrueType subsets and OpenType shaping (Bangla conjuncts, reordered vowel
+// signs, symbols), which is what `lib/pdf/engine` does server-side. The old
+// in-browser writer used the standard 14 Type 1 fonts and stripped every
+// non-Latin-1 character, which is why exports came out blank or garbled.
+//
+// This helper posts the content to `/api/export/pdf` and returns the bytes.
 
-const PDF_LINE_WIDTH = 96;
-const PDF_LINES_PER_PAGE = 48;
-/** The 14 standard PDF fonts are Latin-1 only; keep output printable. */
-const PDF_UNSUPPORTED = /[^\x20-\x7E\n\r\t]/g;
-
-function wrapLines(text: string, width: number): string[] {
-  const out: string[] = [];
-  for (const raw of text.split(/\n/)) {
-    const line = raw.replace(PDF_UNSUPPORTED, "").replace(/\t/g, "  ").trimEnd();
-    if (!line) { out.push(""); continue; }
-    let rest = line;
-    while (rest.length > width) {
-      // Prefer breaking on a space so words stay readable.
-      let cut = rest.lastIndexOf(" ", width);
-      if (cut < Math.floor(width * 0.55)) cut = width;
-      out.push(rest.slice(0, cut).trimEnd());
-      rest = rest.slice(cut).trimStart();
-    }
-    if (rest) out.push(rest);
-  }
-  return out;
-}
-
-function pdfString(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
-}
-
-/** A multi-page PDF 1.4 document with Helvetica text. */
-export function exportPdfBytes(text: string, title = "MATRIX"): Uint8Array<ArrayBuffer> {
-  const heading = pdfString(title.replace(PDF_UNSUPPORTED, "").slice(0, 120) || "MATRIX");
-  const lines = wrapLines(toPlainText(text), PDF_LINE_WIDTH);
-  const pages: string[][] = [];
-  for (let i = 0; i < Math.max(1, lines.length); i += PDF_LINES_PER_PAGE) {
-    pages.push(lines.slice(i, i + PDF_LINES_PER_PAGE));
-  }
-
-  // Object layout: 1 catalog, 2 pages tree, 3 font, then per page: page + content.
-  const pageCount = pages.length;
-  const firstPageObject = 4;
-  const kids = pages.map((_, index) => `${firstPageObject + index * 2} 0 R`).join(" ");
-
-  const objects: string[] = [
-    `<< /Type /Catalog /Pages 2 0 R >>`,
-    `<< /Type /Pages /Kids [${kids}] /Count ${pageCount} >>`,
-    `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>`,
-  ];
-
-  pages.forEach((pageLines, index) => {
-    const pageObject = firstPageObject + index * 2;
-    const contentObject = pageObject + 1;
-    objects.push(
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents ${contentObject} 0 R /Resources << /Font << /F1 3 0 R >> >> >>`,
-    );
-    const stream: string[] = ["BT", "/F1 15 Tf", "18 TL", "48 790 Td", `(${index === 0 ? heading : pdfString(title.slice(0, 120))}) Tj`, "ET"];
-    if (index === 0) {
-      stream.push("0.85 w", "48 778 m", "547 778 l", "S");
-    }
-    stream.push("BT", "/F1 10.5 Tf", "14 TL", "48 758 Td");
-    for (const line of pageLines) stream.push(`(${pdfString(line)}) Tj`, "T*");
-    stream.push("ET");
-    const body = stream.join("\n");
-    objects.push(`<< /Length ${body.length} >>\nstream\n${body}\nendstream`);
+export async function requestPdfBytes(content: string, title = "MATRIX"): Promise<Uint8Array<ArrayBuffer>> {
+  const res = await fetch("/api/export/pdf", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content, title }),
   });
-
-  let pdf = "%PDF-1.4\n";
-  const offsets: number[] = [];
-  objects.forEach((object, index) => {
-    offsets.push(pdf.length);
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  });
-  const startxref = pdf.length;
-  let xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  for (const offset of offsets) xref += `${String(offset).padStart(10, "0")} 00000 n \n`;
-  pdf += `${xref}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${startxref}\n%%EOF\n`;
-  return toBlobBytes(new TextEncoder().encode(pdf));
+  if (!res.ok) throw new Error(`PDF_EXPORT_FAILED_${res.status}`);
+  const buffer = await res.arrayBuffer();
+  if (buffer.byteLength < 1000) throw new Error("PDF_EXPORT_EMPTY");
+  return new Uint8Array(buffer) as Uint8Array<ArrayBuffer>;
 }
 
 // ---------------------------------------------------------------------------
@@ -401,8 +344,11 @@ export function extractJson(content: string): string | null {
  * Build the requested artifact from a reply. Returns null when the content
  * cannot honestly produce that format (e.g. CSV for prose) — the UI then says
  * so instead of handing the user an empty file.
+ *
+ * Async because PDFs are rendered by the shared server-side engine (embedded
+ * Unicode fonts + OpenType shaping); every other format is built locally.
  */
-export function buildArtifact(format: ExportFormat, content: string, title = "MATRIX response"): BuiltArtifact | null {
+export async function buildArtifact(format: ExportFormat, content: string, title = "MATRIX response"): Promise<BuiltArtifact | null> {
   const filename = exportFilename(format, title);
   const mime = EXPORT_MIME[format];
   const source = content ?? "";
@@ -410,7 +356,8 @@ export function buildArtifact(format: ExportFormat, content: string, title = "MA
 
   switch (format) {
     case "pdf":
-      return { filename, mime, data: exportPdfBytes(source, title), preview: null };
+      // Real Unicode PDFs are rendered by the shared server-side engine.
+      return { filename, mime, data: await requestPdfBytes(source, title), preview: null };
     case "docx":
       return { filename, mime, data: exportDocxBytes(source, title), preview: null };
     case "markdown": {
