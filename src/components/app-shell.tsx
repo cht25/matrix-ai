@@ -213,12 +213,16 @@ function SidebarBody({
   onNavigate,
   footer,
   hideBrand,
+  collapsed,
+  onToggleCollapsed,
 }: {
   conversations: SidebarConversation[];
   isAdmin: boolean;
   onNavigate?: () => void;
   footer?: ReactNode;
   hideBrand?: boolean;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -236,8 +240,13 @@ function SidebarBody({
     <div className="flex h-full min-h-0 flex-col">
       {hideBrand ? null : (
         <div className="flex shrink-0 items-center justify-between gap-2 px-3 pb-3 pt-4">
-          <div className="sidebar-brand min-w-0"><Logo size="md" href="/chat" /></div>
-          <AiStatus />
+          {collapsed ? <Logo size="sm" href="/chat" /> : <div className="sidebar-brand min-w-0"><Logo size="md" href="/chat" /></div>}
+          {collapsed ? null : <AiStatus />}
+          {onToggleCollapsed ? (
+            <button type="button" onClick={onToggleCollapsed} className="grid h-9 w-9 place-items-center rounded-lg text-ink-3 hover:bg-surface-2" aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
+              <Menu size={14} />
+            </button>
+          ) : null}
         </div>
       )}
 
@@ -254,6 +263,9 @@ function SidebarBody({
           </Link>
           <Link href="/chat?mode=agent" onClick={onNavigate} className={cn("nav-item", agentActive && "is-active")}>
             <Code2 size={16} strokeWidth={1.7} /> Agent
+          </Link>
+          <Link href="/workspace" onClick={onNavigate} className={cn("nav-item", pathname.startsWith("/workspace") && "is-active")}>
+            <LayoutGrid size={16} strokeWidth={1.7} /> Workspace
           </Link>
           <Link href="/temporary-chat" onClick={onNavigate} className={cn("nav-item", pathname.startsWith("/temporary-chat") && "is-active")}>
             <History size={16} strokeWidth={1.7} /> Private
@@ -374,6 +386,7 @@ export function AppShell({
   children: ReactNode;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const online = useOnline();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -401,11 +414,13 @@ export function AppShell({
 
   return (
     <ToastProvider>
-      <div className="min-h-dvh lg:flex">
-        <aside className="app-sidebar fixed inset-y-0 left-0 z-40 hidden w-[276px] lg:block">
+      <div className="min-h-dvh overflow-x-hidden lg:flex">
+        <aside className={cn("app-sidebar fixed inset-y-0 left-0 z-40 hidden transition-[width] duration-200 lg:block", sidebarCollapsed ? "w-[72px]" : "w-[276px]")}>
           <SidebarBody
             conversations={conversations}
             isAdmin={isAdmin}
+            collapsed={sidebarCollapsed}
+            onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
             footer={<ShellFooter user={user} />}
           />
         </aside>
@@ -491,7 +506,7 @@ export function AppShell({
 
         <div
           className={cn(
-            "min-w-0 flex-1 lg:pl-[276px]",
+            sidebarCollapsed ? "min-w-0 flex-1 lg:pl-[72px]" : "min-w-0 flex-1 lg:pl-[276px]",
             immersive
               ? "flex h-[calc(100dvh-3.5rem-env(safe-area-inset-top))] flex-col overflow-hidden pb-[calc(var(--app-bottom-nav)+env(safe-area-inset-bottom))] lg:h-dvh lg:pb-0"
               : "pb-[calc(var(--app-bottom-nav)+env(safe-area-inset-bottom))] lg:pb-0",

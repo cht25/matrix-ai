@@ -4,7 +4,7 @@ export type ThemeTemplateId = "default" | "midnight" | "ivory" | "carbon" | "aur
 // LIGHT is the primary product theme: fresh installs, signed-out visitors and
 // anyone who never saved a preference all start here. Dark is the optional
 // secondary theme; "system" follows the device.
-export const DEFAULT_THEME: ThemeMode = "light";
+export const DEFAULT_THEME: ThemeMode = "dark";
 
 export type ThemeSwatch = {
   bg: string;

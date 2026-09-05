@@ -3,6 +3,8 @@
 // =============================================================================
 
 import type { AIMessage } from "@/lib/ai/groq";
+import type { ChatMode, ExplainStyle, StudyLevel } from "@/lib/ai/modes";
+import { codeSystemPrompt, creativeSystemPrompt, healthSystemPrompt, orchestratorSystemPrompt, researchSystemPrompt, studySystemPrompt } from "@/lib/ai/modes";
 
 export const SYSTEM_PROMPT = `You are MATRIX AI, a capable all-in-one assistant operated by THAMJJ13.TOP White Hat Team.
 
@@ -95,6 +97,28 @@ export function buildSystemMessages(ragContext: string, emergency: boolean, pref
     });
   }
   return messages;
+}
+
+export function buildModeSystemMessages(
+  mode: ChatMode,
+  ragContext: string,
+  preferredLanguage?: "en" | "bn",
+  extras?: { studyLevel?: StudyLevel; explainStyle?: ExplainStyle },
+): AIMessage[] {
+  if (mode === "agent") return buildAgentSystemMessages(preferredLanguage);
+  if (mode === "study") {
+    return [{ role: "system", content: studySystemPrompt(extras?.studyLevel ?? "college", extras?.explainStyle ?? "simple") }, ...buildSystemMessages(ragContext, false, preferredLanguage).slice(1)];
+  }
+  const overlay =
+    mode === "health" ? healthSystemPrompt() :
+    mode === "research" ? researchSystemPrompt() :
+    mode === "code" ? codeSystemPrompt() :
+    mode === "creative" ? creativeSystemPrompt() :
+    mode === "orchestrator" ? orchestratorSystemPrompt() :
+    "";
+  const base = buildSystemMessages(ragContext, false, preferredLanguage);
+  if (!overlay) return base;
+  return [{ role: "system", content: overlay }, ...base];
 }
 
 export function buildAgentSystemMessages(preferredLanguage?: "en" | "bn"): AIMessage[] {
