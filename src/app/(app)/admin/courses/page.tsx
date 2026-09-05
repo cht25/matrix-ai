@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { db, getCurrentUser } from "@/lib/data";
 import { getAdminPermissions } from "@/lib/server/queries";
-import { AdminNav } from "@/components/admin/admin-nav";
+import { adminRoleOf } from "@/lib/server/rpc";
+import { AdminShell } from "@/components/admin/admin-shell";
 import { CoursesAdmin } from "@/components/admin/courses-admin";
 
 export const metadata: Metadata = { title: "Admin · Courses" };
@@ -11,6 +12,7 @@ export default async function AdminCoursesPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
   const codes = await getAdminPermissions(db(), user.uid);
+  const role = await adminRoleOf(db(), user.uid).catch(() => null);
   if (codes.length === 0) redirect("/chat");
 
   const d = db();
@@ -20,10 +22,8 @@ export default async function AdminCoursesPage() {
     .sort((a, b) => a.sort_order - b.sort_order);
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Courses</h1>
-      <AdminNav />
+    <AdminShell title="Courses" subtitle="Author and publish cyber-safety courses, modules and quizzes." role={role} codes={codes}>
       <CoursesAdmin codes={codes} courses={courseList} />
-    </div>
+    </AdminShell>
   );
 }

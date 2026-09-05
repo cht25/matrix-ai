@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { rpc, RpcCallError } from "@/lib/client/api";
-import { Alert, Badge, Button, Card, Select, Spinner, Textarea } from "@/components/ui";
+import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
+import { Alert, Badge, Button, Card, EmptyState, Select, Spinner, TableSkeleton, Textarea } from "@/components/ui";
 import { formatDate } from "@/lib/utils";
 
 type Report = {
@@ -41,15 +42,15 @@ export function ReportsTab({ codes }: { codes: string[] }) {
       }).catch(() => {});
       setMsg("Report updated and audited.");
     } catch (err) {
-      setMsg(err instanceof RpcCallError ? err.code : "UPDATE_FAILED");
+      setMsg(friendly(err, "UPDATE_FAILED"));
     }
   }
 
   if (!codes.includes("reports.view")) {
     return <Card><p className="text-sm text-ink-3">You need the <strong>reports.view</strong> permission.</p></Card>;
   }
-  if (!items) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;
-  if (items.length === 0) return <Card><p className="text-sm text-ink-3">No reports yet.</p></Card>;
+  if (!items) return <Card><TableSkeleton rows={4} cols={3} label="Loading…" /></Card>;
+  if (items.length === 0) return <Card><EmptyState title="No scam reports yet" body="Reports submitted by learners will appear here for triage." /></Card>;
 
   return (
     <div className="space-y-3">
@@ -99,7 +100,7 @@ export function AiSafetyTab({ codes }: { codes: string[] }) {
   if (!codes.includes("ai.view")) {
     return <Card><p className="text-sm text-ink-3">You need the <strong>ai.view</strong> permission.</p></Card>;
   }
-  if (!items) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;
+  if (!items) return <Card><TableSkeleton rows={4} cols={3} label="Loading…" /></Card>;
 
   return (
     <Card>
@@ -140,7 +141,7 @@ export function AuditTab({ codes }: { codes: string[] }) {
   if (!codes.includes("audit.view")) {
     return <Card><p className="text-sm text-ink-3">You need the <strong>audit.view</strong> permission (auditor/super_admin).</p></Card>;
   }
-  if (!items) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;
+  if (!items) return <Card><TableSkeleton rows={4} cols={3} label="Loading…" /></Card>;
 
   return (
     <Card>
@@ -166,4 +167,11 @@ export function AuditTab({ codes }: { codes: string[] }) {
       </div>
     </Card>
   );
+}
+
+/** Internal code -> human sentence. The raw code stays in the console only. */
+function friendly(err: unknown, fallback: string): string {
+  const view = mapAdminError(errorCodeOf(err, fallback));
+  console.error("[MATRIX admin]", view.code, err);
+  return `${view.title} — ${view.detail}`;
 }

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { rpc, RpcCallError } from "@/lib/client/api";
-import { Alert, Badge, Button, Card, Input, Spinner, Textarea } from "@/components/ui";
+import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
+import { Alert, Badge, Button, Card, Input, Spinner, TableSkeleton, Textarea } from "@/components/ui";
 import { formatDate } from "@/lib/utils";
 
 type VerificationItem = {
@@ -32,14 +33,14 @@ export function VerificationQueue({ codes }: { codes: string[] }) {
       setMsg(approve ? "Approved — the user's age_verified flag was set server-side." : "Rejected with reason.");
       void load();
     } catch (err) {
-      setMsg(err instanceof RpcCallError ? err.code : "REVIEW_FAILED");
+      setMsg(friendly(err, "REVIEW_FAILED"));
     }
   }
 
   if (!codes.includes("verification.review")) {
     return <Card><p className="text-sm text-ink-3">You need the <strong>verification.review</strong> permission.</p></Card>;
   }
-  if (!items) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;
+  if (!items) return <Card><TableSkeleton rows={4} cols={3} label="Loading…" /></Card>;
   if (items.length === 0) return <Card><p className="text-sm text-ink-3"> No pending age verifications.</p></Card>;
 
   return (
@@ -101,14 +102,14 @@ export function ConsentQueue({ codes }: { codes: string[] }) {
       setMsg(approve ? "Consent approved." : "Consent revoked.");
       void load();
     } catch (err) {
-      setMsg(err instanceof RpcCallError ? err.code : "REVIEW_FAILED");
+      setMsg(friendly(err, "REVIEW_FAILED"));
     }
   }
 
   if (!codes.includes("consent.review")) {
     return <Card><p className="text-sm text-ink-3">You need the <strong>consent.review</strong> permission.</p></Card>;
   }
-  if (!items) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;
+  if (!items) return <Card><TableSkeleton rows={4} cols={3} label="Loading…" /></Card>;
   if (items.length === 0) return <Card><p className="text-sm text-ink-3"> No pending consents.</p></Card>;
 
   return (
@@ -132,4 +133,11 @@ export function ConsentQueue({ codes }: { codes: string[] }) {
       ))}
     </div>
   );
+}
+
+/** Internal code -> human sentence. The raw code stays in the console only. */
+function friendly(err: unknown, fallback: string): string {
+  const view = mapAdminError(errorCodeOf(err, fallback));
+  console.error("[MATRIX admin]", view.code, err);
+  return `${view.title} — ${view.detail}`;
 }

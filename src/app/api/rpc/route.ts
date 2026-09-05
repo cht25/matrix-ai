@@ -16,9 +16,26 @@ import * as projects from "@/lib/server/projects";
 import * as deploy from "@/lib/server/deploy";
 import { nowTs } from "@/lib/firebase/admin";
 import { ascDoc, descDoc } from "@/lib/server/sort";
+import { ADMIN_ROLES, NO_ROLE } from "@/lib/roles";
+import { ALL_ADMIN_PERMISSION_CODES } from "@/lib/admin-rbac";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// --- standard response envelope ---------------------------------------------
+// Success: { success: true, data }        Error: { success: false, error: { code, message } }
+// `error` is also mirrored as a top-level string for backwards compatibility
+// with older clients. The human-readable message is produced in the browser by
+// src/lib/admin-errors.ts — the server only emits stable machine codes.
+function ok(data: unknown) {
+  return NextResponse.json({ success: true, data });
+}
+function fail(code: string, status: number) {
+  return NextResponse.json(
+    { success: false, error: { code, message: code }, data: null },
+    { status },
+  );
+}
 
 type Handler = (d: ReturnType<typeof adminDb>, user: SessionUser, body: Record<string, unknown>) => Promise<unknown>;
 
@@ -50,7 +67,7 @@ export async function POST(req: NextRequest) {
   try {
     body = (await req.json()) as Record<string, unknown>;
   } catch {
-    return NextResponse.json({ error: "BAD_REQUEST" }, { status: 400 });
+    return fail("BAD_REQUEST", 400);
   }
   const action = str(body.action);
 
@@ -65,25 +82,28 @@ export async function POST(req: NextRequest) {
     } catch {
       sameOrigin = false;
     }
-    if (!sameOrigin) return NextResponse.json({ error: "BAD_ORIGIN" }, { status: 403 });
+    if (!sameOrigin) return fail("BAD_ORIGIN", 403);
   }
 
   const user = await getSessionUser();
-  if (!user) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
+  if (!user) return fail("UNAUTHENTICATED", 401);
 
   const d = adminDb();
   try {
     const handler = ACTIONS[action];
-    if (!handler) return NextResponse.json({ error: "UNKNOWN_ACTION" }, { status: 400 });
+    if (!handler) return fail("UNKNOWN_ACTION", 400);
     const result = await handler(d, user, body);
-    return NextResponse.json({ data: result ?? true });
+    return ok(result ?? true);
   } catch (err) {
-    if (err instanceof RpcError) return NextResponse.json({ error: err.code }, { status: err.status });
-    if (err instanceof z.ZodError) return NextResponse.json({ error: "VALIDATION_FAILED", detail: err.issues[0]?.message }, { status: 400 });
+    if (err instanceof RpcError) return fail(err.code, err.status);
+    if (err instanceof z.ZodError) {
+      console.warn(`[MATRIX] /api/rpc action "${action}" validation failed`, err.issues[0]?.message);
+      return fail("BAD_REQUEST", 400);
+    }
     // Never leak internal error text (stack, SQL, file paths, provider
     // details) to the browser — log server-side, return a stable code.
     console.error(`[MATRIX] /api/rpc action "${action}" failed`, err);
-    return NextResponse.json({ error: "INTERNAL" }, { status: 500 });
+    return fail("INTERNAL", 500);
   }
 }
 
@@ -172,7 +192,29 @@ const ACTIONS: Record<string, Handler> = {
   project_verify_domain: (d, u, b) => deploy.verifyProjectDomain(d, u, z.string().min(1).parse(b.project_id)),
 
   admin_bootstrap: (d, u, b) => rpc.bootstrapAdmin(d, u, z.string().min(1).parse(b.key)),
-  admin_set_role: (d, u, b) => rpc.adminSetUserRole(d, u, { uid: z.string().min(1).parse(b.uid), role: z.string().min(1).parse(b.role) }),
+  admin_set_role: (d, u, b) =>
+    rpc.adminSetUserRole(d, u, {
+      uid: z.string().min(1).parse(b.uid),
+      // Any string is accepted here; the canonical catalog in @/lib/roles is
+      // the only authority on what is valid (and maps legacy values).
+      role: z.string().min(1).parse(b.role),
+    }),
+  // Canonical role catalog — the admin UI selector is generated from this, so
+  // it can never offer a role the backend would reject.
+  admin_role_catalog: async (d, u) => {
+    if (!(await rpc.isAdmin(d, u.uid))) throw new RpcError("PERMISSION_DENIED", 403);
+    return {
+      roles: ADMIN_ROLES.map((r) => ({
+        id: r.id,
+        label: r.label,
+        description: r.description,
+        tone: r.tone,
+        permissions: [...r.permissions],
+      })),
+      permissions: [...ALL_ADMIN_PERMISSION_CODES],
+      none: { id: NO_ROLE, label: "Standard user (no admin access)" },
+    };
+  },
   admin_set_disabled: (d, u, b) => rpc.adminSetUserDisabled(d, u, { uid: z.string().min(1).parse(b.uid), disabled: z.boolean().parse(b.disabled) }),
   course_upsert: (d, u, b) =>
     rpc.upsertCourse(d, u, {
@@ -433,7 +475,7 @@ const ACTIONS: Record<string, Handler> = {
   admin_audit_logs: async (d, u) => {
     if (!(await rpc.isAdmin(d, u.uid))) throw new RpcError("PERMISSION_DENIED", 403);
     const snap = await d.collection("audit_logs").orderBy("created_at", "desc").limit(100).get();
-    return snap.docs.map((a) => ({ id: a.id, actor_id: a.data().actor_id ?? "", action: a.data().action, target_type: a.data().target_type ?? "", target_id: a.data().target_id ?? "", reason: a.data().reason ?? "", created_at: a.data().created_at?.toDate?.().toISOString() ?? "" }));
+    return snap.docs.map((a) => ({ id: a.id, actor_id: a.data().actor_id ?? "", action: a.data().action, target_type: a.data().target_type ?? "", target_id: a.data().target_id ?? "", reason: a.data().reason ?? "", metadata: (a.data().metadata ?? {}) as Record<string, unknown>, created_at: a.data().created_at?.toDate?.().toISOString() ?? "" }));
   },
 
   admin_grants: async (d, u) => {

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { rpc, RpcCallError } from "@/lib/client/api";
+import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
 import { Alert, Badge, Button, Card, Field, Input, Spinner } from "@/components/ui";
 
 type PublicConfig = {
@@ -51,7 +52,7 @@ export function AiProviderSettings() {
       setApiKey("");
       setEnabled(value.enabled);
     } catch (error) {
-      const code = error instanceof RpcCallError ? error.code : "LOAD_FAILED";
+      const code = errorCodeOf(error, "LOAD_FAILED");
       setMessage({
         tone: code === "PERMISSION_DENIED" ? "warning" : "danger",
         text: ERROR_MAP[code] ?? "Could not load AI provider settings.",
@@ -81,7 +82,7 @@ export function AiProviderSettings() {
       setApiKey("");
       setMessage({ tone: "success", text: "AI provider settings saved. New chat and Agent requests will use this endpoint and model." });
     } catch (error) {
-      const code = error instanceof RpcCallError ? error.code : "SAVE_FAILED";
+      const code = errorCodeOf(error, "SAVE_FAILED");
       setMessage({ tone: "danger", text: ERROR_MAP[code] ?? "Could not save AI provider settings." });
     } finally {
       setSaving(false);
@@ -104,7 +105,7 @@ export function AiProviderSettings() {
           : result.detail,
       });
     } catch (error) {
-      const code = error instanceof RpcCallError ? error.code : "TEST_FAILED";
+      const code = errorCodeOf(error, "TEST_FAILED");
       setMessage({ tone: "danger", text: ERROR_MAP[code] ?? "Connection test failed." });
     } finally {
       setTesting(null);

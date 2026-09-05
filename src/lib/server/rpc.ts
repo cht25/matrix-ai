@@ -15,6 +15,7 @@ import { identityHashes, maskLast4, validateCertNumber } from "@/lib/server/iden
 import { env, isIdentityPepperConfigured } from "@/lib/env";
 import { isThemeMode, isThemeTemplateId } from "@/lib/theme-templates";
 import { ALL_ADMIN_PERMISSION_CODES, normalizeAdminPermission } from "@/lib/admin-rbac";
+import { ADMIN_ROLES, NO_ROLE, normalizeRoleInput } from "@/lib/roles";
 
 export { RpcError } from "@/lib/server/errors";
 import { RpcError } from "@/lib/server/errors";
@@ -368,59 +369,84 @@ export async function bootstrapAdmin(d: Db, user: SessionUser, key: string) {
   return { role: "super_admin" };
 }
 
-/** Idempotent seed of roles + permission codes so non-super roles have links. */
+/**
+ * Idempotent seed of every canonical role + permission link.
+ *
+ * Previously this only seeded 3 of the 5 roles, so `admin_roles/security_admin`
+ * and `admin_roles/content_admin` never existed on setups bootstrapped through
+ * /admin/setup — which is what made role assignment fail with ROLE_INVALID.
+ * It now derives entirely from ADMIN_ROLES (single source of truth) and also
+ * repairs deployments that were seeded by the old code.
+ */
 export async function seedAdminRbac(d: Db) {
-  const roles = [
-    { id: "super_admin", name: "Super admin" },
-    { id: "support_admin", name: "Support" },
-    { id: "auditor", name: "Auditor" },
-  ];
-  for (const role of roles) {
-    await d.collection("admin_roles").doc(role.id).set({ name: role.name, updated_at: nowTs() }, { merge: true });
+  for (const role of ADMIN_ROLES) {
+    await d.collection("admin_roles").doc(role.id).set(
+      { name: role.label, description: role.description, updated_at: nowTs() },
+      { merge: true },
+    );
   }
   for (const code of ALL_ADMIN_PERMISSION_CODES) {
     await d.collection("admin_permissions").doc(code).set({ code, updated_at: nowTs() }, { merge: true });
-    await d.collection("admin_role_permissions").doc(`super_admin__${code}`).set({
-      role_id: "super_admin",
-      permission_id: code,
-    }, { merge: true });
   }
-  const support = ["users.view", "verification.review", "consent.review", "reports.view"];
-  for (const code of support) {
-    await d.collection("admin_role_permissions").doc(`support_admin__${code}`).set({
-      role_id: "support_admin",
-      permission_id: code,
-    }, { merge: true });
-  }
-  const audit = ["audit.view", "ai.view", "security.view"];
-  for (const code of audit) {
-    await d.collection("admin_role_permissions").doc(`auditor__${code}`).set({
-      role_id: "auditor",
-      permission_id: code,
-    }, { merge: true });
+  for (const role of ADMIN_ROLES) {
+    for (const code of role.permissions) {
+      await d.collection("admin_role_permissions").doc(`${role.id}__${code}`).set(
+        { role_id: role.id, permission_id: code, updated_at: nowTs() },
+        { merge: true },
+      );
+    }
   }
   return true;
 }
 
 export async function adminSetUserRole(d: Db, actor: SessionUser, p: { uid: string; role: string }) {
+  // AUTHORIZATION — server-side only. The browser's `role=` claim is never trusted.
   if ((await adminRoleOf(d, actor.uid)) !== "super_admin") throw new RpcError("PERMISSION_DENIED", 403);
+
+  // VALIDATION — against the canonical catalog, not against whatever documents
+  // happen to exist in Firestore. Legacy/differently-cased values are mapped.
+  const role = normalizeRoleInput(p.role);
+  if (role === null) throw new RpcError("ROLE_INVALID", 400);
+
+  const uid = String(p.uid ?? "").trim();
+  if (!uid) throw new RpcError("BAD_REQUEST", 400);
+  // A super admin may not lock themselves out — there must always be one left.
+  if (uid === actor.uid) throw new RpcError("ROLE_SELF_DEMOTION", 400);
+
   const auth = (await import("firebase-admin/auth")).getAuth();
-  if (p.role === "none") {
-    await d.collection("admin_role_assignments").doc(p.uid).delete();
-    await auth.setCustomUserClaims(p.uid, { admin: false });
-    await logAudit(d, actor.uid, "admin_role_removed", "user", p.uid, "");
-    return true;
+  const previous = await adminRoleOf(d, uid);
+
+  if (role === NO_ROLE) {
+    await d.collection("admin_role_assignments").doc(uid).delete();
+    await auth.setCustomUserClaims(uid, { admin: false }).catch(() => {});
+    await logAudit(d, actor.uid, "admin_role_removed", "user", uid, "", {
+      previous_role: previous ?? "none",
+      new_role: "none",
+      result: "success",
+    });
+    return { uid, role: null, previous_role: previous };
   }
-  const roleDoc = await d.collection("admin_roles").doc(p.role).get();
-  if (!roleDoc.exists) throw new RpcError("ROLE_INVALID", 400);
-  await d.collection("admin_role_assignments").doc(p.uid).set({
-    role_id: p.role,
+
+  // Self-heal deployments whose `admin_roles` collection predates the canonical
+  // catalog, so a valid role can always be assigned.
+  const roleRef = d.collection("admin_roles").doc(role);
+  if (!(await roleRef.get()).exists) {
+    await seedAdminRbac(d);
+  }
+
+  await d.collection("admin_role_assignments").doc(uid).set({
+    role_id: role,
     assigned_by: actor.uid,
     created_at: nowTs(),
+    updated_at: nowTs(),
   });
-  await auth.setCustomUserClaims(p.uid, { admin: true, role: p.role });
-  await logAudit(d, actor.uid, "admin_role_assigned", "user", p.uid, p.role);
-  return true;
+  await auth.setCustomUserClaims(uid, { admin: true, role }).catch(() => {});
+  await logAudit(d, actor.uid, "admin_role_assigned", "user", uid, role, {
+    previous_role: previous ?? "none",
+    new_role: role,
+    result: "success",
+  });
+  return { uid, role, previous_role: previous };
 }
 
 export async function adminSetUserDisabled(d: Db, actor: SessionUser, p: { uid: string; disabled: boolean }) {
@@ -726,12 +752,22 @@ export async function logAudit(
 export async function adminListUsers(d: Db, requester: SessionUser) {
   if (!(await hasPermission(d, requester.uid, "users.view"))) throw new RpcError("PERMISSION_DENIED", 403);
   const auth = (await import("firebase-admin/auth")).getAuth();
-  const [profiles, consents, verifications, listed] = await Promise.all([
+  const [profiles, consents, verifications, listed, roleAssignments] = await Promise.all([
     d.collection("profiles").limit(500).get(),
     d.collection("guardian_consents").get(),
     d.collection("identity_verifications").get(),
     auth.listUsers(500).catch(() => ({ users: [] as import("firebase-admin/auth").UserRecord[] })),
+    d.collection("admin_role_assignments").get().catch(() => ({ docs: [] as never[] })),
   ]);
+  // Admin role per user — normalised through the canonical catalog so legacy
+  // documents (e.g. an old "admin" value) never render as an unknown role.
+  const roleByUid = new Map<string, string | null>(
+    roleAssignments.docs.map((doc: { id: string; data: () => Record<string, unknown> }) => {
+      const normalised = normalizeRoleInput(doc.data()?.role_id);
+      return [doc.id, normalised && normalised !== NO_ROLE ? normalised : null];
+    }),
+  );
+  const disabledByUid = new Map(listed.users.map((u) => [u.uid, u.disabled === true]));
   const consentByUser = new Map(consents.docs.map((c) => [c.id, c.data().status as string]));
   const latestVerification = new Map<string, string>();
   const verificationSorted = [...verifications.docs].sort(descDoc("created_at"));
@@ -758,6 +794,8 @@ export async function adminListUsers(d: Db, requester: SessionUser) {
         country: data.country ?? "",
         consent_status: consentByUser.get(p.id) ?? "none",
         identity_status: latestVerification.get(p.id) ?? "none",
+        admin_role: roleByUid.get(p.id) ?? null,
+        disabled: disabledByUid.get(p.id) ?? false,
       };
     });
   return users;

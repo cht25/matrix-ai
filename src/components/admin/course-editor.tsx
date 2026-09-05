@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { rpc, RpcCallError } from "@/lib/client/api";
+import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
 import { Alert, Button, Card, Field, Input, Select, Spinner, Textarea } from "@/components/ui";
 
 export function CourseEditor() {
@@ -45,7 +46,7 @@ export function CourseEditor() {
       setMsg(`Saved course ${result.slug}. Learners only see it when status is published. Correct answers stay server-side.`);
       setTitle(""); setSlug(""); setDescription(""); setModuleTitle(""); setLessonTitle(""); setLessonBody(""); setQuizTitle(""); setQuestion("");
     } catch (err) {
-      setMsg(err instanceof RpcCallError ? err.code : "Save failed.");
+      setMsg(friendly(err, "Save failed."));
     } finally {
       setBusy(false);
     }
@@ -88,4 +89,11 @@ export function CourseEditor() {
       </form>
     </Card>
   );
+}
+
+/** Internal code -> human sentence. The raw code stays in the console only. */
+function friendly(err: unknown, fallback: string): string {
+  const view = mapAdminError(errorCodeOf(err, fallback));
+  console.error("[MATRIX admin]", view.code, err);
+  return `${view.title} — ${view.detail}`;
 }

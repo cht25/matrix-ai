@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { rpc, RpcCallError } from "@/lib/client/api";
-import { Alert, Button, Card, Spinner } from "@/components/ui";
+import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
+import { Alert, Button, Card, Spinner, TableSkeleton } from "@/components/ui";
 
 type Site = { slug: string; owner_id: string; url: string; status: string; updated_at: string };
 
@@ -26,11 +27,11 @@ export function AdminSites() {
       setMsg(`Unpublished /s/${slug}`);
       await load();
     } catch (err) {
-      setMsg(err instanceof RpcCallError ? err.code : "Unpublish failed.");
+      setMsg(friendly(err, "Unpublish failed."));
     }
   }
 
-  if (!sites) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;
+  if (!sites) return <Card><TableSkeleton rows={4} cols={3} label="Loading…" /></Card>;
 
   return (
     <Card>
@@ -51,4 +52,11 @@ export function AdminSites() {
       )}
     </Card>
   );
+}
+
+/** Internal code -> human sentence. The raw code stays in the console only. */
+function friendly(err: unknown, fallback: string): string {
+  const view = mapAdminError(errorCodeOf(err, fallback));
+  console.error("[MATRIX admin]", view.code, err);
+  return `${view.title} — ${view.detail}`;
 }
