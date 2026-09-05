@@ -303,16 +303,89 @@ export async function restoreProjectVersion(d: Db, user: SessionUser, p: { proje
   return true;
 }
 
-export async function setProjectEnv(d: Db, user: SessionUser, p: { project_id: string; env: Record<string, string> }) {
+/**
+ * Public runtime variables (§35).
+ *
+ * MATRIX hosting serves static documents — a deployed project has no server
+ * process that could hold a secret. Anything stored here is injected into the
+ * published page as `window.MATRIX_ENV`, so it is PUBLIC by construction and
+ * keys that look like secrets are refused outright rather than quietly stored.
+ * Provider credentials and deployment tokens never pass through this path.
+ */
+export function looksLikeSecretKey(key: string): boolean {
+  const normalized = key.trim().toUpperCase();
+  if (/(?:SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE|APIKEY|API_KEY|ACCESS_KEY|SECRET_KEY|SIGNING|SESSION|OTP|REFRESH)/.test(normalized)) return true;
+  return /(?:^|_)(?:KEY|SECRET|TOKEN|PASSWORD)($|_)/.test(normalized);
+}
+
+export async function setProjectEnv(
+  d: Db,
+  user: SessionUser,
+  p: { project_id: string; env: Record<string, string> },
+): Promise<{ env: Record<string, string>; rejected: string[] }> {
   const { ref } = await ownedProject(d, user, p.project_id);
   const clean: Record<string, string> = {};
+  const rejected: string[] = [];
   for (const [key, value] of Object.entries(p.env).slice(0, 30)) {
     const k = key.trim().slice(0, 40);
     if (!/^[A-Z][A-Z0-9_]*$/.test(k)) continue;
+    if (looksLikeSecretKey(k)) {
+      rejected.push(k);
+      continue;
+    }
     clean[k] = String(value).slice(0, 500);
   }
   await ref.set({ env_public: clean, updated_at: nowTs() }, { merge: true });
-  return { env: clean };
+  return { env: clean, rejected };
+}
+
+/** A directory is materialised the way git does it: a `.gitkeep` placeholder. */
+export async function createProjectDirectory(d: Db, user: SessionUser, p: { project_id: string; path: string }) {
+  const path = assertSafeProjectPath(p.path);
+  return upsertProjectFile(d, user, {
+    project_id: p.project_id,
+    path: `${path}/.gitkeep`,
+    content: "",
+    source: "agent",
+  });
+}
+
+export type ProjectAssetGroup = {
+  path: string;
+  kind: "image" | "font" | "media" | "other";
+  bytes: number;
+  updated_at: string;
+  generated: boolean;
+  prompt?: string;
+};
+
+/** Asset library (§28): what the project actually owns, grouped for the UI. */
+export async function listProjectAssets(d: Db, user: SessionUser, projectId: string) {
+  await ownedProject(d, user, projectId);
+  const [files, doc] = await Promise.all([
+    d.collection("projects").doc(projectId).collection("files").get(),
+    d.collection("projects").doc(projectId).get(),
+  ]);
+  const manifest = Array.isArray(doc.data()?.image_assets) ? (doc.data()?.image_assets as Array<{ path: string; promptHash?: string }>) : [];
+  const generatedPaths = new Set(manifest.map((entry) => entry.path));
+  const images: ProjectAssetGroup[] = [];
+  const other: ProjectAssetGroup[] = [];
+  for (const file of files.docs) {
+    const path = String(file.data().path ?? "");
+    if (!path) continue;
+    const content = String(file.data().content ?? "");
+    const bytes = file.data().encoding === "base64" ? Math.floor(content.length * 0.75) : content.length;
+    const entry: ProjectAssetGroup = {
+      path,
+      kind: isImagePath(path) ? "image" : /\.(woff2?|ttf|otf|eot)$/i.test(path) ? "font" : /\.(mp3|mp4|webm|wav|ogg)$/i.test(path) ? "media" : "other",
+      bytes,
+      updated_at: iso(file.data().updated_at),
+      generated: generatedPaths.has(path),
+    };
+    if (entry.kind === "image") images.push(entry);
+    else if (entry.kind !== "other") other.push(entry);
+  }
+  return { images, files: other, generatedCount: images.filter((image) => image.generated).length };
 }
 
 export async function loadProjectFiles(d: Db, projectId: string): Promise<ProjectFile[]> {

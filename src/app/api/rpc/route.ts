@@ -14,6 +14,7 @@ import * as rpc from "@/lib/server/rpc";
 import * as aiRuntime from "@/lib/ai/runtime-config";
 import * as projects from "@/lib/server/projects";
 import * as deploy from "@/lib/server/deploy";
+import { latestBuildRunForProject, readBuildRun } from "@/lib/server/build";
 import { nowTs } from "@/lib/firebase/admin";
 import { ascDoc, descDoc } from "@/lib/server/sort";
 import { ADMIN_ROLES, NO_ROLE } from "@/lib/roles";
@@ -178,7 +179,47 @@ const ACTIONS: Record<string, Handler> = {
     projects.restoreProjectVersion(d, u, { project_id: z.string().min(1).parse(b.project_id), version_id: z.string().min(1).parse(b.version_id) }),
   project_set_env: (d, u, b) =>
     projects.setProjectEnv(d, u, { project_id: z.string().min(1).parse(b.project_id), env: z.record(z.string()).parse(b.env ?? {}) }),
-  project_publish: (d, u, b) => deploy.publishProject(d, u, { project_id: z.string().min(1).parse(b.project_id), slug: b.slug ? str(b.slug) : undefined }),
+  project_assets: (d, u, b) => projects.listProjectAssets(d, u, z.string().min(1).parse(b.project_id)),
+  project_create_directory: (d, u, b) =>
+    projects.createProjectDirectory(d, u, { project_id: z.string().min(1).parse(b.project_id), path: z.string().min(1).parse(b.path) }),
+  project_publish: (d, u, b) =>
+    deploy.publishProject(d, u, {
+      project_id: z.string().min(1).parse(b.project_id),
+      slug: b.slug ? str(b.slug) : undefined,
+      overridden: bool(b.overridden),
+    }),
+  project_validate: (d, u, b) => deploy.validateProjectBuild(d, u, z.string().min(1).parse(b.project_id)),
+
+  // --- build runs (real pipeline state, never synthesised) ------------------
+  build_run_get: (d, u, b) => readBuildRun(d, u, z.string().min(1).parse(b.run_id)),
+  build_run_latest: (d, u, b) => latestBuildRunForProject(d, u, z.string().min(1).parse(b.project_id)),
+
+  // --- deployment panel (§17–§21) -------------------------------------------
+  deployment_overview: (d, u, b) => deploy.getDeploymentOverview(d, u, z.string().min(1).parse(b.project_id)),
+  deployment_logs: (d, u, b) =>
+    deploy.deploymentLogs(d, u, {
+      project_id: z.string().min(1).parse(b.project_id),
+      deployment_id: b.deployment_id ? str(b.deployment_id) : undefined,
+    }),
+  deployment_rollback: (d, u, b) =>
+    deploy.rollbackDeployment(d, u, {
+      project_id: z.string().min(1).parse(b.project_id),
+      deployment_id: z.string().min(1).parse(b.deployment_id),
+    }),
+
+  // --- project urls / aliases / custom domains (§8, §19, §20) ---------------
+  url_list: (d, u, b) => deploy.listProjectUrls(d, u, z.string().min(1).parse(b.project_id)),
+  url_add: (d, u, b) =>
+    deploy.addProjectUrl(d, u, {
+      project_id: z.string().min(1).parse(b.project_id),
+      value: z.string().min(3).max(300).parse(b.value),
+      kind: (b.kind === "custom" || b.kind === "preview" ? str(b.kind) : "generated") as "custom" | "preview" | "generated",
+    }),
+  url_remove: (d, u, b) =>
+    deploy.removeProjectUrl(d, u, { project_id: z.string().min(1).parse(b.project_id), url_id: z.string().min(1).parse(b.url_id) }),
+  url_set_primary: (d, u, b) =>
+    deploy.setPrimaryProjectUrl(d, u, { project_id: z.string().min(1).parse(b.project_id), url_id: z.string().min(1).parse(b.url_id) }),
+  url_verify_domain: (d, u, b) => deploy.verifyProjectDomain(d, u, z.string().min(1).parse(b.project_id)),
   snippet_publish: (d, u, b) =>
     deploy.publishSnippet(d, u, {
       lang: str(b.lang, "html"),

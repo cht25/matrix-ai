@@ -28,7 +28,7 @@ import {
   primeSpeech, readAutoSpeakPreference, speakMarkdown, stopSpeech, writeAutoSpeakPreference,
 } from "@/lib/chat-speech";
 import { firebaseBrowserConfigured, waitForAuthUser } from "@/lib/firebase/client";
-import { uploadOwnedFile } from "@/lib/client/api";
+import { rpc, uploadOwnedFile } from "@/lib/client/api";
 import { Button, Textarea } from "@/components/ui";
 import { Markdown } from "@/components/markdown";
 import { MatrixMark, MatrixWordmark } from "@/components/logo";
@@ -59,6 +59,11 @@ import { AgentActivityCard } from "@/components/agent-sandbox";
 import { ArtifactCard } from "@/components/artifact-panel";
 import { ResponseProgress } from "@/components/response-status";
 import { ModeQuickActions, LiveTaskGraph, type GraphNode } from "@/components/mode-workspace";
+import { buildActionsFor, detectBuildIntent, detectImageAssetRequest, shouldRunBuildPipeline, type BuildIntent } from "@/lib/ai/build-intent";
+import { streamBuildRun } from "@/lib/client/build-runner";
+import { BuildStatusCard } from "@/components/build/build-progress";
+import { DeploySuccessPopup } from "@/components/build/deploy-card";
+import { toRunSnapshot, type BuildRun } from "@/lib/deploy/stages";
 import { planOrchestrator } from "@/lib/ai/router";
 import type { AgentStageId, PipelineAnalytics } from "@/lib/ai/pipeline";
 
@@ -193,6 +198,12 @@ export function ChatClient({
   const [agentFiles, setAgentFiles] = useState<AgentFile[]>(latestArtifacts(initialMessages));
   const [agentProjectId, setAgentProjectId] = useState<string | null>(latestProjectId(initialMessages));
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+
+  // --- build pipeline (real execution state, mirrored from the server) -----
+  const [buildRun, setBuildRun] = useState<BuildRun | null>(null);
+  const [publishPopup, setPublishPopup] = useState<{ run: BuildRun; url: string; files: number } | null>(null);
+  const buildControllerRef = useRef<AbortController | null>(null);
+  const lastBuildPromptRef = useRef<string | null>(null);
 
   // --- routing metadata (tertiary) ---------------------------------------
   const [lastModel, setLastModel] = useState<string | null>(() => {
@@ -490,7 +501,9 @@ export function ChatClient({
   function stop() {
     clearIdleTimer();
     abortRef.current?.abort(new DOMException("Stopped by user.", "AbortError"));
+    buildControllerRef.current?.abort(new DOMException("Stopped by user.", "AbortError"));
     setStreaming(false);
+    setNotice("Stopped. The build keeps running on the server if it was already publishing — refresh the project to see its real state.");
   }
 
   function toggleAutoSpeak() {
@@ -910,7 +923,194 @@ export function ChatClient({
     const hinted = suggestMode(rawMessage, mode);
     if (hinted && hinted !== effectiveMode(intent, mode)) setModeHint(hinted);
     if (mode === "orchestrator") setGraphNodes(planOrchestrator(rawMessage).map((task) => ({ id: task.id, title: task.title, status: "running" as const })));
+
+    // --- build / publish intent (§2, §25, §26) ----------------------------
+    // "Make it", "build this website and publish it" run the real pipeline:
+    // plan → files → build → validate → publish. A plain question never gets
+    // here, and an under-specified "make it" asks one question instead of
+    // deploying a guess.
+    const buildIntent = detectBuildIntent(rawMessage, {
+      mode,
+      agentMode: mode === "agent",
+      projectFileCount: agentFiles.length || (agentProjectId ? 1 : 0),
+      priorPlan: lastAssistantContent(messages),
+      hasAttachments: pending.length > 0,
+    });
+    if (buildIntent.needsClarification) {
+      setNotice(buildIntent.clarification ?? "Describe what to build and I will create, validate and (if you ask) publish it.");
+      await streamMessage(message, { attachments: pending, intent, turnId });
+      return;
+    }
+    if (shouldRunBuildPipeline(buildIntent)) {
+      await runBuildTurn(message, buildIntent, turnId, pending);
+      return;
+    }
     await streamMessage(message, { attachments: pending, intent, turnId });
+  }
+
+  /**
+   * Run the real build pipeline for one user turn (§24). The chat shows the
+   * server's stage state, never a simulated one, and the publish popup only
+   * appears when the hosting provider reported a live deployment.
+   */
+  async function runBuildTurn(
+    message: string,
+    buildIntent: BuildIntent,
+    turnId: string,
+    sentAttachments: PendingAttachment[] = [],
+  ) {
+    if (requestInFlightRef.current) return;
+    requestInFlightRef.current = true;
+    lastBuildPromptRef.current = message;
+    const startedAt = Date.now();
+    setFailure(null);
+    setNotice(null);
+    setStreaming(true);
+    setStreamStatus("processing");
+    setBuildRun(null);
+    setActiveStartedAt(startedAt);
+    setStreamedText("");
+    stopSpeech();
+
+    const controller = new AbortController();
+    buildControllerRef.current = controller;
+    abortRef.current = controller;
+    const actions = buildActionsFor(buildIntent);
+    const imageRequests = detectImageAssetRequest(message) ? imageRequestsFor(message) : [];
+    // Attachments become project context: seed them as files when the Agent
+    // is repairing an existing project so the validator sees the real source.
+    const attachmentSeed: AgentFile[] = sentAttachments.map((file) => ({
+      path: file.name.replace(/^\/+/, ""),
+      content: file.content,
+      language: file.name.split(".").pop() ?? "text",
+    }));
+
+    let settled: { run: BuildRun | null; reply: string; projectId: string | null } = { run: null, reply: "", projectId: null };
+    let buildError: { code: string; message: string } | null = null;
+    try {
+      if (!firebaseBrowserConfigured) {
+        setFailure({ ...failureCopy("not-configured"), detail: "The MATRIX backend is not configured on this deployment yet, so nothing can be built." });
+        return;
+      }
+      settled = await streamBuildRun(
+        {
+          prompt: message,
+          projectId: agentProjectId,
+          conversationId: convIdRef.current,
+          actions,
+          imageRequests,
+        },
+        {
+          signal: controller.signal,
+          onRun: (run) => {
+            setBuildRun(run);
+            if (run.projectId && run.projectId !== agentProjectId) setAgentProjectId(run.projectId);
+          },
+          onError: (code, detail) => {
+            buildError = { code, message: detail };
+          },
+        },
+      );
+    } catch (err) {
+      buildError = { code: "BUILD_UNREACHABLE", message: "MATRIX could not reach the build service. Your message is safe — try again." };
+      if (!(err instanceof Error && err.name === "AbortError")) console.error("[MATRIX] build stream failed", err);
+    } finally {
+      clearIdleTimer();
+      setStreaming(false);
+      setStreamStatus(null);
+      setActiveStartedAt(null);
+      abortRef.current = null;
+      buildControllerRef.current = null;
+      requestInFlightRef.current = false;
+    }
+
+    const run = settled.run;
+    const liveUrl = run?.deployment?.status === "live" ? run.deployment.url ?? null : null;
+
+    // Refresh the workspace file list from the project — the files the Agent
+    // actually wrote, not a reconstruction from the reply text.
+    let artifacts: AgentFile[] = [];
+    const projectId = run?.projectId ?? settled.projectId ?? agentProjectId;
+    if (projectId) {
+      try {
+        const project = await rpc<{ files: Array<{ path: string; content: string; language: string }> }>("project_get", { id: projectId });
+        artifacts = project.files
+          .filter((file) => file.content.length <= 200_000)
+          .map((file) => ({ path: file.path, content: file.content, language: file.language }));
+        if (artifacts.length) setAgentFiles(artifacts);
+      } catch {
+        /* the workspace will load them itself */
+      }
+    }
+
+    const replyText =
+      settled.reply.trim() ||
+      (run?.status === "succeeded"
+        ? liveUrl
+          ? `Built and published ${run.fileCount || artifacts.length || attachmentSeed.length} project file${run.fileCount === 1 ? "" : "s"}. The live address is below.`
+          : `Build and validation passed. ${run.fileCount || artifacts.length} file${run.fileCount === 1 ? "" : "s"} are ready to preview.`
+        : buildError
+          ? `${buildError.message}${buildError.code ? ` (${buildError.code})` : ""}`
+          : "MATRIX stopped before the build finished. Open Deployment details to see where it ended.");
+
+    commitPartial(
+      replyText,
+      { turnId },
+      {
+        mode: "agent",
+        project_id: projectId ?? undefined,
+        artifacts: artifacts.length ? artifacts : undefined,
+        build: run ? toRunSnapshot(run) : undefined,
+        deployment: run?.deployment
+          ? {
+              id: run.deployment.id,
+              status: run.deployment.status,
+              url: run.deployment.status === "live" ? run.deployment.url : null,
+              slug: run.deployment.slug,
+              environment: run.deployment.environment,
+              files: run.fileCount,
+            }
+          : undefined,
+        duration_ms: Date.now() - startedAt,
+      },
+    );
+
+    if (run?.status === "failed" || buildError) {
+      const detail = run?.error?.message ?? buildError?.message ?? "The build stopped before publishing.";
+      setFailure({ ...failureCopy("server"), title: run?.deployment?.status === "failed" ? "Publishing failed" : "Build failed", detail, retryable: true });
+    }
+    if (liveUrl && run) {
+      setPublishPopup({ run, url: liveUrl, files: run.fileCount || artifacts.length });
+      // Keep the live card visible for this turn only as long as the popup is
+      // open; after it is dismissed the committed message row carries the link.
+      setBuildRun(null);
+    }
+  }
+
+  function retryBuild() {
+    const prompt = lastBuildPromptRef.current;
+    if (!prompt || streaming) return;
+    setFailure(null);
+    void send(undefined, prompt);
+  }
+
+  /**
+   * Which generated images the request asked for (§27). Kept deliberately
+   * small and deterministic: the pipeline stores each one as a real project
+   * file and reuses an existing asset with the same prompt.
+   */
+  function imageRequestsFor(text: string): Array<{ name: string; prompt: string }> {
+    const subject = text.replace(/^(?:please\s+)?(?:build|make|create|design)\s+(?:me\s+)?(?:a|an|the)?\s*/i, "").slice(0, 180);
+    const wanted = /hero|banner|background/i.test(text) ? 1 : 0;
+    const features = /feature|benefit|card/i.test(text) ? 2 : 0;
+    const count = Math.min(3, Math.max(1, wanted + features));
+    return Array.from({ length: count }, (_, index) => ({
+      name: index === 0 ? "hero" : `feature-${index}`,
+      prompt:
+        index === 0
+          ? `Editorial website hero illustration for: ${subject}. Deep obsidian background, mint-green and violet accent light, geometric, no text, no words, no logos.`
+          : `Abstract product feature illustration for: ${subject}. Dark obsidian palette with subtle mint accents, minimal vector style, no text.`,
+    }));
   }
 
   function regenerate() {
@@ -1297,6 +1497,8 @@ export function ChatClient({
                       intent={intent}
                       artifact={artifact}
                       execution={isLatest ? execution : null}
+                      liveBuildRun={isLatest ? buildRun : null}
+                      onRetryBuild={retryBuild}
                       timeLabel={message.created_at ? new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
                       actions={actions}
                       exportFormats={availableExportFormats(signals, intent.suppressExport ? [] : intent.formats)}
@@ -1350,14 +1552,15 @@ export function ChatClient({
                       provider="Together AI"
                     />
                   ) : null}
-                  <ResponseProgress mode={runMode} streamStatus={streamStatus} />
+                  {buildRun ? null : <ResponseProgress mode={runMode} streamStatus={streamStatus} />}
                   {streamedText ? (
                     <div className="ai-reply">
                       <Markdown text={streamedText} />
                       <span className="ml-0.5 inline-block h-3.5 w-px animate-pulse bg-ink align-middle" aria-hidden="true" />
                     </div>
                   ) : null}
-                  {runIntent.intent === "AGENT_TASK" && execution.status !== "idle" ? (
+                  {buildRun ? <BuildStatusCard run={buildRun} /> : null}
+                  {!buildRun && runIntent.intent === "AGENT_TASK" && execution.status !== "idle" ? (
                     <AgentActivityCard execution={execution} />
                   ) : null}
                 </div>
@@ -1512,6 +1715,32 @@ export function ChatClient({
           {mode === "agent" ? "Review files before preview or push" : "MATRIX may make mistakes · verify important information"}
         </p>
       </div>
+
+      {publishPopup ? (
+        <DeploySuccessPopup
+          run={publishPopup.run}
+          url={publishPopup.url}
+          files={publishPopup.files}
+          onClose={() => {
+            setPublishPopup(null);
+            setBuildRun(null);
+          }}
+          onViewProject={() => {
+            const projectId = publishPopup.run.projectId;
+            setPublishPopup(null);
+            if (projectId) router.push(`/projects/${projectId}`);
+            else setWorkspaceOpen(true);
+          }}
+          onDeploymentDetails={() => {
+            setPublishPopup(null);
+            setWorkspaceOpen(true);
+          }}
+          onAssets={() => {
+            setPublishPopup(null);
+            setWorkspaceOpen(true);
+          }}
+        />
+      ) : null}
 
       {mode === "agent" || agentFiles.length > 0 ? (
         <AgentWorkspace

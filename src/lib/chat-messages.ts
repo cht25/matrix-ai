@@ -6,6 +6,7 @@
 // =============================================================================
 
 import type { AgentFile, ChatMode } from "@/lib/ai/agent";
+import type { BuildRunSnapshot } from "@/lib/deploy/stages";
 import type { ArtifactSnapshot } from "@/lib/ai/artifacts";
 import { DEFAULT_INTENT, detectIntent, type ArtifactType, type IntentId, type IntentResult } from "@/lib/ai/intent";
 
@@ -29,6 +30,20 @@ export type MessageMetadata = {
   artifact?: ArtifactSnapshot;
   /** Stable id tying one request → one reply → its artifact/execution UI. */
   turn_id?: string;
+  /**
+   * Build pipeline snapshot for this turn (§39). Only present when a real run
+   * happened; the live URL inside it comes from the provider, never locally.
+   */
+  build?: BuildRunSnapshot;
+  /** Compact deployment summary for the chat row. */
+  deployment?: {
+    id: string;
+    status: string;
+    url: string | null;
+    slug: string | null;
+    environment: string;
+    files: number;
+  };
 };
 
 export type ChatMessage = {
@@ -60,6 +75,15 @@ export function latestArtifacts(list: ChatMessage[]): AgentFile[] {
     if (Array.isArray(files) && files.length) return files;
   }
   return [];
+}
+
+/** The most recent build run id, so the chat can re-read its real state. */
+export function latestBuildRunId(list: ChatMessage[]): string | null {
+  for (let i = list.length - 1; i >= 0; i--) {
+    const id = list[i].metadata?.build?.run_id;
+    if (typeof id === "string" && id) return id;
+  }
+  return null;
 }
 
 export function latestProjectId(list: ChatMessage[]): string | null {
