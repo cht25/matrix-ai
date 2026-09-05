@@ -27,7 +27,8 @@ import { createAIRoutesFromDb, type AIRouteTarget } from "@/lib/ai/config";
 import { AGENT_SYSTEM_PROMPT } from "@/lib/ai/prompts";
 import { parseAgentResponse } from "@/lib/ai/agent";
 import { planFromRequest, type BuildIntent } from "@/lib/ai/build-intent";
-import { generateTogetherImage, isTogetherConfigured } from "@/lib/ai/together";
+import { generateImage } from "@/lib/ai/image/generate";
+import { isImageGenerationConfigured } from "@/lib/ai/image/config";
 import { applyProjectFiles, ensureProject, loadProjectFiles } from "@/lib/server/projects";
 import { PROJECT_LIMITS, type ProjectFile } from "@/lib/projects/paths";
 import {
@@ -498,8 +499,8 @@ async function generateImageAssets(
 ): Promise<Array<{ path: string; width: number; height: number; reused: boolean }>> {
   const out: Array<{ path: string; width: number; height: number; reused: boolean }> = [];
   if (!requested.length) return out;
-  if (!isTogetherConfigured()) {
-    note("generate", "warn", "Image generation is not configured on this deployment (Together AI key missing) — the project will use inline SVG instead.");
+  if (!(await isImageGenerationConfigured(d))) {
+    note("generate", "warn", "Image generation is not configured — an administrator can add an image provider under Admin → AI configuration. The project will use inline SVG instead.");
     return out;
   }
   const doc = await d.collection("projects").doc(projectId).get();
@@ -514,10 +515,10 @@ async function generateImageAssets(
       note("generate", "info", `Reusing existing generated asset ${path} (same prompt).`);
       continue;
     }
-    note("generate", "info", `Generating image asset ${path} with Together AI…`);
+    note("generate", "info", `Generating image asset ${path}…`);
     await emit("generate");
     try {
-      const image = await generateTogetherImage(request.prompt, { width: 768, height: 768, signal: AbortSignal.timeout(90_000) });
+      const image = await generateImage(d, request.prompt, { width: 768, height: 768, signal: AbortSignal.timeout(90_000) });
       const bytes = Math.floor(image.b64.length * 0.75);
       if (bytes > PROJECT_LIMITS.maxImageBytes) {
         note("generate", "warn", `Generated image for ${path} (${Math.round(bytes / 1024)} KB) exceeds the per-file asset budget — not stored.`);

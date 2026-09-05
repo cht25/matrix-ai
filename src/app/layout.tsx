@@ -1,19 +1,15 @@
 import type { Metadata, Viewport } from "next";
+// Typography: Inter for the interface, JetBrains Mono for technical metadata.
+// Both are self-hosted (no render-blocking request to fonts.googleapis.com),
+// and only the weights the design system actually uses are shipped.
 import "@fontsource/inter/400.css";
 import "@fontsource/inter/500.css";
 import "@fontsource/inter/600.css";
-import "@fontsource/manrope/500.css";
-import "@fontsource/manrope/600.css";
-import "@fontsource/cormorant-garamond/400.css";
-import "@fontsource/cormorant-garamond/500.css";
-import "@fontsource/cormorant-garamond/600.css";
-import "@fontsource/cormorant-garamond/700.css";
-import "@fontsource/tangerine/400.css";
-import "@fontsource/tangerine/700.css";
+import "@fontsource/jetbrains-mono/400.css";
+import "@fontsource/jetbrains-mono/500.css";
 import "./globals.css";
 import { ThemeProvider } from "@/lib/theme";
 import { LocaleProvider } from "@/lib/i18n/client";
-import { CyberBackground } from "@/components/cyber-background";
 import { BRAND_ICON_URL, BRAND_WORDMARK_URL } from "@/lib/brand";
 
 export const metadata: Metadata = {
@@ -60,8 +56,8 @@ export const viewport: Viewport = {
   viewportFit: "cover",
   // Light is the primary theme, so it is also the default (no media) chrome.
   themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#070B14" },
-    { media: "(prefers-color-scheme: light)", color: "#F6F8FC" },
+    { media: "(prefers-color-scheme: dark)", color: "#070B12" },
+    { media: "(prefers-color-scheme: light)", color: "#F7F9FC" },
   ],
   colorScheme: "light dark",
 };
@@ -76,9 +72,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" data-theme="dark" suppressHydrationWarning>
       <head>
         <link rel="preconnect" href="https://res.cloudinary.com" crossOrigin="" />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
-        <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
         <link rel="icon" type="image/png" href={BRAND_ICON_URL} />
         <link rel="apple-touch-icon" href={BRAND_ICON_URL} />
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
@@ -86,7 +79,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <ThemeProvider>
           <LocaleProvider>
-            <CyberBackground />
             <a href="#main" className="skip-link">
               Skip to content
             </a>

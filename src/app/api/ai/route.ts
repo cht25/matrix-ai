@@ -28,7 +28,8 @@ import { AIProviderError, logGatewayFailure, logProviderFailure, providerPublicC
 import { stripReasoningContent } from "@/lib/ai/reasoning";
 import { agentGenerationIncomplete, formatAttachmentContext, isCodingRequest, parseAgentResponse, safeAgentPath, type AgentFile, type ChatMode, type TextAttachment } from "@/lib/ai/agent";
 import { AGENT_STAGES, computeAnalytics, detectAgentTool } from "@/lib/ai/pipeline";
-import { generateTogetherImage, isTogetherConfigured } from "@/lib/ai/together";
+import { generateImage, imageErrorCode } from "@/lib/ai/image/generate";
+import { isImageGenerationConfigured } from "@/lib/ai/image/config";
 import { buildModeSystemMessages, validateOutput, buildSummaryPrompt } from "@/lib/ai/prompts";
 import { isChatMode, isModelLane, isStrategy, type ExplainStyle, type StudyLevel } from "@/lib/ai/modes";
 import { decideRoute, planOrchestrator } from "@/lib/ai/router";
@@ -884,7 +885,7 @@ async function handleImage(d: Db, user: SessionUser, body: Record<string, unknow
   const prompt = typeof body.message === "string" ? body.message.trim() : (typeof body.prompt === "string" ? body.prompt.trim() : "");
   if (!prompt) return json({ error: "MESSAGE_REQUIRED" }, 400, requestId);
   if (prompt.length > 4000) return json({ error: "MESSAGE_TOO_LONG" }, 400, requestId);
-  if (!isTogetherConfigured()) return json({ error: "TOGETHER_NOT_CONFIGURED" }, 503, requestId);
+  if (!(await isImageGenerationConfigured(d))) return json({ error: "IMAGE_NOT_CONFIGURED" }, 503, requestId);
 
   const conversationId = typeof body.conversation_id === "string" ? body.conversation_id : null;
   const isTemporary = body.is_temporary === true;
@@ -915,7 +916,7 @@ async function handleImage(d: Db, user: SessionUser, body: Record<string, unknow
   }
 
   try {
-    const image = await generateTogetherImage(prompt);
+    const image = await generateImage(d, prompt);
     const dataUrl = `data:${image.mime};base64,${image.b64}`;
     const reply = "Image ready.";
     if (convId) {
@@ -923,7 +924,7 @@ async function handleImage(d: Db, user: SessionUser, body: Record<string, unknow
         await d.collection("conversations").doc(convId).collection("messages").add({
           role: "assistant",
           content: reply,
-          metadata: { mode: "image", image_data_url: dataUrl, model: image.model, provider: "Together" },
+          metadata: { mode: "image", image_data_url: dataUrl, model: image.model, provider: image.provider },
           created_at: nowTs(),
         });
       } catch (error) {
@@ -937,15 +938,16 @@ async function handleImage(d: Db, user: SessionUser, body: Record<string, unknow
       mode: "image",
       image: { mime: image.mime, data_url: dataUrl },
       model: image.model,
-      provider: "Together",
+      provider: image.provider,
       image_status: "ready",
       analytics: computeAnalytics({ started, completionTokens: 0, toolsExecuted: 1, agentSteps: 4 }),
       request_id: requestId,
     }, 200, requestId);
   } catch (error) {
-    const code = error instanceof Error ? error.message : "TOGETHER_UNAVAILABLE";
-    await logUsage(d, user.uid, "together", "image", {}, Date.now() - started, "error", requestId);
-    return json({ error: code, conversation_id: convId, image_status: "failed" }, code === "TOGETHER_NOT_CONFIGURED" ? 503 : 502, requestId);
+    const code = imageErrorCode(error);
+    console.error("[MATRIX] image generation failed", code, error);
+    await logUsage(d, user.uid, "image", "image", {}, Date.now() - started, "error", requestId);
+    return json({ error: code, conversation_id: convId, image_status: "failed" }, code === "IMAGE_NOT_CONFIGURED" ? 503 : 502, requestId);
   }
 }
 
@@ -958,15 +960,15 @@ async function handleOrchestrate(d: Db, user: SessionUser, body: Record<string, 
   const sections: Array<{ id: string; title: string; mode: string; reply?: string; error?: string; image_data_url?: string }> = [];
   for (const task of tasks) {
     if (task.mode === "image") {
-      if (!isTogetherConfigured()) {
-        sections.push({ id: task.id, title: task.title, mode: task.mode, error: "TOGETHER_NOT_CONFIGURED" });
+      if (!(await isImageGenerationConfigured(d))) {
+        sections.push({ id: task.id, title: task.title, mode: task.mode, error: "IMAGE_NOT_CONFIGURED" });
         continue;
       }
       try {
-        const image = await generateTogetherImage(task.prompt);
+        const image = await generateImage(d, task.prompt);
         sections.push({ id: task.id, title: task.title, mode: task.mode, reply: "Image ready.", image_data_url: `data:${image.mime};base64,${image.b64}` });
       } catch (error) {
-        sections.push({ id: task.id, title: task.title, mode: task.mode, error: error instanceof Error ? error.message : "TOGETHER_UNAVAILABLE" });
+        sections.push({ id: task.id, title: task.title, mode: task.mode, error: imageErrorCode(error) });
       }
       continue;
     }

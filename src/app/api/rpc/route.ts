@@ -12,6 +12,8 @@ import { getSessionUser, type SessionUser } from "@/lib/firebase/session";
 import { RpcError } from "@/lib/server/rpc";
 import * as rpc from "@/lib/server/rpc";
 import * as aiRuntime from "@/lib/ai/runtime-config";
+import * as imageConfig from "@/lib/ai/image/config";
+import { getConversationHistoryPage } from "@/lib/server/queries";
 import * as projects from "@/lib/server/projects";
 import * as deploy from "@/lib/server/deploy";
 import { latestBuildRunForProject, readBuildRun } from "@/lib/server/build";
@@ -316,6 +318,48 @@ const ACTIONS: Record<string, Handler> = {
     await rpc.logAudit(d, u.uid, "ai_provider_settings_tested", "system_settings", "ai_provider", mode);
     return result;
   },
+  // --- image generation provider (Together AI + future providers) -------------
+  // The API key is written encrypted and is NEVER returned to the browser:
+  // these actions only ever expose {configured, provider, model, last4}.
+  admin_image_provider_get: async (d, u) => {
+    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
+    return imageConfig.getImageProviderConfigPublic(d);
+  },
+  admin_image_provider_save: async (d, u, b) => {
+    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
+    const apiKey = typeof b.api_key === "string" ? b.api_key : "";
+    const result = await imageConfig.saveImageProviderConfig(d, u.uid, {
+      provider: str(b.provider, "together"),
+      model: str(b.model),
+      api_key: apiKey,
+      enabled: bool(b.enabled, true),
+    });
+    // Audit the CHANGE, never the secret. `key_rotated` records only whether a
+    // new key was supplied — the value itself is never logged anywhere.
+    await rpc.logAudit(d, u.uid, "image_provider_settings_updated", "system_settings", "image_provider", "", {
+      provider: result.provider,
+      model: result.model,
+      enabled: result.enabled,
+      key_rotated: apiKey.length > 0,
+    });
+    return result;
+  },
+  admin_image_provider_test: async (d, u) => {
+    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
+    const result = await imageConfig.testImageProviderConfig(d);
+    await rpc.logAudit(d, u.uid, "image_provider_settings_tested", "system_settings", "image_provider", "", {
+      ok: result.ok,
+      code: result.code,
+    });
+    return result;
+  },
+  admin_image_provider_clear_key: async (d, u) => {
+    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
+    const result = await imageConfig.clearImageProviderKey(d, u.uid);
+    await rpc.logAudit(d, u.uid, "image_provider_key_cleared", "system_settings", "image_provider", "");
+    return result;
+  },
+
   admin_live_sites: async (d, u) => {
     if (!(await rpc.isAdmin(d, u.uid))) throw new RpcError("PERMISSION_DENIED", 403);
     return deploy.listLiveSites(d);
@@ -345,6 +389,16 @@ const ACTIONS: Record<string, Handler> = {
   security_score: (d, u) => rpc.securityScore(d, u),
 
   // --- conversations (owner-scoped mutations + export) --------------------------
+  // Incremental upward scroll: the chat page ships only the most recent
+  // messages, and asks for older pages as the user scrolls back.
+  conversation_messages_page: async (d, u, b) => {
+    const id = z.string().min(1).parse(b.id);
+    const before = str(b.before);
+    const limit = Math.min(50, Math.max(10, Number(b.limit) || 30));
+    const page = await getConversationHistoryPage(d, u.uid, id, before, limit);
+    if (!page) throw new RpcError("NOT_FOUND", 404);
+    return page;
+  },
   conversation_update: async (d, u, b) => {
     const id = z.string().min(1).parse(b.id);
     const ref = d.collection("conversations").doc(id);

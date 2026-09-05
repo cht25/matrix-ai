@@ -14,7 +14,12 @@ export const PUBLIC_PATHS = [
   "/terms",
   "/support",
   "/emergency",
+  // Certificate verification, the print view and the PDF all expose exactly
+  // the same public-safe fields (name, course, score, date, ID) — no email,
+  // phone, DOB or address — so all three are reachable without a session.
   "/certificate/verify",
+  "/certificate/print",
+  "/api/certificate",
   "/scams",
   "/api/health",
   "/api/ai",

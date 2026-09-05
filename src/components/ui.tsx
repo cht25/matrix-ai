@@ -7,22 +7,21 @@ export const Button = forwardRef<
   HTMLButtonElement,
   ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }
 >(function Button({ variant = "primary", className, children, type = "button", ...props }, ref) {
+  // The button system lives in styles/components.css (.btn + variants), so
+  // hover / active / focus / disabled / loading states are defined once and
+  // every button — including plain <a class="btn"> links — matches.
   const styles: Record<ButtonVariant, string> = {
-    primary: "bg-accent text-white hover:bg-accent-hover active:bg-accent-2",
-    secondary: "bg-surface-2 text-ink hover:bg-surface-3",
-    ghost: "text-ink-2 hover:bg-surface-2 hover:text-ink",
-    danger: "bg-danger text-white hover:opacity-90",
-    outline: "border border-border-strong bg-surface text-ink hover:border-accent hover:text-accent",
+    primary: "btn-primary",
+    secondary: "btn-secondary",
+    ghost: "btn-ghost",
+    danger: "btn-danger",
+    outline: "btn-outline",
   };
   return (
     <button
       ref={ref}
       type={type}
-      className={cn(
-        "inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] px-4 py-2 text-sm font-medium transition-colors duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-10",
-        styles[variant],
-        className,
-      )}
+      className={cn("btn", styles[variant], className)}
       {...props}
     >
       {children}

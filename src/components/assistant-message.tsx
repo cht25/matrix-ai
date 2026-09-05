@@ -75,12 +75,22 @@ export function AssistantMessage(props: AssistantMessageProps) {
       <Markdown text={message.content} />
 
       {message.metadata?.image_data_url ? (
-        <figure className="mt-3 overflow-hidden rounded-xl border border-border">
+        // Generated image. `w-full` + `object-contain` keeps it inside the
+        // viewport on mobile — it can never overflow horizontally.
+        <figure className="mt-3 overflow-hidden rounded-[12px] border border-border">
+          <figcaption className="flex items-center justify-between gap-2 border-b border-border bg-surface-2 px-3 py-1.5">
+            <span className="eyebrow">Image</span>
+            <span className="mono text-[10px] text-ink-3">
+              {String(message.metadata.provider ?? "")} {String(message.metadata.model ?? "")}
+            </span>
+          </figcaption>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={message.metadata.image_data_url}
             alt="Generated image"
-            className="max-h-[480px] w-full bg-[#070B14] object-contain"
+            loading="lazy"
+            decoding="async"
+            className="max-h-[70svh] w-full bg-surface-3 object-contain"
           />
         </figure>
       ) : null}

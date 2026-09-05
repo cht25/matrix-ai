@@ -14,6 +14,7 @@ import { adminConfigured, adminDb } from "@/lib/firebase/admin";
 import { createAIRoutes, createAIRoutesFromDb, logAIConfiguration } from "@/lib/ai/config";
 import { ping as pingCloudinary } from "@/lib/server/cloudinary";
 import { checkWebFirebaseConfig } from "@/lib/server/identitytoolkit";
+import { testImageProviderConfig } from "@/lib/ai/image/config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,6 +38,7 @@ export async function GET() {
         cloudinary: isCloudinaryConfigured() ? "unknown" : "not-configured",
         ai: createAIRoutes(false).length ? "unknown" : "not-configured",
         codingAi: createAIRoutes(true).length ? "unknown" : "not-configured",
+        imageAi: "unknown",
         checkedAt,
       },
       { status: 503 },
@@ -93,6 +95,24 @@ export async function GET() {
     codingAi = "unavailable";
   }
 
+  // Image generation: a real probe against the configured provider. "online"
+  // is only ever reported after the provider answered.
+  let imageAi: "online" | "unavailable" | "not-configured" = "not-configured";
+  let imageProvider: string | undefined;
+  let imageModel: string | undefined;
+  if (runtimeDb) {
+    try {
+      const probe = await testImageProviderConfig(runtimeDb);
+      if (probe.code !== "NOT_CONFIGURED") {
+        imageAi = probe.ok ? "online" : "unavailable";
+        imageProvider = probe.provider;
+        imageModel = probe.model;
+      }
+    } catch {
+      imageAi = "unavailable";
+    }
+  }
+
   const ok = firebase === "reachable";
   return NextResponse.json({
     ok,
@@ -101,6 +121,8 @@ export async function GET() {
     ai,
     codingAi,
     ...(codingProvider ? { codingProvider, codingModel, codingFallback } : {}),
+    imageAi,
+    ...(imageProvider ? { imageProvider, imageModel } : {}),
     checkedAt,
   }, { status: ok ? 200 : 503 });
 }

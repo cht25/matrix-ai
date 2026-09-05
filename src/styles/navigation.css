@@ -1,0 +1,183 @@
+/* =============================================================================
+   MATRIX V3 — application shell + navigation.
+   Desktop: fixed collapsible sidebar. Mobile: minimal top bar + fixed bottom
+   navigation + a "More" bottom sheet. NO hamburger menu anywhere.
+   ============================================================================= */
+
+.app-shell {
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+
+/* --- desktop sidebar -------------------------------------------------------- */
+.app-sidebar {
+  background: var(--sidebar);
+  border-right: 1px solid var(--border);
+}
+
+.app-topbar {
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: saturate(1.1) blur(10px);
+  -webkit-backdrop-filter: saturate(1.1) blur(10px);
+}
+/* Mobile keeps the bar opaque: blur is the single most expensive paint on
+   low-end devices and buys nothing behind a solid header. */
+@media (max-width: 1023px) {
+  .app-topbar {
+    background: var(--bg);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: background-color var(--ease), color var(--ease);
+}
+.nav-item:hover { background: var(--surface-2); color: var(--text); }
+.nav-item.is-active {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+/* --- mobile bottom navigation ---------------------------------------------- */
+.bottom-nav {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 40;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@media (min-width: 1024px) { .bottom-nav { display: none; } }
+
+.bottom-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: var(--app-bottom-nav);
+  padding: 4px 2px;
+  font-size: 0.625rem;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  color: var(--text-muted);
+  transition: color var(--ease);
+}
+.bottom-nav-item span:last-child {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bottom-nav-item:hover { color: var(--text); }
+.bottom-nav-item[aria-current="page"],
+.bottom-nav-item.is-active { color: var(--primary); }
+.bottom-nav-item.is-active .bottom-nav-icon::after {
+  content: "";
+  position: absolute;
+  inset-inline: 25%;
+  bottom: -5px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--primary);
+}
+.bottom-nav-icon { position: relative; display: grid; place-items: center; }
+
+/* --- bottom sheet ("More", activity, deployment details) -------------------- */
+.sheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(2, 6, 14, 0.6);
+  animation: sheet-fade var(--ease) both;
+}
+
+.sheet {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 61;
+  max-height: 82dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  padding-bottom: env(safe-area-inset-bottom);
+  animation: sheet-up var(--ease-slow) both;
+}
+
+.sheet-handle {
+  width: 36px;
+  height: 4px;
+  margin: 10px auto 2px;
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+}
+
+.sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.sheet-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: var(--space-2) var(--space-3) var(--space-4);
+}
+
+.sheet-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  text-align: left;
+  transition: background-color var(--ease);
+}
+.sheet-item:hover,
+.sheet-item:focus-visible { background: var(--surface-2); }
+.sheet-item .sheet-item-icon { color: var(--text-muted); display: grid; place-items: center; }
+.sheet-item[data-active="true"] { color: var(--primary); background: var(--primary-soft); }
+.sheet-item[data-active="true"] .sheet-item-icon { color: var(--primary); }
+
+.sheet-section-title {
+  padding: var(--space-3) var(--space-3) var(--space-1);
+}
+
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@keyframes sheet-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheet, .sheet-scrim { animation: none; }
+}
