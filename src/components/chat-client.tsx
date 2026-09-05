@@ -201,6 +201,8 @@ export function ChatClient({
 
   // --- build pipeline (real execution state, mirrored from the server) -----
   const [buildRun, setBuildRun] = useState<BuildRun | null>(null);
+  /** True between "send" and the first server event, so the wait is explained. */
+  const [buildPending, setBuildPending] = useState(false);
   const [publishPopup, setPublishPopup] = useState<{ run: BuildRun; url: string; files: number } | null>(null);
   const buildControllerRef = useRef<AbortController | null>(null);
   const lastBuildPromptRef = useRef<string | null>(null);
@@ -968,6 +970,7 @@ export function ChatClient({
     setStreaming(true);
     setStreamStatus("processing");
     setBuildRun(null);
+    setBuildPending(true);
     setActiveStartedAt(startedAt);
     setStreamedText("");
     stopSpeech();
@@ -977,15 +980,16 @@ export function ChatClient({
     abortRef.current = controller;
     const actions = buildActionsFor(buildIntent);
     const imageRequests = detectImageAssetRequest(message) ? imageRequestsFor(message) : [];
-    // Attachments become project context: seed them as files when the Agent
-    // is repairing an existing project so the validator sees the real source.
-    const attachmentSeed: AgentFile[] = sentAttachments.map((file) => ({
-      path: file.name.replace(/^\/+/, ""),
-      content: file.content,
-      language: file.name.split(".").pop() ?? "text",
-    }));
+    // Attachments travel as files, not as pasted text: the pipeline stores them
+    // in the project so the validator, preview and host all see the real source.
+    const attachmentFiles = sentAttachments.map((file) => ({ name: file.name.replace(/^\/+/, ""), content: file.content }));
 
-    let settled: { run: BuildRun | null; reply: string; projectId: string | null } = { run: null, reply: "", projectId: null };
+    let settled: { run: BuildRun | null; reply: string; projectId: string | null; conversationId: string | null } = {
+      run: null,
+      reply: "",
+      projectId: null,
+      conversationId: null,
+    };
     let buildError: { code: string; message: string } | null = null;
     try {
       if (!firebaseBrowserConfigured) {
@@ -997,12 +1001,17 @@ export function ChatClient({
           prompt: message,
           projectId: agentProjectId,
           conversationId: convIdRef.current,
+          isTemporary,
           actions,
           imageRequests,
+          // Attachments go to the pipeline as files, not as pasted text: they
+          // become project records the validator and preview can actually read.
+          attachments: attachmentFiles.length ? attachmentFiles : undefined,
         },
         {
           signal: controller.signal,
           onRun: (run) => {
+            setBuildPending(false);
             setBuildRun(run);
             if (run.projectId && run.projectId !== agentProjectId) setAgentProjectId(run.projectId);
           },
@@ -1018,6 +1027,7 @@ export function ChatClient({
       clearIdleTimer();
       setStreaming(false);
       setStreamStatus(null);
+      setBuildPending(false);
       setActiveStartedAt(null);
       abortRef.current = null;
       buildControllerRef.current = null;
@@ -1026,6 +1036,15 @@ export function ChatClient({
 
     const run = settled.run;
     const liveUrl = run?.deployment?.status === "live" ? run.deployment.url ?? null : null;
+    // The run owns its conversation: adopt it (and the URL) so a refresh lands
+    // on the thread that contains this build.
+    if (settled.conversationId) {
+      rememberConv(settled.conversationId);
+      if (!isTemporary) {
+        const targetUrl = `/chat/${settled.conversationId}`;
+        if (!window.location.pathname.startsWith(targetUrl)) window.history.replaceState(null, "", targetUrl);
+      }
+    }
 
     // Refresh the workspace file list from the project — the files the Agent
     // actually wrote, not a reconstruction from the reply text.
@@ -1047,7 +1066,7 @@ export function ChatClient({
       settled.reply.trim() ||
       (run?.status === "succeeded"
         ? liveUrl
-          ? `Built and published ${run.fileCount || artifacts.length || attachmentSeed.length} project file${run.fileCount === 1 ? "" : "s"}. The live address is below.`
+          ? `Built and published ${run.fileCount || artifacts.length || attachmentFiles.length} project file${run.fileCount === 1 ? "" : "s"}. The live address is below.`
           : `Build and validation passed. ${run.fileCount || artifacts.length} file${run.fileCount === 1 ? "" : "s"} are ready to preview.`
         : buildError
           ? `${buildError.message}${buildError.code ? ` (${buildError.code})` : ""}`
@@ -1559,7 +1578,17 @@ export function ChatClient({
                       <span className="ml-0.5 inline-block h-3.5 w-px animate-pulse bg-ink align-middle" aria-hidden="true" />
                     </div>
                   ) : null}
-                  {buildRun ? <BuildStatusCard run={buildRun} /> : null}
+                  {buildRun ? (
+                    <BuildStatusCard run={buildRun} />
+                  ) : buildPending ? (
+                    <div className="sandbox-card fade-in rounded-xl border border-border bg-surface p-3.5">
+                      <p className="flex items-center gap-2 text-[12.5px] font-medium text-ink">
+                        <span className="pulse-dot h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />
+                        Starting build
+                      </p>
+                      <p className="mt-1 text-[11.5px] text-ink-3">Accepting the run and reading the project…</p>
+                    </div>
+                  ) : null}
                   {!buildRun && runIntent.intent === "AGENT_TASK" && execution.status !== "idle" ? (
                     <AgentActivityCard execution={execution} />
                   ) : null}

@@ -23,9 +23,10 @@ export type BuildStreamEvent = {
   run_id?: string;
   reply?: string;
   project_id?: string | null;
+  conversation_id?: string | null;
 };
 
-export type BuildDonePayload = { run: BuildRun | null; reply: string; projectId: string | null };
+export type BuildDonePayload = { run: BuildRun | null; reply: string; projectId: string | null; conversationId: string | null };
 
 export type BuildStreamHandlers = {
   onRun?: (run: BuildRun, stage?: BuildStageId) => void;
@@ -38,6 +39,10 @@ export type BuildStartInput = {
   prompt: string;
   projectId?: string | null;
   conversationId?: string | null;
+  /** Temporary chats never touch conversation storage — no thread is written. */
+  isTemporary?: boolean;
+  /** Attached text/code files, stored as real project files by the pipeline. */
+  attachments?: Array<{ name: string; content: string }>
   actions?: { build?: boolean; publish?: boolean; preview?: boolean; fix?: boolean };
   slug?: string | null;
   /** Where the deployment goes — only environments the host reports as supported. */
@@ -59,8 +64,9 @@ const POLL_LIMIT_MS = 15 * 60_000;
 export async function streamBuildRun(
   input: BuildStartInput,
   handlers: BuildStreamHandlers = {},
-): Promise<{ run: BuildRun | null; reply: string; projectId: string | null }> {
+): Promise<{ run: BuildRun | null; reply: string; projectId: string | null; conversationId: string | null }> {
   let reply = "";
+  let conversationId: string | null = null;
   const controller = new AbortController();
   const external = handlers.signal;
   if (external) external.addEventListener("abort", () => controller.abort(), { once: true });
@@ -95,6 +101,8 @@ export async function streamBuildRun(
         prompt: input.prompt,
         project_id: input.projectId ?? null,
         conversation_id: input.conversationId ?? null,
+        is_temporary: input.isTemporary === true,
+        attachments: (input.attachments ?? []).map((file) => ({ name: file.name, content: file.content })),
         actions: input.actions ?? null,
         slug: input.slug ?? null,
         environment: input.environment ?? "production",
@@ -135,10 +143,12 @@ export async function streamBuildRun(
         }
         if (event.type === "done") {
           reply = event.reply ?? reply;
+          conversationId = event.conversation_id ?? conversationId;
           if (event.run) last = event.run;
-          handlers.onDone?.({ run: event.run ?? null, reply: event.reply ?? "", projectId: event.project_id ?? null });
+          handlers.onDone?.({ run: event.run ?? null, reply, projectId: event.project_id ?? null, conversationId });
           continue;
         }
+        if (event.conversation_id) conversationId = event.conversation_id;
         if (event.run) {
           last = event.run;
           handlers.onRun?.(event.run, event.stage);
@@ -167,7 +177,7 @@ export async function streamBuildRun(
   }
   // Anything still "running" after the feed ended is judged by its timestamps.
   const run = last ? applyStaleness(last, Date.now()) : null;
-  return { run, reply, projectId: run?.projectId ?? null };
+  return { run, reply, projectId: run?.projectId ?? null, conversationId };
 }
 
 /** Poll the persisted run (used after a reload or when the stream dropped). */

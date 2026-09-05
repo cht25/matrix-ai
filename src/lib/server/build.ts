@@ -59,6 +59,8 @@ export type BuildPipelineInput = {
   allowOverride?: boolean;
   imageRequests?: ImageAssetRequest[];
   maxFixAttempts?: number;
+  /** Text/code files the user attached: stored as real project files first. */
+  attachments?: Array<{ path: string; content: string }>;
   /** Store the assistant turn in the conversation (skipped for temp chats). */
   isTemporary?: boolean;
   onEvent?: (event: { run: BuildRun; stage?: BuildStageId; copy?: ReturnType<typeof buildRunCopy> }) => void;
@@ -144,6 +146,29 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       note("plan", "info", `Created project "${plan.title}".`);
     }
     if (!projectId) return await abort("PROJECT_REQUIRED", "There is no project to build yet. Describe what to create and I will make it.", "plan");
+    // Attached source files are stored as project records before anything else
+    // happens, so validation, preview and publishing all see the user's real
+    // code instead of a paraphrase of it (§12).
+    if (input.attachments?.length) {
+      const files = input.attachments
+        .filter((item) => item.path && item.content.trim())
+        .slice(0, 8)
+        .map((item) => ({
+          path: item.path.slice(0, 200),
+          content: item.content.slice(0, 200_000),
+          language: item.path.split(".").pop() ?? "text",
+        }));
+      if (files.length) {
+        try {
+          const applied = await applyProjectFiles(d, user, { project_id: projectId, files, source: "agent" });
+          note("plan", "info", `Stored ${applied.count} attached file${applied.count === 1 ? "" : "s"} in the project.`);
+          await emit("plan");
+        } catch (error) {
+          const code = error instanceof RpcError ? error.code : "FILE_WRITE_FAILED";
+          return await abort(code, "One of the attached files could not be stored in the project, so nothing was built from it.", "plan");
+        }
+      }
+    }
     const before = await loadProjectFiles(d, projectId);
     const slug = (input.slug ?? "").trim() || plan.slug;
     await finish("plan", `Project ready · ${before.length} existing file${before.length === 1 ? "" : "s"} · address /s/${slug}.`);
@@ -177,13 +202,22 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
             "MATRIX build pipeline: emit complete, publishable files only.",
             `Project title: ${plan.title}. Entry page must be index.html at the project root.`,
             before.length ? `Existing project files: ${before.map((file) => file.path).join(", ")}. Return every file you change, complete.` : "This is a new project.",
+            input.attachments?.length
+              ? `The user attached these files as the source of truth: ${input.attachments.map((item) => item.path).join(", ")}. Keep their behaviour; do not invent contents for them.`
+              : "",
             assets.length
               ? `Generated image assets already exist in the project and MUST be referenced with relative paths: ${assets.map((asset) => `${asset.path} (${asset.width}x${asset.height})`).join(", ")}.`
               : "Do not reference local binary images that do not exist. Use inline SVG or CSS art.",
             "Static hosting only: plain HTML, CSS and JavaScript. No bundler, no npm install, no server code.",
           ].join("\n"),
         },
-        { role: "user", content: input.prompt || "Build the project described above." },
+        {
+          role: "user",
+          content: [
+            input.prompt || "Build the project described above.",
+            ...(input.attachments ?? []).slice(0, 3).map((item) => `\n\n--- attached ${item.path} ---\n${item.content.slice(0, 3_000)}`),
+          ].join(""),
+        },
       ];
       let raw = "";
       try {

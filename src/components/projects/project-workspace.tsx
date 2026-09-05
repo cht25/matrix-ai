@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import type { AgentFile } from "@/lib/ai/agent";
 import { rpc, RpcCallError } from "@/lib/client/api";
-import { streamBuildRun } from "@/lib/client/build-runner";
+import { pollBuildRun, streamBuildRun } from "@/lib/client/build-runner";
 import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
 import { looksLikeFrameworkProject, type ProjectFile } from "@/lib/projects/paths";
 import type { ProjectDeploymentOverview } from "@/lib/deploy/provider";
@@ -335,6 +335,11 @@ export function ProjectWorkspace({
         { signal: controller.signal, onRun: (next) => setRun(next) },
       );
       setRun(result.run);
+      // A disconnected stream must not leave "Publishing…" on screen: keep
+      // reading the stored run until the server reports a terminal state.
+      if (result.run && (result.run.status === "running" || result.run.status === "requested")) {
+        void pollBuildRun(result.run.id, { onRun: (next) => setRun(next) }).finally(() => void load(project.id));
+      }
       await load(project.id);
       if (result.run?.deployment?.status === "live" && result.run.deployment.url) {
         setPopup({ url: result.run.deployment.url, files: result.run.fileCount });

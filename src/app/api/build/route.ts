@@ -11,7 +11,7 @@
 // =============================================================================
 
 import { NextRequest, NextResponse } from "next/server";
-import { adminAuth, adminDb } from "@/lib/firebase/admin";
+import { adminAuth, adminDb, nowTs } from "@/lib/firebase/admin";
 import { verifySession, type SessionUser } from "@/lib/firebase/session";
 import { FirestoreDeploymentProvider } from "@/lib/deploy/firestore-provider";
 import { runBuildPipeline, latestBuildRunForProject, readBuildRun, type ImageAssetRequest } from "@/lib/server/build";
@@ -89,6 +89,21 @@ function parseActions(body: Record<string, unknown>, prompt: string): BuildActio
   };
 }
 
+/** Attached text/code files, bounded and shape-checked (never trusted). */
+function parseAttachments(body: Record<string, unknown>): Array<{ path: string; content: string }> {
+  const raw = Array.isArray(body.attachments) ? body.attachments : [];
+  const out: Array<{ path: string; content: string }> = [];
+  for (const entry of raw.slice(0, 8)) {
+    if (!entry || typeof entry !== "object") continue;
+    const item = entry as Record<string, unknown>;
+    const path = typeof item.name === "string" ? item.name.trim().slice(0, 200) : "";
+    const content = typeof item.content === "string" ? item.content.slice(0, 100_000) : "";
+    if (!path || !content) continue;
+    out.push({ path, content });
+  }
+  return out;
+}
+
 function parseImageRequests(body: Record<string, unknown>): ImageAssetRequest[] {
   const raw = Array.isArray(body.image_requests) ? body.image_requests : [];
   return raw
@@ -135,6 +150,43 @@ export async function POST(req: NextRequest) {
   const d = adminDb();
   const runId = crypto.randomUUID().replace(/-/g, "").slice(0, 24);
   const wantsStream = (req.headers.get("accept") ?? "").includes("text/event-stream");
+  const isTemporary = body.is_temporary === true;
+
+  // A build run belongs to a conversation exactly like a chat turn: reuse the
+  // caller's thread (only if it is theirs) or open one, and store the request
+  // so a reload shows the same history. Temporary chats stay in memory.
+  let convId = conversationId;
+  if (!isTemporary && prompt) {
+    try {
+      if (convId) {
+        const existing = await d.collection("conversations").doc(convId).get();
+        if (!existing.exists || (existing.data() as { user_id?: string } | undefined)?.user_id !== user.uid) convId = null;
+      }
+      if (!convId) {
+        const created = await d.collection("conversations").add({
+          user_id: user.uid,
+          title: prompt.replace(/\s+/g, " ").slice(0, 60),
+          mode: "agent",
+          is_temporary: false,
+          summary: "",
+          archived_at: null,
+          deleted_at: null,
+          created_at: nowTs(),
+          updated_at: nowTs(),
+        });
+        convId = created.id;
+      }
+      await d
+        .collection("conversations")
+        .doc(convId)
+        .collection("messages")
+        .add({ role: "user", content: prompt.slice(0, 12_000), metadata: { mode: "agent", intent: "BUILD" }, created_at: nowTs() });
+    } catch (error) {
+      // Storage trouble must not stop a build; the run document is the source
+      // of truth and the chat still shows the turn in memory.
+      logGatewayFailure("build_conversation", { requestId, userId: user.uid }, error);
+    }
+  }
 
   if (!wantsStream) {
     // Fire-and-check: the caller polls GET /api/build?run_id=… for real state.
@@ -144,7 +196,7 @@ export async function POST(req: NextRequest) {
       provider: providerFor(d, user),
       runId,
       projectId,
-      conversationId,
+      conversationId: convId,
       requestId,
       prompt,
       actions,
@@ -152,10 +204,11 @@ export async function POST(req: NextRequest) {
       slug: typeof body.slug === "string" ? body.slug : null,
       allowOverride: body.allow_override === true,
       imageRequests: parseImageRequests(body),
-      isTemporary: body.is_temporary === true,
+      attachments: parseAttachments(body),
+      isTemporary,
       maxFixAttempts: typeof body.max_fix_attempts === "number" ? Math.max(0, Math.min(5, body.max_fix_attempts)) : undefined,
     }).catch((error) => logGatewayFailure("build_run", { requestId, runId }, error));
-    return json({ run_id: runId, status: "queued" }, 202);
+    return json({ run_id: runId, conversation_id: convId, status: "queued" }, 202);
   }
 
   const stream = new ReadableStream<Uint8Array>({
@@ -171,7 +224,7 @@ export async function POST(req: NextRequest) {
           closed = true;
         }
       };
-      send({ type: "accepted", run_id: runId, request_id: requestId });
+      send({ type: "accepted", run_id: runId, request_id: requestId, conversation_id: convId });
       try {
         const result = await runBuildPipeline({
           d,
@@ -179,17 +232,31 @@ export async function POST(req: NextRequest) {
           provider: providerFor(d, user),
           runId,
           projectId,
-          conversationId,
+          conversationId: convId,
           requestId,
           prompt,
           actions,
+          environment,
           slug: typeof body.slug === "string" ? body.slug : null,
           allowOverride: body.allow_override === true,
           imageRequests: parseImageRequests(body),
+          attachments: parseAttachments(body),
+          isTemporary,
           maxFixAttempts: typeof body.max_fix_attempts === "number" ? Math.max(0, Math.min(5, body.max_fix_attempts)) : undefined,
           onEvent: ({ run, stage, copy }) => send({ type: "run", stage, run, copy }),
         });
-        send({ type: "done", run: result.run, copy: undefined });
+        // The final frame carries the summary sentence and the real
+        // deployment, so the chat can commit its turn without a second read.
+        send({
+          type: "done",
+          run: result.run,
+          reply: result.reply,
+          project_id: result.projectId,
+          conversation_id: convId,
+          deployment: result.run.deployment
+            ? { id: result.run.deployment.id, status: result.run.deployment.status, url: result.run.deployment.url }
+            : null,
+        });
       } catch (error) {
         const code = error instanceof RpcError ? error.code : "BUILD_RUN_FAILED";
         send({ type: "error", code, message: error instanceof Error ? error.message.slice(0, 240) : "The build stopped." });
