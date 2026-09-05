@@ -52,6 +52,13 @@ export async function middleware(request: NextRequest) {
     return bounce(request, "/chat");
   }
 
+  // Dev-only UI preview route (returns 404 in production builds).
+  if (process.env.NODE_ENV !== "production" && pathname.startsWith("/dev-preview")) {
+    const passthrough = NextResponse.next();
+    passthrough.headers.set("x-matrix-pathname", pathname);
+    return passthrough;
+  }
+
   if (!valid && !isPublic(pathname)) {
     return bounce(request, "/login", { next: pathname });
   }

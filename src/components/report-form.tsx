@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { rpc, RpcCallError } from "@/lib/client/api";
+import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
 import { Alert, Button, Field, Input, Select, Textarea } from "@/components/ui";
 
 export function ReportForm({ categories, countries }: { categories: { id: string; name: string }[]; countries: { id: string; name: string }[] }) {
@@ -37,7 +38,7 @@ export function ReportForm({ categories, countries }: { categories: { id: string
       });
     } catch (err) {
       setBusy(false);
-      return setError(err instanceof RpcCallError ? err.code : "Report failed. Please try again.");
+      return setError(friendly(err, "Report failed. Please try again."));
     }
     setBusy(false);
     setDone(true);
@@ -99,4 +100,11 @@ export function ReportForm({ categories, countries }: { categories: { id: string
       <Button type="submit" disabled={busy} className="w-full">{busy ? "Submitting…" : "Submit private report"}</Button>
     </form>
   );
+}
+
+/** Internal code -> human sentence. The raw code stays in the console only. */
+function friendly(err: unknown, fallback: string): string {
+  const view = mapAdminError(errorCodeOf(err, fallback));
+  console.error("[MATRIX]", view.code, err);
+  return `${view.title} — ${view.detail}`;
 }

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { detectEditorIssues } from "@/lib/projects/preview";
 import { rpc, RpcCallError } from "@/lib/client/api";
+import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
 import { languageForPath } from "@/lib/ai/agent";
 
 export function FileEditor({
@@ -38,7 +39,7 @@ export function FileEditor({
       });
       setPub(r.public_url);
     } catch (err) {
-      setPub(err instanceof RpcCallError ? err.code : "Publish failed");
+      setPub(friendly(err, "Publish failed"));
     }
   }
 
@@ -81,4 +82,11 @@ export function FileEditor({
       ) : null}
     </div>
   );
+}
+
+/** Internal code -> human sentence. The raw code stays in the console only. */
+function friendly(err: unknown, fallback: string): string {
+  const view = mapAdminError(errorCodeOf(err, fallback));
+  console.error("[MATRIX]", view.code, err);
+  return `${view.title} — ${view.detail}`;
 }

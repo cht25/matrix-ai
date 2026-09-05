@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { rpc, RpcCallError } from "@/lib/client/api";
+import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
 import { Alert, Button, Field, Input, Spinner } from "@/components/ui";
 
 export function AdminSetupForm({ seedOnly = false }: { seedOnly?: boolean }) {
@@ -28,14 +29,14 @@ export function AdminSetupForm({ seedOnly = false }: { seedOnly?: boolean }) {
         router.refresh();
       }
     } catch (err) {
-      const code = err instanceof RpcCallError ? err.code : "BOOTSTRAP_FAILED";
+      const code = errorCodeOf(err, "BOOTSTRAP_FAILED");
       const map: Record<string, string> = {
         BOOTSTRAP_NOT_CONFIGURED: "ADMIN_BOOTSTRAP_KEY is not set on the server.",
         INVALID_BOOTSTRAP_KEY: "That bootstrap key is not correct.",
         BOOTSTRAP_CLOSED: "An administrator already exists.",
         PERMISSION_DENIED: "Only a super_admin can seed the permission matrix.",
       };
-      setMsg(map[code] ?? code);
+      setMsg(map[code] ?? friendly(err, code));
     } finally {
       setBusy(false);
     }
@@ -60,4 +61,11 @@ export function AdminSetupForm({ seedOnly = false }: { seedOnly?: boolean }) {
       <Button type="submit" disabled={busy}>{busy ? <Spinner /> : "Become super_admin"}</Button>
     </form>
   );
+}
+
+/** Internal code -> human sentence. The raw code stays in the console only. */
+function friendly(err: unknown, fallback: string): string {
+  const view = mapAdminError(errorCodeOf(err, fallback));
+  console.error("[MATRIX]", view.code, err);
+  return `${view.title} — ${view.detail}`;
 }

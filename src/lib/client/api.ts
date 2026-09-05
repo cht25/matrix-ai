@@ -23,8 +23,20 @@ export async function rpc<T = unknown>(action: string, args: Record<string, unkn
     body: JSON.stringify({ action, ...args }),
     credentials: "same-origin",
   });
-  const data = (await res.json().catch(() => ({}))) as { data?: T; error?: string };
-  if (!res.ok) throw new RpcCallError(data.error ?? `HTTP_${res.status}`, res.status);
+  // Standard envelope: { success, data } / { success:false, error:{ code, message } }.
+  // The legacy top-level string `error` is still tolerated.
+  const data = (await res.json().catch(() => ({}))) as {
+    success?: boolean;
+    data?: T;
+    error?: string | { code?: string; message?: string };
+  };
+  if (!res.ok || data.success === false) {
+    const code =
+      typeof data.error === "string"
+        ? data.error
+        : data.error?.code ?? `HTTP_${res.status}`;
+    throw new RpcCallError(code, res.status);
+  }
   return data.data as T;
 }
 

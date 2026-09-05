@@ -5,6 +5,7 @@
 
 import { useState } from "react";
 import { rpc, RpcCallError } from "@/lib/client/api";
+import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
 
 type Block =
   | { type: "p"; text: string }
@@ -108,7 +109,7 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
       setPub("done");
     } catch (err) {
       setPub("err");
-      setUrl(err instanceof RpcCallError ? err.code : "Publish failed");
+      setUrl(friendly(err, "Publish failed"));
     }
   }
 
@@ -165,4 +166,11 @@ export function Markdown({ text }: { text: string }) {
       })}
     </div>
   );
+}
+
+/** Internal code -> human sentence. The raw code stays in the console only. */
+function friendly(err: unknown, fallback: string): string {
+  const view = mapAdminError(errorCodeOf(err, fallback));
+  console.error("[MATRIX]", view.code, err);
+  return `${view.title} — ${view.detail}`;
 }

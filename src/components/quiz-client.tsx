@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { rpc, RpcCallError } from "@/lib/client/api";
+import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
 import { Alert, Badge, Button, Card } from "@/components/ui";
 
 type Question = { id: string; question: string; explanation: string };
@@ -50,7 +51,7 @@ export function QuizClient({
       setResult(data);
     } catch (err) {
       const code = err instanceof RpcCallError ? err.code : "SUBMIT_FAILED";
-      setError(code === "ATTEMPT_LIMIT_REACHED" ? "You've used all attempts for this quiz." : code);
+      setError(code === "ATTEMPT_LIMIT_REACHED" ? "You've used all attempts for this quiz." : friendly(err, code));
     } finally {
       setBusy(false);
     }
@@ -139,4 +140,11 @@ export function QuizClient({
       </Button>
     </Card>
   );
+}
+
+/** Internal code -> human sentence. The raw code stays in the console only. */
+function friendly(err: unknown, fallback: string): string {
+  const view = mapAdminError(errorCodeOf(err, fallback));
+  console.error("[MATRIX]", view.code, err);
+  return `${view.title} — ${view.detail}`;
 }

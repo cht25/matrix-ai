@@ -631,3 +631,26 @@ h1 { font-weight: 600; }
   --sidebar: #dcfce7; --ink: #102016; --ink-2: #166534; --ink-3: #5b7a64;
   --accent: #15803d; --accent-hover: #166534; --accent-2: #166534; --accent-soft: rgba(21, 128, 61, 0.1);
 }
+
+/* --- Admin / control-centre micro-interactions ---------------------------- */
+@keyframes modal-pop {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.modal-pop { animation: modal-pop 0.16s cubic-bezier(0.2, 0.8, 0.3, 1); }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.45; transform: scale(0.82); }
+}
+.pulse-dot { animation: pulse-dot 2.2s ease-in-out infinite; }
+
+@keyframes row-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+.row-in { animation: row-in 0.2s ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-pop, .pulse-dot, .row-in, .fade-in { animation: none !important; }
+}

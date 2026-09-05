@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import type { AgentFile } from "@/lib/ai/agent";
 import { rpc, RpcCallError } from "@/lib/client/api";
+import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
 import { buildPreviewHtml } from "@/lib/projects/preview";
 import { looksLikeFrameworkProject, type ProjectFile } from "@/lib/projects/paths";
 import { GithubConnection } from "@/components/github-connection";
@@ -93,7 +94,7 @@ export function ProjectWorkspace({
         }
         await load(id);
       } catch (err) {
-        if (!cancelled) setMsg(err instanceof RpcCallError ? err.code : "Could not open project.");
+        if (!cancelled) setMsg(friendly(err, "Could not open project."));
       }
     })();
     return () => { cancelled = true; };
@@ -129,7 +130,7 @@ export function ProjectWorkspace({
       await load(project.id);
       setActivePath(path);
     } catch (err) {
-      setMsg(err instanceof RpcCallError ? err.code : "Could not create file.");
+      setMsg(friendly(err, "Could not create file."));
     } finally {
       setBusy(false);
     }
@@ -143,7 +144,7 @@ export function ProjectWorkspace({
       await rpc("project_file_delete", { project_id: project.id, path: active.path });
       await load(project.id);
     } catch (err) {
-      setMsg(err instanceof RpcCallError ? err.code : "Could not delete file.");
+      setMsg(friendly(err, "Could not delete file."));
     } finally {
       setBusy(false);
     }
@@ -200,7 +201,7 @@ export function ProjectWorkspace({
       setMsg(`PUBLISHED:${result.public_url}`);
     } catch (err) {
       const code = err instanceof RpcCallError ? err.code : "Publish failed.";
-      setMsg(PUBLISH_ERRORS[code] ?? `Publish failed (${code}). Check the model created a complete index.html and try again.`);
+      setMsg(PUBLISH_ERRORS[code] ?? "Publish failed. Check that the project has a complete index.html and try again.");
     } finally {
       setPublishing(false);
       setBusy(false);
@@ -260,7 +261,7 @@ export function ProjectWorkspace({
       const result = await rpc<{ instructions: string; status: string }>("project_add_domain", { project_id: project.id, domain });
       setMsg(`${result.status}: ${result.instructions}`);
     } catch (err) {
-      setMsg(err instanceof RpcCallError ? err.code : "Domain could not be saved.");
+      setMsg(friendly(err, "Domain could not be saved."));
     } finally {
       setBusy(false);
     }
@@ -439,4 +440,11 @@ export function ProjectWorkspace({
       </div>
     </div>
   );
+}
+
+/** Internal code -> human sentence. The raw code stays in the console only. */
+function friendly(err: unknown, fallback: string): string {
+  const view = mapAdminError(errorCodeOf(err, fallback));
+  console.error("[MATRIX]", view.code, err);
+  return `${view.title} — ${view.detail}`;
 }

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { rpc, RpcCallError } from "@/lib/client/api";
+import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
 import { Alert, Badge, Button, Card, Spinner } from "@/components/ui";
 import { CourseEditor } from "@/components/admin/course-editor";
 
@@ -19,7 +20,7 @@ export function CoursesAdmin({ codes, courses }: { codes: string[]; courses: Cou
       await rpc("log_audit", { action: "course_status_changed", target_type: "courses", target_id: c.id, reason: `→ ${next}` }).catch(() => {});
       setMsg(`"${c.title}" is now ${next}. Audit logged.`);
     } catch (err) {
-      setMsg(err instanceof RpcCallError ? err.code : "UPDATE_FAILED");
+      setMsg(friendly(err, "UPDATE_FAILED"));
     }
     setBusy(null);
     window.location.reload();
@@ -53,4 +54,11 @@ export function CoursesAdmin({ codes, courses }: { codes: string[]; courses: Cou
     </Card>
     </div>
   );
+}
+
+/** Internal code -> human sentence. The raw code stays in the console only. */
+function friendly(err: unknown, fallback: string): string {
+  const view = mapAdminError(errorCodeOf(err, fallback));
+  console.error("[MATRIX admin]", view.code, err);
+  return `${view.title} — ${view.detail}`;
 }

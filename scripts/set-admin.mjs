@@ -47,10 +47,20 @@ if (roleArg === "none") {
   process.exit(0);
 }
 
+// Canonical role list — kept in sync with src/lib/roles.ts (single source of
+// truth). We validate against the catalog, NOT against whatever documents
+// happen to exist in Firestore, so a partially seeded database cannot make a
+// legitimate role look invalid.
+const CANONICAL_ROLES = ["super_admin", "security_admin", "content_admin", "support_admin", "auditor"];
+if (!CANONICAL_ROLES.includes(roleArg)) {
+  console.error(`Unknown role "${roleArg}". Valid roles: ${CANONICAL_ROLES.join(", ")}, none.`);
+  process.exit(1);
+}
+// Self-heal a missing role document rather than refusing the assignment.
 const roleDoc = await db.collection("admin_roles").doc(roleArg).get();
 if (!roleDoc.exists) {
-  console.error(`Unknown role "${roleArg}". Run scripts/seed.mjs first (roles: super_admin, security_admin, content_admin, support_admin, auditor).`);
-  process.exit(1);
+  console.warn(`admin_roles/${roleArg} was missing — creating it. Run \`npm run seed\` to seed descriptions and permission links.`);
+  await db.collection("admin_roles").doc(roleArg).set({ name: roleArg, created_at: new Date() }, { merge: true });
 }
 
 await db.collection("admin_role_assignments").doc(user.uid).set({

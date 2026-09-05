@@ -2,7 +2,7 @@
   "name": "matrix-ai",
   "version": "1.0.0",
   "private": true,
-  "description": "MATRIX AI — AI Cyber Safety & Cybersecurity Education Platform for ages 11–17. Operated by THAMJJ13.TOP White Hat Team. Built on Firebase (Auth, Firestore, Storage) + Next.js.",
+  "description": "MATRIX AI \u2014 AI Cyber Safety & Cybersecurity Education Platform for ages 11\u201317. Operated by THAMJJ13.TOP White Hat Team. Built on Firebase (Auth, Firestore, Storage) + Next.js.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -14,7 +14,9 @@
     "seed:dry-run": "node scripts/seed.mjs --dry-run",
     "set-admin": "node scripts/set-admin.mjs",
     "emulators": "firebase emulators:start --only auth,firestore,storage",
-    "deploy": "firebase deploy --only firestore:rules,firestore:indexes,storage"
+    "deploy": "firebase deploy --only firestore:rules,firestore:indexes,storage",
+    "migrate:roles": "node scripts/migrate-roles.mjs",
+    "migrate:roles:dry-run": "node scripts/migrate-roles.mjs --dry-run"
   },
   "dependencies": {
     "@fontsource/cormorant-garamond": "^5.3.0",

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { rpc, RpcCallError } from "@/lib/client/api";
-import { Alert, Badge, Button, Card, Input, Select, Spinner, Textarea } from "@/components/ui";
+import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
+import { Alert, Badge, Button, Card, Input, Select, Spinner, TableSkeleton, Textarea } from "@/components/ui";
 import { formatDate } from "@/lib/utils";
 
 type Article = {
@@ -41,7 +42,7 @@ export function ContentTab({ codes }: { codes: string[] }) {
       await rpc("log_audit", { action: "scam_article_status_changed", target_type: "scam_articles", target_id: article.id, reason: `→ ${next}` }).catch(() => {});
       setMsg(`"${article.title}" is now ${next}. Audit logged.`);
     } catch (err) {
-      setMsg(err instanceof RpcCallError ? err.code : "UPDATE_FAILED");
+      setMsg(friendly(err, "UPDATE_FAILED"));
     }
     void load();
   }
@@ -49,7 +50,7 @@ export function ContentTab({ codes }: { codes: string[] }) {
   if (!canManage) {
     return <Card><p className="text-sm text-ink-3">You need the <strong>content.manage</strong> permission (content_admin / super_admin).</p></Card>;
   }
-  if (!articles) return <Card className="flex items-center gap-2 text-ink-3"><Spinner /> Loading…</Card>;
+  if (!articles) return <Card><TableSkeleton rows={4} cols={3} label="Loading…" /></Card>;
 
   const visible = articles.filter((a) => filter === "all" || a.status === filter);
 
@@ -137,7 +138,7 @@ export function GrantsTab({ codes }: { codes: string[] }) {
         duration_hours: parseInt(duration, 10),
       });
     } catch (err) {
-      setMsg(err instanceof RpcCallError ? err.code : "REQUEST_FAILED");
+      setMsg(friendly(err, "REQUEST_FAILED"));
       return;
     }
     setMsg(`Grant created (${grantId}). Listing the user's conversations…`);
@@ -157,7 +158,7 @@ export function GrantsTab({ codes }: { codes: string[] }) {
       const data = await rpc<{ role: string; content: string }[]>("admin_view_conversation", { grant_id: grantId, conversation_id: conversationId });
       setConversationView(data ?? []);
     } catch (err) {
-      setMsg(err instanceof RpcCallError ? err.code : "VIEW_FAILED");
+      setMsg(friendly(err, "VIEW_FAILED"));
     }
   }
 
@@ -239,4 +240,11 @@ export function GrantsTab({ codes }: { codes: string[] }) {
       ) : null}
     </div>
   );
+}
+
+/** Internal code -> human sentence. The raw code stays in the console only. */
+function friendly(err: unknown, fallback: string): string {
+  const view = mapAdminError(errorCodeOf(err, fallback));
+  console.error("[MATRIX admin]", view.code, err);
+  return `${view.title} — ${view.detail}`;
 }

@@ -869,34 +869,52 @@ export function ChatClient({
       style={keyboardInset ? { paddingBottom: keyboardInset } : undefined}
     >
       {!isTemporary ? (
-        <div className="mb-2 flex min-h-12 shrink-0 items-center justify-between gap-3 border-b border-border py-1.5">
-          <div className="flex min-w-0 flex-wrap items-center gap-2" aria-label="Conversation mode">
+        <div className="mb-2 flex min-h-12 shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border py-1.5">
+          {/* Primary controls: what the conversation IS. Provider/model detail
+              stays visually secondary; Demo mode is a session toggle, not a
+              model control, so it lives in the overflow menu. */}
+          <div className="flex min-w-0 items-center gap-2" aria-label="Conversation mode">
             <label className="sr-only" htmlFor="matrix-mode">Matrix mode</label>
             <select
               id="matrix-mode"
               value={mode}
               disabled={streaming}
               onChange={(e) => switchMode(e.target.value as ChatMode)}
-              className="input-base !w-auto !rounded-[10px] !py-1.5 text-xs"
+              className="input-base !w-auto !min-h-9 !rounded-[10px] !py-1.5 text-xs font-medium"
             >
               {MATRIX_MODES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
             </select>
+            <span aria-hidden className="hidden h-4 w-px bg-border sm:block" />
             <label className="sr-only" htmlFor="matrix-lane">Model</label>
-            <select id="matrix-lane" value={lane} disabled={streaming} onChange={(e) => setLane(e.target.value as ModelLane)} className="input-base !w-auto !rounded-[10px] !py-1.5 text-xs">
+            <select id="matrix-lane" value={lane} disabled={streaming} onChange={(e) => setLane(e.target.value as ModelLane)} className="input-base !w-auto !min-h-9 !rounded-[10px] !py-1.5 text-xs text-ink-2">
               {MODEL_LANES.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
             </select>
-            <select value={strategy} disabled={streaming} onChange={(e) => setStrategy(e.target.value as ResponseStrategy)} className="hidden input-base !w-auto !rounded-[10px] !py-1.5 text-xs sm:block" aria-label="Response strategy">
+            <select value={strategy} disabled={streaming} onChange={(e) => setStrategy(e.target.value as ResponseStrategy)} className="hidden input-base !w-auto !min-h-9 !rounded-[10px] !py-1.5 text-xs text-ink-2 sm:block" aria-label="Response strategy">
               <option value="fast">Fast</option>
               <option value="balanced">Balanced</option>
               <option value="quality">Quality</option>
               <option value="efficient">Efficient</option>
             </select>
-            <button type="button" onClick={() => setDemoMode((v) => !v)} className={cn("export-btn", demoMode && "!border-accent")} aria-pressed={demoMode}>Demo</button>
           </div>
+
           <div className="flex min-w-0 items-center gap-1 sm:gap-2">
-            <span title="Requests use the AI provider and model configured on the server (Admin → AI usage)." className="hidden max-w-52 truncate text-[11px] font-medium text-ink-3 lg:block">
-              {lastProvider || lastModel ? [lastProvider, lastModel].filter(Boolean).join(" · ") : "Automatic model routing"}
+            <span
+              role="status"
+              aria-live="polite"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-2 px-2 py-1 text-[11px] font-medium text-ink-2"
+            >
+              <span aria-hidden className={cn("h-1.5 w-1.5 rounded-full", streaming ? "bg-accent pulse-dot" : "bg-success")} />
+              {streaming ? "Responding" : "Ready"}
             </span>
+            <span
+              title="Requests use the AI provider and model configured on the server (Admin → AI configuration)."
+              className="hidden max-w-48 truncate font-mono text-[10px] text-ink-3 xl:block"
+            >
+              {lastProvider || lastModel ? [lastProvider, lastModel].filter(Boolean).join(" · ") : "auto routing"}
+            </span>
+            {demoMode ? (
+              <span className="rounded-lg border border-accent/40 bg-accent-soft px-2 py-1 text-[11px] font-medium text-accent">Demo mode</span>
+            ) : null}
             {mode === "agent" ? (
               <button
                 type="button"
@@ -908,6 +926,18 @@ export function ChatClient({
             ) : (
               <AutoSpeakToggle on={autoSpeak} onToggle={toggleAutoSpeak} onLabel={t("chat.autoSpeakOn")} offLabel={t("chat.autoSpeakOff")} />
             )}
+            <button
+              type="button"
+              onClick={() => setDemoMode((v) => !v)}
+              aria-pressed={demoMode}
+              title="Demo mode replays a scripted answer instead of calling the AI provider."
+              className={cn(
+                "inline-flex min-h-9 items-center rounded-[10px] border px-2.5 text-xs font-medium transition-colors",
+                demoMode ? "border-accent/40 bg-accent-soft text-accent" : "border-border text-ink-3 hover:border-border-strong hover:text-ink",
+              )}
+            >
+              Demo
+            </button>
             <div className="hidden lg:block">
               <NotificationsBell placement="down" />
             </div>

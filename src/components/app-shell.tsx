@@ -8,7 +8,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   ChevronDown, Code2, FileSearch, GraduationCap, History, LayoutGrid, Menu,
-  MessageSquare, MoreVertical, Plus, Search, Shield, ShieldAlert, User, X,
+  MessageSquare, MoreVertical, Plus, Search, Shield, ShieldAlert, Sliders, User, X,
 } from "lucide-react";
 import { rpc } from "@/lib/client/api";
 import { Logo } from "@/components/logo";
@@ -239,14 +239,16 @@ function SidebarBody({
   return (
     <div className="flex h-full min-h-0 flex-col">
       {hideBrand ? null : (
-        <div className="flex shrink-0 items-center justify-between gap-2 px-3 pb-3 pt-4">
-          {collapsed ? <Logo size="sm" href="/chat" /> : <div className="sidebar-brand min-w-0"><Logo size="md" href="/chat" /></div>}
-          {collapsed ? null : <AiStatus />}
-          {onToggleCollapsed ? (
-            <button type="button" onClick={onToggleCollapsed} className="grid h-9 w-9 place-items-center rounded-lg text-ink-3 hover:bg-surface-2" aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
-              <Menu size={14} />
-            </button>
-          ) : null}
+        <div className="shrink-0 px-3 pb-3 pt-4">
+          <div className="flex items-center justify-between gap-2">
+            {collapsed ? <Logo size="sm" href="/chat" /> : <div className="sidebar-brand min-w-0"><Logo size="md" href="/chat" /></div>}
+            {onToggleCollapsed ? (
+              <button type="button" onClick={onToggleCollapsed} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink" aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
+                <Menu size={14} />
+              </button>
+            ) : null}
+          </div>
+          {collapsed ? null : <div className="mt-2"><AiStatus /></div>}
         </div>
       )}
 
@@ -296,9 +298,26 @@ function SidebarBody({
           </nav>
         </details>
 
-        {isAdmin ? (
-          <Link href="/admin" onClick={onNavigate} className="mt-3 flex min-h-10 items-center gap-2.5 rounded-[10px] border border-border px-2 text-[13px] text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"><LayoutGrid size={16} /> {t("nav.admin")}</Link>
-        ) : null}
+        <nav className="mt-4 space-y-0.5 border-t border-border pt-3" aria-label="Workspace management">
+          {isAdmin ? (
+            <Link
+              href="/admin"
+              onClick={onNavigate}
+              aria-current={pathname.startsWith("/admin") ? "page" : undefined}
+              className={cn("nav-item", pathname.startsWith("/admin") && "is-active")}
+            >
+              <Sliders size={16} strokeWidth={1.7} /> {t("nav.admin")}
+            </Link>
+          ) : null}
+          <Link
+            href="/settings"
+            onClick={onNavigate}
+            aria-current={pathname.startsWith("/settings") ? "page" : undefined}
+            className={cn("nav-item", pathname.startsWith("/settings") && "is-active")}
+          >
+            <User size={16} strokeWidth={1.7} /> {t("nav.settings")}
+          </Link>
+        </nav>
       </div>
       {footer}
     </div>

@@ -143,3 +143,47 @@ export function Menu({ trigger, items }: { trigger: ReactNode; items: { label: s
     </details>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Skeleton — never show a blank page while data loads.
+// ---------------------------------------------------------------------------
+export function Skeleton({ className }: { className?: string }) {
+  return <div aria-hidden className={cn("animate-pulse rounded-lg bg-surface-2", className)} />;
+}
+
+export function TableSkeleton({ rows = 5, cols = 5, label = "Loading…" }: { rows?: number; cols?: number; label?: string }) {
+  return (
+    <div role="status" aria-live="polite" aria-busy="true" className="space-y-2">
+      <span className="sr-only">{label}</span>
+      <div className="flex items-center gap-2 text-xs font-medium text-ink-3">
+        <Spinner className="h-3.5 w-3.5" /> {label}
+      </div>
+      {Array.from({ length: rows }).map((_, r) => (
+        <div key={r} className="grid gap-3 rounded-xl border border-border bg-surface p-3" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))` }}>
+          {Array.from({ length: cols }).map((__, c) => (
+            <Skeleton key={c} className={cn("h-4", c === 0 && "w-4/5", c > 0 && "w-3/5")} />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ErrorState — human-readable failure surface. Internal codes stay in a small
+// monospace reference line, never as the headline.
+// ---------------------------------------------------------------------------
+export function ErrorState({
+  title, detail, code, onRetry, retryLabel = "Try again",
+}: { title: string; detail: string; code?: string; onRetry?: () => void; retryLabel?: string }) {
+  return (
+    <div role="alert" className="fade-in space-y-3 rounded-2xl border border-danger/40 bg-danger-soft p-5">
+      <p className="text-[15px] font-semibold text-danger">{title}</p>
+      <p className="text-sm leading-relaxed text-ink-2">{detail}</p>
+      <div className="flex flex-wrap items-center gap-3">
+        {onRetry ? <Button variant="outline" className="!min-h-9 !py-1.5 text-xs" onClick={onRetry}>{retryLabel}</Button> : null}
+        {code ? <code className="font-mono text-[11px] text-ink-3">ref: {code}</code> : null}
+      </div>
+    </div>
+  );
+}

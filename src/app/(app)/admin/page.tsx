@@ -3,10 +3,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { db, getCurrentUser } from "@/lib/data";
 import { getAdminPermissions } from "@/lib/server/queries";
-import { isAdmin } from "@/lib/server/rpc";
-import { AdminNav } from "@/components/admin/admin-nav";
+import { adminRoleOf, isAdmin } from "@/lib/server/rpc";
+import { AdminShell } from "@/components/admin/admin-shell";
 import { OverviewTab } from "@/components/admin/overview-tab";
-import { Card } from "@/components/ui";
+import { Card, EmptyState } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Admin" };
 
@@ -26,59 +26,44 @@ export default async function AdminPage() {
   if (noAdminYet) redirect("/admin/setup");
 
   const codes = await getAdminPermissions(db(), user.uid);
+  const role = await adminRoleOf(db(), user.uid).catch(() => null);
 
-  // The account has an admin role but no permissions attached to that role.
-  // Show an explanation rather than redirecting away — a silent redirect makes
-  // the panel look broken.
   if (codes.length === 0) {
     const admin = await isAdmin(db(), user.uid).catch(() => false);
     return (
-      <Card className="space-y-3">
-        <h1 className="font-display text-xl font-semibold text-ink">
-          {admin ? "No admin permissions assigned" : "Admin access required"}
-        </h1>
-        <p className="text-sm leading-relaxed text-ink-2">
-          {admin ? (
-            <>
-              Your account has an admin role, but that role currently has no permissions attached.
-              Ask a <code className="rounded bg-surface-2 px-1">super_admin</code> to grant
-              permissions, or run{" "}
-              <code className="rounded bg-surface-2 px-1">npm run set-admin</code> to reset the role.
-            </>
-          ) : (
-            <>
-              This account does not have an admin role in Firestore. Roles apply as soon as{" "}
-              <code className="rounded bg-surface-2 px-1">admin_role_assignments</code> exists (via{" "}
-              <code className="rounded bg-surface-2 px-1">npm run set-admin</code> or{" "}
-              <code className="rounded bg-surface-2 px-1">/admin/setup</code>).
-            </>
-          )}
-        </p>
-        <Link
-          href="/chat"
-          className="inline-flex min-h-10 items-center text-sm font-medium text-accent hover:underline"
-        >
-          Back to chat
-        </Link>
+      <Card>
+        <EmptyState
+          title={admin ? "No permissions attached to your role" : "Admin access required"}
+          body={
+            admin
+              ? "Your account has an admin role, but that role currently grants no permissions. Ask a super administrator to review it."
+              : "This account does not have an administrative role. Ask a super administrator for access."
+          }
+          action={
+            <Link href="/chat" className="inline-flex min-h-10 items-center text-sm font-medium text-accent hover:underline">
+              Back to chat
+            </Link>
+          }
+        />
       </Card>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Admin Panel</h1>
-        <p className="mt-1 text-ink-2">
-          Role-based access control — every section is gated by <code className="rounded bg-surface-2 px-1">has_permission()</code> in the
-          database, and every sensitive action is audited.
-        </p>
-      </div>
-      <AdminNav />
+    <AdminShell
+      title="Admin control centre"
+      subtitle="Manage users, permissions, security and AI infrastructure."
+      role={role}
+      codes={codes}
+    >
       <OverviewTab codes={codes} />
-      <Card className="!p-4 text-xs text-ink-3">
-        Admin privacy policy: conversations are never shown by default. Any privileged access requires a
-        reason, an explicit time-limited grant, and an audit entry.
+      <Card className="!p-4">
+        <p className="text-xs leading-relaxed text-ink-3">
+          Admin privacy policy: conversations are never shown by default. Any privileged access requires a
+          reason, an explicit time-limited grant, and an audit entry. Every section is gated server-side by
+          the caller&apos;s real permission codes — hiding UI is never the security boundary.
+        </p>
       </Card>
-    </div>
+    </AdminShell>
   );
 }
