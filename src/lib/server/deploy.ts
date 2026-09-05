@@ -1,12 +1,36 @@
+// =============================================================================
+// MATRIX hosting facade (§4, §5, §7, §8, §17, §18, §21)
+//
+// This module is the server-side entry point the RPC layer calls. It keeps the
+// long-standing function names (`publishProject`, `getDeployment`, …) and now
+// delegates every state change to a `DeploymentProvider`, so the hosting
+// backend can be swapped without touching the Agent UI (§33).
+//
+// Provider credentials (the Firebase Admin service account) stay server-side;
+// the browser only receives deployment records, URLs and log lines (§34).
+// =============================================================================
+
 import "server-only";
-import crypto from "node:crypto";
-import { Db, nowTs } from "@/lib/firebase/admin";
+import type { Db } from "@/lib/firebase/admin";
+import { nowTs } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
 import { RpcError } from "@/lib/server/errors";
-import { loadProjectFiles } from "@/lib/server/projects";
-import { contentTypeForPath, isValidDeploySlug, slugify, type ProjectFile } from "@/lib/projects/paths";
-import { buildPublishedFiles } from "@/lib/projects/bundle";
+import { contentTypeForPath, slugify } from "@/lib/projects/paths";
 import { siteOrigin } from "@/lib/seo";
+import { deploymentCopy, normalizeStatus, type DeploymentStatus } from "@/lib/deploy/status";
+import { FirestoreDeploymentProvider, publicUrl, readStoredUrls } from "@/lib/deploy/firestore-provider";
+import { filesFromSnippet } from "@/lib/ai/agent";
+import { urlErrorCopy, type ProjectUrl, type UrlKind } from "@/lib/deploy/urls";
+import type {
+  DeploymentCapabilities,
+  DeploymentLogResult,
+  DeploymentRecord,
+  DeploymentRow,
+  ProjectDeploymentOverview,
+  PublishResult,
+  UrlMutationResult,
+  ValidationView,
+} from "@/lib/deploy/provider";
 
 const iso = (v: unknown): string => {
   const ts = v as { toDate?: () => Date } | null | undefined;
@@ -14,32 +38,59 @@ const iso = (v: unknown): string => {
   return typeof v === "string" ? v : "";
 };
 
-// Centralised production-safe origin for all generated public URLs (published
-// sites, deployment records, notifications). Uses the same siteOrigin() as
-// sitemap/robots so every public link honours NEXT_PUBLIC_APP_URL and never
-// leaks localhost or a bare Render domain.
-function origin(): string {
-  return siteOrigin();
+function provider(d: Db, user: SessionUser): FirestoreDeploymentProvider {
+  return new FirestoreDeploymentProvider(d, user);
 }
 
 async function ownedProject(d: Db, user: SessionUser, projectId: string) {
   const ref = d.collection("projects").doc(projectId);
   const doc = await ref.get();
-  if (!doc.exists || doc.data()!.owner_id !== user.uid || doc.data()!.archived_at) {
-    throw new RpcError("NOT_FOUND", 404);
-  }
+  if (!doc.exists || doc.data()!.owner_id !== user.uid || doc.data()!.archived_at) throw new RpcError("NOT_FOUND", 404);
   return { ref, data: doc.data()! };
+}
+
+// ---------------------------------------------------------------------------
+// Publish / unpublish
+// ---------------------------------------------------------------------------
+
+function toPublishResult(record: DeploymentRecord): PublishResult {
+  return {
+    id: record.id,
+    status: record.status,
+    slug: record.slug ?? "",
+    public_url: record.url ?? "",
+    environment: record.environment,
+    files: record.files,
+    bytes: record.bytes,
+    version: record.version,
+    rollback_available: record.rollbackAvailable,
+    overridden: record.overridden,
+    log: record.log,
+  };
+}
+
+export async function publishProject(
+  d: Db,
+  user: SessionUser,
+  p: { project_id: string; slug?: string; overridden?: boolean },
+): Promise<PublishResult> {
+  const record = await provider(d, user).deploy({
+    projectId: p.project_id,
+    slug: p.slug?.trim() ? slugify(p.slug) : null,
+    environment: "production",
+    overridden: p.overridden === true,
+  });
+  return toPublishResult(record);
 }
 
 export async function publishSnippet(
   d: Db,
   user: SessionUser,
   p: { lang?: string; code: string; title?: string; slug?: string },
-) {
+): Promise<PublishResult> {
   const code = p.code.trim();
   if (!code) throw new RpcError("NO_FILES", 400);
   if (code.length > 400_000) throw new RpcError("FILE_TOO_LARGE", 400);
-  const { filesFromSnippet } = await import("@/lib/ai/agent");
   const { applyProjectFiles, ensureProject } = await import("@/lib/server/projects");
   const files = filesFromSnippet(p.lang ?? "html", code);
   const proj = await ensureProject(d, user, { title: (p.title || "Snippet site").slice(0, 80) });
@@ -47,218 +98,229 @@ export async function publishSnippet(
   return publishProject(d, user, { project_id: proj.id, slug: p.slug });
 }
 
-export async function publishProject(
-  d: Db,
-  user: SessionUser,
-  p: { project_id: string; slug?: string },
-) {
-  const recent = await d.collection("deployments").where("owner_id", "==", user.uid).get();
-  const hourAgo = Date.now() - 3600_000;
-  const recentCount = recent.docs.filter((doc) => (doc.data().created_at?.toDate?.()?.getTime?.() ?? 0) >= hourAgo).length;
-  if (recentCount >= 10) throw new RpcError("PUBLISH_RATE_LIMITED", 429);
-
-  const { ref, data } = await ownedProject(d, user, p.project_id);
-  const files = await loadProjectFiles(d, p.project_id);
-  const logs: { at: string; step: string; detail: string }[] = [];
-  const stamp = () => new Date().toISOString();
-  logs.push({ at: stamp(), step: "validate", detail: `Found ${files.length} project files.` });
-  if (!files.length) throw new RpcError("NO_FILES", 400);
-  const hasHtml = files.some((file) => /\.html?$/i.test(file.path));
-  if (!hasHtml) throw new RpcError("INDEX_REQUIRED", 400);
-
-  let slug = (p.slug || data.live_slug || slugify(data.title || "site") || `site-${crypto.randomBytes(3).toString("hex")}`).toLowerCase();
-  slug = slugify(slug) || `site-${crypto.randomBytes(3).toString("hex")}`;
-  if (!isValidDeploySlug(slug)) throw new RpcError("SLUG_INVALID", 400);
-
-  const existingSite = await d.collection("published_sites").doc(slug).get();
-  if (existingSite.exists && existingSite.data()?.owner_id !== user.uid && existingSite.data()?.status === "live") {
-    throw new RpcError("SLUG_TAKEN", 409);
+export async function unpublishProject(d: Db, user: SessionUser, projectId: string): Promise<{ status: DeploymentStatus }> {
+  const { ref, data } = await ownedProject(d, user, projectId);
+  const slug = (data.live_slug as string) ?? "";
+  const site = d.collection("published_sites").doc(slug);
+  if (slug) {
+    const files = await site.collection("files").listDocuments().catch(() => [] as FirebaseFirestore.DocumentReference[]);
+    await Promise.all(files.map((file) => file.delete()));
+    await site.set({ status: "unpublished", updated_at: nowTs() }, { merge: true });
+    // Aliases of this site stop resolving so they cannot serve stale content.
+    const aliases = await d.collection("published_sites").where("alias_of", "==", slug).get().catch(() => null);
+    if (aliases) {
+      await Promise.all(aliases.docs.map((doc) => doc.ref.set({ status: "unpublished", alias_of: null, updated_at: nowTs() }, { merge: true })));
+    }
   }
-  logs.push({ at: stamp(), step: "snapshot", detail: `Publishing as /s/${slug}` });
-
-  const previous = data.live_deployment_id as string | undefined;
-  const deployment = await d.collection("deployments").add({
-    project_id: p.project_id,
-    owner_id: user.uid,
-    status: "building",
-    slug,
-    public_url: `${origin()}/s/${slug}`,
-    error: "",
-    log: logs,
-    created_at: nowTs(),
-    updated_at: nowTs(),
-  });
-
-  const siteRef = d.collection("published_sites").doc(slug);
-  const oldFiles = await siteRef.collection("files").listDocuments();
-  await Promise.all(oldFiles.map((file) => file.delete()));
-
-  const envPublic = (data.env_public ?? {}) as Record<string, string>;
-
-  // The root page is published as ONE self-contained HTML document: every
-  // local CSS/JS file is inlined and images/fonts become data: URIs, so the
-  // public site at /s/<slug>/ renders completely with no extra requests.
-  // Deeper pages and other assets are published unchanged alongside it.
-  const bundled = buildPublishedFiles(files, envPublic);
-  const publishFiles: ProjectFile[] = bundled.outFiles;
-  // Non-root pages and standalone scripts can still load window.MATRIX_ENV.
-  if (Object.keys(envPublic).length) {
-    publishFiles.push({
-      path: "env.js",
-      content: `window.MATRIX_ENV = ${JSON.stringify(envPublic)};`,
-      language: "javascript",
-      encoding: "utf8",
-    });
+  if (data.live_deployment_id) {
+    await d
+      .collection("deployments")
+      .doc(data.live_deployment_id as string)
+      .set({ status: "unpublished", updated_at: nowTs() }, { merge: true })
+      .catch(() => {});
   }
+  await ref.set({ live_slug: null, live_url: null, live_status: "unpublished", updated_at: nowTs() }, { merge: true });
+  return { status: "unpublished" };
+}
 
-  for (const file of publishFiles) {
-    await siteRef.collection("files").add({
-      path: file.path,
-      content: file.content,
-      encoding: file.encoding ?? "utf8",
-      content_type: contentTypeForPath(file.path),
-    });
-  }
-  logs.push({
-    at: stamp(),
-    step: "write",
-    detail: `Wrote ${publishFiles.length} files` +
-      (bundled.standalone ? ` — ${bundled.standalone.path} is a self-contained page (${bundled.standalone.inlined} CSS/JS/asset references inlined).` : "."),
-  });
+// ---------------------------------------------------------------------------
+// Deployment panel data (§17, §21)
+// ---------------------------------------------------------------------------
 
-  await siteRef.set({
-    deployment_id: deployment.id,
-    project_id: p.project_id,
-    owner_id: user.uid,
-    status: "live",
-    slug,
-    updated_at: nowTs(),
-    created_at: existingSite.exists ? existingSite.data()?.created_at ?? nowTs() : nowTs(),
-  }, { merge: true });
-
-  logs.push({ at: stamp(), step: "activate", detail: "Site is live." });
-  await deployment.set({ status: "live", log: logs, updated_at: nowTs() }, { merge: true });
-  await ref.set({
-    live_slug: slug,
-    live_url: `${origin()}/s/${slug}`,
-    live_deployment_id: deployment.id,
-    updated_at: nowTs(),
-  }, { merge: true });
-
-  if (previous && previous !== deployment.id) {
-    await d.collection("deployments").doc(previous).set({ status: "unpublished", updated_at: nowTs() }, { merge: true }).catch(() => {});
-  }
-
-  await d.collection("notifications").add({
-    user_id: user.uid,
-    type: "info",
-    title: "Site published",
-    body: `Your project is live at /s/${slug}.`,
-    link: `/s/${slug}`,
-    read_at: null,
-    created_at: nowTs(),
-  });
-
+export async function getDeploymentOverview(d: Db, user: SessionUser, projectId: string): Promise<ProjectDeploymentOverview> {
+  const { data } = await ownedProject(d, user, projectId);
+  const p = provider(d, user);
+  const capabilities = p.capabilities();
+  const deployments = await p.listDeployments(projectId);
+  const urls = readStoredUrls(data, projectId);
+  const liveDeployment = deployments.find((record) => record.status === "live") ?? null;
+  const status = liveDeployment ? liveDeployment.status : normalizeStatus(data.live_status ?? (data.live_slug ? "live" : "none"));
+  const fileDocs = await d.collection("projects").doc(projectId).collection("files").get().catch(() => null);
+  const liveUrl = liveDeployment?.url ?? (data.live_slug ? publicUrl(String(data.live_slug)) : null);
   return {
-    id: deployment.id,
-    status: "live",
-    slug,
-    public_url: `${origin()}/s/${slug}`,
-    log: logs,
+    status,
+    status_label: deploymentCopy(status).label,
+    status_detail: deploymentCopy(status).detail,
+    environment: liveDeployment?.environment ?? "production",
+    live_slug: (data.live_slug as string) ?? null,
+    live_url: status === "live" ? liveUrl : null,
+    preview_url: `/api/projects/${projectId}/preview`,
+    project_id: projectId,
+    files: fileDocs?.size ?? Number(data.file_count ?? 0),
+    urls,
+    deployments: deployments.map(toDeploymentRow),
+    capabilities,
+    custom_domain: (data.custom_domain as string) ?? "",
+    custom_domain_status: (data.custom_domain_status as string) ?? "",
+    last_deployed_at: liveDeployment?.updated_at ?? deployments[0]?.updated_at ?? null,
+    is_live: status === "live" && Boolean(liveDeployment?.url),
+    hosting_configured: true,
   };
 }
 
-export async function unpublishProject(d: Db, user: SessionUser, projectId: string) {
-  const { ref, data } = await ownedProject(d, user, projectId);
-  const slug = data.live_slug as string | undefined;
-  if (slug) {
-    const site = d.collection("published_sites").doc(slug);
-    const files = await site.collection("files").listDocuments();
-    await Promise.all(files.map((file) => file.delete()));
-    await site.set({ status: "unpublished", updated_at: nowTs() }, { merge: true });
-  }
-  if (data.live_deployment_id) {
-    await d.collection("deployments").doc(data.live_deployment_id).set({ status: "unpublished", updated_at: nowTs() }, { merge: true }).catch(() => {});
-  }
-  await ref.set({ live_slug: null, live_url: null, updated_at: nowTs() }, { merge: true });
-  return true;
-}
-
+/** Back-compatible shape consumed by the project workspace. */
 export async function getDeployment(d: Db, user: SessionUser, projectId: string) {
   const { data } = await ownedProject(d, user, projectId);
-  const snap = await d.collection("deployments").where("project_id", "==", projectId).get();
-  const mine = snap.docs.filter((doc) => doc.data().owner_id === user.uid).sort(descDocSafe);
+  const deployments = await provider(d, user).listDeployments(projectId);
   return {
     live_slug: data.live_slug ?? null,
-    live_url: data.live_url ?? null,
+    live_url: data.live_slug ? publicUrl(String(data.live_slug)) : null,
     custom_domain: data.custom_domain ?? "",
     custom_domain_status: data.custom_domain_status ?? "",
-    deployments: mine.slice(0, 10).map((doc) => ({
-      id: doc.id,
-      status: doc.data().status,
-      slug: doc.data().slug,
-      public_url: doc.data().public_url,
-      error: doc.data().error ?? "",
-      log: doc.data().log ?? [],
-      created_at: iso(doc.data().created_at),
+    deployments: deployments.slice(0, 10).map((record) => ({
+      id: record.id,
+      status: record.status,
+      slug: record.slug,
+      public_url: record.url,
+      error: record.error ?? "",
+      log: record.log,
+      created_at: record.created_at,
+      files: record.files,
+      version: record.version,
+      environment: record.environment,
+      rollback_available: record.rollbackAvailable,
+      overridden: record.overridden,
     })),
   };
 }
 
-function descDocSafe(a: FirebaseFirestore.QueryDocumentSnapshot, b: FirebaseFirestore.QueryDocumentSnapshot) {
-  const at = a.data().created_at?.toDate?.()?.getTime?.() ?? 0;
-  const bt = b.data().created_at?.toDate?.()?.getTime?.() ?? 0;
-  return bt - at;
+/**
+ * Run the real build checks without publishing anything (§14). Returns the
+ * provider's own report, so "Preview/Validate" in the UI is the same verdict a
+ * publish would use.
+ */
+export async function validateProjectBuild(d: Db, user: SessionUser, projectId: string): Promise<ValidationView> {
+  await ownedProject(d, user, projectId);
+  const built = await provider(d, user).build(projectId);
+  return {
+    ok: built.ok,
+    checks: built.report.checks,
+    blocking: built.report.blocking,
+    errors: built.report.errors,
+    warnings: built.report.warnings,
+    summary: built.report.summary,
+    artifacts: built.artifacts.length,
+    bytes: built.bytes,
+    error_text: built.report.blocking
+      ? built.report.checks
+          .flatMap((check) => check.issues.filter((issue) => issue.severity === "error"))
+          .slice(0, 6)
+          .map((issue) => `${issue.path}${issue.line ? `:${issue.line}` : ""}  ${issue.message}`)
+          .join("\n")
+      : "",
+  };
 }
 
-export async function addProjectDomain(d: Db, user: SessionUser, p: { project_id: string; domain: string }) {
-  const { ref } = await ownedProject(d, user, p.project_id);
-  const domain = p.domain.trim().toLowerCase().replace(/^https?:\/\//, "").split("/")[0];
-  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)) throw new RpcError("DOMAIN_INVALID", 400);
-  const token = crypto.randomBytes(16).toString("hex");
-  await ref.set({
-    custom_domain: domain,
-    custom_domain_status: "pending_dns",
-    custom_domain_token: token,
-    updated_at: nowTs(),
-  }, { merge: true });
+function toDeploymentRow(record: DeploymentRecord): DeploymentRow {
   return {
-    domain,
-    status: "pending_dns",
-    token,
-    instructions: `Add a CNAME from ${domain} to this MATRIX host, then create https://${domain}/.well-known/matrix-domain containing: ${token}`,
+    id: record.id,
+    status: record.status,
+    slug: record.slug,
+    public_url: record.url,
+    error: record.error ?? "",
+    log: record.log,
+    created_at: record.created_at,
+    files: record.files,
+    bytes: record.bytes,
+    version: record.version,
+    environment: record.environment,
+    rollback_available: record.rollbackAvailable,
+    overridden: record.overridden,
+  };
+}
+
+export async function deploymentLogs(d: Db, user: SessionUser, p: { project_id: string; deployment_id?: string }): Promise<DeploymentLogResult> {
+  const deployments = await provider(d, user).listDeployments(p.project_id);
+  const target = p.deployment_id ? deployments.find((record) => record.id === p.deployment_id) : deployments[0];
+  if (!target) throw new RpcError("NOT_FOUND", 404);
+  return {
+    deployment_id: target.id,
+    status: target.status,
+    created_at: target.created_at,
+    log: target.log.map((entry) => ({ ...entry, time: entry.at.slice(11, 19) })),
+  };
+}
+
+export async function rollbackDeployment(
+  d: Db,
+  user: SessionUser,
+  p: { project_id: string; deployment_id: string },
+): Promise<PublishResult> {
+  const capabilities = provider(d, user).capabilities();
+  if (!capabilities.rollback) throw new RpcError("ROLLBACK_NOT_SUPPORTED", 400);
+  const record = await provider(d, user).rollback({ projectId: p.project_id, deploymentId: p.deployment_id });
+  return toPublishResult(record);
+}
+
+// ---------------------------------------------------------------------------
+// Project URLs (§8, §19, §20)
+// ---------------------------------------------------------------------------
+
+export async function listProjectUrls(d: Db, user: SessionUser, projectId: string): Promise<ProjectUrl[]> {
+  return provider(d, user).listUrls(projectId);
+}
+
+export async function addProjectUrl(
+  d: Db,
+  user: SessionUser,
+  p: { project_id: string; value: string; kind?: UrlKind },
+): Promise<UrlMutationResult> {
+  const kind: UrlKind = p.kind === "custom" || p.kind === "preview" ? p.kind : "generated";
+  if (kind === "custom" && provider(d, user).capabilities().customDomain === "none") {
+    throw new RpcError("CUSTOM_DOMAIN_NOT_SUPPORTED", 400);
+  }
+  const url = await provider(d, user).addDomain({ projectId: p.project_id, value: p.value, kind });
+  return { url, urls: await provider(d, user).listUrls(p.project_id) };
+}
+
+export async function removeProjectUrl(d: Db, user: SessionUser, p: { project_id: string; url_id: string }): Promise<ProjectUrl[]> {
+  return provider(d, user).removeDomain(p.project_id, p.url_id);
+}
+
+export async function setPrimaryProjectUrl(
+  d: Db,
+  user: SessionUser,
+  p: { project_id: string; url_id: string },
+): Promise<ProjectUrl[]> {
+  return provider(d, user).setPrimaryUrl(p.project_id, p.url_id);
+}
+
+/** Legacy alias kept for the existing RPC action. */
+export async function addProjectDomain(d: Db, user: SessionUser, p: { project_id: string; domain: string }) {
+  const url = await provider(d, user).addDomain({ projectId: p.project_id, value: p.domain, kind: "custom" });
+  return {
+    domain: url.hostname,
+    status: url.status === "active" ? "verified" : "pending_dns",
+    instructions: url.detail,
+    error_copy: urlErrorCopy(null),
   };
 }
 
 export async function verifyProjectDomain(d: Db, user: SessionUser, projectId: string) {
-  const { ref, data } = await ownedProject(d, user, projectId);
-  const domain = data.custom_domain as string;
-  const token = data.custom_domain_token as string;
-  if (!domain || !token) throw new RpcError("DOMAIN_NOT_SET", 400);
-  try {
-    const res = await fetch(`https://${domain}/.well-known/matrix-domain`, { redirect: "follow", signal: AbortSignal.timeout(8000) });
-    const body = (await res.text()).trim();
-    if (res.ok && body.includes(token)) {
-      await ref.set({ custom_domain_status: "verified", updated_at: nowTs() }, { merge: true });
-      return { status: "verified", domain };
-    }
-  } catch {
-    /* fall through */
-  }
-  await ref.set({ custom_domain_status: "pending_dns", updated_at: nowTs() }, { merge: true });
-  return { status: "pending_dns", domain, detail: "DNS challenge was not found yet. Keep the CNAME and token file in place." };
+  return provider(d, user).verifyDomain!(projectId);
 }
+
+export function friendlyUrlError(code: unknown): { title: string; detail: string } {
+  return urlErrorCopy(code);
+}
+
+// ---------------------------------------------------------------------------
+// Admin surfaces (unchanged behaviour)
+// ---------------------------------------------------------------------------
 
 export async function adminUnpublishSite(d: Db, slug: string) {
   const site = d.collection("published_sites").doc(slug);
   const doc = await site.get();
   if (!doc.exists) throw new RpcError("NOT_FOUND", 404);
-  const files = await site.collection("files").listDocuments();
+  const files = await site.collection("files").listDocuments().catch(() => [] as FirebaseFirestore.DocumentReference[]);
   await Promise.all(files.map((file) => file.delete()));
   await site.set({ status: "unpublished", updated_at: nowTs() }, { merge: true });
   const projectId = doc.data()?.project_id as string | undefined;
   if (projectId) {
-    await d.collection("projects").doc(projectId).set({ live_slug: null, live_url: null, updated_at: nowTs() }, { merge: true });
+    await d
+      .collection("projects")
+      .doc(projectId)
+      .set({ live_slug: null, live_url: null, live_status: "unpublished", updated_at: nowTs() }, { merge: true });
   }
   return true;
 }
@@ -270,17 +332,32 @@ export async function listLiveSites(d: Db) {
     owner_id: doc.data().owner_id,
     project_id: doc.data().project_id,
     status: doc.data().status,
+    alias_of: doc.data().alias_of ?? null,
     updated_at: iso(doc.data().updated_at),
-    url: `${origin()}/s/${doc.id}`,
+    url: `${siteOrigin()}/s/${doc.id}`,
   }));
 }
 
+// ---------------------------------------------------------------------------
+// Serving published sites (GET /s/<slug>/…)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve a published file. `alias_of` documents serve the primary site's file
+ * set, so multiple project URLs (§8) cost zero duplication and can never
+ * drift out of sync with the deployment.
+ */
 export async function loadPublishedFile(d: Db, slug: string, path: string) {
   const site = await d.collection("published_sites").doc(slug).get();
   if (!site.exists || site.data()?.status !== "live") return null;
+  const targetSlug = (site.data()?.alias_of as string) || slug;
+  const filesRoot = targetSlug === slug ? site.ref : d.collection("published_sites").doc(targetSlug);
+  const targetStatus = targetSlug === slug ? null : await d.collection("published_sites").doc(targetSlug).get();
+  if (targetSlug !== slug && targetStatus?.data()?.status !== "live") return null;
+
   const raw = (path || "").replace(/^\.?\/+/, "");
   const wanted = !raw ? "index.html" : raw.endsWith("/") ? `${raw}index.html` : raw;
-  const files = await site.ref.collection("files").get();
+  const files = await filesRoot.collection("files").get();
   if (files.empty) return null;
 
   const normalizedWanted = wanted.toLowerCase();
@@ -295,7 +372,7 @@ export async function loadPublishedFile(d: Db, slug: string, path: string) {
       return p === `${normalizedWanted}.html` || p === `${normalizedWanted}/index.html`;
     }) ??
     files.docs.find((doc) => (doc.data().path || "").split("/").pop()?.toLowerCase() === baseName) ??
-    ((!raw || raw === "index.html") ? files.docs.find((doc) => /(^|\/)index\.html?$/i.test(doc.data().path)) : null);
+    (!raw || raw === "index.html" ? files.docs.find((doc) => /(^|\/)index\.html?$/i.test(doc.data().path)) : null);
 
   if (!match) return null;
   return {
@@ -305,3 +382,22 @@ export async function loadPublishedFile(d: Db, slug: string, path: string) {
     content_type: (match.data().content_type as string) || contentTypeForPath(match.data().path),
   };
 }
+
+/** Health/readiness for the hosting backend: does publishing actually work? */
+export async function hostingStatus(d: Db): Promise<{
+  configured: boolean;
+  provider: string;
+  sites_live: number;
+  capabilities: DeploymentCapabilities;
+}> {
+  const live = await d.collection("published_sites").where("status", "==", "live").get().catch(() => null);
+  const sample = new FirestoreDeploymentProvider(d, { uid: "__health__", email: null, emailVerified: false });
+  return {
+    configured: true,
+    provider: sample.id,
+    sites_live: live?.size ?? 0,
+    capabilities: sample.capabilities(),
+  };
+}
+
+export { slugify, publicUrl };

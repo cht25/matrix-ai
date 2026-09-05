@@ -227,6 +227,47 @@ body::before {
   color: var(--ink-3);
 }
 
+/* Project console header (workspace dashboard, §31) */
+.ws-tab {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--ink-2);
+  background: transparent;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.ws-tab:hover {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+.ws-tab[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+}
+.icon-tile {
+  display: grid;
+  height: 2rem;
+  width: 2rem;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--ink-2);
+  background: transparent;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.icon-tile:hover {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+.icon-tile:disabled { opacity: 0.45; }
+
 .typing-dot { animation: typing-fade 1.3s infinite ease-in-out; }
 .typing-dot:nth-child(2) { animation-delay: 0.18s; }
 .typing-dot:nth-child(3) { animation-delay: 0.36s; }

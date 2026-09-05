@@ -19,6 +19,8 @@ import { ArtifactCard, ExportFormatRow, FormatChoice } from "@/components/artifa
 import { ActivityDisclosure } from "@/components/activity-panel";
 import { AgentActivityCard } from "@/components/agent-sandbox";
 import { FlashcardDeck } from "@/components/mode-workspace";
+import { BuildRunCard } from "@/components/build/build-run-card";
+import type { BuildRun } from "@/lib/deploy/stages";
 import { ThemeGallery } from "@/components/theme-gallery";
 import { isArtifactVisible, type ArtifactState, type ExecutionState } from "@/lib/ai/artifacts";
 import type { ContentSignals, ExportFormat, IntentResult, ResponseKind } from "@/lib/ai/intent";
@@ -34,6 +36,9 @@ export type AssistantMessageProps = {
   artifact: ArtifactState;
   /** Execution detail for the latest turn only — null keeps the UI clean. */
   execution: ExecutionState | null;
+  /** Live pipeline state for the turn currently streaming, if any. */
+  liveBuildRun?: BuildRun | null;
+  onRetryBuild?: () => void;
   timeLabel: string;
   actions: { primary: ChatAction[]; overflow: ChatAction[] };
   /** Formats this reply can honestly be exported to. */
@@ -52,7 +57,7 @@ export type AssistantMessageProps = {
 
 export function AssistantMessage(props: AssistantMessageProps) {
   const {
-    message, isLatest, streaming, kind, signals, intent, artifact, execution, timeLabel, actions,
+    message, isLatest, streaming, kind, signals, intent, artifact, execution, liveBuildRun, onRetryBuild, timeLabel, actions,
     exportFormats, exportPickerOpen, onCloseExportPicker, onPickFormat,
     onGenerateArtifact, onDismissArtifact, onOpenArtifact, onSaveArtifact, onCopyArtifact,
     onOpenWorkspace, artifactActions,
@@ -98,6 +103,16 @@ export function AssistantMessage(props: AssistantMessageProps) {
       {showFormatChoice ? <FormatChoice formats={intent.formatChoices} onPick={onPickFormat} /> : null}
 
       {isLatest && !streaming && signals.hasFlashcards ? <FlashcardDeck text={message.content} /> : null}
+
+      {message.metadata?.build || liveBuildRun ? (
+        <BuildRunCard
+          snapshot={message.metadata?.build ?? null}
+          deployment={message.metadata?.deployment ?? null}
+          liveRun={liveBuildRun}
+          onOpenWorkspace={files.length || message.metadata?.project_id ? onOpenWorkspace : undefined}
+          onRetry={onRetryBuild}
+        />
+      ) : null}
 
       {files.length ? (
         <button
