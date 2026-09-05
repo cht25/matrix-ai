@@ -8,7 +8,7 @@ export default async function ChatHomePage({ searchParams }: { searchParams: Pro
   const user = await getCurrentUser();
   if (!user) redirect("/login");
   const { new: fresh, mode: requestedMode } = await searchParams;
-  const mode = requestedMode === "agent" ? "agent" as const : "general" as const;
+  const mode = requestedMode === "agent" ? "agent" as const : requestedMode === "image" ? "image" as const : "general" as const;
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-4xl flex-1 flex-col">

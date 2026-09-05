@@ -70,6 +70,7 @@ export const env = {
   serviceKeyRaw,
   groqApiKey: process.env.GROQ_API_KEY ?? "",
   openRouterApiKey: process.env.OPENROUTER_API_KEY ?? "",
+  togetherApiKey: process.env.TOGETHER_API_KEY ?? "",
   identityPepper: clean(process.env.IDENTITY_PEPPER ?? ""),
   adminBootstrapKey: clean(process.env.ADMIN_BOOTSTRAP_KEY ?? ""),
   github: {

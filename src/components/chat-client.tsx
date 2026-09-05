@@ -34,8 +34,13 @@ import { useI18n } from "@/lib/i18n/client";
 import { cn } from "@/lib/utils";
 import type { AgentFile, ChatMode, TextAttachment } from "@/lib/ai/agent";
 import { AgentWorkspace } from "@/components/agent-workspace";
+import { AgentSandbox } from "@/components/agent-sandbox";
+import { ExecutionConsole } from "@/components/execution-console";
+import { PipelineAnalyticsPanel } from "@/components/pipeline-analytics";
+import { ExportDesk } from "@/components/export-desk";
 import { ThemeGallery } from "@/components/theme-gallery";
 import { ThinkingIndicator, ThinkingSummary } from "@/components/thinking-indicator";
+import type { AgentStageId, PipelineAnalytics, PipelineEvent } from "@/lib/ai/pipeline";
 
 type MessageMetadata = {
   mode?: ChatMode;
@@ -48,6 +53,7 @@ type MessageMetadata = {
   action?: string;
   project_id?: string;
   thinking_ms?: number;
+  image_data_url?: string;
 };
 
 export type ChatMessage = {
@@ -149,6 +155,12 @@ export function ChatClient({
   const toast = useToast();
   const { t, locale } = useI18n();
   const [mode, setMode] = useState<ChatMode>(isTemporary ? "general" : initialMode);
+  const [pipelineEvents, setPipelineEvents] = useState<PipelineEvent[]>([]);
+  const [pipelineStage, setPipelineStage] = useState<AgentStageId | "complete" | null>(null);
+  const [pipelineTool, setPipelineTool] = useState<string | null>(null);
+  const [analytics, setAnalytics] = useState<PipelineAnalytics | null>(null);
+  const [streamStatus, setStreamStatus] = useState<string | null>(null);
+
   const suggestions = mode === "agent" ? AGENT_SUGGESTIONS : locale === "bn" ? [
     { icon: <Sparkles size={15} strokeWidth={1.5} />, label: "পরিকল্পনা বা আইডিয়া", prompt: "আমার একটি আইডিয়াকে পরিষ্কার ধাপে ধাপে পরিকল্পনায় সাজাতে সাহায্য করুন।" },
     { icon: <BrainCircuit size={15} strokeWidth={1.5} />, label: "সহজভাবে বুঝিয়ে দিন", prompt: "একটি কঠিন বিষয় সহজভাবে বুঝিয়ে একটি বাস্তব উদাহরণ দিন।" },
@@ -363,6 +375,11 @@ export function ChatClient({
     setFailure(null);
     setNotice(null);
     setStreaming(true);
+    setPipelineEvents([{ at: Date.now(), type: "info", message: mode === "agent" ? "Agent initialized" : mode === "image" ? "Image generation started" : "Connecting" }]);
+    setPipelineStage(mode === "agent" ? "understanding" : null);
+    setPipelineTool(null);
+    setAnalytics(null);
+    setStreamStatus("connecting");
     setLastUserMessage(message);
     const startedAt = Date.now();
     setActiveStartedAt(startedAt);
@@ -436,7 +453,22 @@ export function ChatClient({
           fallback?: boolean;
           theme_gallery?: boolean;
           storage_degraded?: boolean;
+          image?: { data_url?: string };
+          analytics?: PipelineAnalytics;
         };
+        if (data.analytics) setAnalytics(data.analytics);
+        if (data.image?.data_url) {
+          commitPartial(data.reply || "Image ready.", replaceLastAssistant, {
+            mode: "image",
+            image_data_url: data.image.data_url,
+            model: data.model,
+            provider: data.provider,
+          });
+          committed = true;
+          setStreamStatus("complete");
+          if (data.conversation_id) rememberConv(data.conversation_id);
+          return;
+        }
         if (data.conversation_id) rememberConv(data.conversation_id);
         // The project is created and files are persisted server-side; the
         // workspace reuses it via project_id (or the conversation id).
@@ -509,7 +541,26 @@ export function ChatClient({
               provider?: string;
               fallback?: boolean;
               storage_degraded?: boolean;
+              stage?: AgentStageId;
+              label?: string;
+              tool?: string;
+              stream_status?: string;
+              files?: AgentFile[];
+              project_id?: string | null;
+              analytics?: PipelineAnalytics;
             };
+            if (data.stream_status) setStreamStatus(data.stream_status);
+            if (data.stage) {
+              setPipelineStage(data.stage);
+              setPipelineEvents((ev) => [...ev, { at: Date.now(), type: "stage", message: data.label || data.stage!, stage: data.stage }]);
+            }
+            if (data.tool) {
+              setPipelineTool(data.tool);
+              setPipelineEvents((ev) => [...ev, { at: Date.now(), type: "tool", message: "Tool selected", tool: data.tool }]);
+            }
+            if (data.analytics) setAnalytics(data.analytics);
+            if (data.files?.length) streamMetadata.artifacts = data.files;
+            if (data.project_id) streamMetadata.project_id = data.project_id;
             if (data.model) { streamMetadata.model = data.model; setActiveModel(data.model); }
             if (data.mode) streamMetadata.mode = data.mode;
             if (typeof data.coding_detected === "boolean") streamMetadata.coding_detected = data.coding_detected;
@@ -812,10 +863,19 @@ export function ChatClient({
               type="button"
               onClick={() => switchMode("agent")}
               disabled={streaming}
-              className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-[8px] px-3 text-xs font-medium transition-colors duration-150 ease-out", mode === "agent" ? "bg-accent text-white shadow-sm" : "text-ink-3 hover:text-ink")}
+              className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-[8px] px-3 text-xs font-medium transition-colors duration-150 ease-out", mode === "agent" ? "bg-accent text-[#0B0F19] shadow-sm" : "text-ink-3 hover:text-ink")}
               aria-pressed={mode === "agent"}
             >
               <Code2 size={13} /> Agent
+            </button>
+            <button
+              type="button"
+              onClick={() => switchMode("image")}
+              disabled={streaming}
+              className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-[8px] px-3 text-xs font-medium transition-colors duration-150 ease-out", mode === "image" ? "bg-[#8B5CF6] text-white shadow-sm" : "text-ink-3 hover:text-ink")}
+              aria-pressed={mode === "image"}
+            >
+              <ImageIcon size={13} /> Image
             </button>
           </div>
           <div className="flex min-w-0 items-center gap-1 sm:gap-2">
@@ -926,6 +986,13 @@ export function ChatClient({
                         />
                       ) : null}
                       <Markdown text={m.content} />
+                      {m.metadata?.image_data_url ? (
+                        <div className="mt-3 overflow-hidden rounded-xl border border-border">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={m.metadata.image_data_url} alt="Generated image" className="max-h-[480px] w-full object-contain bg-[#070B14]" />
+                        </div>
+                      ) : null}
+                      {m.role === "assistant" && i === messages.length - 1 && !streaming ? <ExportDesk content={m.content} /> : null}
                       {m.metadata?.action === "theme_gallery" ? (
                         <div className="mt-3 rounded-xl border border-border bg-surface p-3">
                           <ThemeGallery compact />
@@ -1011,6 +1078,9 @@ export function ChatClient({
             ))}
           </div>
         ) : null}
+        {mode === "agent" ? <p className="mode-pill mx-auto mb-2 max-w-2xl">Agent Mode Active</p> : null}
+        {mode === "image" ? <p className="mode-pill mx-auto mb-2 max-w-2xl" style={{ color: "#8B5CF6" }}>Image Generation Active</p> : null}
+        {streamStatus ? <p className="mx-auto mb-1 max-w-2xl font-mono text-[11px] text-ink-3">● {streamStatus}</p> : null}
         <form onSubmit={(e) => void send(e)} className="composer-shell mx-auto max-w-2xl p-3">
           <input
             ref={fileRef}

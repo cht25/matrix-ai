@@ -27,6 +27,8 @@ import { completeWithFallback, streamWithFallback } from "@/lib/ai/executor";
 import { AIProviderError, logGatewayFailure, logProviderFailure, providerPublicCode } from "@/lib/ai/provider-error";
 import { stripReasoningContent } from "@/lib/ai/reasoning";
 import { agentGenerationIncomplete, formatAttachmentContext, isCodingRequest, parseAgentResponse, safeAgentPath, type AgentFile, type ChatMode, type TextAttachment } from "@/lib/ai/agent";
+import { AGENT_STAGES, computeAnalytics, detectAgentTool } from "@/lib/ai/pipeline";
+import { generateTogetherImage, isTogetherConfigured } from "@/lib/ai/together";
 import { buildAgentSystemMessages, buildSystemMessages, validateOutput, buildSummaryPrompt } from "@/lib/ai/prompts";
 import { isThemeIntent, THEME_GALLERY_REPLY_BN, THEME_GALLERY_REPLY_EN } from "@/lib/theme-intent";
 import { validateImageUpload } from "@/lib/ai/upload-validation";
@@ -366,11 +368,17 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const message = typeof body.message === "string" ? body.message.trim() : "";
   const conversationId = typeof body.conversation_id === "string" ? body.conversation_id : null;
   const isTemporary = body.is_temporary === true;
-  const requestedMode: ChatMode = body.mode === "agent" && !isTemporary ? "agent" : "general";
-  let mode = requestedMode;
+  const requestedMode: ChatMode = isTemporary
+    ? "general"
+    : body.mode === "agent"
+      ? "agent"
+      : body.mode === "image"
+        ? "image"
+        : "general";
+  let mode: ChatMode = requestedMode === "image" ? "general" : requestedMode;
   const attachments = normaliseTextAttachments(body.attachments);
   const requestedStream = body.stream === true;
-  let wantStream = requestedStream && mode !== "agent";
+  let wantStream = requestedStream;
   const regenerate = body.regenerate === true;
   const reuseUser = body.reuse_user === true || regenerate;
   let conversationPersistDegraded = false;
@@ -434,8 +442,11 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
       return json({ error: "CHAT_STORAGE_UNAVAILABLE", conversation_id: convId }, 503, requestId);
     }
     if (!conv.exists || conv.data()!.user_id !== user.uid) return json({ error: "CONVERSATION_NOT_FOUND" }, 404);
-    mode = conv.data()!.mode === "agent" && !isTemporary ? "agent" : "general";
-    wantStream = requestedStream && mode !== "agent";
+    // Honor an explicit Agent request even if the stored conversation was general.
+    // The previous overwrite (`stored mode or general`) silently dropped Agent Mode.
+    if (requestedMode === "agent") mode = "agent";
+    else mode = conv.data()!.mode === "agent" && !isTemporary ? "agent" : "general";
+    wantStream = requestedStream;
   } else {
     const title = message.replace(/\s+/g, " ").slice(0, 60);
     try {
@@ -570,8 +581,8 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     { role: "user", content: redaction.redacted },
   ];
 
-  // --- Provider streaming path ------------------------------------------------
-  if (wantStream && mode !== "agent" && targets[0]?.client.streamChat) {
+  // --- Provider streaming path (Chat and Agent) --------------------------------
+  if (wantStream && targets[0]?.client.streamChat) {
     let done = false;
     let full = "";
     let activeTarget: AIRouteTarget = targets[0];
@@ -587,7 +598,15 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
         };
         let window = "";
         try {
-          emit({ conversation_id: convId, mode, model: activeTarget.model, provider: activeTarget.provider, coding_detected: codingDetected });
+          emit({ conversation_id: convId, mode, model: activeTarget.model, provider: activeTarget.provider, coding_detected: codingDetected, stream_status: "connecting" });
+          if (mode === "agent") {
+            const selected = detectAgentTool(message);
+            for (const stage of AGENT_STAGES) {
+              emit({ stage: stage.id, label: stage.label, node: stage.node, stream_status: "processing" });
+            }
+            emit({ tool: selected.tool, tool_reason: selected.reason });
+          }
+          emit({ stream_status: "streaming" });
           for await (const item of streamWithFallback(
             targets,
             {
@@ -617,12 +636,36 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
           }
           if (!full.trim()) throw new Error("EMPTY_AI_RESPONSE");
           done = true;
+          emit({ stream_status: "finalizing" });
+          let streamedReply = stripReasoningContent(full);
+          let streamedFiles: AgentFile[] = [];
+          if (mode === "agent") {
+            const parsed = parseAgentResponse(streamedReply);
+            streamedReply = parsed.reply;
+            streamedFiles = parsed.files;
+          }
+          let projectId: string | null = null;
+          if (mode === "agent" && streamedFiles.length) {
+            try {
+              const proj = await ensureProject(d, user, { conversation_id: convId, title: (message || "Agent project").slice(0, 80) });
+              await applyProjectFiles(d, user, { project_id: proj.id, files: streamedFiles, source: "agent" });
+              projectId = proj.id;
+            } catch { /* best-effort */ }
+          }
+          const analytics = computeAnalytics({
+            started,
+            firstTokenAt: started,
+            promptTokens: 0,
+            completionTokens: streamedReply.split(/\s+/).length,
+            agentSteps: mode === "agent" ? AGENT_STAGES.length : 1,
+            toolsExecuted: mode === "agent" ? 1 : 0,
+          });
           let degraded = conversationPersistDegraded;
           try {
             await finalizeChat(d, {
               provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
-              redactedMessage: redaction.redacted, reply: full, history, redaction, started,
-              model: activeTarget.model, mode, codingDetected, requestId,
+              redactedMessage: redaction.redacted, reply: streamedReply, history, redaction, started,
+              model: activeTarget.model, mode, codingDetected, files: streamedFiles, projectId, requestId,
             });
           } catch (error) {
             degraded = true;
@@ -637,6 +680,10 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
             provider: activeTarget.provider,
             fallback: usedFallback,
             coding_detected: codingDetected,
+            files: streamedFiles,
+            project_id: projectId,
+            analytics,
+            stream_status: "complete",
             ...(degraded ? { storage_degraded: true } : {}),
           });
         } catch (e) {
@@ -808,9 +855,87 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     fallback: targets.length > 1 && (targets.indexOf(activeTarget) > 0 || (preferFallback && targets.indexOf(activeTarget) < targets.length - 1)),
     coding_detected: codingDetected,
     usage,
+    analytics: computeAnalytics({
+      started,
+      promptTokens: usage.promptTokens,
+      completionTokens: usage.completionTokens,
+      agentSteps: mode === "agent" ? AGENT_STAGES.length : 1,
+      toolsExecuted: mode === "agent" ? (files.length ? 1 : 0) : 0,
+    }),
     ...(finalizeFailed ? { storage_degraded: true } : {}),
     request_id: requestId,
   }, 200, requestId);
+}
+
+async function handleImage(d: Db, user: SessionUser, body: Record<string, unknown>) {
+  const started = Date.now();
+  const requestId = requestIdFrom(body);
+  const prompt = typeof body.message === "string" ? body.message.trim() : (typeof body.prompt === "string" ? body.prompt.trim() : "");
+  if (!prompt) return json({ error: "MESSAGE_REQUIRED" }, 400, requestId);
+  if (prompt.length > 4000) return json({ error: "MESSAGE_TOO_LONG" }, 400, requestId);
+  if (!isTogetherConfigured()) return json({ error: "TOGETHER_NOT_CONFIGURED" }, 503, requestId);
+
+  const conversationId = typeof body.conversation_id === "string" ? body.conversation_id : null;
+  const isTemporary = body.is_temporary === true;
+  let convId = conversationId;
+  try {
+    if (!convId) {
+      const created = await d.collection("conversations").add({
+        user_id: user.uid,
+        title: prompt.replace(/\s+/g, " ").slice(0, 60),
+        mode: "image",
+        is_temporary: isTemporary,
+        summary: "",
+        archived_at: null,
+        deleted_at: null,
+        created_at: nowTs(),
+        updated_at: nowTs(),
+      });
+      convId = created.id;
+    }
+    await d.collection("conversations").doc(convId).collection("messages").add({
+      role: "user",
+      content: prompt,
+      metadata: { mode: "image" },
+      created_at: nowTs(),
+    });
+  } catch (error) {
+    logGatewayFailure("image_persist_user", { requestId }, error);
+  }
+
+  try {
+    const image = await generateTogetherImage(prompt);
+    const dataUrl = `data:${image.mime};base64,${image.b64}`;
+    const reply = "Image ready.";
+    if (convId) {
+      try {
+        await d.collection("conversations").doc(convId).collection("messages").add({
+          role: "assistant",
+          content: reply,
+          metadata: { mode: "image", image_data_url: dataUrl, model: image.model, provider: "Together" },
+          created_at: nowTs(),
+        });
+      } catch (error) {
+        logGatewayFailure("image_persist_assistant", { requestId }, error);
+      }
+    }
+    await logUsage(d, user.uid, image.model, "image", {}, Date.now() - started, "ok", requestId);
+    return json({
+      reply,
+      conversation_id: convId,
+      mode: "image",
+      image: { mime: image.mime, data_url: dataUrl },
+      model: image.model,
+      provider: "Together",
+      image_status: "ready",
+      analytics: computeAnalytics({ started, completionTokens: 0, toolsExecuted: 1, agentSteps: 4 }),
+      request_id: requestId,
+    }, 200, requestId);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "TOGETHER_UNAVAILABLE";
+    await logUsage(d, user.uid, "together", "image", {}, Date.now() - started, "error", requestId);
+    return json({ error: code, conversation_id: convId, image_status: "failed" }, code === "TOGETHER_NOT_CONFIGURED" ? 503 : 502, requestId);
+  }
 }
 
 // ---------------------------------------------------------------------------
