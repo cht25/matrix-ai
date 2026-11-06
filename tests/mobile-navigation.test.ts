@@ -36,8 +36,8 @@ describe("mobile navigation has NO hamburger", () => {
 describe("primary bottom navigation", () => {
   const nav = read("src/components/mobile-nav.tsx");
 
-  it("exposes Chat, Agent, Workspace and Private plus More", () => {
-    for (const label of ["Chat", "Agent", "Workspace", "Private", "More"]) {
+  it("exposes Chat, Agent, Canvas, Family and Devices plus More", () => {
+    for (const label of ["Chat", "Agent", "Canvas", "Family", "Devices", "More"]) {
       expect(nav).toContain(`"${label}"`);
     }
   });

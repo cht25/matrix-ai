@@ -103,6 +103,16 @@ describe("verifyQrPayload", () => {
 });
 
 describe("completePairing", () => {
+  it("rejects cross-account pairing without consuming the challenge", async () => {
+    const d = makeDb();
+    const ch = await createPairingChallenge(d, owner);
+    await expect(completePairing(d, { ...scanner, uid: "other-account" }, {
+      qr_payload: ch.qr_payload, device_name: "X", device_type: "phone", platform: "android",
+    })).rejects.toMatchObject({ code: "PAIRING_ACCOUNT_MISMATCH", status: 403 });
+    expect(d._docs.get(`pairing_challenges/${ch.challenge_id}`)?.status).toBe("pending");
+    expect(await listDevices(d, owner.uid)).toEqual([]);
+  });
+
   it("registers a device under the owner account with scoped authorization", async () => {
     const d = makeDb();
     const ch = await createPairingChallenge(d, owner);

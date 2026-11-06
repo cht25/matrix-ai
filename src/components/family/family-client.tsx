@@ -10,6 +10,8 @@ import { useToast } from "@/components/toast";
 import { rpc, RpcCallError } from "@/lib/client/api";
 import { Users } from "lucide-react";
 
+type Invitation = { invitation_id: string; token: string; expires_at: string; qr_data_url: string; email_status: string };
+
 type Family = { family_id: string; role: "parent" | "child"; name: string; member_count: number };
 type Member = { member_id: string; user_id: string; role: "parent" | "child"; invited_by: string | null; joined_at: string };
 
@@ -25,9 +27,10 @@ export function FamilyClient() {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [inviteEmail, setInviteEmail] = useState<Record<string, string>>({});
-  const [inviteResult, setInviteResult] = useState<Record<string, { token: string; expires_at: string }>>({});
+  const [inviteResult, setInviteResult] = useState<Record<string, Invitation>>({});
   const [members, setMembers] = useState<Record<string, Member[]>>({});
   const [acceptToken, setAcceptToken] = useState("");
+  const [review, setReview] = useState<{ name: string; role: string; expires_at: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -42,6 +45,15 @@ export function FamilyClient() {
 
   useEffect(() => {
     void load();
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    const token = params.get("invite");
+    if (token) {
+      setAcceptToken(token);
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+    const refresh = () => { if (!document.hidden) void load(); };
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
   }, [load]);
 
   async function loadMembers(familyId: string) {
@@ -73,18 +85,38 @@ export function FamilyClient() {
     if (!email) return;
     setBusy(true);
     try {
-      const res = await rpc<{ invitation_id: string; token: string; expires_at: string }>("family_invite", {
+      const res = await rpc<Invitation>("family_invite", {
         family_id: familyId,
         invitee_email: email,
       });
-      setInviteResult((r) => ({ ...r, [familyId]: { token: res.token, expires_at: res.expires_at } }));
+      setInviteResult((r) => ({ ...r, [familyId]: res }));
       setInviteEmail((e) => ({ ...e, [familyId]: "" }));
-      toast("Invitation created. Share the one-time code with the child.");
+      toast(res.email_status === "accepted_by_provider" ? "Invitation submitted to email provider. Delivery is not yet confirmed." : "Invitation created. Email unavailable — share the QR or code.");
     } catch (err) {
       toast(errorMessage(err, "Could not create invitation."));
     } finally {
       setBusy(false);
     }
+  }
+
+  async function revokeInvite(familyId: string) {
+    const invitation = inviteResult[familyId];
+    if (!invitation) return;
+    setBusy(true);
+    try {
+      await rpc("family_invitation_revoke", { invitation_id: invitation.invitation_id });
+      setInviteResult((current) => { const next = { ...current }; delete next[familyId]; return next; });
+      toast("Invitation revoked.");
+    } catch (err) { toast(errorMessage(err, "Could not revoke invitation.")); }
+    finally { setBusy(false); }
+  }
+
+  async function reviewInvite() {
+    setBusy(true);
+    try {
+      setReview(await rpc("family_invitation_review", { token: acceptToken.trim() }));
+    } catch (err) { toast(errorMessage(err, "Could not review invitation.")); }
+    finally { setBusy(false); }
   }
 
   async function accept() {
@@ -93,6 +125,7 @@ export function FamilyClient() {
     try {
       const res = await rpc<{ family_id: string; role: string }>("family_accept", { token: acceptToken.trim() });
       setAcceptToken("");
+      setReview(null);
       toast(`Joined family as ${res.role}.`);
       await load();
     } catch (err) {
@@ -134,7 +167,7 @@ export function FamilyClient() {
       <div>
         <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Family</h1>
         <p className="mt-1 text-ink-2">
-          Link parent and child accounts. Parents manage children&apos;s linked devices and permissions; children keep their own
+          Link parent and child accounts. Device supervision requires separately implemented native capabilities and explicit consent; children keep their own
           private AI workspace. All access is explicit, visible and revocable — there is no hidden monitoring.
         </p>
       </div>
@@ -152,10 +185,11 @@ export function FamilyClient() {
 
         <Card className="space-y-3 p-4">
           <h2 className="font-semibold text-ink">Join with an invitation code</h2>
-          <Field label="One-time invitation code" htmlFor="accept-token" hint="Ask the parent for the code they received when inviting you.">
-            <Input id="accept-token" value={acceptToken} onChange={(e) => setAcceptToken(e.target.value)} placeholder="Paste invitation code" />
+          <Field label="One-time invitation code" htmlFor="accept-token" hint="Review the invitation before accepting. You must sign in with the invited, verified email. Joining does not grant screen capture or monitoring permission.">
+            <Input id="accept-token" value={acceptToken} onChange={(e) => { setAcceptToken(e.target.value); setReview(null); }} placeholder="Paste invitation code" />
           </Field>
-          <Button variant="secondary" onClick={accept} disabled={busy || !acceptToken.trim()}>Accept invitation</Button>
+          {review ? <Alert tone="info">Join <strong>{review.name}</strong> as {review.role}. Expires {new Date(review.expires_at).toLocaleString()}. No device monitoring permissions are granted.</Alert> : null}
+          <Button variant="secondary" onClick={review ? accept : reviewInvite} disabled={busy || !acceptToken.trim()}>{review ? "Accept invitation" : "Review invitation"}</Button>
         </Card>
       </div>
 
@@ -195,10 +229,15 @@ export function FamilyClient() {
                   </div>
                 </Field>
                 {inviteResult[f.family_id] ? (
+                  <div className="space-y-3">
+                  <img src={inviteResult[f.family_id].qr_data_url} width={256} height={256} alt="Single-use family invitation QR code" className="rounded-lg" />
                   <Alert tone="info">
+                    Email: {inviteResult[f.family_id].email_status.replace(/_/g, " ")}.<br />
                     One-time code (expires {new Date(inviteResult[f.family_id].expires_at).toLocaleString()}):{" "}
                     <code className="break-all font-mono text-xs">{inviteResult[f.family_id].token}</code>
                   </Alert>
+                  <Button variant="danger" disabled={busy} onClick={() => void revokeInvite(f.family_id)}>Revoke invitation</Button>
+                  </div>
                 ) : null}
               </div>
             ) : null}

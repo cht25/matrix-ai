@@ -58,7 +58,7 @@ export function assertRoleAssignmentAllowed(accountRole: AccountRole, familyRole
 }
 
 /** Family invitations expire after this long. */
-export const INVITATION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
+export const INVITATION_TTL_MS = 1000 * 60 * 15; // 15 minutes; existing stored expirations are preserved
 
 /** Deterministic membership doc id: one membership per (user, family). */
 export function membershipDocId(uid: string, familyId: string): string {

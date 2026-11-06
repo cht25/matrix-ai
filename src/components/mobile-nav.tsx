@@ -1,10 +1,10 @@
 "use client";
 
 // MATRIX mobile navigation — a fixed bottom bar plus a "More" bottom sheet.
-// There is deliberately NO hamburger menu: the four primary destinations are
+// There is deliberately NO hamburger menu: the five primary destinations are
 // always one tap away and every secondary feature lives in More.
 
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
@@ -34,8 +34,8 @@ export function buildMoreLinks({ isAdmin }: { isAdmin: boolean }): MoreLink[] {
     { href: "/dashboard", label: "Dashboard", icon: <LayoutGrid size={18} strokeWidth={1.7} />, group: "Workspace" },
     { href: "/projects", label: "Projects", icon: <Code2 size={18} strokeWidth={1.7} />, group: "Workspace" },
     { href: "/history", label: "History", icon: <History size={18} strokeWidth={1.7} />, group: "Workspace" },
-    { href: "/family", label: "Family", icon: <Users size={18} strokeWidth={1.7} />, group: "Workspace" },
-    { href: "/devices", label: "Devices", icon: <Smartphone size={18} strokeWidth={1.7} />, group: "Workspace" },
+    { href: "/workspace", label: "AI Workspace", icon: <LayoutGrid size={18} />, group: "Workspace" },
+    { href: "/temporary-chat", label: "Private Workspace", icon: <History size={18} />, group: "Workspace" },
     { href: "/design", label: "Design studio", icon: <Sliders size={18} strokeWidth={1.7} />, group: "Workspace" },
     { href: "/compare", label: "Compare models", icon: <Columns3 size={18} strokeWidth={1.7} />, group: "Workspace" },
     { href: "/automations", label: "Automations", icon: <Zap size={18} strokeWidth={1.7} />, group: "Workspace" },
@@ -69,14 +69,32 @@ export function buildMoreLinks({ isAdmin }: { isAdmin: boolean }): MoreLink[] {
 const PRIMARY = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/chat?mode=agent", label: "Agent", icon: Code2 },
-  { href: "/workspace", label: "Workspace", icon: LayoutGrid },
-  { href: "/temporary-chat", label: "Private", icon: History },
+  { href: "/canvas", label: "Canvas", icon: LayoutGrid },
+  { href: "/family", label: "Family", icon: Users },
+  { href: "/devices", label: "Devices", icon: Smartphone },
 ] as const;
 
 function MobileNavImpl({ isAdmin }: { isAdmin: boolean }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [moreOpen, setMoreOpen] = useState(false);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const update = () => {
+      const editable = document.activeElement?.matches("input, textarea, [contenteditable=true]");
+      setKeyboardOpen(Boolean(editable && window.innerHeight - viewport.height > 150));
+    };
+    viewport.addEventListener("resize", update);
+    document.addEventListener("focusin", update);
+    document.addEventListener("focusout", update);
+    return () => {
+      viewport.removeEventListener("resize", update);
+      document.removeEventListener("focusin", update);
+      document.removeEventListener("focusout", update);
+    };
+  }, []);
   const agentActive = pathname === "/chat" && searchParams.get("mode") === "agent";
 
   const links = useMemo(() => buildMoreLinks({ isAdmin }), [isAdmin]);
@@ -96,11 +114,11 @@ function MobileNavImpl({ isAdmin }: { isAdmin: boolean }) {
     return pathname === href || pathname.startsWith(`${href}/`);
   }
 
-  const moreActive = links.some((l) => !l.href.includes("?") && pathname.startsWith(l.href) && l.href !== "/");
+  const moreActive = !PRIMARY.some((item) => isActive(item.href)) && links.some((l) => !l.href.includes("?") && pathname.startsWith(l.href) && l.href !== "/");
 
   return (
     <>
-      <nav className="bottom-nav" aria-label="Primary">
+      <nav className="bottom-nav" aria-label="Primary" style={keyboardOpen ? { display: "none" } : undefined}>
         {PRIMARY.map(({ href, label, icon: Icon }) => {
           const active = isActive(href);
           return (

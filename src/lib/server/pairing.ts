@@ -111,6 +111,9 @@ export async function completePairing(
   input: { qr_payload: string; device_name: string; device_type: string; platform: string },
 ): Promise<PairedDevice> {
   const verified = verifyQrPayload(input.qr_payload);
+  // Device clients query the same authenticated owner registry. Cross-account
+  // pairing used to succeed but made the scanning client show an empty list.
+  if (scanner.uid !== verified.ownerUid) throw new RpcError("PAIRING_ACCOUNT_MISMATCH", 403);
   const id = verified.challengeId;
 
   const challengeRef = d.collection(CHALLENGES).doc(id);
@@ -119,6 +122,7 @@ export async function completePairing(
     const snap = await tx.get(challengeRef);
     if (!snap.exists) throw new RpcError("PAIRING_INVALID", 404);
     const data = snap.data()!;
+    if (data.owner_uid !== verified.ownerUid) throw new RpcError("PAIRING_INVALID", 400);
     if (data.status !== "pending" || data.consumed_at) throw new RpcError("PAIRING_USED", 409); // replay protection
     const expiresAt = (data.expires_at as Timestamp | undefined)?.toMillis?.() ?? 0;
     if (Date.now() > expiresAt) throw new RpcError("PAIRING_EXPIRED", 410);

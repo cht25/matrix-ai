@@ -164,6 +164,8 @@ const ACTIONS: Record<string, Handler> = {
   family_create: (d, u, b) => family.createFamily(d, u, { name: z.string().min(2).max(80).parse(b.name) }),
   family_invite: (d, u, b) =>
     family.inviteMember(d, u, { family_id: z.string().min(1).parse(b.family_id), invitee_email: z.string().email().parse(b.invitee_email) }),
+  family_invitation_revoke: (d, u, b) => family.revokeInvitation(d, u, z.string().min(1).max(200).parse(b.invitation_id)),
+  family_invitation_review: (d, u, b) => family.reviewInvitation(d, u, z.string().min(10).max(200).parse(b.token)),
   family_accept: (d, u, b) => family.acceptInvitation(d, u, { token: z.string().min(10).max(200).parse(b.token) }),
   family_role_change: (d, u, b) =>
     family.changeMemberRole(d, u, { family_id: z.string().min(1).parse(b.family_id), member_id: z.string().min(1).parse(b.member_id), role: str(b.role) }),

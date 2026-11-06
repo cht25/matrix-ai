@@ -185,7 +185,7 @@ export async function createAIRoutesFromDb(
  */
 export async function createScanRoutesFromDb(d: Db | null): Promise<AIRouteTarget[]> {
   const groq = createProvider();
-  const envTarget: AIRouteTarget | null = groq
+  const envTarget: AIRouteTarget | null = groq && MODELS.vision
     ? { provider: "Groq", model: MODELS.vision, client: groq }
     : null;
 
