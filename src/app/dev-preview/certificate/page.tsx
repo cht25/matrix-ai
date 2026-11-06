@@ -27,7 +27,13 @@ export default function DevPreviewCertificatePage() {
         <h1 className="mt-1">Certificate document</h1>
       </div>
       <CertificateDocument cert={SAMPLE} />
-      <CertificateActions cert={SAMPLE} />
+      {/* Points at the credential-free dev endpoints so Preview, Download and
+          Print can all be exercised without Firebase. */}
+      <CertificateActions
+        cert={SAMPLE}
+        pdfHref="/api/dev-preview/certificate/pdf"
+        printHref="/dev-preview/certificate/print"
+      />
     </div>
   );
 }

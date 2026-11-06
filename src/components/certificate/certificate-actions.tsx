@@ -12,13 +12,23 @@ import { Download, ExternalLink, Printer } from "lucide-react";
 import { CertificateDocument, type CertificateData } from "@/components/certificate/certificate-document";
 import { Alert, Button } from "@/components/ui";
 
-export function CertificateActions({ cert }: { cert: CertificateData }) {
+export function CertificateActions({
+  cert,
+  pdfHref,
+  printHref,
+}: {
+  cert: CertificateData;
+  /** Override the PDF endpoint (used by the credential-free dev preview). */
+  pdfHref?: string;
+  /** Override the print view (used by the credential-free dev preview). */
+  printHref?: string;
+}) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
 
-  const printUrl = `/certificate/print/${encodeURIComponent(cert.certificate_id)}`;
-  const pdfUrl = `/api/certificate/${encodeURIComponent(cert.certificate_id)}/pdf`;
+  const printUrl = printHref ?? `/certificate/print/${encodeURIComponent(cert.certificate_id)}`;
+  const pdfUrl = pdfHref ?? `/api/certificate/${encodeURIComponent(cert.certificate_id)}/pdf`;
 
   function print() {
     setError(null);
@@ -35,6 +45,10 @@ export function CertificateActions({ cert }: { cert: CertificateData }) {
       const res = await fetch(pdfUrl, { credentials: "same-origin" });
       if (!res.ok) throw new Error(String(res.status));
       const blob = await res.blob();
+      // A valid certificate is tens of KB once the Unicode font subsets are
+      // embedded; anything tiny means the render failed and we must not hand
+      // the learner a blank file.
+      if (blob.size < 1000) throw new Error("EMPTY_PDF");
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;

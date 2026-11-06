@@ -421,39 +421,46 @@ export function ChatClient({
     setArtifacts((current) => ({ ...current, [key]: next(current[key] ?? emptyArtifactState()) }));
   }
 
-  /** Requested → Generating → Ready (or Failed) for one message. */
-  function buildArtifactFor(key: string, format: ExportFormat, content: string, title: string) {
+  /**
+   * Requested → Generating → Ready (or Failed) for one message.
+   *
+   * Async because PDFs are rendered by the shared server-side engine
+   * (`/api/export/pdf`), which embeds real Unicode fonts and shapes the text.
+   */
+  async function buildArtifactFor(key: string, format: ExportFormat, content: string, title: string) {
     updateArtifact(key, (current) => beginArtifact(requestArtifact(current, { format, title })));
-    // One frame later so the "Generating…" state is real, not skipped.
-    window.setTimeout(() => {
-      try {
-        const built = buildArtifact(format, content, title);
-        if (!built) {
-          updateArtifact(key, (current) =>
-            failArtifact(current, format === "csv" || format === "xlsx"
-              ? "This answer has no tabular data to export yet."
-              : "There is nothing to export in this answer yet."),
-          );
-          return;
-        }
-        builtRef.current.set(key, built);
-        updateArtifact(key, (current) => completeArtifact(current, built.filename));
-      } catch {
-        updateArtifact(key, (current) => failArtifact(current, "The file could not be built. Try again."));
+    try {
+      const built = await buildArtifact(format, content, title);
+      if (!built) {
+        updateArtifact(key, (current) =>
+          failArtifact(current, format === "csv" || format === "xlsx"
+            ? "This answer has no tabular data to export yet."
+            : "There is nothing to export in this answer yet."),
+        );
+        return;
       }
-    }, 80);
+      builtRef.current.set(key, built);
+      updateArtifact(key, (current) => completeArtifact(current, built.filename));
+    } catch {
+      updateArtifact(key, (current) => failArtifact(current, "The file could not be built. Try again."));
+    }
   }
 
-  function artifactSource(key: string, content: string, title: string, format: ExportFormat) {
+  async function artifactSource(key: string, content: string, title: string, format: ExportFormat) {
     const cached = builtRef.current.get(key);
     if (cached && cached.filename.endsWith(`.${format === "markdown" ? "md" : format}`)) return cached;
-    const built = buildArtifact(format, content, title);
+    const built = await buildArtifact(format, content, title);
     if (built) builtRef.current.set(key, built);
     return built;
   }
 
-  function downloadBuilt(key: string, content: string, title: string, format: ExportFormat) {
-    const built = artifactSource(key, content, title, format);
+  async function downloadBuilt(key: string, content: string, title: string, format: ExportFormat) {
+    let built: BuiltArtifact | null = null;
+    try {
+      built = await artifactSource(key, content, title, format);
+    } catch {
+      built = null;
+    }
     if (!built) {
       toast("Nothing to download yet");
       return;
@@ -467,8 +474,13 @@ export function ChatClient({
     toast(`${format.toUpperCase()} saved`);
   }
 
-  function openBuilt(key: string, content: string, title: string, format: ExportFormat) {
-    const built = artifactSource(key, content, title, format);
+  async function openBuilt(key: string, content: string, title: string, format: ExportFormat) {
+    let built: BuiltArtifact | null = null;
+    try {
+      built = await artifactSource(key, content, title, format);
+    } catch {
+      built = null;
+    }
     if (!built) {
       toast("Nothing to open yet");
       return;
@@ -502,7 +514,7 @@ export function ChatClient({
     // CSV from this table" refers to the table in the reply that just arrived.
     const previous = lastAssistantContent(messagesRef.current);
     const content = pickArtifactContent({ format, reply, previous });
-    buildArtifactFor(key, format, content, firstHeading(content, "MATRIX response"));
+    void buildArtifactFor(key, format, content, firstHeading(content, "MATRIX response"));
   }
 
   // -------------------------------------------------------------------------
@@ -1351,7 +1363,7 @@ export function ChatClient({
       explain: () => askFollowUp("Explain the code above step by step, then list what could go wrong."),
       save: () => {
         if (message.metadata?.image_data_url) saveDataUrl(message.metadata.image_data_url, `matrix-image-${key.slice(-6)}.png`);
-        else if (artifact.format) downloadBuilt(key, message.content, title, artifact.format);
+        else if (artifact.format) void downloadBuilt(key, message.content, title, artifact.format);
       },
       editPrompt: () => {
         const prompt = imagePromptRef.current ?? lastUserMessage ?? "";
@@ -1361,7 +1373,7 @@ export function ChatClient({
       },
       sources: () => askFollowUp("List the sources and evidence behind that answer, and mark anything you could not verify."),
       export: () => setExportPickerKey((current) => (current === key ? null : key)),
-      open: () => artifact.format && openBuilt(key, message.content, title, artifact.format),
+      open: () => artifact.format && void openBuilt(key, message.content, title, artifact.format),
       copyJson: () => copyMessage(extractJson(message.content) ?? message.content),
       listen: () => listenTo(key, message.content, index === latestAssistantIndex),
       workspace: () => setWorkspaceOpen(true),
@@ -1583,9 +1595,9 @@ export function ChatClient({
                       onCloseExportPicker={() => setExportPickerKey(null)}
                       onPickFormat={(next) => {
                         setExportPickerKey(null);
-                        buildArtifactFor(key, next, message.content, firstHeading(message.content, "MATRIX response"));
+                        void buildArtifactFor(key, next, message.content, firstHeading(message.content, "MATRIX response"));
                       }}
-                      onGenerateArtifact={() => format && buildArtifactFor(key, format, message.content, firstHeading(message.content, "MATRIX response"))}
+                      onGenerateArtifact={() => format && void buildArtifactFor(key, format, message.content, firstHeading(message.content, "MATRIX response"))}
                       onDismissArtifact={() => {
                         builtRef.current.delete(key);
                         setArtifacts((current) => {
@@ -1594,10 +1606,10 @@ export function ChatClient({
                           return next;
                         });
                       }}
-                      onOpenArtifact={() => format && openBuilt(key, message.content, firstHeading(message.content, "MATRIX response"), format)}
+                      onOpenArtifact={() => format && void openBuilt(key, message.content, firstHeading(message.content, "MATRIX response"), format)}
                       onSaveArtifact={() => {
                         if (message.metadata?.image_data_url) saveDataUrl(message.metadata.image_data_url, `matrix-image-${key.slice(-6)}.png`);
-                        else if (format) downloadBuilt(key, message.content, firstHeading(message.content, "MATRIX response"), format);
+                        else if (format) void downloadBuilt(key, message.content, firstHeading(message.content, "MATRIX response"), format);
                       }}
                       onCopyArtifact={() => copyMessage(extractJson(message.content) ?? message.content)}
                       onOpenWorkspace={() => {

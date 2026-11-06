@@ -25,7 +25,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     if (!cert.valid) {
       return NextResponse.json({ error: "CERTIFICATE_NOT_FOUND" }, { status: 404 });
     }
-    const bytes = renderCertificatePdf(cert);
+    const bytes = await renderCertificatePdf(cert);
     return new NextResponse(bytes as unknown as BodyInit, {
       status: 200,
       headers: {

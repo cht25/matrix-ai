@@ -146,7 +146,7 @@ describe("clean top bar", () => {
 describe("artifacts are built for real", () => {
   it("the client builds files through the shared exporter", () => {
     const source = chatClient();
-    expect(source).toMatch(/buildArtifact\(format, content, title\)/);
+    expect(source).toMatch(/await buildArtifact\(format, content, title\)/);
     expect(source).toMatch(/URL\.createObjectURL/);
     expect(source).toMatch(/anchor\.download = built\.filename/);
     // Open is offered only for formats a browser can render.
