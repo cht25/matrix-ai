@@ -238,8 +238,6 @@ function SidebarBody({
     { href: "/scams", label: t("nav.scams"), icon: <ShieldAlert size={16} strokeWidth={1.7} />, detail: "Safety library" },
     { href: "/courses", label: t("nav.courses"), icon: <GraduationCap size={16} strokeWidth={1.7} />, detail: "Guided learning" },
     { href: "/report", label: t("nav.report"), icon: <Shield size={16} strokeWidth={1.7} />, detail: "Reporting assistant" },
-    { href: "/family", label: "Family", icon: <Users size={16} strokeWidth={1.7} />, detail: "Parents, children & permissions" },
-    { href: "/devices", label: "Devices", icon: <Smartphone size={16} strokeWidth={1.7} />, detail: "MATRIX Connect pairing" },
     { href: "/design", label: "Design studio", icon: <Sliders size={16} strokeWidth={1.7} />, detail: "Custom validated themes" },
     { href: "/compare", label: "Compare models", icon: <Columns3 size={16} strokeWidth={1.7} />, detail: "Side-by-side answers" },
     { href: "/automations", label: "Automations", icon: <Zap size={16} strokeWidth={1.7} />, detail: "Scheduled tool workflows" },
@@ -273,27 +271,36 @@ function SidebarBody({
             <MessageSquare size={16} strokeWidth={1.7} /> Chat
           </Link>
           <Link href="/chat?mode=agent" onClick={onNavigate} className={cn("nav-item", agentActive && "is-active")}>
-            <Code2 size={16} strokeWidth={1.7} /> Agent
+            <Code2 size={16} strokeWidth={1.7} /> AI Agent
           </Link>
           <Link href="/workspace" onClick={onNavigate} className={cn("nav-item", pathname.startsWith("/workspace") && "is-active")}>
-            <LayoutGrid size={16} strokeWidth={1.7} /> Workspace
+            <LayoutGrid size={16} strokeWidth={1.7} /> AI Workspace
           </Link>
-          <Link href="/temporary-chat" onClick={onNavigate} className={cn("nav-item", pathname.startsWith("/temporary-chat") && "is-active")}>
-            <History size={16} strokeWidth={1.7} /> Private
+          <Link href="/canvas" onClick={onNavigate} aria-current={pathname === "/canvas" ? "page" : undefined} className={cn("nav-item", pathname === "/canvas" && "is-active")}>
+            <LayoutGrid size={16} /> Canvas
+          </Link>
+          <Link href="/history" onClick={onNavigate} className={cn("nav-item", pathname === "/history" && "is-active")}>
+            <History size={16} /> Chat History
           </Link>
         </nav>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3">
+        <nav className="mb-4 space-y-0.5 border-t border-border pt-3" aria-label="Primary platform">
+          <Link href="/family" onClick={onNavigate} aria-current={pathname.startsWith("/family") ? "page" : undefined} className={cn("nav-item", pathname.startsWith("/family") && "is-active")}><Users size={16} /> Family</Link>
+          <Link href="/devices" onClick={onNavigate} aria-current={pathname.startsWith("/devices") ? "page" : undefined} className={cn("nav-item", pathname.startsWith("/devices") && "is-active")}><Smartphone size={16} /> Connected Devices</Link>
+          <Link href="/projects" onClick={onNavigate} className={cn("nav-item", pathname.startsWith("/projects") && "is-active")}><LayoutGrid size={16} /> Workspace</Link>
+          <Link href="/temporary-chat" onClick={onNavigate} className={cn("nav-item", pathname.startsWith("/temporary-chat") && "is-active")}><History size={16} /> Private Workspace</Link>
+        </nav>
         <div className="mb-2 flex items-center justify-between px-1">
           <p className="eyebrow">Recent chats</p>
           <Link href="/history" onClick={onNavigate} className="text-[11px] font-medium text-ink-3 transition-colors hover:text-ink">View all</Link>
         </div>
         <HistoryList conversations={conversations} onNavigate={onNavigate} />
 
-        <details className="group mt-5 border-t border-border pt-3" open={conversations.length === 0}>
+        <details className="group mt-5 border-t border-border pt-3" open={conversations.length === 0 || tools.some((item) => pathname.startsWith(item.href))}>
           <summary className="flex min-h-9 cursor-pointer list-none items-center justify-between rounded-[8px] px-1 text-ink-2 hover:text-ink [&::-webkit-details-marker]:hidden">
-            <span className="eyebrow">More tools</span>
+            <span className="eyebrow">AI and Safety</span>
             <ChevronDown size={13} className="transition-transform duration-150 group-open:rotate-180" />
           </summary>
           <nav className="mt-1 space-y-0.5" aria-label="More tools">

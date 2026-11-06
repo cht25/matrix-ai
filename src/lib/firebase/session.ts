@@ -60,12 +60,17 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   if (!adminConfigured()) return null;
   // Native apps (Android/Windows/Wear) authenticate with a Firebase ID token
   // in the Authorization header; browsers use the httpOnly session cookie.
-  try {
-    const hdrs = await headers();
-    const bearer = extractBearerToken(hdrs.get("authorization"));
-    if (bearer) return await verifyIdToken(bearer);
-  } catch {
-    // fall through to the cookie path; an invalid bearer must not 500
+  const hdrs = await headers();
+  const authorization = hdrs.get("authorization");
+  if (authorization !== null) {
+    const bearer = extractBearerToken(authorization);
+    if (!bearer) return null;
+    try {
+      return await verifyIdToken(bearer);
+    } catch {
+      // Explicit invalid credentials must never fall back to another identity.
+      return null;
+    }
   }
   const store = await cookies();
   const value = store.get(SESSION_COOKIE)?.value;

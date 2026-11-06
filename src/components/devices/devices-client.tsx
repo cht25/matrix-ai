@@ -44,6 +44,7 @@ export function DevicesClient() {
       const res = await fetch("/api/devices", { credentials: "same-origin" });
       if (!res.ok) throw new Error("HTTP_" + res.status);
       setDevices(((await res.json()) as { devices: Device[] }).devices);
+      setError(null);
     } catch {
       setError("Could not load devices.");
     } finally {
@@ -53,6 +54,15 @@ export function DevicesClient() {
 
   useEffect(() => {
     void load();
+    const refresh = () => { if (!document.hidden) void load(); };
+    const timer = window.setInterval(refresh, 30_000);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
+    };
   }, [load]);
 
   async function createChallenge() {
@@ -99,7 +109,9 @@ export function DevicesClient() {
       toast(`Device "${body.device?.device_name}" linked.`);
       await load();
     } catch (err) {
-      toast(err instanceof Error ? err.message.replace(/_/g, " ").toLowerCase() : "Pairing failed.");
+      toast(err instanceof Error && err.message === "PAIRING_ACCOUNT_MISMATCH"
+        ? "Sign in to the same MATRIX account on both devices, then try again."
+        : err instanceof Error ? err.message.replace(/_/g, " ").toLowerCase() : "Pairing failed.");
     } finally {
       setBusy(false);
     }

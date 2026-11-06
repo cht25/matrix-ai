@@ -236,10 +236,10 @@ export class GroqProvider implements AIProvider {
   }
 }
 
-// Model registry (server-side only). Official Groq replacements as of 2026-08-16.
+// Server-side model defaults. Vision requires an operator-verified provider ID.
 export const MODELS = {
   chat: "openai/gpt-oss-120b",
-  vision: "qwen/qwen3.6-27b",
+  vision: process.env.GROQ_VISION_MODEL?.trim() || "",
   fast: "openai/gpt-oss-20b",
 } as const;
 

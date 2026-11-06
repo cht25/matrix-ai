@@ -6,6 +6,8 @@
 
 import "server-only";
 import crypto from "node:crypto";
+import QRCode from "qrcode";
+import { familyInvitationUrl, sendFamilyInvitation } from "@/lib/server/family-email";
 import { Timestamp } from "firebase-admin/firestore";
 import { adminDb, nowTs, type Db } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
@@ -79,54 +81,80 @@ export async function inviteMember(d: Db, user: SessionUser, input: { family_id:
   const token = crypto.randomBytes(24).toString("base64url");
   const ref = d.collection(INVITATIONS).doc();
   const now = nowTs();
+  const expiresAt = new Date(Date.now() + INVITATION_TTL_MS).toISOString();
   await ref.set({
     family_id: input.family_id,
     invited_by: user.uid,
     invitee_email: email,
     token_hash: hashToken(token),
     status: "pending",
-    expires_at: Timestamp.fromMillis(Date.now() + INVITATION_TTL_MS),
+    expires_at: Timestamp.fromDate(new Date(expiresAt)),
     created_at: now,
     resolved_at: null,
   });
   await audit(d, user.uid, "family.invite", ref.id, { family_id: input.family_id, invitee_email: email });
-  // The raw token is returned ONCE to the inviter (to share out-of-band / QR);
-  // only its hash is stored.
-  return { invitation_id: ref.id, token, expires_at: new Date(Date.now() + INVITATION_TTL_MS).toISOString() };
+  const delivery = await sendFamilyInvitation({ id: ref.id, email, token, expiresAt });
+  await ref.set({ email_status: delivery.status, email_provider_id: delivery.provider_id ?? null }, { merge: true });
+  return {
+    invitation_id: ref.id, token, expires_at: expiresAt, email_status: delivery.status,
+    qr_data_url: await QRCode.toDataURL(familyInvitationUrl(token), { width: 256, margin: 2 }),
+  };
+}
+
+/** Only the intended verified recipient can review a bearer invitation. */
+export async function reviewInvitation(d: Db, user: SessionUser, token: string) {
+  const snap = await d.collection(INVITATIONS).where("token_hash", "==", hashToken(token)).limit(1).get();
+  if (snap.empty) throw new RpcError("INVITATION_INVALID", 404);
+  const invite = snap.docs[0].data();
+  if (invite.status !== "pending") throw new RpcError("INVITATION_INVALID", 409);
+  if (Date.now() >= ((invite.expires_at as Timestamp)?.toMillis?.() ?? 0)) throw new RpcError("INVITATION_EXPIRED", 410);
+  if (!user.emailVerified || user.email?.trim().toLowerCase() !== invite.invitee_email) throw new RpcError("INVITATION_EMAIL_MISMATCH", 403);
+  const family = await d.collection(FAMILIES).doc(String(invite.family_id)).get();
+  if (!family.exists) throw new RpcError("INVITATION_INVALID", 404);
+  return { name: String(family.data()?.name ?? "Family"), role: "child" as const, expires_at: (invite.expires_at as Timestamp).toDate().toISOString() };
 }
 
 export async function acceptInvitation(d: Db, user: SessionUser, input: { token: string }) {
-  const tokenHash = hashToken(input.token);
-  const snap = await d
-    .collection(INVITATIONS)
-    .where("token_hash", "==", tokenHash)
-    .where("status", "==", "pending")
-    .limit(1)
-    .get();
+  const snap = await d.collection(INVITATIONS).where("token_hash", "==", hashToken(input.token)).limit(1).get();
   if (snap.empty) throw new RpcError("INVITATION_INVALID", 404);
-  const invite = snap.docs[0];
-  const data = invite.data();
-  const expiresAt = (data.expires_at as Timestamp | undefined)?.toMillis?.() ?? 0;
-  if (Date.now() > expiresAt) {
-    await invite.ref.set({ status: "expired", resolved_at: nowTs() }, { merge: true });
-    throw new RpcError("INVITATION_EXPIRED", 410);
-  }
-  const familyId = String(data.family_id);
-  // Reject if the user is already an active member of this family.
-  const existing = await getActiveMembership(d, user.uid, familyId);
-  if (existing) throw new RpcError("ALREADY_MEMBER", 409);
-  const now = nowTs();
-  await d.collection(MEMBERS).doc(membershipDocId(user.uid, familyId)).set({
-    user_id: user.uid,
-    family_id: familyId,
-    role: "child", // invitees join as child; a parent promotes via changeRole
-    invited_by: data.invited_by,
-    joined_at: now,
-    revoked_at: null,
+  const invitationRef = d.collection(INVITATIONS).doc(snap.docs[0].id);
+  // Re-read and consume atomically: concurrent accepts must not reuse a token.
+  const familyId = await d.runTransaction(async (tx) => {
+    const invite = await tx.get(invitationRef);
+    const data = invite.data();
+    if (!data || data.status !== "pending") throw new RpcError("INVITATION_INVALID", 409);
+    if (Date.now() >= ((data.expires_at as Timestamp)?.toMillis?.() ?? 0)) throw new RpcError("INVITATION_EXPIRED", 410);
+    if (!user.emailVerified || user.email?.trim().toLowerCase() !== data.invitee_email) {
+      throw new RpcError("INVITATION_EMAIL_MISMATCH", 403);
+    }
+    const id = String(data.family_id);
+    const memberRef = d.collection(MEMBERS).doc(membershipDocId(user.uid, id));
+    const parentRef = d.collection(MEMBERS).doc(membershipDocId(String(data.invited_by), id));
+    const [member, parent] = await Promise.all([tx.get(memberRef), tx.get(parentRef)]);
+    if (!parent.exists || parent.data()?.revoked_at || parent.data()?.role !== "parent") throw new RpcError("INVITATION_INVALID", 403);
+    if (member.exists && !member.data()?.revoked_at) throw new RpcError("ALREADY_MEMBER", 409);
+    const now = nowTs();
+    tx.set(memberRef, { user_id: user.uid, family_id: id, role: "child", invited_by: data.invited_by, joined_at: now, revoked_at: null });
+    tx.set(invitationRef, { status: "accepted", resolved_at: now }, { merge: true });
+    return id;
   });
-  await invite.ref.set({ status: "accepted", resolved_at: now }, { merge: true });
-  await audit(d, user.uid, "family.join", familyId, { invitation_id: invite.id });
+  await audit(d, user.uid, "family.join", familyId, { invitation_id: invitationRef.id });
   return { family_id: familyId, role: "child" as const };
+}
+
+export async function revokeInvitation(d: Db, user: SessionUser, invitationId: string) {
+  const ref = d.collection(INVITATIONS).doc(invitationId);
+  await d.runTransaction(async (tx) => {
+    const invite = await tx.get(ref);
+    if (!invite.exists) throw new RpcError("NOT_FOUND", 404);
+    const data = invite.data()!;
+    const parent = await tx.get(d.collection(MEMBERS).doc(membershipDocId(user.uid, String(data.family_id))));
+    if (!parent.exists || parent.data()?.revoked_at || parent.data()?.role !== "parent") throw new RpcError("PERMISSION_DENIED", 403);
+    if (data.status !== "pending") throw new RpcError("INVITATION_INVALID", 409);
+    tx.set(ref, { status: "revoked", resolved_at: nowTs() }, { merge: true });
+  });
+  await audit(d, user.uid, "family.invitation_revoke", invitationId, {});
+  return { ok: true };
 }
 
 export async function changeMemberRole(d: Db, user: SessionUser, input: { family_id: string; member_id: string; role: string }) {
