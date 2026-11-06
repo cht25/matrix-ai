@@ -39,6 +39,7 @@ import { ragSearch } from "@/lib/server/rpc";
 import { downloadImage } from "@/lib/server/cloudinary";
 import { descDoc } from "@/lib/server/sort";
 import { applyProjectFiles, ensureProject } from "@/lib/server/projects";
+import { recordAgentToolSelection } from "@/lib/server/tool-gateway";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -617,6 +618,9 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
               emit({ stage: stage.id, label: stage.label, node: stage.node, stream_status: "processing" });
             }
             emit({ tool: selected.tool, tool_reason: selected.reason });
+            // Every agent tool selection is audit-logged server-side; actual
+            // tool execution goes through the guarded gateway (/api/agent/tools).
+            void recordAgentToolSelection(d, user.uid, selected.tool, selected.reason).catch(() => {});
           }
           emit({ stream_status: "streaming" });
           for await (const item of streamWithFallback(

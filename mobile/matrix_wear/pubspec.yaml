@@ -1,0 +1,25 @@
+name: matrix_wear
+description: MATRIX Wear OS companion — quick AI replies, device status, reminders. Shares the phone app's API client.
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.4.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  matrix_app:
+    path: ../matrix_app
+  firebase_core: ^3.8.0
+  firebase_auth: ^5.3.3
+  http: ^1.2.2
+  wear: ^1.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
