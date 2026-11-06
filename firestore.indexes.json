@@ -93,6 +93,69 @@
         { "fieldPath": "user_id", "order": "ASCENDING" },
         { "fieldPath": "quiz_id", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "family_members",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "user_id", "order": "ASCENDING" },
+        { "fieldPath": "revoked_at", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "family_members",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "family_id", "order": "ASCENDING" },
+        { "fieldPath": "revoked_at", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "family_invitations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "token_hash", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "devices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "user_id", "order": "ASCENDING" },
+        { "fieldPath": "paired_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "versions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "version", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "agent_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "user_id", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "automations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "user_id", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "automation_runs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "user_id", "order": "ASCENDING" },
+        { "fieldPath": "created_at", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

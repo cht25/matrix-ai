@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/data";
 import { MATRIX_MODES } from "@/lib/ai/modes";
+import { AgentToolsPanel } from "@/components/agent-tools-panel";
 
 export const metadata = { title: "Workspace" } as const;
 
@@ -41,6 +42,7 @@ export default async function WorkspacePage() {
           </Link>
         </li>
       </ul>
+      <AgentToolsPanel />
     </div>
   );
 }

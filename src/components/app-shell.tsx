@@ -10,8 +10,8 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
-  ChevronDown, Code2, FileSearch, GraduationCap, History, LayoutGrid, MessageSquare,
-  MoreVertical, PanelLeft, Plus, Search, Shield, ShieldAlert, Sliders, User,
+  ChevronDown, Code2, Columns3, FileSearch, GraduationCap, History, LayoutGrid, MessageSquare,
+  MoreVertical, PanelLeft, Plus, Search, Shield, ShieldAlert, Sliders, Smartphone, User, Users, Zap,
 } from "lucide-react";
 import { rpc } from "@/lib/client/api";
 import { Logo } from "@/components/logo";
@@ -238,6 +238,11 @@ function SidebarBody({
     { href: "/scams", label: t("nav.scams"), icon: <ShieldAlert size={16} strokeWidth={1.7} />, detail: "Safety library" },
     { href: "/courses", label: t("nav.courses"), icon: <GraduationCap size={16} strokeWidth={1.7} />, detail: "Guided learning" },
     { href: "/report", label: t("nav.report"), icon: <Shield size={16} strokeWidth={1.7} />, detail: "Reporting assistant" },
+    { href: "/family", label: "Family", icon: <Users size={16} strokeWidth={1.7} />, detail: "Parents, children & permissions" },
+    { href: "/devices", label: "Devices", icon: <Smartphone size={16} strokeWidth={1.7} />, detail: "MATRIX Connect pairing" },
+    { href: "/design", label: "Design studio", icon: <Sliders size={16} strokeWidth={1.7} />, detail: "Custom validated themes" },
+    { href: "/compare", label: "Compare models", icon: <Columns3 size={16} strokeWidth={1.7} />, detail: "Side-by-side answers" },
+    { href: "/automations", label: "Automations", icon: <Zap size={16} strokeWidth={1.7} />, detail: "Scheduled tool workflows" },
   ];
 
   return (

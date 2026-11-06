@@ -11,7 +11,7 @@
 // signature server-side.
 
 import "server-only";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import type { NextRequest } from "next/server";
 import { adminAuth, adminConfigured } from "@/lib/firebase/admin";
 
@@ -39,9 +39,34 @@ export async function verifySession(cookieValue: string): Promise<SessionUser> {
   };
 }
 
+/** Extract a Bearer token from an Authorization header value (pure, testable). */
+export function extractBearerToken(header: string | null | undefined): string | null {
+  if (!header) return null;
+  const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+  return match ? match[1].trim() : null;
+}
+
+/**
+ * Verify a raw Firebase ID token (used by native mobile/desktop clients that
+ * cannot hold httpOnly cookies). Server-verified exactly like the cookie path.
+ */
+export async function verifyIdToken(idToken: string): Promise<SessionUser> {
+  const decoded = await adminAuth().verifyIdToken(idToken, true);
+  return { uid: decoded.uid, email: decoded.email ?? null, emailVerified: decoded.email_verified ?? false };
+}
+
 /** Current signed-in user for server components, or null. */
 export async function getSessionUser(): Promise<SessionUser | null> {
   if (!adminConfigured()) return null;
+  // Native apps (Android/Windows/Wear) authenticate with a Firebase ID token
+  // in the Authorization header; browsers use the httpOnly session cookie.
+  try {
+    const hdrs = await headers();
+    const bearer = extractBearerToken(hdrs.get("authorization"));
+    if (bearer) return await verifyIdToken(bearer);
+  } catch {
+    // fall through to the cookie path; an invalid bearer must not 500
+  }
   const store = await cookies();
   const value = store.get(SESSION_COOKIE)?.value;
   if (!value) return null;

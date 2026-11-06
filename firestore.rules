@@ -208,6 +208,60 @@ service cloud.firestore {
     }
     match /system_settings/{id} { allow read, write: if false; }
 
+    // --- Dynamic Design Engine ------------------------------------------------------
+    match /design_configs/{uid} {
+      allow read: if isOwner(uid) || adminClaim();
+      allow write: if false; // saved only server-side via /api/rpc after approval
+      match /versions/{vid} {
+        allow read: if isOwner(uid) || adminClaim();
+        allow write: if false;
+      }
+    }
+
+    // --- MATRIX Family ----------------------------------------------------------------
+    match /families/{id} {
+      // Readable by active members (membership doc id is `${uid}_${familyId}`)
+      // and admins; all mutations run server-side with role checks in code.
+      allow read: if (signedIn() && exists(/databases/$(database)/documents/family_members/$(request.auth.uid + "_" + id))) || adminClaim();
+      allow write: if false;
+    }
+    match /family_members/{mid} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false;
+    }
+    match /family_invitations/{id} {
+      allow read, write: if false; // tokens are hashed; server-only
+    }
+
+    // --- Automations -------------------------------------------------------------------
+    match /automations/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false; // server-side via /api/rpc with registry checks
+    }
+    match /automation_runs/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false; // execution results — server only
+    }
+
+    // --- Agent tasks & checkpoints ----------------------------------------------------
+    match /agent_tasks/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false; // checkpoints are appended server-side only
+      match /checkpoints/{n} {
+        allow read: if (signedIn() && get(/databases/$(database)/documents/agent_tasks/$(id)).data.user_id == request.auth.uid) || adminClaim();
+        allow write: if false;
+      }
+    }
+
+    // --- MATRIX Connect (device pairing) ----------------------------------------------
+    match /pairing_challenges/{id} {
+      allow read, write: if false; // HMAC-signed one-time challenges — server only
+    }
+    match /devices/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false; // pairing/revocation happen server-side
+    }
+
     // --- Default deny --------------------------------------------------------------
     match /{document=**} {
       allow read, write: if false;

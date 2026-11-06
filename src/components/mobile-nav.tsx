@@ -8,9 +8,9 @@ import { memo, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
-  Activity, BookOpen, Code2, FileSearch, GraduationCap, HeartPulse, History, KeyRound,
+  Activity, BookOpen, Code2, Columns3, FileSearch, GraduationCap, HeartPulse, History, KeyRound,
   LayoutGrid, LifeBuoy, MessageSquare, MoreHorizontal, Rocket, Settings, Shield,
-  ShieldAlert, Sliders, User,
+  ShieldAlert, Sliders, Smartphone, User, Users, Zap,
 } from "lucide-react";
 import { BottomSheet } from "@/components/bottom-sheet";
 import { ThemeToggle } from "@/lib/theme";
@@ -34,6 +34,11 @@ export function buildMoreLinks({ isAdmin }: { isAdmin: boolean }): MoreLink[] {
     { href: "/dashboard", label: "Dashboard", icon: <LayoutGrid size={18} strokeWidth={1.7} />, group: "Workspace" },
     { href: "/projects", label: "Projects", icon: <Code2 size={18} strokeWidth={1.7} />, group: "Workspace" },
     { href: "/history", label: "History", icon: <History size={18} strokeWidth={1.7} />, group: "Workspace" },
+    { href: "/family", label: "Family", icon: <Users size={18} strokeWidth={1.7} />, group: "Workspace" },
+    { href: "/devices", label: "Devices", icon: <Smartphone size={18} strokeWidth={1.7} />, group: "Workspace" },
+    { href: "/design", label: "Design studio", icon: <Sliders size={18} strokeWidth={1.7} />, group: "Workspace" },
+    { href: "/compare", label: "Compare models", icon: <Columns3 size={18} strokeWidth={1.7} />, group: "Workspace" },
+    { href: "/automations", label: "Automations", icon: <Zap size={18} strokeWidth={1.7} />, group: "Workspace" },
 
     { href: "/courses", label: "Courses", icon: <GraduationCap size={18} strokeWidth={1.7} />, group: "Learn" },
     { href: "/certificates", label: "Certificates", icon: <BookOpen size={18} strokeWidth={1.7} />, group: "Learn" },

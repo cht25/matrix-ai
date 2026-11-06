@@ -16,6 +16,12 @@ import * as imageConfig from "@/lib/ai/image/config";
 import { getConversationHistoryPage } from "@/lib/server/queries";
 import * as projects from "@/lib/server/projects";
 import * as deploy from "@/lib/server/deploy";
+import * as design from "@/lib/server/design";
+import * as family from "@/lib/server/family";
+import * as agentTasks from "@/lib/server/agent-tasks";
+import * as agentDeploy from "@/lib/server/agent-deploy";
+import * as automations from "@/lib/server/automations";
+import { designTokensSchema } from "@/lib/design/tokens";
 import { latestBuildRunForProject, readBuildRun } from "@/lib/server/build";
 import { nowTs } from "@/lib/firebase/admin";
 import { ascDoc, descDoc } from "@/lib/server/sort";
@@ -140,6 +146,75 @@ const ACTIONS: Record<string, Handler> = {
   onboarding_status: (d, u) => rpc.profileOnboardingComplete(d, u.uid).then((complete) => ({ complete })),
 
   theme_update: (d, u, b) => rpc.updateTheme(d, u, { theme: str(b.theme), theme_template: str(b.theme_template) }),
+
+  // --- Dynamic Design Engine (validated tokens only; preview never writes) --
+  design_preview: async (d, u, b) => design.previewDesign({ instruction: b.instruction ? str(b.instruction) : undefined, changes: b.changes as Record<string, unknown> | undefined }),
+  design_save: (d, u, b) =>
+    design.saveDesignConfig(d, u, {
+      tokens: designTokensSchema.parse(b.tokens),
+      source: b.source === "instruction" ? "instruction" : "manual",
+      summary: str(b.summary, "Custom design"),
+    }),
+  design_current: (d, u) => design.getCurrentDesignConfig(d, u.uid),
+  design_versions: (d, u) => design.listDesignVersions(d, u.uid),
+  design_apply_version: (d, u, b) => design.applyDesignVersion(d, u, z.number().int().min(1).parse(b.version)),
+  design_reset: (d, u) => design.resetDesignConfig(d, u),
+
+  // --- MATRIX Family (server-enforced roles & relationships) ------------------
+  family_create: (d, u, b) => family.createFamily(d, u, { name: z.string().min(2).max(80).parse(b.name) }),
+  family_invite: (d, u, b) =>
+    family.inviteMember(d, u, { family_id: z.string().min(1).parse(b.family_id), invitee_email: z.string().email().parse(b.invitee_email) }),
+  family_accept: (d, u, b) => family.acceptInvitation(d, u, { token: z.string().min(10).max(200).parse(b.token) }),
+  family_role_change: (d, u, b) =>
+    family.changeMemberRole(d, u, { family_id: z.string().min(1).parse(b.family_id), member_id: z.string().min(1).parse(b.member_id), role: str(b.role) }),
+  family_revoke: (d, u, b) =>
+    family.revokeMember(d, u, { family_id: z.string().min(1).parse(b.family_id), member_id: z.string().min(1).parse(b.member_id) }),
+  family_list: (d, u) => family.listFamiliesForUser(d, u.uid),
+  family_members: (d, u, b) => family.listMembers(d, u, z.string().min(1).parse(b.family_id)),
+
+  // --- Agent tasks & checkpoints (server-written execution trail) -------------
+  agent_task_create: (d, u, b) =>
+    agentTasks.createAgentTask(d, u, {
+      title: z.string().min(1).max(120).parse(b.title),
+      goal: z.string().min(1).max(4000).parse(b.goal),
+      conversation_id: b.conversation_id ? str(b.conversation_id) : null,
+      project_id: b.project_id ? str(b.project_id) : null,
+      model: b.model ? str(b.model) : null,
+    }),
+  agent_task_list: (d, u) => agentTasks.listAgentTasks(d, u),
+  agent_task_get: (d, u, b) => agentTasks.getAgentTask(d, u, z.string().min(1).parse(b.task_id)),
+  agent_task_checkpoint: (d, u, b) =>
+    agentTasks.appendCheckpoint(d, u, z.string().min(1).parse(b.task_id), {
+      step: z.string().min(1).max(40).parse(b.step),
+      state: z.enum(["started", "ok", "failed", "skipped", "needs_approval"]).parse(b.state),
+      detail: str(b.detail),
+    }),
+  agent_task_status: (d, u, b) =>
+    agentTasks.setTaskStatus(d, u, z.string().min(1).parse(b.task_id), z.enum(["planning", "running", "awaiting_approval", "completed", "failed", "cancelled"]).parse(b.status)),
+  // --- Automations (actions only reference registry tools; LOW-risk only) -----
+  automation_create: (d, u, b) =>
+    automations.createAutomation(d, u, {
+      name: z.string().min(2).max(80).parse(b.name),
+      description: b.description ? str(b.description) : undefined,
+      trigger: str(b.trigger),
+      schedule: b.schedule ? str(b.schedule) : null,
+      actions: b.actions,
+    }),
+  automation_list: (d, u) => automations.listAutomations(d, u),
+  automation_status: (d, u, b) =>
+    automations.setAutomationStatus(d, u, z.string().min(1).parse(b.id), z.enum(["active", "paused", "disabled"]).parse(b.status)),
+  automation_delete: (d, u, b) => automations.deleteAutomation(d, u, z.string().min(1).parse(b.id)),
+  automation_run: (d, u, b) =>
+    automations.runAutomation(d, u, z.string().min(1).parse(b.id), { approvalId: b.approval_id ? str(b.approval_id) : undefined, triggerSource: str(b.source, "manual") }),
+
+  agent_task_deploy: (d, u, b) =>
+    agentDeploy.deployAgentTask(d, u, {
+      task_id: z.string().min(1).parse(b.task_id),
+      vercel_project_id: z.string().min(1).max(120).parse(b.vercel_project_id),
+      approve: b.approve === true,
+      target: b.target === "preview" ? "preview" : "production",
+      subdomain: b.subdomain ? str(b.subdomain) : undefined,
+    }),
   notifications_list: (d, u) => rpc.listNotifications(d, u),
   notifications_mark_read: (d, u, b) => rpc.markNotificationsRead(d, u, { id: b.id ? str(b.id) : undefined, all: bool(b.all) }),
   usage_summary: (d, u) => rpc.usageSummary(d, u),

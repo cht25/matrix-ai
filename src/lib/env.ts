@@ -81,6 +81,17 @@ export const env = {
   },
 } as const;
 
+// Vercel config is read LIVE (not snapshotted) so tests and runtime env changes
+// are honored; the token stays server-side only.
+export function vercelConfig(): { token: string; teamId: string; appsDomain: string } {
+  return {
+    token: clean(process.env.VERCEL_TOKEN ?? ""),
+    teamId: clean(process.env.VERCEL_TEAM_ID ?? ""),
+    // Approved parent domain for deployed app aliases (e.g. *.apps.thamjj13.top).
+    appsDomain: clean(process.env.VERCEL_APPS_DOMAIN ?? "apps.thamjj13.top"),
+  };
+}
+
 export function isConfigured(): boolean {
   return configured;
 }
@@ -121,6 +132,12 @@ export function isAdminBootstrapConfigured(): boolean {
 export function isCloudinaryConfigured(): boolean {
   const c = env.cloudinary;
   return Boolean(c.cloudName && c.apiKey && c.apiSecret) && !PLACEHOLDERS.some((p) => c.cloudName.includes(p) || c.apiSecret.includes(p));
+}
+
+/** True when the server-side Vercel deployment engine has a real API token. */
+export function isVercelConfigured(): boolean {
+  const v = vercelConfig();
+  return Boolean(v.token) && !PLACEHOLDERS.some((p) => v.token.includes(p));
 }
 
 export function serviceAccount(): { projectId: string; clientEmail: string; privateKey: string } | undefined {
