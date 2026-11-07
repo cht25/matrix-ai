@@ -55,7 +55,15 @@ export function shortUrl(url: string | null | undefined, limit = 52): string {
 export function absoluteUrl(url: string | null | undefined): string {
   const value = String(url ?? "").trim();
   if (!value) return "";
-  if (/^https?:\/\//i.test(value)) return value;
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      const parsed = new URL(value);
+      const host = parsed.hostname.toLowerCase();
+      const local = host === "localhost" || host.endsWith(".localhost") || host === "127.0.0.1" || host === "0.0.0.0" || host === "::1" || /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || host.endsWith(".local");
+      if (local) return parsed.pathname.startsWith("/s/") ? parsed.pathname : "";
+    } catch { return ""; }
+    return value;
+  }
   if (typeof window === "undefined") return value;
   try {
     return new URL(value, window.location.origin).toString();

@@ -58,7 +58,7 @@ export type DeployLogEntry = {
   at: string;
   step:
     | "plan" | "generate" | "install" | "build" | "validate" | "upload"
-    | "activate" | "domain" | "rollback" | "warn" | "error";
+    | "activate" | "verify" | "domain" | "rollback" | "warn" | "error";
   detail: string;
 };
 
