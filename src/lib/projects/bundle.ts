@@ -1,12 +1,10 @@
 // Standalone-site bundler.
 //
 // Turns a MATRIX Agent project (a tree of HTML / CSS / JS / asset files) into
-// a single self-contained HTML document: every local stylesheet is inlined
-// into a <style> tag, every local script into a <script> tag, local images,
-// favicons and CSS url(...) resources become data: URIs, and window.MATRIX_ENV
-// is injected. The published root page therefore renders perfectly at
-// /s/<slug>/ with no dependency on sibling files — "completely ready" the
-// moment it goes public.
+// a mostly self-contained root document: local text and binary resources are
+// inlined while the output stays within Firestore's safe document budget.
+// References that do not fit remain as sibling files and resolve via <base>.
+// Public window.MATRIX_ENV values are injected into the HTML when configured.
 
 import type { ProjectFile } from "@/lib/projects/paths";
 import { contentTypeForPath, fileExtension } from "@/lib/projects/paths";
@@ -92,10 +90,10 @@ const ASSET_REF_ATTRS = /(?:src|href|poster|data-src|xlink:href)\s*=\s*["']([^"'
 const ASSET_EXT = /\.(?:png|jpe?g|gif|webp|svg|ico|avif|bmp|woff2?|ttf|otf|eot|mp3|mp4|wav|webm|json|webmanifest)(?:[?#][^"']*)?$/i;
 
 /**
- * Produce a fully self-contained version of one HTML file: local CSS is
- * inlined as <style> (with its url() resources inlined), local JS as inline
- * <script>, and local asset references become data: URIs. Returns the
- * rewritten HTML, plus the number of inlined resources (for publish logs).
+ * Inline local resources into one HTML file while keeping the result below
+ * the safe Firestore document budget. Resources that do not fit remain as
+ * relative references to their sibling files. Returns rewritten HTML and the
+ * number of inlined resources (for publish logs).
  */
 /** Keep the resulting document under Firestore's ~1 MiB document limit. */
 const MAX_INLINED_BYTES = 900_000;
@@ -117,24 +115,27 @@ export function inlineHtmlDocument(
   opts: { envPublic?: Record<string, string> } = {},
 ): { html: string; inlined: number } {
   let inlined = 0;
-  let inlinedBytes = 0;
+  // Include the original document in the budget; only count introduced content
+  // thereafter. This keeps the published root file below Firestore's document
+  // limit even when a project references many large CSS/JS/assets.
+  let inlinedBytes = Buffer.byteLength(html, "utf8");
   const cssCache = new Map<string, string>();
 
-  // Text resources (CSS/JS) are always inlined — they are the whole point of
-  // a self-contained page. Binary data: URIs count against a budget; once it
-  // is spent the asset is left as a normal relative reference (the published
-  // route injects a <base> tag so it still loads as a sibling file).
-  const roomFor = (estimated: number) => inlinedBytes + estimated < MAX_INLINED_BYTES;
-  const addText = (chars: number) => {
+  // Inline text resources while they fit. Once the budget is spent, preserve
+  // the original local reference; the published route's <base> resolves it.
+  const roomFor = (bytes: number) => inlinedBytes + bytes < MAX_INLINED_BYTES;
+  const addText = (content: string): boolean => {
+    const bytes = Buffer.byteLength(content, "utf8");
+    if (!roomFor(bytes)) return false;
     inlined += 1;
-    inlinedBytes += chars;
+    inlinedBytes += bytes;
+    return true;
   };
   const addAsset = (asset: ProjectFile): string | null => {
     const dataUri = toDataUri(asset);
-    // data: URIs inflate ~33% for base64; budget against the encoded length.
-    if (!roomFor(Math.ceil(dataUri.length * 1.05))) return null;
+    if (!roomFor(Buffer.byteLength(dataUri, "utf8"))) return null;
     inlined += 1;
-    inlinedBytes += Math.ceil(dataUri.length * 1.05);
+    inlinedBytes += Buffer.byteLength(dataUri, "utf8");
     return dataUri;
   };
 
@@ -166,7 +167,7 @@ export function inlineHtmlDocument(
       const cssFile = resolveFile(files, href, htmlPath);
       if (!cssFile || cssFile.encoding === "base64") return full;
       const content = cssFor(cssFile).replace(/<\/style/gi, "<\\/style");
-      addText(content.length);
+      if (!addText(content)) return full;
       return `<style data-matrix-source="${cssFile.path}">\n${content}\n</style>`;
     },
   );
@@ -181,7 +182,7 @@ export function inlineHtmlDocument(
       const isModule = /type=["']module["']/i.test(`${before} ${after}`);
       const typeAttr = isModule ? ' type="module"' : "";
       const content = jsFile.content.replace(/<\/script/gi, "<\\/script");
-      addText(content.length);
+      if (!addText(content)) return full;
       return `<script${typeAttr} data-matrix-source="${jsFile.path}">\n${content}\n</script>`;
     },
   );
@@ -240,9 +241,9 @@ export function inlineHtmlDocument(
 /**
  * Build the set of files to write to a published site. The root document
  * (`index.html` at the top level, or the only HTML file when there is no
- * index) is published as a single self-contained page so `/s/<slug>/` works
- * with no extra requests; every other project file is published unchanged so
- * deeper pages, downloads and assets keep working.
+ * index) has local resources inlined up to the safe document-size budget;
+ * overflow references stay available as sibling files. Other files are kept
+ * so deeper pages, downloads and assets continue to work.
  */
 export function buildPublishedFiles(files: ProjectFile[], envPublic?: Record<string, string>): {
   outFiles: { path: string; content: string; language: string; encoding: "utf8" | "base64" }[];
