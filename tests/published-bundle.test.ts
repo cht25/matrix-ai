@@ -38,6 +38,17 @@ describe("buildPublishedFiles", () => {
     expect(outFiles.some((f) => f.path === "js/app.js")).toBe(true);
   });
 
+  it("escapes public env values for inline-script context without changing their runtime value", () => {
+    const attack = `</script><script>globalThis.compromised=true</script>&\u2028`;
+    const { outFiles } = buildPublishedFiles(project, { PUBLIC_MESSAGE: attack });
+    const html = outFiles.find((file) => file.path === "index.html")!.content;
+    expect(html).not.toContain(attack);
+    expect(html).not.toContain("</script><script>globalThis.compromised");
+    const serialized = html.match(/<script data-matrix-env>window\.MATRIX_ENV=(.*?);<\/script>/s)?.[1];
+    expect(serialized).toBeDefined();
+    expect(JSON.parse(serialized!).PUBLIC_MESSAGE).toBe(attack);
+  });
+
   it("leaves remote CDN references untouched", () => {
     const files: ProjectFile[] = [
       {

@@ -100,6 +100,16 @@ const ASSET_EXT = /\.(?:png|jpe?g|gif|webp|svg|ico|avif|bmp|woff2?|ttf|otf|eot|m
 /** Keep the resulting document under Firestore's ~1 MiB document limit. */
 const MAX_INLINED_BYTES = 900_000;
 
+/** Serialize JSON for an inline script without allowing HTML's parser to end it. */
+function jsonForInlineScript(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
 export function inlineHtmlDocument(
   html: string,
   files: ProjectFile[],
@@ -211,7 +221,7 @@ export function inlineHtmlDocument(
 
   // 6. Inject public env vars for the site's JS.
   if (opts.envPublic && Object.keys(opts.envPublic).length) {
-    const envScript = `<script data-matrix-env>window.MATRIX_ENV=${JSON.stringify(opts.envPublic)};</script>`;
+    const envScript = `<script data-matrix-env>window.MATRIX_ENV=${jsonForInlineScript(opts.envPublic)};</script>`;
     if (/<head\b[^>]*>/i.test(out)) {
       out = out.replace(/(<head\b[^>]*>)/i, `$1\n${envScript}`);
     } else {
