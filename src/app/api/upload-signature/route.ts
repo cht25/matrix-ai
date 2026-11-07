@@ -10,11 +10,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/firebase/session";
 import { isCloudinaryConfigured } from "@/lib/env";
 import { createUploadSignature, type UploadFolder } from "@/lib/server/cloudinary";
+import { mutationCsrfResponse } from "@/lib/server/request-security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
+  const csrf = mutationCsrfResponse(req);
+  if (csrf) return csrf;
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
   if (!isCloudinaryConfigured()) return NextResponse.json({ error: "UPLOADS_NOT_CONFIGURED" }, { status: 503 });

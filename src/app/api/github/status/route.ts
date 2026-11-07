@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/firebase/session";
 import { isGithubConfigured } from "@/lib/env";
 import { deleteGithubConnection, getGithubConnection, githubRequest } from "@/lib/server/github";
+import { mutationCsrfResponse } from "@/lib/server/request-security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +21,9 @@ export async function GET() {
   }
 }
 
-export async function DELETE() {
+export async function DELETE(req: Request) {
+  const csrf = mutationCsrfResponse(req);
+  if (csrf) return csrf;
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
   await deleteGithubConnection(user.uid);

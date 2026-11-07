@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/firebase/session";
 import { pushAgentFiles, validatePushFiles } from "@/lib/server/github";
+import { mutationCsrfResponse } from "@/lib/server/request-security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
+  const csrf = mutationCsrfResponse(req);
+  if (csrf) return csrf;
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
 

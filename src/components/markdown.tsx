@@ -1,176 +1,95 @@
 "use client";
 
-// Safe renderer for AI replies: headings, bold, lists, inline code, fenced
-// code blocks with copy + make-public (no HTML upload required).
-
+// Safe coding-assistance renderer. AI markup is text inside a highlighted code
+// block, never trusted application HTML. Publishing belongs to the explicit
+// Agent/project workflow, not to an ordinary code answer.
 import { useState } from "react";
-import { rpc, RpcCallError } from "@/lib/client/api";
-import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
+import { Check, Copy, Download } from "lucide-react";
+import { filenameForCode, highlightCode, looksLikeRawMarkup, parseFenceInfo } from "@/lib/code-blocks";
 
 type Block =
-  | { type: "p"; text: string }
-  | { type: "ul"; items: string[] }
-  | { type: "ol"; items: string[] }
-  | { type: "h"; text: string }
-  | { type: "code"; lang: string; code: string };
+  | { type: "p" | "h"; text: string }
+  | { type: "ul" | "ol"; items: string[] }
+  | { type: "code"; lang: string; filename: string; code: string };
 
-function parseBlocks(raw: string): Block[] {
-  const lines = raw.split("\n");
-  const blocks: Block[] = [];
+export function parseBlocks(raw: string): Block[] {
+  if (looksLikeRawMarkup(raw)) return [{ type: "code", lang: "html", filename: "index.html", code: raw.trim() }];
+  const lines = raw.split("\n"); const blocks: Block[] = [];
   let list: { ordered: boolean; items: string[] } | null = null;
-  let fence: { lang: string; code: string[] } | null = null;
-
-  const flushList = () => {
-    if (list) {
-      blocks.push(list.ordered ? { type: "ol", items: list.items } : { type: "ul", items: list.items });
-      list = null;
-    }
-  };
-
-  for (const line of lines) {
+  let fence: { lang: string; filename: string; code: string[] } | null = null;
+  let codeIndex = 0;
+  const flushList = () => { if (list) { blocks.push({ type: list.ordered ? "ol" : "ul", items: list.items }); list = null; } };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     if (fence) {
-      if (line.trim().startsWith("```")) {
-        blocks.push({ type: "code", lang: fence.lang, code: fence.code.join("\n") });
-        fence = null;
-      } else {
-        fence.code.push(line);
-      }
+      if (/^\s*```+\s*$/.test(line)) { blocks.push({ type: "code", lang: fence.lang, filename: fence.filename, code: fence.code.join("\n") }); fence = null; }
+      else fence.code.push(line);
       continue;
     }
-    const fenceMatch = line.match(/^```(\w*)/);
-    if (fenceMatch) {
-      flushList();
-      fence = { lang: fenceMatch[1] || "text", code: [] };
-      continue;
+    const opening = line.match(/^\s*```+\s*([^`\n]*)$/);
+    if (opening) {
+      flushList(); const info = parseFenceInfo(opening[1] ?? "", lines[i - 1] ?? "", codeIndex++);
+      fence = { lang: info.language, filename: info.filename, code: [] }; continue;
     }
     const t = line.trim();
     if (!t) { flushList(); continue; }
-    const ul = t.match(/^[-*•]\s+(.*)/);
-    const ol = t.match(/^\d+[.)]\s+(.*)/);
-    if (ul || ol) {
-      if (!list || list.ordered !== Boolean(ol)) { flushList(); list = { ordered: Boolean(ol), items: [] }; }
-      list.items.push((ul ? ul[1] : ol![1]).trim());
-      continue;
-    }
+    // A filename label immediately before a fence is shown in the code header,
+    // not duplicated as a prose paragraph.
+    if (/^(?:\*\*[\w./-]+\.[a-z0-9]+\*\*|#{1,4}\s+[\w./-]+\.[a-z0-9]+|`[\w./-]+\.[a-z0-9]+`)$/i.test(t) && /^\s*```/.test(lines[i + 1] ?? "")) continue;
+    const ul = t.match(/^[-*•]\s+(.*)/); const ol = t.match(/^\d+[.)]\s+(.*)/);
+    if (ul || ol) { if (!list || list.ordered !== Boolean(ol)) { flushList(); list = { ordered: Boolean(ol), items: [] }; } list.items.push((ul ? ul[1] : ol![1]).trim()); continue; }
     flushList();
-    if (/^#{1,4}\s/.test(t)) {
-      blocks.push({ type: "h", text: t.replace(/^#{1,4}\s/, "") });
-    } else {
-      blocks.push({ type: "p", text: t });
-    }
+    if (/^#{1,6}\s/.test(t)) blocks.push({ type: "h", text: t.replace(/^#{1,6}\s/, "") });
+    else blocks.push({ type: "p", text: line });
   }
-  if (fence) blocks.push({ type: "code", lang: fence.lang, code: fence.code.join("\n") });
-  flushList();
-  return blocks;
+  if (fence) blocks.push({ type: "code", lang: fence.lang, filename: fence.filename, code: fence.code.join("\n") });
+  flushList(); return blocks;
 }
 
 function Inline({ text }: { text: string }) {
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g);
-  return (
-    <>
-      {parts.map((p, i) => {
-        if (p.startsWith("**") && p.endsWith("**")) return <strong key={i}>{p.slice(2, -2)}</strong>;
-        if (p.startsWith("`") && p.endsWith("`")) return <code key={i}>{p.slice(1, -1)}</code>;
-        const link = p.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/);
-        if (link) {
-          return (
-            <a key={i} href={link[2]} target="_blank" rel="noopener noreferrer" className="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent">
-              {link[1]}
-            </a>
-          );
-        }
-        return <span key={i}>{p}</span>;
-      })}
-    </>
-  );
+  return <>{parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) return <strong key={i}>{part.slice(2, -2)}</strong>;
+    if (part.startsWith("`") && part.endsWith("`")) return <code key={i}>{part.slice(1, -1)}</code>;
+    const link = part.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/);
+    if (link) return <a key={i} href={link[2]} target="_blank" rel="noopener noreferrer" className="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent">{link[1]}</a>;
+    return <span key={i}>{part}</span>;
+  })}</>;
 }
 
-function CodeBlock({ lang, code }: { lang: string; code: string }) {
+function CodeBlock({ lang, filename, code }: { lang: string; filename: string; code: string }) {
   const [copied, setCopied] = useState(false);
-  const [pub, setPub] = useState<"idle" | "busy" | "done" | "err">("idle");
-  const [url, setUrl] = useState<string | null>(null);
-
+  const [copyFailed, setCopyFailed] = useState(false);
   async function copy() {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    } catch {
-      /* clipboard unavailable */
-    }
+    try { await navigator.clipboard.writeText(code); setCopied(true); setCopyFailed(false); setTimeout(() => setCopied(false), 1800); }
+    catch { setCopyFailed(true); }
   }
-
-  async function makePublic() {
-    if (pub === "busy") return;
-    setPub("busy");
-    try {
-      const result = await rpc<{ public_url: string }>("snippet_publish", { lang, code });
-      setUrl(result.public_url);
-      setPub("done");
-    } catch (err) {
-      setPub("err");
-      setUrl(friendly(err, "Publish failed"));
-    }
+  function download() {
+    const url = URL.createObjectURL(new Blob([code], { type: "text/plain;charset=utf-8" }));
+    const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename || filenameForCode(lang, 0); anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
-
-  return (
-    <div className="code-block my-2">
-      <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-1.5">
-        <span className="text-[10px] font-bold uppercase tracking-widest text-ink-3">{lang}</span>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => void copy()}
-            className="rounded-md px-2 py-1 text-[10px] font-semibold text-ink-3 transition-colors hover:bg-surface/10 hover:text-white"
-          >
-            {copied ? "Copied" : "Copy"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void makePublic()}
-            disabled={pub === "busy"}
-            className="rounded-md px-2 py-1 text-[10px] font-semibold text-ink-3 transition-colors hover:bg-surface/10 hover:text-white disabled:opacity-50"
-          >
-            {pub === "busy" ? "Publishing…" : pub === "done" ? "Public" : "Make public"}
-          </button>
-        </div>
+  return <div className="code-block my-2 min-w-0 overflow-hidden">
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-1.5">
+      <span className="min-w-0 truncate font-mono text-[11px] text-ink-2"><span className="mr-2 font-sans text-[10px] font-bold uppercase tracking-widest text-ink-3">{lang}</span>{filename}</span>
+      <div className="flex shrink-0 items-center gap-1">
+        <button type="button" onClick={() => void copy()} aria-label={`Copy code from ${filename}`} className="inline-flex min-h-8 items-center gap-1 rounded-md px-2 text-[11px] font-semibold text-ink-3 hover:bg-surface/10 hover:text-white">{copied ? <Check size={12} /> : <Copy size={12} />}{copied ? "Copied" : "Copy code"}</button>
+        <button type="button" onClick={download} aria-label={`Download ${filename}`} className="inline-flex min-h-8 items-center gap-1 rounded-md px-2 text-[11px] font-semibold text-ink-3 hover:bg-surface/10 hover:text-white"><Download size={12} />Download</button>
       </div>
-      <pre><code>{code}</code></pre>
-      {url && pub === "done" ? (
-        <p className="border-t border-white/10 px-3 py-1.5 text-[11px]">
-          Live: <a href={url} target="_blank" rel="noreferrer" className="text-accent underline">{url}</a>
-        </p>
-      ) : null}
-      {pub === "err" && url ? <p className="border-t border-white/10 px-3 py-1.5 text-[11px] text-danger">{url}</p> : null}
     </div>
-  );
+    <pre className="max-w-full overflow-x-auto"><code>{highlightCode(code, lang).map((token, i) => <span key={i} className={`code-token-${token.kind}`}>{token.text}</span>)}</code></pre>
+    {copyFailed ? <p className="border-t border-white/10 px-3 py-1.5 text-[11px] text-warning">Clipboard access was blocked. Select the code and copy it manually.</p> : null}
+  </div>;
 }
 
 export function Markdown({ text }: { text: string }) {
-  const blocks = parseBlocks(text);
-  return (
-    <div className="ai-reply">
-      {blocks.map((b, i) => {
-        switch (b.type) {
-          case "h":
-            return <p key={i} className="!mt-3 font-bold text-ink"><Inline text={b.text} /></p>;
-          case "ul":
-            return <ul key={i}>{b.items.map((it, j) => <li key={j}><Inline text={it} /></li>)}</ul>;
-          case "ol":
-            return <ol key={i}>{b.items.map((it, j) => <li key={j}><Inline text={it} /></li>)}</ol>;
-          case "code":
-            return <CodeBlock key={i} lang={b.lang} code={b.code} />;
-          default:
-            return <p key={i}><Inline text={b.text} /></p>;
-        }
-      })}
-    </div>
-  );
-}
-
-/** Internal code -> human sentence. The raw code stays in the console only. */
-function friendly(err: unknown, fallback: string): string {
-  const view = mapAdminError(errorCodeOf(err, fallback));
-  console.error("[MATRIX]", view.code, err);
-  return `${view.title} — ${view.detail}`;
+  return <div className="ai-reply min-w-0">{parseBlocks(text).map((block, i) => {
+    switch (block.type) {
+      case "h": return <p key={i} className="!mt-3 font-bold text-ink"><Inline text={block.text} /></p>;
+      case "ul": return <ul key={i}>{block.items.map((item, j) => <li key={j}><Inline text={item} /></li>)}</ul>;
+      case "ol": return <ol key={i}>{block.items.map((item, j) => <li key={j}><Inline text={item} /></li>)}</ol>;
+      case "code": return <CodeBlock key={i} lang={block.lang} filename={block.filename} code={block.code} />;
+      default: return <p key={i} className="whitespace-pre-wrap"><Inline text={block.text} /></p>;
+    }
+  })}</div>;
 }

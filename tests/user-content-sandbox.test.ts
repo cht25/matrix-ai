@@ -24,7 +24,7 @@ describe("user-content sandboxing", () => {
   });
 
   it("/api/rpc rejects cross-origin browser requests", () => {
-    const src = readFileSync(join(__dirname, "../src/app/api/rpc/route.ts"), "utf8");
+    const src = readFileSync(join(__dirname, "../src/lib/server/request-security.ts"), "utf8");
     expect(src).toContain("BAD_ORIGIN");
     expect(src).toContain("x-forwarded-host");
   });

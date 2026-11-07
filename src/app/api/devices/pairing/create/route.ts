@@ -6,11 +6,14 @@ import QRCode from "qrcode";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionUser } from "@/lib/firebase/session";
 import { createPairingChallenge } from "@/lib/server/pairing";
+import { mutationCsrfResponse } from "@/lib/server/request-security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
+  const csrf = mutationCsrfResponse(req);
+  if (csrf) return csrf;
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
   let deviceLabel = "";

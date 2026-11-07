@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:browser": "node scripts/browser-smoke.mjs",
+    "worker:automations": "node scripts/automation-worker.mjs",
     "seed": "node scripts/seed.mjs",
     "seed:dry-run": "node scripts/seed.mjs --dry-run",
     "set-admin": "node scripts/set-admin.mjs",
@@ -33,6 +35,7 @@
     "zod": "^3.25.0"
   },
   "devDependencies": {
+    "@sparticuz/chromium": "^153.0.0",
     "@tailwindcss/postcss": "^4.1.8",
     "@types/node": "^22.15.0",
     "@types/pdfkit": "^0.17.6",
@@ -40,6 +43,7 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "firebase-tools": "^15.27.0",
+    "playwright-core": "^1.65.0",
     "sharp": "^0.35.3",
     "tailwindcss": "^4.1.8",
     "typescript": "^5.8.3",

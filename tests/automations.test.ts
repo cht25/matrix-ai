@@ -1,6 +1,7 @@
 // Automations: only registered LOW-risk tools may be attached; execution runs
 // through the guarded registry and records real per-action outcomes.
 import { describe, expect, it } from "vitest";
+import { Timestamp } from "firebase-admin/firestore";
 import { z } from "zod";
 import { RiskTier, toolRegistry } from "@/lib/ai/tools/registry";
 import { validateAutomationActions } from "@/lib/automations";
@@ -63,13 +64,22 @@ function makeDb() {
       get: async () => {
         const matched = [...docs.entries()]
           .filter(([k, v]) => k.startsWith(`${name}/`) && !k.slice(name.length + 1).includes("/"))
-          .filter(([, v]) => (op === "==" ? v[field] === value : true))
+          .filter(([, v]) => op === "==" ? v[field] === value : op === "<=" ? Number((v[field] as Timestamp | undefined)?.toMillis?.() ?? Infinity) <= Number((value as Timestamp).toMillis()) : true)
           .map(([k, v]) => ({ id: k.slice(name.length + 1), data: () => v, exists: true }));
         return { empty: matched.length === 0, docs: matched, size: matched.length };
       },
     }),
   });
-  return { collection, _docs: docs } as unknown as Parameters<typeof createAutomation>[0] & { _docs: Map<string, DocData> };
+  let lock: Promise<unknown> = Promise.resolve();
+  const runTransaction = (fn: (tx: unknown) => Promise<unknown>) => {
+    const next = lock.then(() => fn({
+      get: (ref: { get: () => Promise<unknown> }) => ref.get(),
+      set: (ref: { set: (data: DocData, opts?: { merge?: boolean }) => Promise<unknown> }, data: DocData, opts?: { merge?: boolean }) => ref.set(data, opts),
+    }));
+    lock = next.catch(() => {});
+    return next;
+  };
+  return { collection, runTransaction, _docs: docs } as unknown as Parameters<typeof createAutomation>[0] & { _docs: Map<string, DocData> };
 }
 
 const user = { uid: "auto-user", email: "a@x.com", emailVerified: true };

@@ -1,7 +1,7 @@
 /// Authenticated API client for the MATRIX backend.
 ///
-/// Native clients authenticate with a Firebase ID token in the
-/// `Authorization: Bearer` header — the server verifies it exactly like the
+/// Pairing uses a Firebase ID token; subsequent requests use the
+/// revocable device credential in `Authorization: Bearer` — the server verifies it exactly like the
 /// web session cookie (see src/lib/firebase/session.ts). Tokens are kept in
 /// FlutterSecureStorage and never logged.
 library;
@@ -25,12 +25,58 @@ class MatrixApi {
   final http.Client _client;
   static const _storage = FlutterSecureStorage();
 
+  Future<String> _accountToken() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw ApiException('UNAUTHENTICATED', 401);
+    return user.getIdToken(true);
+  }
+
   Future<String> _token() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw ApiException('UNAUTHENTICATED', 401);
-    // Force refresh so an expired token never produces a confusing 401.
-    return user.getIdToken(true);
+    final stored = await _storage.read(key: 'matrix_device_credential');
+    if (stored == null || stored.isEmpty) return _accountToken();
+    final credential = jsonDecode(stored) as Map<String, dynamic>;
+    if (credential['owner_uid'] != user.uid) {
+      throw ApiException('PAIRING_ACCOUNT_MISMATCH', 403);
+    }
+    final expiry = DateTime.tryParse(credential['expires_at']?.toString() ?? '');
+    if (expiry == null || !expiry.isAfter(DateTime.now().toUtc())) {
+      throw ApiException('DEVICE_CREDENTIAL_EXPIRED', 401);
+    }
+    final token = credential['access_token']?.toString() ?? '';
+    if (!token.startsWith('matrix_device.')) throw ApiException('DEVICE_CREDENTIAL_INVALID', 401);
+    // A revoked credential must never silently fall back to account auth.
+    return token;
   }
+
+  Future<Map<String, dynamic>> pairDevice(Map<String, dynamic> payload) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw ApiException('UNAUTHENTICATED', 401);
+    final token = await _accountToken();
+    final response = await _sendRaw('POST', MatrixConfig.baseUri.resolve('/api/devices/pairing/complete'), token, payload);
+    final data = _decode(response);
+    if (response.statusCode != 200 || data['access_token'] == null) {
+      throw ApiException(data['error']?.toString() ?? 'PAIRING_FAILED', response.statusCode);
+    }
+    await _storage.write(key: 'matrix_device_credential', value: jsonEncode({
+      'access_token': data['access_token'],
+      'expires_at': data['access_token_expires_at'],
+      'owner_uid': user.uid,
+      'device_id': (data['device'] as Map?)?['id'],
+    }));
+    return data;
+  }
+
+  static Future<String?> currentDeviceId() async {
+    final raw = await _storage.read(key: 'matrix_device_credential');
+    if (raw == null || raw.isEmpty) return null;
+    return (jsonDecode(raw) as Map)['device_id']?.toString();
+  }
+
+  static Future<void> clearDeviceCredential() => _storage.delete(key: 'matrix_device_credential');
+
+  Future<String?> accountLabel() async => FirebaseAuth.instance.currentUser?.email;
 
   Map<String, String> _headers(String token) => {
         'Authorization': 'Bearer $token',

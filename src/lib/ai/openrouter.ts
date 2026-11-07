@@ -11,16 +11,17 @@ import type {
   AIProviderRequest,
   AIProviderResponse,
 } from "@/lib/ai/groq";
+import { fetchModelCatalog, verifyCatalogModel } from "@/lib/ai/model-catalog";
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
 import { assistantContentOnly, assistantDeltaContent, createReasoningStreamFilter } from "@/lib/ai/reasoning";
 
 // The :free variant is intentional. A paid/custom model can still be selected
 // explicitly with OPENROUTER_CODING_MODEL; it is never silently rewritten.
 export const OPENROUTER_MODELS = {
-  coding: process.env.OPENROUTER_CODING_MODEL?.trim() || "nvidia/nemotron-3-ultra-550b-a55b:free",
+  coding: process.env.OPENROUTER_CODING_MODEL?.trim() || "",
 } as const;
 
-export const CODING_MODEL_LABEL = "NVIDIA Nemotron 3 Ultra";
+export const CODING_MODEL_LABEL = OPENROUTER_MODELS.coding || "Configure a coding model";
 
 export class OpenRouterProvider implements AIProvider {
   private readonly baseUrl = "https://openrouter.ai/api/v1";
@@ -52,6 +53,9 @@ export class OpenRouterProvider implements AIProvider {
     };
   }
 
+  async listModels() { return (await fetchModelCatalog({ baseUrl: this.baseUrl, apiKey: this.apiKey, provider: "OpenRouter" })).models; }
+  async verifyModel(model: string) { await verifyCatalogModel({ baseUrl: this.baseUrl, apiKey: this.apiKey, provider: "OpenRouter" }, model); }
+
   async healthCheck(): Promise<boolean> {
     // GET /models is PUBLIC on OpenRouter — it answers 200 without any valid
     // key, so it cannot be used as a health signal (it used to report "AI
@@ -81,6 +85,7 @@ export class OpenRouterProvider implements AIProvider {
     try {
       response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
+        redirect: "error",
         headers: this.headers(req.requestId),
         body: JSON.stringify(this.buildBody(req, false)),
         signal: req.signal ?? AbortSignal.timeout(60_000),
@@ -121,6 +126,7 @@ export class OpenRouterProvider implements AIProvider {
     try {
       response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
+        redirect: "error",
         headers: this.headers(req.requestId),
         body: JSON.stringify(this.buildBody(req, true)),
         signal: req.signal ?? AbortSignal.timeout(60_000),

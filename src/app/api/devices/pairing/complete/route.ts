@@ -6,6 +6,7 @@ import { z } from "zod";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionUser } from "@/lib/firebase/session";
 import { completePairing, RpcError } from "@/lib/server/pairing";
+import { mutationCsrfResponse } from "@/lib/server/request-security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,6 +19,8 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: Request) {
+  const csrf = mutationCsrfResponse(req);
+  if (csrf) return csrf;
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
   let body: z.infer<typeof bodySchema>;
@@ -27,8 +30,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "BAD_REQUEST" }, { status: 400 });
   }
   try {
-    const device = await completePairing(adminDb(), user, body);
-    return NextResponse.json({ device });
+    const { access_token, access_token_expires_at, ...device } = await completePairing(adminDb(), user, body);
+    return NextResponse.json({ device, access_token, access_token_expires_at }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     if (error instanceof RpcError) {
       return NextResponse.json({ error: error.code }, { status: error.status });

@@ -48,10 +48,14 @@ export function BuildStatusCard({
   run,
   className,
   showLogs = true,
+  onCancel,
+  cancelling = false,
 }: {
   run: BuildRun | null;
   className?: string;
   showLogs?: boolean;
+  onCancel?: () => void;
+  cancelling?: boolean;
 }) {
   const [logsOpen, setLogsOpen] = useState(false);
   if (!run) return null;
@@ -76,12 +80,19 @@ export function BuildStatusCard({
                 : "Build finished"
               : run.status === "failed"
                 ? "Build stopped"
-                : `BUILDING PROJECT · ${progress.activeLabel}`}
+                : run.status === "cancelled"
+                  ? "Build cancelled"
+                  : `BUILDING PROJECT · ${progress.activeLabel}`}
           </p>
         </div>
         <span className="shrink-0 font-mono text-[11px] text-ink-3">
           {progress.completed} / {progress.total} steps
         </span>
+        {live && onCancel ? (
+          <button type="button" onClick={onCancel} disabled={cancelling || run.cancelRequested} className="shrink-0 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-ink-2 hover:text-ink disabled:opacity-50">
+            {run.cancelRequested || cancelling ? "Cancelling…" : "Cancel"}
+          </button>
+        ) : null}
       </header>
 
       <div className="px-3 py-2.5">

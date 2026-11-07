@@ -36,7 +36,7 @@ class _PairingScreenState extends State<PairingScreen> {
     await _controller.stop();
     try {
       final deviceName = 'Android phone (${DateTime.now().toIso8601String().substring(0, 10)})';
-      final res = await widget.api.postJson('/api/devices/pairing/complete', {
+      final res = await widget.api.pairDevice({
         'qr_payload': raw,
         'device_name': deviceName,
         'device_type': 'phone',

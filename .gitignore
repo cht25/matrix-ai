@@ -26,6 +26,7 @@ supabase/.temp
 
 # testing
 /coverage
+/artifacts
 
 # typescript incremental build info
 tsconfig.tsbuildinfo

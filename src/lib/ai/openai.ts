@@ -18,6 +18,7 @@ import type {
 } from "@/lib/ai/groq";
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
 import { assistantContentOnly, assistantDeltaContent, createReasoningStreamFilter } from "@/lib/ai/reasoning";
+import { fetchModelCatalog, verifyCatalogModel } from "@/lib/ai/model-catalog";
 import { cachedRealHealthCheck, healthCacheKey } from "@/lib/ai/provider-health";
 
 /** Strip a full chat-completions URL down to the API base URL. */
@@ -106,6 +107,9 @@ export class OpenAICompatibleProvider implements AIProvider {
     return body;
   }
 
+  async listModels() { return (await fetchModelCatalog({ baseUrl: this.baseUrl, apiKey: this.apiKey })).models; }
+  async verifyModel(model: string) { await verifyCatalogModel({ baseUrl: this.baseUrl, apiKey: this.apiKey }, model); }
+
   async healthCheck(): Promise<boolean> {
     // A real one-token completion against the configured model. GET /models is
     // answered 200 by OpenRouter and most proxies WITHOUT a valid key, which
@@ -124,6 +128,7 @@ export class OpenAICompatibleProvider implements AIProvider {
         if (isReasoningModel(model)) body.max_completion_tokens = 1;
         const response = await fetch(`${this.baseUrl}/chat/completions`, {
           method: "POST",
+        redirect: "error",
           headers: this.headers(),
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(8000),
@@ -155,6 +160,7 @@ export class OpenAICompatibleProvider implements AIProvider {
     try {
       response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
+        redirect: "error",
         headers: this.headers(req.requestId),
         body: JSON.stringify(this.buildBody(req, false)),
         signal: req.signal ?? AbortSignal.timeout(60_000),
@@ -195,6 +201,7 @@ export class OpenAICompatibleProvider implements AIProvider {
     try {
       response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
+        redirect: "error",
         headers: this.headers(req.requestId),
         body: JSON.stringify(this.buildBody(req, true)),
         signal: req.signal ?? AbortSignal.timeout(60_000),

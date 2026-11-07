@@ -22,6 +22,8 @@ export type SessionUser = {
   uid: string;
   email: string | null;
   emailVerified: boolean;
+  deviceId?: string;
+  scopes?: string[];
 };
 
 /** Exchange a fresh client ID token for a session cookie. Returns cookie options. */

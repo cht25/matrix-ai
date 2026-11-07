@@ -9,7 +9,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, nowTs } from "@/lib/firebase/admin";
-import { getSessionUser } from "@/lib/firebase/session";
+import { getApiSessionUser, deviceScopeResponse } from "@/lib/firebase/device-session";
 import { createAIRoutesFromDb, type AIRouteTarget } from "@/lib/ai/config";
 import { decideRoute } from "@/lib/ai/router";
 import { buildModeSystemMessages } from "@/lib/ai/prompts";
@@ -21,6 +21,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { parseCompareLanes, MAX_COMPARE_LANES, MAX_COMPARE_MESSAGE } from "@/lib/ai/compare";
+import { mutationCsrfResponse } from "@/lib/server/request-security";
 
 const MAX_LANES = MAX_COMPARE_LANES;
 const MAX_MESSAGE = MAX_COMPARE_MESSAGE;
@@ -112,21 +113,12 @@ async function runLane(
 }
 
 export async function POST(req: NextRequest) {
-  // Same-origin enforcement, mirroring /api/rpc.
-  const origin = req.headers.get("origin");
-  if (origin) {
-    const allowed = req.headers.get("x-forwarded-host")?.split(",")[0].trim() || req.nextUrl.host;
-    let same = false;
-    try {
-      same = new URL(origin).host === allowed;
-    } catch {
-      same = false;
-    }
-    if (!same) return NextResponse.json({ error: "BAD_ORIGIN" }, { status: 403 });
-  }
-
-  const user = await getSessionUser();
+  const csrf = mutationCsrfResponse(req);
+  if (csrf) return csrf;
+  const user = await getApiSessionUser(req);
   if (!user) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
+  const denied = deviceScopeResponse(user, "chat:write");
+  if (denied) return denied;
   if (rateLimited(user.uid)) return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
 
   let body: Record<string, unknown>;

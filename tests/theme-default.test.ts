@@ -40,6 +40,6 @@ describe("dark mode is the default", () => {
     const light = tokens.slice(tokens.indexOf('[data-theme="light"]'));
     expect(light).toMatch(/--primary:\s*#00895e/i);
     const dark = tokens.slice(tokens.indexOf('[data-theme="dark"]'));
-    expect(dark).toMatch(/--primary:\s*#00f5a0/i);
+    expect(dark).toMatch(/--primary:\s*#3897ff/i);
   });
 });

@@ -44,7 +44,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ListTile(
               leading: const Icon(Icons.logout),
               title: const Text('Sign out'),
-              onTap: () => FirebaseAuth.instance.signOut(),
+              onTap: () async { await MatrixApi.clearDeviceCredential(); await FirebaseAuth.instance.signOut(); },
             ),
           ],
         ),

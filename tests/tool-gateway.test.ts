@@ -4,13 +4,14 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { RiskTier, toolRegistry } from "@/lib/ai/tools/registry";
 import { executeAgentTool, describeTools } from "@/lib/server/tool-gateway";
+import { requestToolApproval, decideToolApproval } from "@/lib/server/tool-approvals";
 
 // --- minimal Firestore stub ---------------------------------------------------
 type DocData = Record<string, unknown>;
 function makeDb() {
   const docs = new Map<string, DocData>();
   const collection = (name: string) => ({
-    doc: (id: string) => ({
+    doc: (id = `gen_${docs.size}`) => ({
       id,
       get: async () => ({ id, exists: docs.has(`${name}/${id}`), data: () => docs.get(`${name}/${id}`) }),
       set: async (data: DocData, opts?: { merge?: boolean }) => {
@@ -25,7 +26,11 @@ function makeDb() {
     },
     where: () => ({ get: async () => ({ empty: true, docs: [] }) }),
   });
-  return { collection, _docs: docs } as unknown as Parameters<typeof executeAgentTool>[0] & {
+  const runTransaction = async (fn: (tx: unknown) => Promise<unknown>) => fn({
+    get: (ref: { get: () => Promise<unknown> }) => ref.get(),
+    set: (ref: { set: (data: DocData, opts?: { merge?: boolean }) => Promise<void> }, data: DocData, opts?: { merge?: boolean }) => ref.set(data, opts),
+  });
+  return { collection, runTransaction, _docs: docs } as unknown as Parameters<typeof executeAgentTool>[0] & {
     _docs: Map<string, DocData>;
   };
 }
@@ -85,10 +90,23 @@ describe("tool gateway", () => {
     expect(String(events[0][1].event_type)).toBe("tool_approval_required");
   });
 
-  it("runs HIGH-risk tools when an approval id is supplied", async () => {
+  it("rejects forged approval ids", async () => {
     const d = makeDb();
     const res = await executeAgentTool(d, user, "test.danger", {}, { approvalId: "ap-1" });
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("APPROVAL_INVALID");
+  });
+
+  it("runs HIGH-risk tools only with an owner-approved, one-time record", async () => {
+    const d = makeDb();
+    const approval = await requestToolApproval(d, user, { tool_id: "test.danger", args: {} });
+    await expect(executeAgentTool(d, user, "test.danger", {}, { approvalId: approval.id })).resolves.toMatchObject({ ok: false, error: "APPROVAL_INVALID" });
+    await decideToolApproval(d, user, approval.id, true);
+    const res = await executeAgentTool(d, user, "test.danger", {}, { approvalId: approval.id });
     expect(res.ok).toBe(true);
+    const replay = await executeAgentTool(d, user, "test.danger", {}, { approvalId: approval.id });
+    expect(replay.ok).toBe(false);
+    expect(replay.error).toBe("APPROVAL_INVALID");
   });
 
   it("rejects unknown tools", async () => {

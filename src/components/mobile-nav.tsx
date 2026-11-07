@@ -8,7 +8,7 @@ import { memo, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
-  Activity, BookOpen, Code2, Columns3, FileSearch, GraduationCap, HeartPulse, History, KeyRound,
+  Activity, BookOpen, Bot, Code2, Columns3, Cpu, FileSearch, GraduationCap, HeartPulse, History, House, KeyRound,
   LayoutGrid, LifeBuoy, MessageSquare, MoreHorizontal, Rocket, Settings, Shield,
   ShieldAlert, Sliders, Smartphone, User, Users, Zap,
 } from "lucide-react";
@@ -16,6 +16,7 @@ import { BottomSheet } from "@/components/bottom-sheet";
 import { ThemeToggle } from "@/lib/theme";
 import { SignOutButton } from "@/components/sign-out-button";
 import { cn } from "@/lib/utils";
+import { MOBILE_NAV, MOBILE_MORE_LABEL, PRIMARY_NAV, navigationActive } from "@/lib/navigation";
 
 export type MoreLink = {
   href: string;
@@ -31,6 +32,11 @@ export type MoreLink = {
  */
 export function buildMoreLinks({ isAdmin }: { isAdmin: boolean }): MoreLink[] {
   const links: MoreLink[] = [
+    ...PRIMARY_NAV.filter((item) => ["family", "canvas", "workspace", "projects", "models"].includes(item.id)).map((item) => ({
+      href: item.href, label: item.label, group: "Ecosystem",
+      icon: item.id === "family" ? <Users size={18} /> : item.id === "models" ? <Cpu size={18} /> : item.id === "canvas" ? <Columns3 size={18} /> : <LayoutGrid size={18} />,
+    })),
+
     { href: "/dashboard", label: "Dashboard", icon: <LayoutGrid size={18} strokeWidth={1.7} />, group: "Workspace" },
     { href: "/projects", label: "Projects", icon: <Code2 size={18} strokeWidth={1.7} />, group: "Workspace" },
     { href: "/history", label: "History", icon: <History size={18} strokeWidth={1.7} />, group: "Workspace" },
@@ -38,7 +44,6 @@ export function buildMoreLinks({ isAdmin }: { isAdmin: boolean }): MoreLink[] {
     { href: "/temporary-chat", label: "Private Workspace", icon: <History size={18} />, group: "Workspace" },
     { href: "/design", label: "Design studio", icon: <Sliders size={18} strokeWidth={1.7} />, group: "Workspace" },
     { href: "/compare", label: "Compare models", icon: <Columns3 size={18} strokeWidth={1.7} />, group: "Workspace" },
-    { href: "/automations", label: "Automations", icon: <Zap size={18} strokeWidth={1.7} />, group: "Workspace" },
 
     { href: "/courses", label: "Courses", icon: <GraduationCap size={18} strokeWidth={1.7} />, group: "Learn" },
     { href: "/certificates", label: "Certificates", icon: <BookOpen size={18} strokeWidth={1.7} />, group: "Learn" },
@@ -66,13 +71,7 @@ export function buildMoreLinks({ isAdmin }: { isAdmin: boolean }): MoreLink[] {
   return links;
 }
 
-const PRIMARY = [
-  { href: "/chat", label: "Chat", icon: MessageSquare },
-  { href: "/chat?mode=agent", label: "Agent", icon: Code2 },
-  { href: "/canvas", label: "Canvas", icon: LayoutGrid },
-  { href: "/family", label: "Family", icon: Users },
-  { href: "/devices", label: "Devices", icon: Smartphone },
-] as const;
+const PRIMARY = MOBILE_NAV.map((item) => ({ ...item, icon: item.id === "agent" ? Bot : item.id === "automations" ? Zap : item.id === "devices" ? Smartphone : MessageSquare }));
 
 function MobileNavImpl({ isAdmin }: { isAdmin: boolean }) {
   const pathname = usePathname();
@@ -111,7 +110,7 @@ function MobileNavImpl({ isAdmin }: { isAdmin: boolean }) {
   function isActive(href: string): boolean {
     if (href === "/chat?mode=agent") return agentActive;
     if (href === "/chat") return (pathname === "/chat" || pathname.startsWith("/chat/")) && !agentActive;
-    return pathname === href || pathname.startsWith(`${href}/`);
+    return navigationActive(pathname, new URLSearchParams(searchParams.toString()), href);
   }
 
   const moreActive = !PRIMARY.some((item) => isActive(item.href)) && links.some((l) => !l.href.includes("?") && pathname.startsWith(l.href) && l.href !== "/");
@@ -145,7 +144,7 @@ function MobileNavImpl({ isAdmin }: { isAdmin: boolean }) {
           <span className="bottom-nav-icon" aria-hidden="true">
             <MoreHorizontal size={19} strokeWidth={1.7} />
           </span>
-          <span>More</span>
+          <span>{MOBILE_MORE_LABEL}</span>
         </button>
       </nav>
 

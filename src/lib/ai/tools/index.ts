@@ -166,3 +166,18 @@ toolRegistry.register({
     return { ok: true, data: { families } };
   },
 });
+
+
+// A real, owner-scoped side effect usable in an explicitly created automation.
+toolRegistry.register({
+  id: "notifications.create",
+  description: "Create an in-app notification for the current user. This is not a push/email delivery claim.",
+  category: "notifications", risk: RiskTier.LOW, requiredPermissions: [], scopes: ["notifications:write"],
+  environment: "server", timeoutSeconds: 10, approvalRequired: false, auditRequired: true, rateLimitPerMinute: 30,
+  inputSchema: z.object({ title: z.string().min(1).max(120), body: z.string().max(1000).default(""), link: z.string().max(300).regex(/^\/(?!\/)/).default("/automations") }),
+  handler: async (ctx, raw): Promise<ToolResult> => {
+    const input = raw as { title: string; body: string; link: string };
+    const ref = await asDb(ctx).collection("notifications").add({ user_id: ctx.uid, type: "automation", title: input.title, body: input.body, link: input.link, read_at: null, delivery_channel: "in_app", created_at: new Date() });
+    return { ok: true, data: { notification_id: ref.id, channel: "in_app" }, message: "In-app notification saved." };
+  },
+});

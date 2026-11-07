@@ -4,14 +4,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { adminDb } from "@/lib/firebase/admin";
-import { getSessionUser } from "@/lib/firebase/session";
+import { getApiSessionUser } from "@/lib/firebase/device-session";
 import { describeTools, executeAgentTool } from "@/lib/server/tool-gateway";
+import { mutationCsrfResponse } from "@/lib/server/request-security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const user = await getSessionUser();
+  const user = await getApiSessionUser();
   if (!user) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
   return NextResponse.json({ tools: describeTools() });
 }
@@ -24,18 +25,9 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const origin = req.headers.get("origin");
-  if (origin) {
-    const allowed = req.headers.get("x-forwarded-host")?.split(",")[0].trim() || req.nextUrl.host;
-    let same = false;
-    try {
-      same = new URL(origin).host === allowed;
-    } catch {
-      same = false;
-    }
-    if (!same) return NextResponse.json({ error: "BAD_ORIGIN" }, { status: 403 });
-  }
-  const user = await getSessionUser();
+  const csrf = mutationCsrfResponse(req);
+  if (csrf) return csrf;
+  const user = await getApiSessionUser(req);
   if (!user) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
   let body: z.infer<typeof bodySchema>;
   try {
@@ -47,5 +39,5 @@ export async function POST(req: NextRequest) {
     approvalId: body.approval_id,
     dryRun: body.dry_run,
   });
-  return NextResponse.json(result, { status: result.ok ? 200 : result.error === "APPROVAL_REQUIRED" || result.error === "MISSING_PERMISSIONS" ? 403 : 200 });
+  return NextResponse.json(result, { status: result.ok ? 200 : result.error === "APPROVAL_REQUIRED" || result.error === "APPROVAL_INVALID" || result.error === "MISSING_PERMISSIONS" ? 403 : 200 });
 }

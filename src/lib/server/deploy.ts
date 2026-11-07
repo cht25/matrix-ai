@@ -349,11 +349,11 @@ export async function listLiveSites(d: Db) {
  */
 export async function loadPublishedFile(d: Db, slug: string, path: string) {
   const site = await d.collection("published_sites").doc(slug).get();
-  if (!site.exists || site.data()?.status !== "live") return null;
+  if (!site.exists || !["live", "verifying"].includes(String(site.data()?.status))) return null;
   const targetSlug = (site.data()?.alias_of as string) || slug;
   const filesRoot = targetSlug === slug ? site.ref : d.collection("published_sites").doc(targetSlug);
   const targetStatus = targetSlug === slug ? null : await d.collection("published_sites").doc(targetSlug).get();
-  if (targetSlug !== slug && targetStatus?.data()?.status !== "live") return null;
+  if (targetSlug !== slug && !["live", "verifying"].includes(String(targetStatus?.data()?.status))) return null;
 
   const raw = (path || "").replace(/^\.?\/+/, "");
   const wanted = !raw ? "index.html" : raw.endsWith("/") ? `${raw}index.html` : raw;

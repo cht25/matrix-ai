@@ -15,6 +15,7 @@ import { nowTs, type Db } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
 import { RpcError } from "@/lib/server/rpc";
 import { env } from "@/lib/env";
+import { deviceCredentialHash, DEVICE_TOKEN_PREFIX, DEVICE_CREDENTIAL_TTL_MS } from "@/lib/firebase/device-session";
 
 export { RpcError };
 
@@ -26,7 +27,7 @@ export const PAIRING_TTL_MS = 1000 * 60 * 5;
 export const QR_PROTOCOL = "matrix-pairing:v1";
 
 /** Default scoped authorization granted to a paired device. */
-export const DEFAULT_DEVICE_SCOPES = ["chat:read", "devices:read", "notifications:read"] as const;
+export const DEFAULT_DEVICE_SCOPES = ["chat:read", "chat:write", "devices:read", "devices:write", "notifications:read"] as const;
 
 function pairingSecret(): Buffer {
   // Optional dedicated secret; otherwise derive from server-only Firebase
@@ -109,7 +110,7 @@ export async function completePairing(
   d: Db,
   scanner: SessionUser,
   input: { qr_payload: string; device_name: string; device_type: string; platform: string },
-): Promise<PairedDevice> {
+): Promise<PairedDevice & { access_token: string; access_token_expires_at: string }> {
   const verified = verifyQrPayload(input.qr_payload);
   // Device clients query the same authenticated owner registry. Cross-account
   // pairing used to succeed but made the scanning client show an empty list.
@@ -118,6 +119,8 @@ export async function completePairing(
 
   const challengeRef = d.collection(CHALLENGES).doc(id);
   let deviceId = "";
+  const secret = crypto.randomBytes(32).toString("base64url");
+  const credentialExpires = Date.now() + DEVICE_CREDENTIAL_TTL_MS;
   await d.runTransaction(async (tx) => {
     const snap = await tx.get(challengeRef);
     if (!snap.exists) throw new RpcError("PAIRING_INVALID", 404);
@@ -134,6 +137,8 @@ export async function completePairing(
       device_type: input.device_type.slice(0, 40),
       platform: input.platform.slice(0, 40),
       scopes: [...DEFAULT_DEVICE_SCOPES],
+      access_token_hash: deviceCredentialHash(deviceId, secret),
+      access_token_expires_at: Timestamp.fromMillis(credentialExpires),
       pairing_id: id,
       paired_by: scanner.uid,
       paired_at: nowTs(),
@@ -171,6 +176,8 @@ export async function completePairing(
     paired_at: data.paired_at?.toDate?.().toISOString() ?? "",
     last_seen_at: data.last_seen_at?.toDate?.().toISOString() ?? "",
     revoked_at: null,
+    access_token: `${DEVICE_TOKEN_PREFIX}${deviceId}.${secret}`,
+    access_token_expires_at: new Date(credentialExpires).toISOString(),
   };
 }
 

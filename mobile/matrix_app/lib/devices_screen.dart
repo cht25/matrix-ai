@@ -12,32 +12,47 @@ class DevicesScreen extends StatefulWidget {
   State<DevicesScreen> createState() => _DevicesScreenState();
 }
 
-class _DevicesScreenState extends State<DevicesScreen> {
+class _DevicesScreenState extends State<DevicesScreen> with WidgetsBindingObserver {
   List<dynamic> _devices = [];
   bool _loading = true;
   String? _error;
+  String? _account;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
   }
 
+  @override
+  void dispose() { WidgetsBinding.instance.removeObserver(this); super.dispose(); }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _load();
+  }
+
   Future<void> _load() async {
+    if (!mounted) return;
     setState(() { _loading = true; _error = null; });
     try {
       final res = await widget.api.getJson('/api/devices');
+      final account = await widget.api.accountLabel();
+      if (!mounted) return;
+      setState(() => _account = account);
       setState(() => _devices = (res['devices'] as List?) ?? []);
     } on ApiException catch (e) {
-      setState(() => _error = e.code);
+      if (mounted) setState(() => _error = e.code);
     } finally {
-      setState(() => _loading = false);
+      if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _unlink(String id) async {
     try {
       await widget.api.deleteJson('/api/devices?id=${Uri.encodeComponent(id)}');
+      if (id == await MatrixApi.currentDeviceId()) await MatrixApi.clearDeviceCredential();
       await _load();
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Unlink failed: ${e.code}')));
@@ -47,11 +62,11 @@ class _DevicesScreenState extends State<DevicesScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Connected devices')),
+      appBar: AppBar(title: const Text('Connected devices'), actions: [IconButton(tooltip: 'Refresh devices', onPressed: _load, icon: const Icon(Icons.refresh))]),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(child: Text('Could not load: $_error'))
+              ? Center(child: Padding(padding: const EdgeInsets.all(24), child: Column(mainAxisSize: MainAxisSize.min, children: [Text('Could not load: $_error', textAlign: TextAlign.center), if (_account != null) Text('Account: $_account'), const SizedBox(height: 12), FilledButton(onPressed: _load, child: const Text('Retry')), if (_error == 'DEVICE_SCOPE_DENIED' || _error == 'UNAUTHENTICATED' || _error == 'DEVICE_CREDENTIAL_EXPIRED') TextButton(onPressed: () async { await MatrixApi.clearDeviceCredential(); await _load(); }, child: const Text('Clear revoked/expired pairing and use account login'))])))
               : _devices.isEmpty
                   ? const Center(child: Text('No devices linked yet. Use “Pair this device”.'))
                   : RefreshIndicator(

@@ -39,6 +39,7 @@ import {
 } from "@/lib/deploy/provider";
 import { loadProjectFiles } from "@/lib/server/projects";
 import { prepareNewUrl, type ProjectUrl, type UrlKind } from "@/lib/deploy/urls";
+import { verifyPublishedDeployment } from "@/lib/deploy/verify";
 
 const MAX_LOG_ENTRIES = 60;
 const MAX_SNAPSHOT_FILES = 60;
@@ -211,37 +212,27 @@ export class FirestoreDeploymentProvider {
       assertTransition("building", "deploying");
       await deploymentRef.set({ status: "deploying", updated_at: nowTs() }, { merge: true });
 
-      // Replace the previous artefact set, then upload file by file.
-      const oldFiles = await safeListDocuments(siteRef);
-      await Promise.all(oldFiles.map((file) => file.delete()));
-      for (const file of built.artifacts) {
-        await siteRef.collection("files").add({
-          path: file.path,
-          content: file.content,
-          encoding: file.encoding ?? "utf8",
-          content_type: contentTypeForPath(file.path),
-        });
-      }
-      push("upload", `Wrote ${built.artifacts.length} file${built.artifacts.length === 1 ? "" : "s"} (${formatBytes(built.bytes)}) to MATRIX hosting.`);
-
       const snapshot = await this.writeSnapshot(deploymentRef.id, built.artifacts, push);
       const previousLive = (data.live_deployment_id as string | undefined) ?? null;
       const siteDoc = await siteRef.get();
+      const previousSite = siteDoc.exists ? siteDoc.data() ?? {} : null;
       const createdAt = siteDoc.exists ? (siteDoc.data()?.created_at ?? nowTs()) : nowTs();
 
-      await siteRef.set(
-        {
-          deployment_id: deploymentRef.id,
-          project_id: input.projectId,
-          alias_of: null,
-          owner_id: this.user.uid,
-          status: "live",
-          slug,
-          updated_at: nowTs(),
-          created_at: createdAt,
-        },
-        { merge: true },
-      );
+      // Stage the new artefact set without destroying the previous one, then
+      // prove the public URL actually serves it before calling anything live.
+      const stage = await stagePublishedFiles(siteRef, built.artifacts);
+      push("upload", `Staged ${built.artifacts.length} file${built.artifacts.length === 1 ? "" : "s"} (${formatBytes(built.bytes)}) for verification.`);
+      await siteRef.set({ deployment_id: deploymentRef.id, project_id: input.projectId, alias_of: null, owner_id: this.user.uid, status: "verifying", slug, updated_at: nowTs(), created_at: createdAt }, { merge: true });
+      const verification = await verifyPublishedDeployment({ origin: siteOrigin(), slug, files: built.artifacts });
+      if (!verification.ok) {
+        await stage.restore();
+        await siteRef.set(previousSite ? { status: previousSite.status ?? "failed", deployment_id: previousSite.deployment_id ?? null, updated_at: nowTs() } : { status: "failed", deployment_id: null, updated_at: nowTs() }, { merge: true });
+        push("verify", `Verification failed after ${verification.checked.length} HTTP request(s): ${verification.error}`);
+        throw new RpcError("DEPLOY_VERIFY_FAILED", 502);
+      }
+      await stage.commit();
+      push("verify", `HTTP verified ${verification.checked.length} public URL/asset request(s).`);
+      await siteRef.set({ status: "live", updated_at: nowTs() }, { merge: true });
       push("activate", `Site live at /s/${slug}`);
 
       await this.d.collection("projects").doc(input.projectId).set(
@@ -298,8 +289,10 @@ export class FirestoreDeploymentProvider {
       push("error", message);
       await deploymentRef.set({ status: "failed", error: message, updated_at: nowTs() }, { merge: true }).catch(() => {});
       await this.persistLog(deploymentRef.id, log, "failed");
-      await this.d.collection("projects").doc(input.projectId).set({ live_status: "failed", updated_at: nowTs() }, { merge: true }).catch(() => {});
-      throw new RpcError(message === "NO_FILES" ? "NO_FILES" : "DEPLOY_FAILED", 500);
+      const siteNow = await siteRef.get().catch(() => null);
+      const restoredLive = siteNow?.data()?.status === "live";
+      await this.d.collection("projects").doc(input.projectId).set({ live_status: restoredLive ? "live" : "failed", updated_at: nowTs() }, { merge: true }).catch(() => {});
+      throw new RpcError(message === "NO_FILES" ? "NO_FILES" : message === "DEPLOY_VERIFY_FAILED" ? "DEPLOY_VERIFY_FAILED" : "DEPLOY_FAILED", 500);
     }
   }
 
@@ -378,8 +371,6 @@ export class FirestoreDeploymentProvider {
     const siteRef = this.d.collection("published_sites").doc(slug);
     try {
       push("plan", `Rolling back to deployment v${(target.data()?.version as number) ?? "?"} (${snapshotFiles.size} files).`);
-      const old = await safeListDocuments(siteRef);
-      await Promise.all(old.map((file) => file.delete()));
       let bytes = 0;
       const copies: ProjectFile[] = [];
       for (const doc of snapshotFiles.docs) {
@@ -391,18 +382,21 @@ export class FirestoreDeploymentProvider {
         };
         bytes += byteLength(file);
         copies.push(file);
-        await siteRef.collection("files").add({
-          path: file.path,
-          content: file.content,
-          encoding: file.encoding,
-          content_type: doc.data().content_type ?? contentTypeForPath(file.path),
-        });
       }
-      push("upload", `Re-uploaded ${copies.length} files (${formatBytes(bytes)}).`);
-      await siteRef.set(
-        { status: "live", deployment_id: deploymentRef.id, project_id: input.projectId, owner_id: this.user.uid, slug, updated_at: nowTs() },
-        { merge: true },
-      );
+      const previousSite = (await siteRef.get()).data() ?? null;
+      const stage = await stagePublishedFiles(siteRef, copies);
+      push("upload", `Staged ${copies.length} rollback file${copies.length === 1 ? "" : "s"} (${formatBytes(bytes)}).`);
+      await siteRef.set({ status: "verifying", deployment_id: deploymentRef.id, project_id: input.projectId, owner_id: this.user.uid, slug, updated_at: nowTs() }, { merge: true });
+      const verification = await verifyPublishedDeployment({ origin: siteOrigin(), slug, files: copies });
+      if (!verification.ok) {
+        await stage.restore();
+        await siteRef.set(previousSite ? { status: previousSite.status ?? "failed", deployment_id: previousSite.deployment_id ?? null, updated_at: nowTs() } : { status: "failed", updated_at: nowTs() }, { merge: true });
+        push("verify", `Rollback verification failed: ${verification.error}`);
+        throw new RpcError("ROLLBACK_VERIFY_FAILED", 502);
+      }
+      await stage.commit();
+      push("verify", `HTTP verified ${verification.checked.length} rollback request(s).`);
+      await siteRef.set({ status: "live", deployment_id: deploymentRef.id, project_id: input.projectId, owner_id: this.user.uid, slug, updated_at: nowTs() }, { merge: true });
       await ref.set({ live_slug: slug, live_url: publicUrl(slug), live_deployment_id: deploymentRef.id, live_status: "live", updated_at: nowTs() }, { merge: true });
       push("activate", `Rolled back deployment is live at /s/${slug}`);
       await deploymentRef.set({ status: "live", bytes, rollback_available: true, updated_at: nowTs() }, { merge: true });
@@ -421,7 +415,7 @@ export class FirestoreDeploymentProvider {
       const message = deploymentMessage(error);
       push("error", message);
       await deploymentRef.set({ status: "failed", error: message, updated_at: nowTs() }, { merge: true }).catch(() => {});
-      throw new RpcError("ROLLBACK_FAILED", 500);
+      throw new RpcError(error instanceof RpcError && error.code === "ROLLBACK_VERIFY_FAILED" ? "ROLLBACK_VERIFY_FAILED" : "ROLLBACK_FAILED", 500);
     }
   }
 
@@ -816,6 +810,30 @@ export function readStoredUrls(data: Record<string, unknown>, projectId: string)
   return urls;
 }
 
+function publishedFileId(path: string): string {
+  return `pub_${crypto.createHash("sha256").update(path).digest("hex").slice(0, 40)}`;
+}
+
+/** Stage artefacts beside the previous set; restore/commit are explicit. */
+async function stagePublishedFiles(siteRef: FirebaseFirestore.DocumentReference, artifacts: ProjectFile[]) {
+  const filesRef = siteRef.collection("files");
+  const oldDocs = await filesRef.get();
+  const backup = oldDocs.docs.map((doc) => ({ id: doc.id, path: String(doc.data().path ?? ""), data: doc.data() }));
+  const newPaths = new Set(artifacts.map((file) => file.path));
+  for (const file of artifacts) {
+    await filesRef.doc(publishedFileId(file.path)).set({ path: file.path, content: file.content, encoding: file.encoding ?? "utf8", content_type: contentTypeForPath(file.path) });
+  }
+  // Remove superseded duplicates so the staged entry is unambiguous.
+  for (const old of backup) { if (newPaths.has(old.path)) await filesRef.doc(old.id).delete(); }
+  return {
+    async commit() { for (const old of backup) { if (!newPaths.has(old.path)) await filesRef.doc(old.id).delete().catch(() => {}); } },
+    async restore() {
+      for (const file of artifacts) { if (!backup.some((old) => old.path === file.path)) await filesRef.doc(publishedFileId(file.path)).delete().catch(() => {}); }
+      for (const old of backup) await filesRef.doc(old.id).set(old.data).catch(() => {});
+    },
+  };
+}
+
 export function publicUrl(slug: string): string {
   return `${siteOrigin()}/s/${slug}`;
 }
@@ -843,6 +861,7 @@ function bundlerMessage(error: unknown): string {
 }
 
 function deploymentMessage(error: unknown): string {
+  if (error instanceof RpcError && error.code === "DEPLOY_VERIFY_FAILED") return "DEPLOY_VERIFY_FAILED";
   if (error instanceof RpcError) return error.code;
   if (error instanceof DeploymentUnavailableError) return error.code;
   const message = error instanceof Error ? error.message : String(error);

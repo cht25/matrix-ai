@@ -262,6 +262,16 @@ service cloud.firestore {
       allow write: if false; // pairing/revocation happen server-side
     }
 
+    // --- Visual Canvas (revision-checked server writes) ---
+    match /canvas_documents/{id} {
+      allow read: if isOwner(resource.data.user_id) || adminClaim();
+      allow write: if false;
+      match /versions/{version} {
+        allow read: if isOwner(get(/databases/$(database)/documents/canvas_documents/$(id)).data.user_id) || adminClaim();
+        allow write: if false;
+      }
+    }
+
     // --- Default deny --------------------------------------------------------------
     match /{document=**} {
       allow read, write: if false;

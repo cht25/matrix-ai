@@ -18,8 +18,7 @@
 .app-topbar {
   background: color-mix(in srgb, var(--bg) 86%, transparent);
   border-bottom: 1px solid var(--border);
-  backdrop-filter: saturate(1.1) blur(10px);
-  -webkit-backdrop-filter: saturate(1.1) blur(10px);
+
 }
 /* Mobile keeps the bar opaque: blur is the single most expensive paint on
    low-end devices and buys nothing behind a solid header. */

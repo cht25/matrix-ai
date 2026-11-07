@@ -50,6 +50,7 @@ type ProjectMeta = {
   custom_domain: string;
   custom_domain_status: string;
   updated_at?: string;
+  revision?: number;
 };
 
 type FileOp = { label: string; at: number };
@@ -72,6 +73,8 @@ export function ProjectWorkspace({
   const [openTabs, setOpenTabs] = useState<string[]>(initialFiles[0]?.path ? [initialFiles[0].path] : []);
   const [activePath, setActivePath] = useState(initialFiles[0]?.path ?? "");
   const [dirty, setDirty] = useState(false);
+  const [savePaused, setSavePaused] = useState(false);
+  const revisionRef = useRef(0);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [slug, setSlug] = useState("");
@@ -82,6 +85,7 @@ export function ProjectWorkspace({
   const [fileOps, setFileOps] = useState<FileOp[]>([]);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [previewKey, setPreviewKey] = useState(0);
+  const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runAbort = useRef<AbortController | null>(null);
 
@@ -97,6 +101,8 @@ export function ProjectWorkspace({
   const load = useCallback(async (id: string) => {
     const data = await rpc<{ project: ProjectMeta; files: ProjectFile[] }>("project_get", { id });
     setProject(data.project);
+    revisionRef.current = Number(data.project.revision ?? 0);
+    setSavePaused(false);
     setFiles(data.files);
     setActivePath((cur) => (data.files.some((f) => f.path === cur) ? cur : (data.files[0]?.path ?? "")));
     setOpenTabs((current) => {
@@ -146,14 +152,22 @@ export function ProjectWorkspace({
   function queueSave(nextFiles: ProjectFile[], path: string, content: string) {
     setDirty(true);
     if (saveTimer.current) clearTimeout(saveTimer.current);
+    if (savePaused) return;
     saveTimer.current = setTimeout(() => {
       if (!project) return;
-      void rpc("project_file_upsert", { project_id: project.id, path, content })
-        .then(() => {
+      void rpc<{ revision: number }>("project_file_upsert", { project_id: project.id, path, content, expected_revision: revisionRef.current })
+        .then((result) => {
+          revisionRef.current = result.revision;
+          setProject((current) => current ? { ...current, revision: result.revision } : current);
           setDirty(false);
           recordOp(`Updated ${path}`);
         })
-        .catch(() => setMsg("Autosave failed — the change is only in this browser."));
+        .catch((err: unknown) => {
+          if (err && typeof err === "object" && "code" in err && (err as { code?: string }).code === "PROJECT_REVISION_CONFLICT") {
+            setSavePaused(true);
+            setMsg("This project changed elsewhere. Autosave is paused — reload the workspace before editing again.");
+          } else setMsg("Autosave failed — the change is only in this browser.");
+        });
     }, 450);
     setFiles(nextFiles);
   }
@@ -500,13 +514,20 @@ export function ProjectWorkspace({
                 ) : null}
               </div>
             </div>
+            <div className="mb-2 flex items-center gap-1" role="group" aria-label="Preview device">
+              {(["desktop", "mobile"] as const).map((device) => (
+                <button key={device} type="button" onClick={() => setPreviewDevice(device)} aria-pressed={previewDevice === device} className={`min-h-8 rounded-md border px-2.5 text-xs font-medium ${previewDevice === device ? "border-accent/50 bg-accent-soft text-accent" : "border-border text-ink-2 hover:text-ink"}`}>
+                  {device === "desktop" ? "Desktop" : "Mobile"}
+                </button>
+              ))}
+            </div>
             {project ? (
               <iframe
                 key={previewKey}
                 title="Project live preview"
                 sandbox="allow-scripts allow-forms allow-modals"
                 src={`${previewSrc}?v=${previewKey}`}
-                className="h-full w-full border-0 bg-white"
+                className={`h-full border-0 bg-white ${previewDevice === "mobile" ? "mx-auto w-[390px] max-w-full rounded-lg border border-border" : "w-full"}`}
               />
             ) : (
               <div className="grid flex-1 place-items-center text-sm text-ink-3">

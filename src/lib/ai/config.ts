@@ -8,12 +8,14 @@ import type { Db } from "@/lib/firebase/admin";
 import { MODELS, createProvider, type AIProvider, type AIProviderRequest, type AIProviderResponse } from "@/lib/ai/groq";
 import { OPENROUTER_MODELS, createCodingProvider } from "@/lib/ai/openrouter";
 import { createRuntimeAgentRoute, createRuntimeAIRoute, readAIProviderConfig, type RuntimeAIRoute } from "@/lib/ai/runtime-config";
+import { environmentProviders, CatalogValidatedProvider, type RegisteredProvider } from "@/lib/ai/provider-registry";
 import { AIProviderError, type AIProviderName } from "@/lib/ai/provider-error";
 
 export type AIRouteTarget = {
   provider: AIProviderName;
   model: string;
   client: AIProvider;
+  providerId?: string;
 };
 
 export const AI_CONFIG = {
@@ -127,7 +129,10 @@ export function createAIRoutes(coding: boolean, preferFallback = false): AIRoute
   }
 
   const targets = preferFallback ? [fallback, primary] : [primary, fallback];
-  return targets.filter((target): target is AIRouteTarget => target !== null);
+  const configuredTargets = targets.filter((target): target is AIRouteTarget => target !== null && Boolean(target.model));
+  const known = new Set(configuredTargets.map((target) => target.provider));
+  const additional = environmentProviders().filter((entry) => !known.has(entry.name as AIProviderName) && (coding ? entry.codingModel : entry.defaultModel)).map((entry) => ({ provider: entry.name as AIProviderName, providerId: entry.id, model: coding ? entry.codingModel : entry.defaultModel, client: entry.client }));
+  return [...configuredTargets, ...additional].map((target) => ({ ...target, client: new CatalogValidatedProvider(target.client) }));
 }
 
 export function aiProviderConfigured(coding: boolean): boolean {
@@ -171,7 +176,7 @@ export async function createAIRoutesFromDb(
     ? (createRuntimeAgentRoute(runtimeConfig) ?? runtimeRoute)
     : runtimeRoute;
 
-  const runtimeTargets: AIRouteTarget[] = [{ ...effectiveRoute, client: new FallbackSafeProvider(effectiveRoute.client) }];
+  const runtimeTargets: AIRouteTarget[] = [{ ...effectiveRoute, providerId: "compatible", client: new FallbackSafeProvider(new CatalogValidatedProvider(effectiveRoute.client)) }];
   // `preferFallback` is used by retry/probe flows; it deliberately puts the
   // environment provider first so the admin config is only used after the
   // fallback has been checked.
@@ -213,4 +218,25 @@ export class AIConfigurationError extends Error {
     super(coding ? "No coding AI provider is configured" : "No general AI provider is configured");
     this.name = "AIConfigurationError";
   }
+}
+
+
+/** Runtime record first, then environment registry. Never contains public credentials. */
+export async function providerCatalogEntries(d: Db | null): Promise<RegisteredProvider[]> {
+  const entries = environmentProviders();
+  if (d) {
+    const config = await readAIProviderConfig(d);
+    const route = createRuntimeAIRoute(config);
+    if (config && route) entries.unshift({ id: "compatible", name: config.label || "OpenAI-compatible", client: route.client, baseUrl: config.base_url, defaultModel: config.model, codingModel: config.agent_model || config.model, visionModel: "" });
+  }
+  return entries;
+}
+
+export async function resolveSelectedAIRoute(d: Db | null, providerId: string, model: string): Promise<AIRouteTarget> {
+  const entry = (await providerCatalogEntries(d)).find((item) => item.id === providerId);
+  if (!entry) throw new AIProviderError({ provider: "OpenAI", model, type: "invalid_request", detail: "The selected provider is not configured on this server." });
+  if (!entry.client.listModels || !(await entry.client.listModels()).some((item) => item.id === model)) {
+    throw new AIProviderError({ provider: entry.name as AIProviderName, model, type: "invalid_request", status: 404, detail: `Model ${model} is not listed by ${entry.name}. Select a verified catalog entry.` });
+  }
+  return { provider: entry.name as AIProviderName, providerId: entry.id, model, client: new CatalogValidatedProvider(entry.client) };
 }

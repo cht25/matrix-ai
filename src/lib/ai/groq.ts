@@ -5,9 +5,10 @@
 // Model IDs must stay current — Groq retires production models. As of
 // 2026-08-16 llama-3.3-70b-versatile / llama-3.1-8b-instant / the Llama 3.2
 // vision previews are shut down for free/developer tiers. Chat uses the
-// official replacements (openai/gpt-oss-*); vision uses Qwen 3.6 (multimodal).
+// operator-configured IDs verified against the account catalog; no guessed defaults.
 // =============================================================================
 
+import { fetchModelCatalog, verifyCatalogModel, type CatalogModel } from "@/lib/ai/model-catalog";
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
 import { assistantContentOnly, assistantDeltaContent, createReasoningStreamFilter } from "@/lib/ai/reasoning";
 
@@ -39,6 +40,7 @@ export interface AIProvider {
   streamChat?(req: AIProviderRequest): AsyncGenerator<string>;
   /** Real reachability check against the upstream API (never cached, never faked). */
   healthCheck(): Promise<boolean>;
+  listModels?(): Promise<CatalogModel[]>;
 }
 
 function isReasoningModel(model: string): boolean {
@@ -54,6 +56,7 @@ export class GroqProvider implements AIProvider {
   }
 
   private buildBody(req: AIProviderRequest, stream: boolean): Record<string, unknown> {
+    if (!req.model) throw new Error("GROQ_MODEL_NOT_CONFIGURED");
     const maxTokens = Math.min(req.maxTokens ?? 1024, 8192);
     const body: Record<string, unknown> = {
       model: req.model,
@@ -62,7 +65,7 @@ export class GroqProvider implements AIProvider {
       max_tokens: maxTokens,
       stream,
     };
-    // Reasoning models (GPT-OSS, Qwen 3.6) require max_completion_tokens and
+    // Reasoning models require max_completion_tokens and
     // ignore / reject a lone max_tokens. Hide chain-of-thought so the teen
     // only sees the actual answer; keep effort low so first tokens arrive fast.
     if (isReasoningModel(req.model)) {
@@ -85,6 +88,12 @@ export class GroqProvider implements AIProvider {
     }
     return body;
   }
+
+  async listModels(): Promise<CatalogModel[]> {
+    return (await fetchModelCatalog({ baseUrl: this.baseUrl, apiKey: this.apiKey, provider: "Groq" })).models;
+  }
+
+  async verifyModel(model: string): Promise<void> { await verifyCatalogModel({ baseUrl: this.baseUrl, apiKey: this.apiKey, provider: "Groq" }, model); }
 
   async healthCheck(): Promise<boolean> {
     // Groq's /models requires a valid Bearer key (401 otherwise), so unlike a
@@ -114,6 +123,7 @@ export class GroqProvider implements AIProvider {
     try {
       res = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
+        redirect: "error",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${this.apiKey}`,
@@ -158,6 +168,7 @@ export class GroqProvider implements AIProvider {
     try {
       res = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
+        redirect: "error",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${this.apiKey}`,
@@ -238,9 +249,9 @@ export class GroqProvider implements AIProvider {
 
 // Server-side model defaults. Vision requires an operator-verified provider ID.
 export const MODELS = {
-  chat: "openai/gpt-oss-120b",
+  chat: process.env.GROQ_CHAT_MODEL?.trim() || "",
   vision: process.env.GROQ_VISION_MODEL?.trim() || "",
-  fast: "openai/gpt-oss-20b",
+  fast: process.env.GROQ_FAST_MODEL?.trim() || process.env.GROQ_CHAT_MODEL?.trim() || "",
 } as const;
 
 export function createProvider(): AIProvider | null {

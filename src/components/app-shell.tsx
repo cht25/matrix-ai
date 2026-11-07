@@ -10,8 +10,8 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
-  ChevronDown, Code2, Columns3, FileSearch, GraduationCap, History, LayoutGrid, MessageSquare,
-  MoreVertical, PanelLeft, Plus, Search, Shield, ShieldAlert, Sliders, Smartphone, User, Users, Zap,
+  Bot, ChevronDown, Code2, Columns3, Cpu, FileSearch, GraduationCap, History, LayoutGrid, MessageSquare,
+  MoreVertical, PanelLeft, Plus, Search, Settings, Shield, ShieldAlert, Sliders, Smartphone, User, Users, Zap,
 } from "lucide-react";
 import { rpc } from "@/lib/client/api";
 import { Logo } from "@/components/logo";
@@ -25,6 +25,7 @@ import { MobileNav } from "@/components/mobile-nav";
 import { groupConversations, groupLabel, formatTime, type SidebarConversation } from "@/lib/chat-utils";
 import { useI18n } from "@/lib/i18n/client";
 import { cn } from "@/lib/utils";
+import { PRIMARY_NAV, navigationActive } from "@/lib/navigation";
 
 type ShellUser = { email: string; fullName: string; avatarUrl?: string };
 
@@ -232,15 +233,16 @@ function SidebarBody({
   const searchParams = useSearchParams();
   const agentActive = pathname === "/chat" && searchParams.get("mode") === "agent";
   const { t } = useI18n();
+  const icons = { new: Plus, chat: MessageSquare, agent: Bot, workspace: LayoutGrid, canvas: Columns3, automations: Zap, devices: Smartphone, family: Users, projects: Code2, models: Cpu, settings: Settings };
   const tools = [
-    { href: "/projects", label: "Projects", icon: <Code2 size={16} strokeWidth={1.7} />, detail: "Files, preview, publish" },
-    { href: "/scanner", label: t("nav.scanner"), icon: <FileSearch size={16} strokeWidth={1.7} />, detail: "Images & suspicious content" },
-    { href: "/scams", label: t("nav.scams"), icon: <ShieldAlert size={16} strokeWidth={1.7} />, detail: "Safety library" },
-    { href: "/courses", label: t("nav.courses"), icon: <GraduationCap size={16} strokeWidth={1.7} />, detail: "Guided learning" },
-    { href: "/report", label: t("nav.report"), icon: <Shield size={16} strokeWidth={1.7} />, detail: "Reporting assistant" },
-    { href: "/design", label: "Design studio", icon: <Sliders size={16} strokeWidth={1.7} />, detail: "Custom validated themes" },
-    { href: "/compare", label: "Compare models", icon: <Columns3 size={16} strokeWidth={1.7} />, detail: "Side-by-side answers" },
-    { href: "/automations", label: "Automations", icon: <Zap size={16} strokeWidth={1.7} />, detail: "Scheduled tool workflows" },
+    { href: "/history", label: "Chat history", icon: <History size={16} />, detail: "Search your conversations" },
+    { href: "/temporary-chat", label: "Private workspace", icon: <MessageSquare size={16} />, detail: "Unsaved conversation" },
+    { href: "/scanner", label: t("nav.scanner"), icon: <FileSearch size={16} />, detail: "Images & suspicious content" },
+    { href: "/scams", label: t("nav.scams"), icon: <ShieldAlert size={16} />, detail: "Safety library" },
+    { href: "/courses", label: t("nav.courses"), icon: <GraduationCap size={16} />, detail: "Guided learning" },
+    { href: "/report", label: t("nav.report"), icon: <Shield size={16} />, detail: "Reporting assistant" },
+    { href: "/design", label: "Design studio", icon: <Sliders size={16} />, detail: "Custom validated themes" },
+    { href: "/compare", label: "Compare models", icon: <Columns3 size={16} />, detail: "Side-by-side answers" },
   ];
 
   return (
@@ -259,40 +261,20 @@ function SidebarBody({
         </div>
       )}
 
-      <div className="shrink-0 px-3 pb-3">
-        <NewChatButton
-          onNavigate={onNavigate}
-          className="flex min-h-11 w-full items-center justify-center gap-2 rounded-[12px] bg-accent text-[14px] font-medium text-white transition-colors duration-150 ease-out hover:bg-accent-hover"
-        >
-          <Plus size={16} strokeWidth={2} aria-hidden="true" /> New chat
-        </NewChatButton>
-        <nav className="mt-3 space-y-0.5" aria-label="Assistant modes">
-          <Link href="/chat" onClick={onNavigate} className={cn("nav-item", pathname === "/chat" && !agentActive && "is-active")}>
-            <MessageSquare size={16} strokeWidth={1.7} /> Chat
-          </Link>
-          <Link href="/chat?mode=agent" onClick={onNavigate} className={cn("nav-item", agentActive && "is-active")}>
-            <Code2 size={16} strokeWidth={1.7} /> AI Agent
-          </Link>
-          <Link href="/workspace" onClick={onNavigate} className={cn("nav-item", pathname.startsWith("/workspace") && "is-active")}>
-            <LayoutGrid size={16} strokeWidth={1.7} /> AI Workspace
-          </Link>
-          <Link href="/canvas" onClick={onNavigate} aria-current={pathname === "/canvas" ? "page" : undefined} className={cn("nav-item", pathname === "/canvas" && "is-active")}>
-            <LayoutGrid size={16} /> Canvas
-          </Link>
-          <Link href="/history" onClick={onNavigate} className={cn("nav-item", pathname === "/history" && "is-active")}>
-            <History size={16} /> Chat History
-          </Link>
-        </nav>
-      </div>
-
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3">
-        <nav className="mb-4 space-y-0.5 border-t border-border pt-3" aria-label="Primary platform">
-          <Link href="/family" onClick={onNavigate} aria-current={pathname.startsWith("/family") ? "page" : undefined} className={cn("nav-item", pathname.startsWith("/family") && "is-active")}><Users size={16} /> Family</Link>
-          <Link href="/devices" onClick={onNavigate} aria-current={pathname.startsWith("/devices") ? "page" : undefined} className={cn("nav-item", pathname.startsWith("/devices") && "is-active")}><Smartphone size={16} /> Connected Devices</Link>
-          <Link href="/projects" onClick={onNavigate} className={cn("nav-item", pathname.startsWith("/projects") && "is-active")}><LayoutGrid size={16} /> Workspace</Link>
-          <Link href="/temporary-chat" onClick={onNavigate} className={cn("nav-item", pathname.startsWith("/temporary-chat") && "is-active")}><History size={16} /> Private Workspace</Link>
+        <NewChatButton onNavigate={onNavigate} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-accent text-sm font-semibold text-[var(--primary-contrast)] transition-colors hover:bg-accent-hover">
+          <Plus size={16} aria-hidden="true" /> New Chat
+        </NewChatButton>
+        <nav className="mt-3 space-y-0.5" aria-label="Primary platform">
+          {PRIMARY_NAV.filter((item) => item.id !== "new").map((item) => {
+            const Icon = icons[item.id];
+            const active = navigationActive(pathname, new URLSearchParams(searchParams.toString()), item.href);
+            return <Link key={item.id} href={item.href} onClick={onNavigate} title={collapsed ? item.label : undefined} aria-current={active ? "page" : undefined} className={cn("nav-item", active && "is-active", collapsed && "justify-center px-2")}>
+              <Icon size={17} strokeWidth={1.7} aria-hidden="true" />{collapsed ? <span className="sr-only">{item.label}</span> : item.label}
+            </Link>;
+          })}
         </nav>
-        <div className="mb-2 flex items-center justify-between px-1">
+        <div className="mb-2 mt-5 flex items-center justify-between border-t border-border px-1 pt-4">
           <p className="eyebrow">Recent chats</p>
           <Link href="/history" onClick={onNavigate} className="text-[11px] font-medium text-ink-3 transition-colors hover:text-ink">View all</Link>
         </div>
@@ -325,14 +307,6 @@ function SidebarBody({
               <Sliders size={16} strokeWidth={1.7} /> {t("nav.admin")}
             </Link>
           ) : null}
-          <Link
-            href="/settings"
-            onClick={onNavigate}
-            aria-current={pathname.startsWith("/settings") ? "page" : undefined}
-            className={cn("nav-item", pathname.startsWith("/settings") && "is-active")}
-          >
-            <User size={16} strokeWidth={1.7} /> {t("nav.settings")}
-          </Link>
         </nav>
       </div>
       {footer}

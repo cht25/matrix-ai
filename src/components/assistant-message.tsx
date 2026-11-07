@@ -17,7 +17,6 @@ import { Markdown } from "@/components/markdown";
 import { ResponseActions, type ChatAction } from "@/components/response-actions";
 import { ArtifactCard, ExportFormatRow, FormatChoice } from "@/components/artifact-panel";
 import { ActivityDisclosure } from "@/components/activity-panel";
-import { AgentActivityCard } from "@/components/agent-sandbox";
 import { FlashcardDeck } from "@/components/mode-workspace";
 import { BuildRunCard } from "@/components/build/build-run-card";
 import type { BuildRun } from "@/lib/deploy/stages";
@@ -152,7 +151,7 @@ export function AssistantMessage(props: AssistantMessageProps) {
       ) : null}
 
       {showExecution && execution ? (
-        kind === "agent" ? <AgentActivityCard execution={execution} failed={execution.status === "failed"} /> : <ActivityDisclosure execution={execution} />
+        kind === "agent" ? null : <ActivityDisclosure execution={execution} />
       ) : null}
 
       {exportPickerOpen && exportFormats.length ? (

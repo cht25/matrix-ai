@@ -1,5 +1,6 @@
 import "server-only";
 import crypto from "node:crypto";
+import type { Transaction } from "firebase-admin/firestore";
 import { Db, nowTs } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
 import { RpcError } from "@/lib/server/errors";
@@ -27,6 +28,7 @@ export type ProjectSummary = {
   stack: string;
   conversation_id: string | null;
   file_count: number;
+  revision: number;
   updated_at: string;
   created_at: string;
   live_slug: string | null;
@@ -55,6 +57,7 @@ export async function listProjects(d: Db, user: SessionUser): Promise<ProjectSum
       stack: doc.data().stack ?? "static-web",
       conversation_id: doc.data().conversation_id ?? null,
       file_count: doc.data().file_count ?? 0,
+      revision: Number(doc.data().revision ?? 0),
       updated_at: iso(doc.data().updated_at),
       created_at: iso(doc.data().created_at),
       live_slug: doc.data().live_slug ?? null,
@@ -83,6 +86,9 @@ export async function ensureProject(
     stack: "static-web",
     conversation_id: p.conversation_id ?? null,
     file_count: 0,
+    revision: 0,
+    framework: "html",
+    runtime: "static",
     live_slug: null,
     live_url: null,
     env_public: {},
@@ -105,6 +111,10 @@ export async function getProject(d: Db, user: SessionUser, projectId: string) {
       title: data.title ?? "Untitled project",
       description: data.description ?? "",
       stack: data.stack ?? "static-web",
+      framework: data.framework ?? (data.stack === "static-web" ? "html" : String(data.stack)),
+      runtime: data.runtime ?? "static",
+      revision: Number(data.revision ?? 0),
+      file_manifest: Array.isArray(data.file_manifest) ? data.file_manifest : [],
       conversation_id: data.conversation_id ?? null,
       live_slug: data.live_slug ?? null,
       live_url: data.live_url ?? null,
@@ -135,135 +145,138 @@ export async function updateProject(d: Db, user: SessionUser, p: { id: string; t
   return true;
 }
 
-async function countImages(d: Db, projectId: string): Promise<number> {
-  const files = await d.collection("projects").doc(projectId).collection("files").get();
-  return files.docs.reduce((sum, doc) => {
-    if (doc.data().encoding === "base64") return sum + String(doc.data().content ?? "").length * 0.75;
-    return sum;
-  }, 0);
+export function projectFileId(path: string): string {
+  return `f_${crypto.createHash("sha256").update(assertSafeProjectPath(path)).digest("hex").slice(0, 40)}`;
+}
+
+type StoredFile = { path: string; content: string; encoding: "utf8" | "base64"; language?: string; created_at?: unknown; updated_at?: unknown; updated_by?: string };
+function fileBytes(file: { content: string; encoding?: string }): number {
+  return file.encoding === "base64" ? Math.floor(file.content.length * 0.75) : Buffer.byteLength(file.content, "utf8");
+}
+function validateFile(path: string, content: string, encoding: "utf8" | "base64") {
+  if (encoding === "utf8" && Buffer.byteLength(content, "utf8") > PROJECT_LIMITS.maxTextBytes) throw new RpcError("FILE_TOO_LARGE", 400);
+  if (encoding === "base64") {
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(content) || content.length % 4 !== 0) throw new RpcError("FILE_ENCODING_INVALID", 400);
+    if (fileBytes({ content, encoding }) > PROJECT_LIMITS.maxImageBytes) throw new RpcError("FILE_TOO_LARGE", 400);
+  }
+  void path;
+}
+function manifestFor(files: StoredFile[]) {
+  return files.sort((a, b) => a.path.localeCompare(b.path)).map((file) => ({ path: file.path, bytes: fileBytes(file), encoding: file.encoding, sha256: crypto.createHash("sha256").update(file.content).digest("hex") }));
+}
+async function readOwnedInTransaction(tx: Transaction, d: Db, user: SessionUser, projectId: string) {
+  const ref = d.collection("projects").doc(projectId);
+  const snap = await tx.get(ref);
+  if (!snap.exists || snap.data()?.owner_id !== user.uid || snap.data()?.archived_at) throw new RpcError("NOT_FOUND", 404);
+  return { ref, data: snap.data()!, revision: Number(snap.data()?.revision ?? 0) };
+}
+function assertRevision(current: number, expected?: number) {
+  if (expected !== undefined && expected !== current) throw new RpcError("PROJECT_REVISION_CONFLICT", 409);
+}
+
+/** One transactional write boundary for editor and Agent file operations. */
+async function mutateFiles(
+  d: Db, user: SessionUser, projectId: string,
+  change: (current: Map<string, StoredFile & { id: string }>) => { files: Map<string, StoredFile & { id: string }>; deleted?: string[] },
+  opts: { expectedRevision?: number; source?: string; snapshot?: { source: string; summary: string } } = {},
+) {
+  return d.runTransaction(async (tx) => {
+    const { ref, revision } = await readOwnedInTransaction(tx, d, user, projectId);
+    assertRevision(revision, opts.expectedRevision);
+    const filesRef = ref.collection("files");
+    const snap = await tx.get(filesRef);
+    const current = new Map<string, StoredFile & { id: string }>();
+    for (const doc of snap.docs) { const data = doc.data() as StoredFile; if (data.path) current.set(data.path, { ...data, id: doc.id }); }
+    const before = new Map(current);
+    const result = change(current);
+    const files = [...result.files.values()];
+    if (files.length > PROJECT_LIMITS.maxFilesPerProject) throw new RpcError("TOO_MANY_FILES", 400);
+    const imageBytes = files.filter((file) => file.encoding === "base64" || isImagePath(file.path)).reduce((sum, file) => sum + fileBytes(file), 0);
+    if (imageBytes > PROJECT_LIMITS.maxImageBytesPerProject) throw new RpcError("IMAGE_BUDGET", 400);
+    const stamp = nowTs();
+    for (const [path, old] of before) { if (!result.files.has(path)) tx.delete(filesRef.doc(old.id)); }
+    for (const file of files) {
+      validateFile(file.path, file.content, file.encoding);
+      const old = before.get(file.path);
+      if (old && old.content === file.content && old.encoding === file.encoding && old.path === file.path) continue;
+      const id = old?.id ?? projectFileId(file.path);
+      tx.set(filesRef.doc(id), { path: file.path, content: file.content, encoding: file.encoding, language: withLanguage({ path: file.path, content: file.content, encoding: file.encoding }).language, updated_by: opts.source === "agent" ? "agent" : "user", created_at: old?.created_at ?? stamp, updated_at: stamp }, { merge: true });
+    }
+    const nextRevision = revision + 1;
+    tx.set(ref, { file_count: files.length, file_manifest: manifestFor(files.map((file) => ({ ...file }))), revision: nextRevision, updated_at: stamp }, { merge: true });
+    if (opts.snapshot) {
+      const version = ref.collection("versions").doc();
+      tx.set(version, { source: opts.snapshot.source, summary: opts.snapshot.summary.slice(0, 200), file_count: files.length, revision: nextRevision, created_at: stamp });
+      for (const file of files) tx.set(version.collection("files").doc(projectFileId(file.path)), { path: file.path, content: file.content, encoding: file.encoding });
+    }
+    return { revision: nextRevision, file_count: files.length };
+  });
 }
 
 export async function upsertProjectFile(
-  d: Db,
-  user: SessionUser,
-  p: { project_id: string; path: string; content: string; encoding?: "utf8" | "base64"; source?: string },
+  d: Db, user: SessionUser,
+  p: { project_id: string; path: string; content: string; encoding?: "utf8" | "base64"; source?: string; expected_revision?: number },
 ) {
-  const { ref } = await ownedProject(d, user, p.project_id);
-  const path = assertSafeProjectPath(p.path);
-  const encoding = p.encoding === "base64" ? "base64" : "utf8";
-  if (encoding === "utf8" && p.content.length > PROJECT_LIMITS.maxTextBytes) throw new RpcError("FILE_TOO_LARGE", 400);
-  if (encoding === "base64") {
-    const bytes = Math.floor(p.content.length * 0.75);
-    if (bytes > PROJECT_LIMITS.maxImageBytes) throw new RpcError("FILE_TOO_LARGE", 400);
-  }
-  const files = ref.collection("files");
-  const existing = await files.where("path", "==", path).limit(1).get();
-  if (existing.empty) {
-    const all = await files.get();
-    if (all.size >= PROJECT_LIMITS.maxFilesPerProject) throw new RpcError("TOO_MANY_FILES", 400);
-  }
-  if (encoding === "base64" || isImagePath(path)) {
-    const used = await countImages(d, p.project_id);
-    if (used > PROJECT_LIMITS.maxImageBytesPerProject) throw new RpcError("IMAGE_BUDGET", 400);
-  }
-  const payload = {
-    path,
-    content: p.content,
-    encoding,
-    language: withLanguage({ path, content: p.content, encoding }).language,
-    updated_by: p.source === "agent" ? "agent" : "user",
-    updated_at: nowTs(),
-  };
-  if (existing.empty) await files.add({ ...payload, created_at: nowTs() });
-  else await existing.docs[0].ref.set(payload, { merge: true });
-  const count = (await files.get()).size;
-  await ref.set({ file_count: count, updated_at: nowTs() }, { merge: true });
-  return { path };
+  const path = assertSafeProjectPath(p.path); const encoding = p.encoding === "base64" ? "base64" : "utf8";
+  validateFile(path, p.content, encoding);
+  const result = await mutateFiles(d, user, p.project_id, (current) => { current.set(path, { path, content: p.content, encoding, id: current.get(path)?.id ?? projectFileId(path) }); return { files: current }; }, { expectedRevision: p.expected_revision, source: p.source });
+  return { path, ...result };
 }
 
-export async function deleteProjectFile(d: Db, user: SessionUser, p: { project_id: string; path: string }) {
-  const { ref } = await ownedProject(d, user, p.project_id);
+export async function deleteProjectFile(d: Db, user: SessionUser, p: { project_id: string; path: string; expected_revision?: number }) {
   const path = assertSafeProjectPath(p.path);
-  const existing = await ref.collection("files").where("path", "==", path).get();
-  await Promise.all(existing.docs.map((doc) => doc.ref.delete()));
-  const count = (await ref.collection("files").get()).size;
-  await ref.set({ file_count: count, updated_at: nowTs() }, { merge: true });
+  await mutateFiles(d, user, p.project_id, (current) => { if (!current.delete(path)) throw new RpcError("NOT_FOUND", 404); return { files: current, deleted: [path] }; }, { expectedRevision: p.expected_revision });
   return true;
 }
 
-export async function renameProjectFile(d: Db, user: SessionUser, p: { project_id: string; from: string; to: string }) {
-  const from = assertSafeProjectPath(p.from);
-  const to = assertSafeProjectPath(p.to);
-  const { ref } = await ownedProject(d, user, p.project_id);
-  const existing = await ref.collection("files").where("path", "==", from).limit(1).get();
-  if (existing.empty) throw new RpcError("NOT_FOUND", 404);
-  const clash = await ref.collection("files").where("path", "==", to).limit(1).get();
-  if (!clash.empty) throw new RpcError("PATH_EXISTS", 400);
-  await existing.docs[0].ref.set({ path: to, updated_at: nowTs(), updated_by: "user" }, { merge: true });
-  await ref.set({ updated_at: nowTs() }, { merge: true });
+export async function renameProjectFile(d: Db, user: SessionUser, p: { project_id: string; from: string; to: string; expected_revision?: number }) {
+  const from = assertSafeProjectPath(p.from); const to = assertSafeProjectPath(p.to);
+  await mutateFiles(d, user, p.project_id, (current) => {
+    const file = current.get(from); if (!file) throw new RpcError("NOT_FOUND", 404);
+    if (current.has(to)) throw new RpcError("PATH_EXISTS", 400);
+    current.delete(from); current.set(to, { ...file, path: to, id: projectFileId(to) });
+    return { files: current, deleted: [from] };
+  }, { expectedRevision: p.expected_revision });
   return true;
 }
 
 export async function applyProjectFiles(
-  d: Db,
-  user: SessionUser,
-  p: { project_id: string; files: ProjectFile[]; source?: string; title?: string },
+  d: Db, user: SessionUser,
+  p: { project_id: string; files: ProjectFile[]; source?: string; title?: string; expected_revision?: number },
 ) {
   if (!p.files.length) throw new RpcError("NO_FILES", 400);
   if (p.files.length > PROJECT_LIMITS.maxFilesPerProject) throw new RpcError("TOO_MANY_FILES", 400);
-  for (const file of p.files) {
-    await upsertProjectFile(d, user, {
-      project_id: p.project_id,
-      path: file.path,
-      content: file.content,
-      encoding: file.encoding,
-      source: p.source ?? "agent",
-    });
-  }
-  if (p.title) {
-    await updateProject(d, user, { id: p.project_id, title: p.title });
-  }
-  await saveProjectVersion(d, user, {
-    project_id: p.project_id,
-    source: p.source === "import" ? "import" : "agent",
-    summary: `Applied ${p.files.length} file${p.files.length === 1 ? "" : "s"}`,
-  });
-  return { count: p.files.length };
+  const paths = new Set<string>();
+  for (const file of p.files) { const path = assertSafeProjectPath(file.path); if (paths.has(path)) throw new RpcError("DUPLICATE_PATH", 400); paths.add(path); validateFile(path, file.content, file.encoding === "base64" ? "base64" : "utf8"); }
+  const result = await mutateFiles(d, user, p.project_id, (current) => {
+    for (const file of p.files) { const path = assertSafeProjectPath(file.path); const encoding = file.encoding === "base64" ? "base64" : "utf8"; current.set(path, { path, content: file.content, encoding, id: current.get(path)?.id ?? projectFileId(path) }); }
+    return { files: current };
+  }, { expectedRevision: p.expected_revision, source: p.source ?? "agent", snapshot: { source: p.source === "import" ? "import" : p.source === "user" ? "user" : "agent", summary: `Applied ${p.files.length} file${p.files.length === 1 ? "" : "s"}` } });
+  if (p.title) await updateProject(d, user, { id: p.project_id, title: p.title });
+  return { count: p.files.length, ...result };
 }
 
 export async function saveProjectVersion(
-  d: Db,
-  user: SessionUser,
+  d: Db, user: SessionUser,
   p: { project_id: string; source: string; summary?: string },
 ) {
-  const { ref } = await ownedProject(d, user, p.project_id);
-  const files = await ref.collection("files").get();
-  const versions = await ref.collection("versions").get();
-  const ordered = versions.docs.sort(descDoc("created_at"));
-  if (ordered.length >= PROJECT_LIMITS.maxVersions) {
-    const drop = ordered.slice(PROJECT_LIMITS.maxVersions - 1);
-    for (const old of drop) {
-      const kids = await old.ref.collection("files").listDocuments();
-      await Promise.all(kids.map((kid) => kid.delete()));
-      await old.ref.delete();
-    }
-  }
-  const version = await ref.collection("versions").add({
-    source: p.source,
-    summary: (p.summary ?? "").slice(0, 200),
-    file_count: files.size,
-    created_at: nowTs(),
+  const id = await d.runTransaction(async (tx) => {
+    const { ref } = await readOwnedInTransaction(tx, d, user, p.project_id);
+    const files = await tx.get(ref.collection("files"));
+    const version = ref.collection("versions").doc();
+    tx.set(version, { source: p.source, summary: (p.summary ?? "").slice(0, 200), file_count: files.size, created_at: nowTs() });
+    for (const doc of files.docs) tx.set(version.collection("files").doc(projectFileId(String(doc.data().path))), { path: doc.data().path, content: doc.data().content ?? "", encoding: doc.data().encoding ?? "utf8" });
+    return version.id;
   });
-  await Promise.all(
-    files.docs.map((doc) =>
-      version.collection("files").add({
-        path: doc.data().path,
-        content: doc.data().content ?? "",
-        encoding: doc.data().encoding ?? "utf8",
-      }),
-    ),
-  );
-  return { id: version.id };
+  // Retention is maintenance, not part of the user's atomic save.
+  const versions = await d.collection("projects").doc(p.project_id).collection("versions").get();
+  const ordered = versions.docs.sort(descDoc("created_at"));
+  for (const old of ordered.slice(PROJECT_LIMITS.maxVersions)) {
+    const kids = await old.ref.collection("files").listDocuments();
+    await Promise.all(kids.map((kid) => kid.delete()));
+    await old.ref.delete();
+  }
+  return { id };
 }
 
 export async function listProjectVersions(d: Db, user: SessionUser, projectId: string) {
@@ -278,29 +291,32 @@ export async function listProjectVersions(d: Db, user: SessionUser, projectId: s
   }));
 }
 
-export async function restoreProjectVersion(d: Db, user: SessionUser, p: { project_id: string; version_id: string }) {
-  const { ref } = await ownedProject(d, user, p.project_id);
-  await saveProjectVersion(d, user, { project_id: p.project_id, source: "restore", summary: "Snapshot before restore" });
-  const version = ref.collection("versions").doc(p.version_id);
-  if (!(await version.get()).exists) throw new RpcError("NOT_FOUND", 404);
-  const snapshot = await version.collection("files").get();
-  const current = await ref.collection("files").get();
-  await Promise.all(current.docs.map((doc) => doc.ref.delete()));
-  await Promise.all(
-    snapshot.docs.map((doc) =>
-      ref.collection("files").add({
-        path: doc.data().path,
-        content: doc.data().content ?? "",
-        encoding: doc.data().encoding ?? "utf8",
-        language: withLanguage({ path: doc.data().path, content: doc.data().content ?? "" }).language,
-        updated_by: "user",
-        created_at: nowTs(),
-        updated_at: nowTs(),
-      }),
-    ),
-  );
-  await ref.set({ file_count: snapshot.size, updated_at: nowTs() }, { merge: true });
-  return true;
+export async function restoreProjectVersion(d: Db, user: SessionUser, p: { project_id: string; version_id: string; expected_revision?: number }) {
+  return d.runTransaction(async (tx) => {
+    const { ref, revision } = await readOwnedInTransaction(tx, d, user, p.project_id);
+    assertRevision(revision, p.expected_revision);
+    const version = ref.collection("versions").doc(p.version_id);
+    const versionSnap = await tx.get(version);
+    if (!versionSnap.exists) throw new RpcError("NOT_FOUND", 404);
+    const snapshot = await tx.get(version.collection("files"));
+    const current = await tx.get(ref.collection("files"));
+    const stamp = nowTs();
+    const backup = ref.collection("versions").doc();
+    tx.set(backup, { source: "restore", summary: "Snapshot before restore", file_count: current.size, created_at: stamp });
+    for (const doc of current.docs) {
+      tx.set(backup.collection("files").doc(projectFileId(String(doc.data().path))), { path: doc.data().path, content: doc.data().content ?? "", encoding: doc.data().encoding ?? "utf8" });
+      tx.delete(doc.ref);
+    }
+    const restored: StoredFile[] = [];
+    for (const doc of snapshot.docs) {
+      const file = { path: String(doc.data().path), content: String(doc.data().content ?? ""), encoding: doc.data().encoding === "base64" ? "base64" as const : "utf8" as const };
+      validateFile(file.path, file.content, file.encoding); restored.push(file);
+      tx.set(ref.collection("files").doc(projectFileId(file.path)), { ...file, language: withLanguage(file).language, updated_by: "user", created_at: stamp, updated_at: stamp });
+    }
+    if (restored.length > PROJECT_LIMITS.maxFilesPerProject) throw new RpcError("TOO_MANY_FILES", 400);
+    tx.set(ref, { file_count: restored.length, file_manifest: manifestFor(restored), revision: revision + 1, updated_at: stamp }, { merge: true });
+    return { revision: revision + 1, file_count: restored.length };
+  });
 }
 
 /**
@@ -346,7 +362,7 @@ export async function createProjectDirectory(d: Db, user: SessionUser, p: { proj
     project_id: p.project_id,
     path: `${path}/.gitkeep`,
     content: "",
-    source: "agent",
+    source: "user",
   });
 }
 

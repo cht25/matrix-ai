@@ -8,11 +8,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import { createSessionCookie, SESSION_COOKIE, sessionCookieOptions } from "@/lib/firebase/session";
 import { ensureUserDocuments, profileOnboardingComplete } from "@/lib/server/rpc";
+import { mutationCsrfResponse } from "@/lib/server/request-security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
+  const csrf = mutationCsrfResponse(req);
+  if (csrf) return csrf;
   let idToken: string | undefined;
   try {
     ({ idToken } = (await req.json().catch(() => ({}))) as { idToken?: string });
@@ -47,7 +50,9 @@ export async function POST(req: NextRequest) {
   }
 }
 
-export async function DELETE() {
+export async function DELETE(req: NextRequest) {
+  const csrf = mutationCsrfResponse(req);
+  if (csrf) return csrf;
   const res = NextResponse.json({ ok: true });
   res.cookies.set(SESSION_COOKIE, "", { httpOnly: true, path: "/", maxAge: 0 });
   return res;

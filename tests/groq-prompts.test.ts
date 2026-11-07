@@ -9,19 +9,20 @@ afterEach(() => {
 });
 
 describe("GroqProvider (spec §15)", () => {
+  const testModel = "openai/gpt-oss-120b";
   it("calls the Groq API with the right shape and returns content", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         choices: [{ message: { content: "Stay safe online!" } }],
-        model: MODELS.chat,
+        model: testModel,
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
       }),
     }) as unknown as typeof fetch;
 
     const provider = new GroqProvider("gsk-test");
     const res = await provider.chat({
-      model: MODELS.chat,
+      model: testModel,
       messages: [{ role: "user", content: "Is this email a scam?" }],
     });
 
@@ -31,7 +32,7 @@ describe("GroqProvider (spec §15)", () => {
     const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(String(url)).toContain("api.groq.com");
     const body = JSON.parse(String(init.body));
-    expect(body.model).toBe(MODELS.chat);
+    expect(body.model).toBe(testModel);
     expect(body.max_completion_tokens).toBeDefined();
     expect(body.reasoning_format).toBe("hidden");
   });
@@ -49,7 +50,7 @@ describe("GroqProvider (spec §15)", () => {
     }) as unknown as typeof fetch;
 
     const provider = new GroqProvider("gsk-test");
-    await provider.chat({ model: MODELS.vision, messages: [{ role: "user", content: "analyze" }], imageDataUrl: "data:image/png;base64,abc" });
+    await provider.chat({ model: "test-vision", messages: [{ role: "user", content: "analyze" }], imageDataUrl: "data:image/png;base64,abc" });
 
     const [, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     const body = JSON.parse(String(init.body));

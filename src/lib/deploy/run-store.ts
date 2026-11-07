@@ -43,15 +43,18 @@ function nullableStr(value: unknown): string | null {
 }
 
 const STAGE_STATES: StageState[] = ["queued", "running", "completed", "failed", "skipped"];
-const RUN_STATUSES: BuildRunStatus[] = ["requested", "running", "succeeded", "failed"];
+const RUN_STATUSES: BuildRunStatus[] = ["requested", "running", "succeeded", "failed", "cancelled"];
 
 /** Firestore-safe copy of a run (bounded, no undefined, no functions). */
 export function toFirestoreRun(run: BuildRun): Json {
   return {
     id: run.id,
     projectId: run.projectId ?? null,
+    projectTitle: run.projectTitle ?? null,
     conversationId: run.conversationId ?? null,
     requestId: run.requestId ?? null,
+    taskId: run.taskId ?? null,
+    cancelRequested: run.cancelRequested === true,
     status: run.status,
     environment: run.environment,
     actions: { build: run.actions.build, publish: run.actions.publish, preview: run.actions.preview, fix: run.actions.fix === true },
@@ -162,8 +165,11 @@ export function runFromFirestore(raw: unknown, now: number): BuildRun | null {
   return {
     id,
     projectId: nullableStr(data.projectId),
+    projectTitle: nullableStr(data.projectTitle),
     conversationId: nullableStr(data.conversationId),
     requestId: nullableStr(data.requestId),
+    taskId: nullableStr(data.taskId),
+    cancelRequested: data.cancelRequested === true,
     status,
     actions: {
       build: actions.build !== false,
@@ -239,3 +245,4 @@ function readValidation(value: unknown): BuildCheck[] | null {
 export function storedDeploymentStatus(run: BuildRun | null): DeploymentStatus {
   return run?.deployment?.status ?? "none";
 }
+
