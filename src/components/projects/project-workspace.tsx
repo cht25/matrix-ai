@@ -50,6 +50,7 @@ type ProjectMeta = {
   custom_domain: string;
   custom_domain_status: string;
   updated_at?: string;
+  revision?: number;
 };
 
 type FileOp = { label: string; at: number };
@@ -72,6 +73,8 @@ export function ProjectWorkspace({
   const [openTabs, setOpenTabs] = useState<string[]>(initialFiles[0]?.path ? [initialFiles[0].path] : []);
   const [activePath, setActivePath] = useState(initialFiles[0]?.path ?? "");
   const [dirty, setDirty] = useState(false);
+  const [savePaused, setSavePaused] = useState(false);
+  const revisionRef = useRef(0);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [slug, setSlug] = useState("");
@@ -97,6 +100,8 @@ export function ProjectWorkspace({
   const load = useCallback(async (id: string) => {
     const data = await rpc<{ project: ProjectMeta; files: ProjectFile[] }>("project_get", { id });
     setProject(data.project);
+    revisionRef.current = Number(data.project.revision ?? 0);
+    setSavePaused(false);
     setFiles(data.files);
     setActivePath((cur) => (data.files.some((f) => f.path === cur) ? cur : (data.files[0]?.path ?? "")));
     setOpenTabs((current) => {
@@ -146,14 +151,22 @@ export function ProjectWorkspace({
   function queueSave(nextFiles: ProjectFile[], path: string, content: string) {
     setDirty(true);
     if (saveTimer.current) clearTimeout(saveTimer.current);
+    if (savePaused) return;
     saveTimer.current = setTimeout(() => {
       if (!project) return;
-      void rpc("project_file_upsert", { project_id: project.id, path, content })
-        .then(() => {
+      void rpc<{ revision: number }>("project_file_upsert", { project_id: project.id, path, content, expected_revision: revisionRef.current })
+        .then((result) => {
+          revisionRef.current = result.revision;
+          setProject((current) => current ? { ...current, revision: result.revision } : current);
           setDirty(false);
           recordOp(`Updated ${path}`);
         })
-        .catch(() => setMsg("Autosave failed — the change is only in this browser."));
+        .catch((err: unknown) => {
+          if (err && typeof err === "object" && "code" in err && (err as { code?: string }).code === "PROJECT_REVISION_CONFLICT") {
+            setSavePaused(true);
+            setMsg("This project changed elsewhere. Autosave is paused — reload the workspace before editing again.");
+          } else setMsg("Autosave failed — the change is only in this browser.");
+        });
     }, 450);
     setFiles(nextFiles);
   }

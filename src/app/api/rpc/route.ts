@@ -254,11 +254,12 @@ const ACTIONS: Record<string, Handler> = {
       content: z.string().parse(b.content ?? ""),
       encoding: b.encoding === "base64" ? "base64" : "utf8",
       source: str(b.source, "user"),
+      expected_revision: typeof b.expected_revision === "number" ? z.number().int().min(0).parse(b.expected_revision) : undefined,
     }),
   project_file_delete: (d, u, b) =>
-    projects.deleteProjectFile(d, u, { project_id: z.string().min(1).parse(b.project_id), path: z.string().min(1).parse(b.path) }),
+    projects.deleteProjectFile(d, u, { project_id: z.string().min(1).parse(b.project_id), path: z.string().min(1).parse(b.path), expected_revision: typeof b.expected_revision === "number" ? z.number().int().min(0).parse(b.expected_revision) : undefined }),
   project_file_rename: (d, u, b) =>
-    projects.renameProjectFile(d, u, { project_id: z.string().min(1).parse(b.project_id), from: z.string().min(1).parse(b.from), to: z.string().min(1).parse(b.to) }),
+    projects.renameProjectFile(d, u, { project_id: z.string().min(1).parse(b.project_id), from: z.string().min(1).parse(b.from), to: z.string().min(1).parse(b.to), expected_revision: typeof b.expected_revision === "number" ? z.number().int().min(0).parse(b.expected_revision) : undefined }),
   project_apply_files: (d, u, b) =>
     projects.applyProjectFiles(d, u, {
       project_id: z.string().min(1).parse(b.project_id),
@@ -270,6 +271,7 @@ const ACTIONS: Record<string, Handler> = {
       })),
       source: str(b.source, "agent"),
       title: b.title ? str(b.title) : undefined,
+      expected_revision: typeof b.expected_revision === "number" ? z.number().int().min(0).parse(b.expected_revision) : undefined,
     }),
   project_version_save: (d, u, b) =>
     projects.saveProjectVersion(d, u, { project_id: z.string().min(1).parse(b.project_id), source: str(b.source, "manual"), summary: str(b.summary) }),
