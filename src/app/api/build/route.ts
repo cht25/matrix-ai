@@ -15,6 +15,8 @@ import { adminAuth, adminDb, nowTs } from "@/lib/firebase/admin";
 import { verifySession, type SessionUser } from "@/lib/firebase/session";
 import { FirestoreDeploymentProvider } from "@/lib/deploy/firestore-provider";
 import { runBuildPipeline, latestBuildRunForProject, readBuildRun, type ImageAssetRequest } from "@/lib/server/build";
+import { cancelAgentTask, createAgentTask } from "@/lib/server/agent-tasks";
+import { toFirestoreRun } from "@/lib/deploy/run-store";
 import { getDeploymentOverview } from "@/lib/server/deploy";
 import { detectBuildIntent } from "@/lib/ai/build-intent";
 import { RpcError } from "@/lib/server/errors";
@@ -192,6 +194,15 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  let taskId: string;
+  try {
+    const task = await createAgentTask(d, user, { title: (prompt || "MATRIX build").replace(/\s+/g, " ").slice(0, 120), goal: prompt || `Build project ${projectId ?? "new"}`, conversation_id: convId, project_id: projectId });
+    taskId = task.id;
+  } catch (error) {
+    logGatewayFailure("build_task", { requestId, runId }, error);
+    return json({ error: "TASK_STORAGE_UNAVAILABLE", detail: "The durable Agent task record could not be created, so no build was started." }, 503);
+  }
+
   if (!wantsStream) {
     // Fire-and-check: the caller polls GET /api/build?run_id=… for real state.
     void runBuildPipeline({
@@ -202,6 +213,7 @@ export async function POST(req: NextRequest) {
       projectId,
       conversationId: convId,
       requestId,
+      taskId,
       prompt,
       actions,
       environment,
@@ -212,7 +224,7 @@ export async function POST(req: NextRequest) {
       isTemporary,
       maxFixAttempts: typeof body.max_fix_attempts === "number" ? Math.max(0, Math.min(5, body.max_fix_attempts)) : undefined,
     }).catch((error) => logGatewayFailure("build_run", { requestId, runId }, error));
-    return json({ run_id: runId, conversation_id: convId, status: "queued" }, 202);
+    return json({ run_id: runId, task_id: taskId, conversation_id: convId, status: "queued" }, 202);
   }
 
   const stream = new ReadableStream<Uint8Array>({
@@ -228,7 +240,7 @@ export async function POST(req: NextRequest) {
           closed = true;
         }
       };
-      send({ type: "accepted", run_id: runId, request_id: requestId, conversation_id: convId });
+      send({ type: "accepted", run_id: runId, task_id: taskId, request_id: requestId, conversation_id: convId });
       try {
         const result = await runBuildPipeline({
           d,
@@ -238,6 +250,7 @@ export async function POST(req: NextRequest) {
           projectId,
           conversationId: convId,
           requestId,
+          taskId,
           prompt,
           actions,
           environment,
@@ -308,4 +321,21 @@ export async function GET(req: NextRequest) {
     const code = error instanceof RpcError ? error.code : "INTERNAL";
     return json({ error: code }, errorStatus(code));
   }
+}
+
+export async function DELETE(req: NextRequest) {
+  const csrf = mutationCsrfResponse(req);
+  if (csrf) return csrf;
+  const user = await getUser(req);
+  if (!user) return json({ error: "UNAUTHENTICATED" }, 401);
+  const runId = req.nextUrl.searchParams.get("run_id") ?? "";
+  if (!runId) return json({ error: "BAD_REQUEST" }, 400);
+  const d = adminDb();
+  const run = await readBuildRun(d, user, runId);
+  if (!run) return json({ error: "NOT_FOUND" }, 404);
+  if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") return json({ run });
+  const ref = d.collection("build_runs").doc(runId);
+  await ref.set({ cancel_requested: true, run: { ...toFirestoreRun(run), cancelRequested: true }, updated_at: nowTs() }, { merge: true });
+  if (run.taskId) await cancelAgentTask(d, user, run.taskId).catch(() => null);
+  return json({ run: { ...run, cancelRequested: true }, status: "cancel_requested" });
 }

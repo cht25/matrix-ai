@@ -66,7 +66,7 @@ export type BuildLogLine = {
   message: string;
 };
 
-export type BuildRunStatus = "requested" | "running" | "succeeded" | "failed";
+export type BuildRunStatus = "requested" | "running" | "succeeded" | "failed" | "cancelled";
 
 export type BuildEnvironment = "preview" | "production";
 
@@ -99,6 +99,8 @@ export type BuildRun = {
   projectId: string | null;
   conversationId: string | null;
   requestId: string | null;
+  taskId: string | null;
+  cancelRequested: boolean;
   status: BuildRunStatus;
   actions: BuildActions;
   environment: BuildEnvironment;
@@ -136,6 +138,7 @@ export function createBuildRun(input: {
   projectId?: string | null;
   conversationId?: string | null;
   requestId?: string | null;
+  taskId?: string | null;
   actions: BuildActions;
   environment?: BuildEnvironment;
   maxAttempts?: number;
@@ -146,6 +149,8 @@ export function createBuildRun(input: {
     projectId: input.projectId ?? null,
     conversationId: input.conversationId ?? null,
     requestId: input.requestId ?? null,
+    taskId: input.taskId ?? null,
+    cancelRequested: false,
     status: "requested",
     actions: input.actions,
     environment: input.environment ?? "production",
@@ -262,6 +267,11 @@ export function succeedRun(run: BuildRun, now: number): BuildRun {
   return { ...run, status: "succeeded", updatedAt: now, finishedAt: now };
 }
 
+export function cancelRun(run: BuildRun, now: number): BuildRun {
+  if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") return run;
+  return { ...run, status: "cancelled", cancelRequested: true, stages: run.stages.map((stage) => stage.state === "running" || stage.state === "queued" ? { ...stage, state: "skipped", finishedAt: now } : stage), updatedAt: now, finishedAt: now };
+}
+
 export function failRun(run: BuildRun, error: { code: string; message: string }, now: number): BuildRun {
   const active = run.stages.find((stage) => stage.state === "running");
   const withFailedStage = active ? failStage(run, active.id, now, error.message) : run;
@@ -360,6 +370,9 @@ export function buildRunCopy(run: BuildRun): BuildRunCopy {
       liveUrl: null,
     };
   }
+  if (run.status === "cancelled") {
+    return { title: "Build cancelled", detail: "The run was stopped before completion. No success was reported.", glyph: "○", tone: "neutral", canOpenLive: false, liveUrl: null };
+  }
   if (run.status === "failed") {
     const failedPublish = progress.failedId === "publish" || run.deployment?.status === "failed";
     return {
@@ -428,6 +441,7 @@ export type BuildRunSnapshot = {
   run_id: string;
   project_id?: string | null;
   conversation_id?: string | null;
+  task_id?: string | null;
   status: BuildRunStatus;
   stage_states: Array<[BuildStageId, StageState]>;
   deployment_status: DeploymentStatus | null;
@@ -444,6 +458,7 @@ export function toRunSnapshot(run: BuildRun): BuildRunSnapshot {
     run_id: run.id,
     project_id: run.projectId ?? null,
     conversation_id: run.conversationId ?? null,
+    task_id: run.taskId ?? null,
     status: run.status,
     stage_states: run.stages.map((stage) => [stage.id, stage.state]),
     deployment_status: run.deployment?.status ?? null,
@@ -471,7 +486,7 @@ export function runFromSnapshot(snapshot: Partial<BuildRunSnapshot> & { run_id: 
     return { ...stage, state: stored[1], finishedAt: stage.finishedAt ?? (stored[1] === "running" ? null : now) };
   });
   const status: BuildRunStatus =
-    snapshot.status === "succeeded" || snapshot.status === "failed" || snapshot.status === "running" || snapshot.status === "requested"
+    snapshot.status === "succeeded" || snapshot.status === "failed" || snapshot.status === "running" || snapshot.status === "requested" || snapshot.status === "cancelled"
       ? snapshot.status
       : "failed";
   return {
@@ -479,6 +494,8 @@ export function runFromSnapshot(snapshot: Partial<BuildRunSnapshot> & { run_id: 
     projectId: snapshot.project_id ?? null,
     conversationId: snapshot.conversation_id ?? null,
     requestId: null,
+    taskId: snapshot.task_id ?? null,
+    cancelRequested: snapshot.status === "cancelled",
     status,
     actions: { build: true, publish: status === "succeeded", preview: false },
     environment: snapshot.environment === "preview" ? "preview" : "production",

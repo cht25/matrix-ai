@@ -13,6 +13,7 @@ import "server-only";
 import { nowTs, type Db } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
 import { RpcError } from "@/lib/server/rpc";
+import type { BuildRun, BuildStageId } from "@/lib/deploy/stages";
 
 export { RpcError };
 
@@ -38,6 +39,8 @@ export const CHECKPOINT_STEPS = [
 export type CheckpointStep = (typeof CHECKPOINT_STEPS)[number];
 export type CheckpointState = "started" | "ok" | "failed" | "skipped" | "needs_approval";
 
+export type AgentExecutionState = "QUEUED" | "PLANNING" | "EXECUTING" | "CREATING_FILES" | "INSTALLING_DEPENDENCIES" | "BUILDING" | "TESTING" | "PREVIEW_READY" | "DEPLOYING" | "DEPLOYED" | "FAILED" | "CANCELLED";
+
 export type AgentTask = {
   id: string;
   user_id: string;
@@ -47,6 +50,11 @@ export type AgentTask = {
   goal: string;
   model: string | null;
   status: TaskStatus;
+  execution_state?: AgentExecutionState;
+  build_run_id?: string | null;
+  build_status?: string | null;
+  deployment_status?: string | null;
+  error?: { code: string; message: string } | null;
   created_at: string;
   updated_at: string;
   finished_at: string | null;
@@ -84,6 +92,11 @@ export async function createAgentTask(
     goal,
     model: input.model ?? null,
     status: "planning",
+    execution_state: "QUEUED",
+    build_run_id: null,
+    build_status: null,
+    deployment_status: null,
+    error: null,
     created_at: now,
     updated_at: now,
     finished_at: null,
@@ -97,7 +110,7 @@ export async function createAgentTask(
     metadata: { project_id: input.project_id ?? null },
     created_at: now,
   });
-  return (await ref.get()).data() as AgentTask & { created_at: unknown } as AgentTask;
+  return { ...((await ref.get()).data() as AgentTask), id: ref.id };
 }
 
 /** Append one checkpoint. `state` must reflect a REAL outcome. */
@@ -194,4 +207,39 @@ export async function listAgentTasks(d: Db, user: SessionUser): Promise<AgentTas
     })
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .slice(0, 50);
+}
+
+const STAGE_EXECUTION: Record<BuildStageId, AgentExecutionState> = {
+  plan: "PLANNING", generate: "CREATING_FILES", install: "INSTALLING_DEPENDENCIES", build: "BUILDING", validate: "TESTING", publish: "DEPLOYING",
+};
+
+export function executionStateForRun(run: BuildRun): AgentExecutionState {
+  if (run.status === "cancelled" || run.cancelRequested) return "CANCELLED";
+  if (run.status === "failed") return "FAILED";
+  if (run.status === "succeeded") return run.deployment?.status === "live" ? "DEPLOYED" : run.previewUrl ? "PREVIEW_READY" : "TESTING";
+  const active = run.stages.find((stage) => stage.state === "running");
+  return active ? STAGE_EXECUTION[active.id] : "QUEUED";
+}
+
+/** Server-only task binding. The browser may request cancellation, never write progress. */
+export async function bindBuildTask(d: Db, user: SessionUser, taskId: string, input: { project_id?: string | null; build_run_id: string }) {
+  const ref = await requireOwnedTask(d, user, taskId);
+  await ref.set({ project_id: input.project_id ?? null, build_run_id: input.build_run_id, execution_state: "QUEUED", build_status: "requested", updated_at: nowTs() }, { merge: true });
+}
+
+export async function syncBuildTask(d: Db, user: SessionUser, taskId: string, run: BuildRun) {
+  const ref = await requireOwnedTask(d, user, taskId);
+  const execution = executionStateForRun(run);
+  const status: TaskStatus = execution === "DEPLOYED" || (run.status === "succeeded" && !run.actions.publish) ? "completed" : execution === "FAILED" ? "failed" : execution === "CANCELLED" ? "cancelled" : run.status === "requested" ? "planning" : "running";
+  const closed = status === "completed" || status === "failed" || status === "cancelled";
+  await ref.set({ project_id: run.projectId ?? null, build_run_id: run.id, execution_state: execution, status, build_status: run.status, deployment_status: run.deployment?.status ?? null, error: run.error ?? null, updated_at: nowTs(), ...(closed ? { finished_at: nowTs() } : {}) }, { merge: true });
+}
+
+export async function cancelAgentTask(d: Db, user: SessionUser, taskId: string) {
+  const ref = await requireOwnedTask(d, user, taskId);
+  const snap = await ref.get();
+  const status = String(snap.data()?.status);
+  if (status === "completed" || status === "failed" || status === "cancelled") return { id: taskId, status };
+  await ref.set({ status: "cancelled", execution_state: "CANCELLED", updated_at: nowTs(), finished_at: nowTs() }, { merge: true });
+  return { id: taskId, status: "cancelled" };
 }

@@ -196,14 +196,14 @@ const ACTIONS: Record<string, Handler> = {
     }),
   agent_task_list: (d, u) => agentTasks.listAgentTasks(d, u),
   agent_task_get: (d, u, b) => agentTasks.getAgentTask(d, u, z.string().min(1).parse(b.task_id)),
-  agent_task_checkpoint: (d, u, b) =>
-    agentTasks.appendCheckpoint(d, u, z.string().min(1).parse(b.task_id), {
-      step: z.string().min(1).max(40).parse(b.step),
-      state: z.enum(["started", "ok", "failed", "skipped", "needs_approval"]).parse(b.state),
-      detail: str(b.detail),
-    }),
-  agent_task_status: (d, u, b) =>
-    agentTasks.setTaskStatus(d, u, z.string().min(1).parse(b.task_id), z.enum(["planning", "running", "awaiting_approval", "completed", "failed", "cancelled"]).parse(b.status)),
+  agent_task_checkpoint: async () => {
+    throw new RpcError("SERVER_WRITTEN", 403);
+  },
+  agent_task_status: async (d, u, b) => {
+    const status = z.enum(["planning", "running", "awaiting_approval", "completed", "failed", "cancelled"]).parse(b.status);
+    if (status !== "cancelled") throw new RpcError("SERVER_WRITTEN", 403);
+    return agentTasks.cancelAgentTask(d, u, z.string().min(1).parse(b.task_id));
+  },
   // --- Automations (actions only reference registry tools; LOW-risk only) -----
   automation_create: (d, u, b) =>
     automations.createAutomation(d, u, {

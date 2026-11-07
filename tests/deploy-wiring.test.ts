@@ -34,7 +34,8 @@ describe("chat routes build requests through the real pipeline", () => {
   it("runs the pipeline instead of the plain chat path", () => {
     expect(CHAT).toContain("streamBuildRun(");
     expect(CHAT).toContain("runBuildTurn(message, buildIntent, turnId, pending)");
-    expect(CHAT).toContain("<BuildStatusCard run={buildRun} />");
+    expect(CHAT).toContain("<BuildStatusCard run={buildRun}");
+    expect(CHAT).toContain("cancelBuildRun");
   });
 
   it("asks a clarification rather than deploying a guess", () => {

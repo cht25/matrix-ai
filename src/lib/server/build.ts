@@ -30,9 +30,10 @@ import { planFromRequest, type BuildIntent } from "@/lib/ai/build-intent";
 import { generateImage } from "@/lib/ai/image/generate";
 import { isImageGenerationConfigured } from "@/lib/ai/image/config";
 import { applyProjectFiles, ensureProject, loadProjectFiles } from "@/lib/server/projects";
+import { appendCheckpoint, bindBuildTask, syncBuildTask, type CheckpointStep } from "@/lib/server/agent-tasks";
 import { PROJECT_LIMITS, type ProjectFile } from "@/lib/projects/paths";
 import {
-  applyStaleness, beginStage, buildRunCopy, completeStage, createBuildRun, failRun, failStage,
+  applyStaleness, beginStage, buildRunCopy, cancelRun, completeStage, createBuildRun, failRun, failStage,
   setDeployment, setChanges, setPreviewUrl, setValidation, skipStage, stageProgress, succeedRun,
   summarizeChanges, bumpAttempt,
   toRunSnapshot,
@@ -60,6 +61,7 @@ export type BuildPipelineInput = {
   allowOverride?: boolean;
   imageRequests?: ImageAssetRequest[];
   maxFixAttempts?: number;
+  taskId?: string | null;
   /** Text/code files the user attached: stored as real project files first. */
   attachments?: Array<{ path: string; content: string }>;
   /** Store the assistant turn in the conversation (skipped for temp chats). */
@@ -87,15 +89,31 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     projectId: input.projectId ?? null,
     conversationId: input.conversationId ?? null,
     requestId: input.requestId ?? null,
+    taskId: input.taskId ?? null,
     actions: input.actions,
     environment: input.environment ?? "production",
     maxAttempts: Math.min(input.maxFixAttempts ?? MAX_FIX_ATTEMPTS, 5),
     now: now(),
   });
 
+  if (input.taskId) await bindBuildTask(d, user, input.taskId, { project_id: input.projectId ?? null, build_run_id: runId });
   const emit = async (stage?: BuildStageId): Promise<void> => {
     await persist(d, runId, run);
+    if (run.taskId) {
+      try { await syncBuildTask(d, user, run.taskId, run); }
+      catch (error) { console.error("[build] task sync failed", error instanceof Error ? error.message : "unknown"); }
+    }
     input.onEvent?.({ run, stage, copy: buildRunCopy(run) });
+  };
+  const checkpointSteps: Partial<Record<BuildStageId, CheckpointStep>> = { plan: "plan", generate: "edit", build: "build", validate: "test", publish: "deploy" };
+  const checkpoint = async (stage: BuildStageId | undefined, state: "ok" | "failed", detail: string) => {
+    const step = stage ? checkpointSteps[stage] : undefined;
+    if (!run.taskId || !step) return;
+    try { await appendCheckpoint(d, user, run.taskId, { step, state, detail: detail.slice(0, 500) }); } catch { /* terminal task state is stored on the header */ }
+  };
+  const cancelled = async (): Promise<boolean> => {
+    const snap = await d.collection("build_runs").doc(runId).get();
+    return snap.data()?.cancelRequested === true || snap.data()?.cancel_requested === true || snap.data()?.status === "cancelled";
   };
 
   const note = (stage: BuildStageId | null, level: BuildLogLine["level"], message: string): void => {
@@ -103,6 +121,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
   };
 
   const begin = async (stage: BuildStageId, message: string): Promise<void> => {
+    if (await cancelled()) throw new RpcError("CANCELLED", 409);
     run = beginStage(run, stage, now(), message);
     note(stage, "info", message);
     await emit(stage);
@@ -111,6 +130,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
   const finish = async (stage: BuildStageId, message: string): Promise<void> => {
     run = completeStage(run, stage, now(), message);
     note(stage, "success", message);
+    await checkpoint(stage, "ok", message);
     await emit(stage);
   };
 
@@ -122,6 +142,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
   };
 
   const abort = async (code: string, message: string, stage?: BuildStageId): Promise<BuildPipelineResult> => {
+    await checkpoint(stage, "failed", message);
     if (stage) run = failStage(run, stage, now(), message);
     run = failRun(run, { code, message }, now());
     note(stage ?? null, "error", message);
@@ -397,6 +418,12 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     }
   } catch (error) {
     const code = error instanceof RpcError ? error.code : "BUILD_RUN_FAILED";
+    if (code === "CANCELLED") {
+      run = cancelRun(run, now());
+      note(null, "warn", "Build cancelled by the user.");
+      await emit();
+      return done(run);
+    }
     return await abort(code, error instanceof Error ? error.message.slice(0, 240) : "The build stopped unexpectedly.", undefined);
   } finally {
     await persistBuildMessage(d, user, input, run, reply);
@@ -419,7 +446,9 @@ async function persistBuildMessage(
   const summary = buildRunCopy(run);
   const body =
     reply.trim() ||
-    (run.status === "failed"
+    (run.status === "cancelled"
+      ? "Build cancelled. No success was reported."
+      : run.status === "failed"
       ? `MATRIX stopped during ${summary.detail.toLowerCase()} — nothing else was changed.`
       : `Build finished. ${run.fileCount} project file${run.fileCount === 1 ? "" : "s"} ready.`);
   const text = summary.canOpenLive

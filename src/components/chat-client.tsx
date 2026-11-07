@@ -55,7 +55,6 @@ import { intentForMessage, latestArtifacts, latestProjectId, lastUserContent, me
 import { ChatTopBar } from "@/components/chat-topbar";
 import { AssistantMessage } from "@/components/assistant-message";
 import { AgentWorkspace } from "@/components/agent-workspace";
-import { AgentActivityCard } from "@/components/agent-sandbox";
 import { ArtifactCard } from "@/components/artifact-panel";
 import { ResponseProgress } from "@/components/response-status";
 import { ModeQuickActions, LiveTaskGraph, type GraphNode } from "@/components/mode-workspace";
@@ -222,6 +221,7 @@ export function ChatClient({
 
   // --- build pipeline (real execution state, mirrored from the server) -----
   const [buildRun, setBuildRun] = useState<BuildRun | null>(null);
+  const [cancellingBuild, setCancellingBuild] = useState(false);
   /** True between "send" and the first server event, so the wait is explained. */
   const [buildPending, setBuildPending] = useState(false);
   const [publishPopup, setPublishPopup] = useState<{ run: BuildRun; url: string; files: number } | null>(null);
@@ -1028,6 +1028,16 @@ export function ChatClient({
    * server's stage state, never a simulated one, and the publish popup only
    * appears when the hosting provider reported a live deployment.
    */
+  async function cancelBuildRun() {
+    if (!buildRun || cancellingBuild) return;
+    setCancellingBuild(true);
+    try {
+      const res = await fetch(`/api/build?run_id=${encodeURIComponent(buildRun.id)}`, { method: "DELETE", credentials: "same-origin" });
+      if (res.ok) setBuildRun((current) => current ? { ...current, cancelRequested: true } : current);
+    } catch { /* the next poll still reports the server truth */ }
+    finally { setCancellingBuild(false); }
+  }
+
   async function runBuildTurn(
     message: string,
     buildIntent: BuildIntent,
@@ -1664,7 +1674,7 @@ export function ChatClient({
                     </div>
                   ) : null}
                   {buildRun ? (
-                    <BuildStatusCard run={buildRun} />
+                    <BuildStatusCard run={buildRun} cancelling={cancellingBuild} onCancel={() => { void cancelBuildRun(); }} />
                   ) : buildPending ? (
                     <div className="sandbox-card fade-in rounded-xl border border-border bg-surface p-3.5">
                       <p className="flex items-center gap-2 text-[12.5px] font-medium text-ink">
@@ -1674,9 +1684,7 @@ export function ChatClient({
                       <p className="mt-1 text-[11.5px] text-ink-3">Accepting the run and reading the project…</p>
                     </div>
                   ) : null}
-                  {!buildRun && runIntent.intent === "AGENT_TASK" && execution.status !== "idle" ? (
-                    <AgentActivityCard execution={execution} />
-                  ) : null}
+
                 </div>
               </div>
             ) : null}
