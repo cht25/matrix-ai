@@ -243,3 +243,11 @@
   --radius-lg: var(--radius-lg);
   --radius-xl: var(--radius-xl);
 }
+
+/* Syntax tokens are rendered as React text nodes, never injected HTML. */
+.code-token-comment { color: var(--color-ink-3); font-style: italic; }
+.code-token-string { color: var(--color-success); }
+.code-token-keyword { color: var(--color-accent); font-weight: 600; }
+.code-token-number { color: var(--color-warning); }
+.code-token-tag { color: var(--color-accent); }
+.code-token-attribute { color: var(--color-ink-2); }

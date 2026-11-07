@@ -27,19 +27,20 @@ import { AI_CONFIG, createAIRoutesFromDb, createScanRoutesFromDb, resolveSelecte
 import { completeWithFallback, streamWithFallback } from "@/lib/ai/executor";
 import { AIProviderError, logGatewayFailure, logProviderFailure, providerPublicCode } from "@/lib/ai/provider-error";
 import { stripReasoningContent } from "@/lib/ai/reasoning";
-import { agentGenerationIncomplete, formatAttachmentContext, isCodingRequest, parseAgentResponse, safeAgentPath, type AgentFile, type ChatMode, type TextAttachment } from "@/lib/ai/agent";
-import { AGENT_STAGES, computeAnalytics, detectAgentTool } from "@/lib/ai/pipeline";
+import { formatAttachmentContext, isCodingRequest, safeAgentPath, type AgentFile, type ChatMode, type TextAttachment } from "@/lib/ai/agent";
+import { detectBuildIntent, shouldRunBuildPipeline } from "@/lib/ai/build-intent";
+import { requestChatMode } from "@/lib/ai/execution-policy";
+import { computeAnalytics } from "@/lib/ai/pipeline";
 import { generateImage, imageErrorCode } from "@/lib/ai/image/generate";
 import { isImageGenerationConfigured } from "@/lib/ai/image/config";
 import { buildModeSystemMessages, validateOutput, buildSummaryPrompt } from "@/lib/ai/prompts";
-import { isChatMode, isModelLane, isStrategy, type ExplainStyle, type StudyLevel } from "@/lib/ai/modes";
+import { isModelLane, isStrategy, type ExplainStyle, type StudyLevel } from "@/lib/ai/modes";
 import { decideRoute, planOrchestrator } from "@/lib/ai/router";
 import { isThemeIntent, THEME_GALLERY_REPLY_BN, THEME_GALLERY_REPLY_EN } from "@/lib/theme-intent";
 import { validateImageUpload } from "@/lib/ai/upload-validation";
 import { ragSearch } from "@/lib/server/rpc";
 import { downloadImage } from "@/lib/server/cloudinary";
 import { descDoc } from "@/lib/server/sort";
-import { applyProjectFiles, ensureProject } from "@/lib/server/projects";
 import { recordAgentToolSelection } from "@/lib/server/tool-gateway";
 import { mutationCsrfResponse } from "@/lib/server/request-security";
 
@@ -270,7 +271,7 @@ async function finalizeChat(d: Db, opts: {
 
   // Firestore has a 1 MiB document limit. If files are large, keep a compact version in message metadata
   // since the complete files are already safely stored in the project files collection.
-  const safeArtifacts = files.map((file) => ({
+  const safeArtifacts = mode === "agent" ? [] : files.map((file) => ({
     path: file.path,
     language: file.language,
     content: file.content.length > 60_000 ? file.content.slice(0, 60_000) : file.content,
@@ -380,12 +381,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const message = typeof body.message === "string" ? body.message.trim() : "";
   const conversationId = typeof body.conversation_id === "string" ? body.conversation_id : null;
   const isTemporary = body.is_temporary === true;
-  const requestedMode: ChatMode = isTemporary
-    ? "general"
-    : isChatMode(body.mode)
-      ? body.mode
-      : "general";
-  let mode: ChatMode = requestedMode === "image" ? "general" : requestedMode;
+  const mode: ChatMode = requestChatMode(body.mode, isTemporary);
   const lane = isModelLane(body.lane) ? body.lane : "auto";
   const strategy = isStrategy(body.strategy) ? body.strategy : "balanced";
   const studyLevel = (["beginner", "school", "college", "university", "professional"] as StudyLevel[]).includes(body.study_level as StudyLevel) ? body.study_level as StudyLevel : "college";
@@ -456,14 +452,8 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
       return json({ error: "CHAT_STORAGE_UNAVAILABLE", conversation_id: convId }, 503, requestId);
     }
     if (!conv.exists || conv.data()!.user_id !== user.uid) return json({ error: "CONVERSATION_NOT_FOUND" }, 404);
-    // Honor an explicit Agent request even if the stored conversation was general.
-    // The previous overwrite (`stored mode or general`) silently dropped Agent Mode.
-    if (requestedMode !== "general") mode = requestedMode === "image" ? "general" : requestedMode;
-    else {
-      const stored = conv.data()!.mode;
-      mode = isChatMode(stored) && stored !== "image" ? stored : "general";
-      if (isTemporary) mode = "general";
-    }
+    // Mode is explicit per request. A stored Agent conversation cannot grant
+    // execution authority to an omitted/General request.
     wantStream = requestedStream;
   } else {
     const title = message.replace(/\s+/g, " ").slice(0, 60);
@@ -486,6 +476,17 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     }
   }
   const convRef = d.collection("conversations").doc(convId);
+  let activeProjectId: string | null = null;
+  const requestedProjectId = typeof body.project_id === "string" && body.project_id.trim() ? body.project_id.trim().slice(0, 128) : null;
+  if (requestedProjectId) {
+    const project = await d.collection("projects").doc(requestedProjectId).get();
+    if (!project.exists || project.data()?.owner_id !== user.uid || project.data()?.archived_at) return json({ error: "PROJECT_NOT_FOUND", conversation_id: convId }, 404, requestId);
+    activeProjectId = requestedProjectId;
+    await convRef.set({ active_project_id: activeProjectId, updated_at: nowTs() }, { merge: true });
+  } else {
+    const storedProject = (await convRef.get()).data()?.active_project_id;
+    activeProjectId = typeof storedProject === "string" ? storedProject : null;
+  }
 
   // --- store original privately; only redacted text reaches AI providers ------
   const redaction = redactPII(message);
@@ -537,6 +538,10 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   // as fallbacks. Without a saved admin configuration the previous Groq /
   // OpenRouter automatic routing is unchanged.
   const route = decideRoute({ mode, message, attachments, lane, strategy });
+  const agentExecutionRequired = mode === "agent" && (shouldRunBuildPipeline(detectBuildIntent(message, { agentMode: true, hasAttachments: attachments.length > 0 })) || isCodingRequest(message, attachments));
+  if (agentExecutionRequired) {
+    return json({ error: "AGENT_RUNTIME_REQUIRED", detail: "Executable Agent work must use /api/build so files, task state, validation and deployment are persisted together.", conversation_id: convId, project_id: activeProjectId }, 409, requestId);
+  }
   const codingDetected = route.coding || mode === "agent" || isCodingRequest(message, attachments);
   const preferFallback = body.prefer_fallback === true;
   let targets = await createAIRoutesFromDb(d, codingDetected, preferFallback);
@@ -627,16 +632,6 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
         let window = "";
         try {
           emit({ conversation_id: convId, mode, model: activeTarget.model, provider: activeTarget.provider, coding_detected: codingDetected, stream_status: "connecting" });
-          if (mode === "agent") {
-            const selected = detectAgentTool(message);
-            for (const stage of AGENT_STAGES) {
-              emit({ stage: stage.id, label: stage.label, node: stage.node, stream_status: "processing" });
-            }
-            emit({ tool: selected.tool, tool_reason: selected.reason });
-            // Every agent tool selection is audit-logged server-side; actual
-            // tool execution goes through the guarded gateway (/api/agent/tools).
-            void recordAgentToolSelection(d, user.uid, selected.tool, selected.reason).catch(() => {});
-          }
           emit({ stream_status: "streaming" });
           for await (const item of streamWithFallback(
             targets,
@@ -668,28 +663,16 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
           if (!full.trim()) throw new Error("EMPTY_AI_RESPONSE");
           done = true;
           emit({ stream_status: "finalizing" });
-          let streamedReply = stripReasoningContent(full);
-          let streamedFiles: AgentFile[] = [];
-          if (mode === "agent") {
-            const parsed = parseAgentResponse(streamedReply);
-            streamedReply = parsed.reply;
-            streamedFiles = parsed.files;
-          }
-          let projectId: string | null = null;
-          if (mode === "agent" && streamedFiles.length) {
-            try {
-              const proj = await ensureProject(d, user, { conversation_id: convId, title: (message || "Agent project").slice(0, 80) });
-              await applyProjectFiles(d, user, { project_id: proj.id, files: streamedFiles, source: "agent" });
-              projectId = proj.id;
-            } catch { /* best-effort */ }
-          }
+          const streamedReply = stripReasoningContent(full);
+          const streamedFiles: AgentFile[] = [];
+          const projectId = activeProjectId;
           const analytics = computeAnalytics({
             started,
             firstTokenAt: started,
             promptTokens: 0,
             completionTokens: streamedReply.split(/\s+/).length,
-            agentSteps: mode === "agent" ? AGENT_STAGES.length : 1,
-            toolsExecuted: mode === "agent" ? 1 : 0,
+            agentSteps: 1,
+            toolsExecuted: 0,
           });
           let degraded = conversationPersistDegraded;
           try {
@@ -760,7 +743,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     });
   }
 
-  // --- Non-streaming path (Agent returns structured file artifacts) ------------
+  // --- Non-streaming conversation path (never writes project files) ----------
   let rawReply: string;
   let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   let activeTarget: AIRouteTarget = targets[0];
@@ -775,54 +758,12 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     rawReply = result.response.content;
     usage = result.response.usage;
 
-    // Continue when the model hits the token cap mid-file so Agent does not
-    // return truncated HTML/JS. Up to 3 extra turns, concatenated.
-    if (mode === "agent") {
-      let incomplete = result.response.finishReason === "length" || agentGenerationIncomplete(rawReply);
-      let continuations = 0;
-      while (incomplete && continuations < 3) {
-        continuations += 1;
-        try {
-          const continuation = await completeWithFallback(
-            [activeTarget, ...targets.filter((target) => target !== activeTarget)],
-            {
-              messages: [
-                ...messages,
-                { role: "assistant", content: rawReply },
-                {
-                  role: "user",
-                  content:
-                    "Continue from the exact character where you stopped. Do not restart the answer. Finish every open MATRIX_FILE block with complete file contents and <<<END_MATRIX_FILE>>>. No placeholders or omitted sections.",
-                },
-              ],
-              temperature: 0.2,
-              maxTokens: 8192,
-              requestId,
-            },
-          );
-          activeTarget = continuation.target;
-          const cont = continuation.response;
-          if (!cont.content.trim()) break;
-          rawReply += cont.content;
-          usage = {
-            promptTokens: usage.promptTokens + cont.usage.promptTokens,
-            completionTokens: usage.completionTokens + cont.usage.completionTokens,
-            totalTokens: usage.totalTokens + cont.usage.totalTokens,
-          };
-          incomplete = cont.finishReason === "length" || agentGenerationIncomplete(rawReply);
-        } catch (contErr) {
-          console.warn("[MATRIX] Agent continuation step failed; keeping current reply.", contErr);
-          break;
-        }
-      }
-    }
   } catch (error) {
     logProviderFailure(error, requestId);
     await logUsage(d, user.uid, activeTarget?.model ?? selectedModel, "chat", {}, Date.now() - started, "error", requestId);
     return json({ error: providerPublicCode(error), conversation_id: convId }, providerStatus(error), requestId);
   }
 
-  let files: AgentFile[] = [];
   // Never persist or render the model's chain-of-thought. Providers already
   // drop reasoning, but scrub once more here as a safety net (some mirrors
   // return thinking inside `content`).
@@ -838,27 +779,9 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     for (const l of leaks) rawReply = rawReply.replaceAll(l, "[redacted]");
   }
 
-  let reply = rawReply.trim();
-  if (mode === "agent" && check.ok) {
-    const parsed = parseAgentResponse(rawReply);
-    reply = parsed.reply;
-    files = parsed.files;
-  }
-
-  // Agent artifacts are persisted to a per-conversation project here on the
-  // server (single source of truth) so the workspace always reopens the same
-  // project instead of creating a new one each time. Best-effort: a project
-  // write failure never fails the chat — the files still travel in `artifacts`.
-  let projectId: string | null = null;
-  if (mode === "agent" && files.length) {
-    try {
-      const proj = await ensureProject(d, user, { conversation_id: convId, title: (message || "Agent project").slice(0, 80) });
-      await applyProjectFiles(d, user, { project_id: proj.id, files, source: "agent" });
-      projectId = proj.id;
-    } catch {
-      // best-effort (e.g. project limit) — reply still returns the files
-    }
-  }
+  const reply = rawReply.trim();
+  const files: AgentFile[] = [];
+  const projectId = activeProjectId;
 
   let finalizeFailed = conversationPersistDegraded;
   try {
@@ -890,8 +813,8 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
       started,
       promptTokens: usage.promptTokens,
       completionTokens: usage.completionTokens,
-      agentSteps: mode === "agent" ? AGENT_STAGES.length : 1,
-      toolsExecuted: mode === "agent" ? (files.length ? 1 : 0) : 0,
+      agentSteps: 1,
+      toolsExecuted: 0,
     }),
     ...(finalizeFailed ? { storage_degraded: true } : {}),
     request_id: requestId,

@@ -395,19 +395,19 @@ export function artifactToFormat(artifact: ArtifactType): ExportFormat | null {
 export function selectCapability(result: IntentResult, mode: ChatMode): Capability {
   if (mode === "orchestrator") return "orchestrate";
   if (result.intent === "IMAGE_GENERATION" || mode === "image") return "image";
-  if (result.intent === "AGENT_TASK" || mode === "agent") return "agent";
+  if (mode === "agent") return "agent"; // execution requires explicit activation
   return "chat";
 }
 
 /**
  * The mode Matrix should actually send to the gateway for this one message.
- * Explicit intent can upgrade a General-mode message into an Agent/Image run
- * without permanently switching the user's UI mode.
+ * Explicit image intent may select the image action. Agent execution never
+ * upgrades from General/Code: the user must activate Agent first.
  */
 export function effectiveMode(result: IntentResult, mode: ChatMode): ChatMode {
   const capability = selectCapability(result, mode);
   if (capability === "image") return "image";
-  if (capability === "agent") return "agent";
+  if (capability === "agent" && mode === "agent") return "agent";
   return mode;
 }
 

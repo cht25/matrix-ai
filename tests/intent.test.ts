@@ -130,7 +130,8 @@ describe("intent detection — image, agent and code", () => {
       const result = detectIntent(text);
       expect(result.intent, text).toBe("AGENT_TASK");
       expect(result.artifact, text).toBe("AGENT_TASK");
-      expect(selectCapability(result, "general"), text).toBe("agent");
+      expect(selectCapability(result, "general"), text).toBe("chat");
+      expect(selectCapability(result, "agent"), text).toBe("agent");
     }
   });
 
@@ -182,7 +183,8 @@ describe("capability selection and mode overrides", () => {
 
   it("effectiveMode upgrades only the message that needs it", () => {
     expect(effectiveMode(detectIntent("Generate an image of a neon city"), "general")).toBe("image");
-    expect(effectiveMode(detectIntent("Inspect the repo and run the tests"), "general")).toBe("agent");
+    expect(effectiveMode(detectIntent("Inspect the repo and run the tests"), "general")).toBe("general");
+    expect(effectiveMode(detectIntent("Inspect the repo and run the tests"), "agent")).toBe("agent");
     expect(effectiveMode(detectIntent("hi"), "general")).toBe("general");
     expect(effectiveMode(detectIntent("hi"), "study")).toBe("study");
   });

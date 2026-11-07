@@ -60,6 +60,7 @@ import { ArtifactCard } from "@/components/artifact-panel";
 import { ResponseProgress } from "@/components/response-status";
 import { ModeQuickActions, LiveTaskGraph, type GraphNode } from "@/components/mode-workspace";
 import { buildActionsFor, detectBuildIntent, detectImageAssetRequest, shouldRunBuildPipeline, type BuildIntent } from "@/lib/ai/build-intent";
+import { mayExecuteAgent } from "@/lib/ai/execution-policy";
 import { streamBuildRun } from "@/lib/client/build-runner";
 import { BuildStatusCard } from "@/components/build/build-progress";
 import { DeploySuccessPopup } from "@/components/build/deploy-card";
@@ -144,6 +145,7 @@ export function ChatClient({
   initialMode = "general",
   /** True when the conversation has messages older than `initialMessages`. */
   initialHasMore = false,
+  initialProjectId = null,
   onConversationCreated,
 }: {
   initialMessages: ChatMessage[];
@@ -151,6 +153,7 @@ export function ChatClient({
   isTemporary: boolean;
   initialMode?: ChatMode;
   initialHasMore?: boolean;
+  initialProjectId?: string | null;
   onConversationCreated?: (id: string) => void;
 }) {
   const router = useRouter();
@@ -214,7 +217,7 @@ export function ChatClient({
 
   // --- agent workspace ----------------------------------------------------
   const [agentFiles, setAgentFiles] = useState<AgentFile[]>(latestArtifacts(initialMessages));
-  const [agentProjectId, setAgentProjectId] = useState<string | null>(latestProjectId(initialMessages));
+  const [agentProjectId, setAgentProjectId] = useState<string | null>(initialProjectId ?? latestProjectId(initialMessages));
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
 
   // --- build pipeline (real execution state, mirrored from the server) -----
@@ -709,6 +712,7 @@ export function ChatClient({
           action: isImage ? "image" : isOrchestrator ? "orchestrate" : "chat",
           stream: !isImage && !isOrchestrator,
           conversation_id: convIdRef.current,
+          project_id: agentProjectId,
           is_temporary: isTemporary,
           mode: messageMode,
           lane,
@@ -860,7 +864,7 @@ export function ChatClient({
         if (typeof data.fallback === "boolean") streamMetadata.fallback = data.fallback;
         if (typeof data.delta === "string") {
           collected += data.delta;
-          setStreamedText(collected);
+          if (messageMode !== "agent") setStreamedText(collected);
         }
         if (data.conversation_id) {
           gotConversationId = data.conversation_id;
@@ -1012,7 +1016,7 @@ export function ChatClient({
       await streamMessage(message, { attachments: pending, intent, turnId });
       return;
     }
-    if (shouldRunBuildPipeline(buildIntent)) {
+    if (mayExecuteAgent(mode, buildIntent) && shouldRunBuildPipeline(buildIntent)) {
       await runBuildTurn(message, buildIntent, turnId, pending);
       return;
     }
@@ -1147,7 +1151,6 @@ export function ChatClient({
       {
         mode: "agent",
         project_id: projectId ?? undefined,
-        artifacts: artifacts.length ? artifacts : undefined,
         build: run ? toRunSnapshot(run) : undefined,
         deployment: run?.deployment
           ? {

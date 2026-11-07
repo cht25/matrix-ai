@@ -118,6 +118,7 @@ export async function getConversation(d: Db, uid: string, id: string, limit = CH
       title: conv.data()!.title ?? "New conversation",
       is_temporary: conv.data()!.is_temporary ?? false,
       mode: conv.data()!.mode === "agent" ? "agent" as const : "general" as const,
+      active_project_id: typeof conv.data()!.active_project_id === "string" ? conv.data()!.active_project_id as string : null,
     },
     hasMore,
     messages: docs.map((m) => ({
