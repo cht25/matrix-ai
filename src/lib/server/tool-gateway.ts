@@ -14,6 +14,7 @@ import { adminDb, nowTs, type Db } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
 import { toolRegistry, type ToolContext, type ToolResult } from "@/lib/ai/tools/registry";
 import { hasPermission } from "@/lib/server/rpc";
+import { consumeToolApproval } from "@/lib/server/tool-approvals";
 // Side-effect import: registers all built-in tools on the singleton registry.
 import "@/lib/ai/tools/index";
 
@@ -108,15 +109,16 @@ export async function executeAgentTool(
     }
     return true;
   };
-  const result = await toolRegistry.call(ctx, toolId, args, authorizer);
+  const approvalValidator = async () => consumeToolApproval(d, user, opts.approvalId ?? "", toolId, args);
+  const result = await toolRegistry.call(ctx, toolId, args, authorizer, approvalValidator);
   if (spec.auditRequired || result.ok === false) {
     await auditTool(d, user, toolId, result.ok ? "ok" : "error", result.error ?? result.message ?? "executed", requestId);
   }
-  if (!result.ok && result.error === "APPROVAL_REQUIRED") {
+  if (!result.ok && (result.error === "APPROVAL_REQUIRED" || result.error === "APPROVAL_INVALID")) {
     try {
       await d.collection("security_events").add({
         user_id: user.uid,
-        event_type: "tool_approval_required",
+        event_type: result.error === "APPROVAL_INVALID" ? "tool_approval_invalid" : "tool_approval_required",
         detail: `Tool "${toolId}" requires explicit approval (risk: ${spec.risk})`,
         created_at: nowTs(),
       });

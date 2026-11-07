@@ -102,7 +102,10 @@ describe("ToolRegistry", () => {
     expect(decision.allowed).toBe(false);
     expect(decision.requiresApproval).toBe(true);
     expect(decision.reason).toBe("APPROVAL_REQUIRED");
-    const approved = await reg.call({ ...ctx, approvalId: "ap-1" }, "demo.danger", {}, allowAll);
+    const forged = await reg.call({ ...ctx, approvalId: "ap-1" }, "demo.danger", {}, allowAll);
+    expect(forged.ok).toBe(false);
+    expect(forged.error).toBe("APPROVAL_INVALID");
+    const approved = await reg.call({ ...ctx, approvalId: "ap-1" }, "demo.danger", {}, allowAll, async () => true);
     expect(approved.ok).toBe(true);
   });
 

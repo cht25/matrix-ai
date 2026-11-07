@@ -17,6 +17,7 @@ This record describes what was implemented and what was actually verified in the
 | `a0cd22d` | Durable `agent_tasks` bound to real `build_runs`; server-written execution states/checkpoints; cooperative cancellation. |
 | `b0b04ce` | Staged deployment artifacts, HTTP verification before `live`, rollback verification, localhost/private URL sanitization. |
 | `f55e740` | Deployment success details, mobile preview toggle, 20 mandatory repair test cases. |
+| final approval commit | Real one-time tool approval records closing the arbitrary `approvalId` bypass. |
 
 ## Commands and results
 
@@ -28,7 +29,7 @@ npm run typecheck
 
 npm test -- --reporter=dot
   -> Test Files  71 passed (71)
-     Tests       643 passed (643)
+     Tests       644 passed (644)
 
 npx vitest run tests/mandatory-repair-cases.test.ts --reporter=dot
   -> Test Files  1 passed (1)
@@ -110,7 +111,7 @@ The browser smoke intentionally verifies honest unconfigured states. It is not a
 19. Secret-looking public env keys refused.
 20. Deployment success requires HTTP verification before live.
 
-These are supplemented by the existing 623 tests (71 files total).
+These are supplemented by the existing 624 tests (71 files total).
 
 ## Security verification
 
@@ -123,10 +124,11 @@ Verified by tests/smoke:
 - Published/preview HTML uses CSP sandbox to force opaque origin.
 - Code answers are escaped; raw HTML is not injected as trusted markup.
 - Agent checkpoints/completion cannot be fabricated through browser RPC.
+- Forged or replayed tool approval IDs return `APPROVAL_INVALID`; approval records are consumed atomically.
 
 Known remaining security work:
 
-- `ToolRegistry.authorize()` still accepts any non-empty `approvalId`; real approval records are not implemented yet.
+- Medium+ risk tool execution now requires a server-created, owner-approved, argument-bound, one-time `tool_approvals` record; forged/replayed approval IDs are rejected.
 - Framework builds requiring npm/bundlers/server runtimes are not executed in an isolated runner. The static host refuses unsupported framework projects instead of pretending to compile them.
 - Full authenticated production penetration testing was not performed in this sandbox.
 
@@ -210,7 +212,7 @@ Not claimed:
 
 ## Backlog not completed in this repair
 
-- Real tool-approval records and approval UI.
+- Tool-approval UI surface (server records/RPC are implemented; a dedicated approval inbox can be added).
 - Isolated framework build runner (npm/bundler/server runtime) with resource limits.
 - Voice, MQTT/ESP32/Home Assistant, Family email/consent, screen sharing, Web Push/Tauri, admin health probes.
 - Full production end-to-end verification with real credentials.

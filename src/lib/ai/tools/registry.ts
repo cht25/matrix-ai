@@ -128,6 +128,9 @@ export type ToolHandler<I> = (ctx: ToolContext, input: I) => Promise<ToolResult>
  */
 export type Authorizer = (ctx: ToolContext, permissions: readonly string[]) => Promise<boolean>;
 
+/** Server-side proof that an approval record exists, matches and is unused. */
+export type ApprovalValidator = (ctx: ToolContext, toolId: string) => Promise<boolean>;
+
 export interface ToolSpec<I = unknown> {
   id: string;
   description: string;
@@ -236,6 +239,7 @@ export class ToolRegistry {
     ctx: ToolContext,
     id: string,
     authorizer: Authorizer,
+    approvalValidator?: ApprovalValidator,
   ): Promise<AuthorizationDecision> {
     const spec = this.tools.get(id);
     if (!spec) return { allowed: false, requiresApproval: false, reason: "UNKNOWN_TOOL" };
@@ -250,8 +254,11 @@ export class ToolRegistry {
       }
     }
     const needsApproval = requiresApproval(spec.risk, spec.approvalRequired);
-    if (needsApproval && !ctx.approvalId) {
-      return { allowed: false, requiresApproval: true, reason: "APPROVAL_REQUIRED" };
+    if (needsApproval) {
+      if (!ctx.approvalId) return { allowed: false, requiresApproval: true, reason: "APPROVAL_REQUIRED" };
+      if (!approvalValidator || !(await approvalValidator(ctx, id))) {
+        return { allowed: false, requiresApproval: true, reason: "APPROVAL_INVALID" };
+      }
     }
     return { allowed: true, requiresApproval: needsApproval, reason: "OK" };
   }
@@ -265,10 +272,11 @@ export class ToolRegistry {
     id: string,
     rawArgs: unknown,
     authorizer: Authorizer,
+    approvalValidator?: ApprovalValidator,
   ): Promise<ToolResult> {
     const spec = this.tools.get(id);
     if (!spec) return { ok: false, error: "UNKNOWN_TOOL" };
-    const decision = await this.authorize(ctx, id, authorizer);
+    const decision = await this.authorize(ctx, id, authorizer, approvalValidator);
     if (!decision.allowed) {
       return { ok: false, error: decision.reason, data: { requiresApproval: decision.requiresApproval } };
     }

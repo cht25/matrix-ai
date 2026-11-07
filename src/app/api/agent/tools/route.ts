@@ -39,5 +39,5 @@ export async function POST(req: NextRequest) {
     approvalId: body.approval_id,
     dryRun: body.dry_run,
   });
-  return NextResponse.json(result, { status: result.ok ? 200 : result.error === "APPROVAL_REQUIRED" || result.error === "MISSING_PERMISSIONS" ? 403 : 200 });
+  return NextResponse.json(result, { status: result.ok ? 200 : result.error === "APPROVAL_REQUIRED" || result.error === "APPROVAL_INVALID" || result.error === "MISSING_PERMISSIONS" ? 403 : 200 });
 }

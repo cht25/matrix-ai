@@ -20,6 +20,7 @@ import * as deploy from "@/lib/server/deploy";
 import * as design from "@/lib/server/design";
 import * as family from "@/lib/server/family";
 import * as agentTasks from "@/lib/server/agent-tasks";
+import * as toolApprovals from "@/lib/server/tool-approvals";
 import * as agentDeploy from "@/lib/server/agent-deploy";
 import * as automations from "@/lib/server/automations";
 import * as canvas from "@/lib/server/canvas";
@@ -204,6 +205,9 @@ const ACTIONS: Record<string, Handler> = {
     if (status !== "cancelled") throw new RpcError("SERVER_WRITTEN", 403);
     return agentTasks.cancelAgentTask(d, u, z.string().min(1).parse(b.task_id));
   },
+  // --- Tool approvals (real one-time records, owner-decided) -----------------
+  tool_approval_request: (d, u, b) => toolApprovals.requestToolApproval(d, u, { tool_id: z.string().min(3).max(64).parse(b.tool_id), args: b.args ?? {} }),
+  tool_approval_decide: (d, u, b) => toolApprovals.decideToolApproval(d, u, z.string().min(1).max(120).parse(b.approval_id), z.boolean().parse(b.approve)),
   // --- Automations (actions only reference registry tools; LOW-risk only) -----
   automation_create: (d, u, b) =>
     automations.createAutomation(d, u, {
