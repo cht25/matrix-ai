@@ -2,6 +2,7 @@
 // expiry, and scoped device registration.
 import { describe, expect, it } from "vitest";
 import { Timestamp } from "firebase-admin/firestore";
+import { isFirebaseIdTokenCandidate } from "@/lib/firebase/device-session";
 import {
   PAIRING_TTL_MS,
   completePairing,
@@ -11,6 +12,15 @@ import {
   verifyQrPayload,
   RpcError,
 } from "@/lib/server/pairing";
+
+describe("Firebase bearer classification for privileged routes", () => {
+  it("does not treat scoped MATRIX device credentials as Firebase ID tokens", () => {
+    expect(isFirebaseIdTokenCandidate("matrix_device.device123456.abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHijk")).toBe(false);
+    expect(isFirebaseIdTokenCandidate("header.payload.signature")).toBe(true);
+    expect(isFirebaseIdTokenCandidate("not-a-token")).toBe(false);
+    expect(isFirebaseIdTokenCandidate(" header.payload.signature")).toBe(false);
+  });
+});
 
 // --- Minimal in-memory Firestore stub with transaction support ---------------
 type DocData = Record<string, unknown>;

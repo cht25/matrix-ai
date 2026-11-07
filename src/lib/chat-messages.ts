@@ -18,6 +18,8 @@ export type MessageMetadata = {
   fallback?: boolean;
   artifacts?: AgentFile[];
   attachment_names?: string[];
+  /** Owner-checked private voice recording associated with this user message. */
+  audio_asset_id?: string;
   action?: string;
   project_id?: string;
   image_data_url?: string;

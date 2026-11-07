@@ -104,6 +104,8 @@ export type BuildRun = {
   cancelRequested: boolean;
   status: BuildRunStatus;
   actions: BuildActions;
+  /** True when source files were saved without executing build/preview checks. */
+  workspaceOnly?: boolean;
   environment: BuildEnvironment;
   stages: BuildStage[];
   changes: FileChange[];
@@ -142,6 +144,7 @@ export function createBuildRun(input: {
   requestId?: string | null;
   taskId?: string | null;
   actions: BuildActions;
+  workspaceOnly?: boolean;
   environment?: BuildEnvironment;
   maxAttempts?: number;
   now: number;
@@ -156,6 +159,7 @@ export function createBuildRun(input: {
     cancelRequested: false,
     status: "requested",
     actions: input.actions,
+    workspaceOnly: input.workspaceOnly === true,
     environment: input.environment ?? "production",
     stages: initialStages(),
     changes: [],
@@ -365,8 +369,12 @@ export function buildRunCopy(run: BuildRun): BuildRunCopy {
   }
   if (run.status === "succeeded") {
     return {
-      title: run.actions.build ? "Build completed" : "Validation completed",
-      detail: run.actions.publish ? "The build passed but publishing did not report a live URL." : "Files are ready to preview.",
+      title: run.workspaceOnly ? "Files saved to workspace" : run.actions.build ? "Build completed" : "Validation completed",
+      detail: run.workspaceOnly
+        ? "Project files are stored in the workspace; build and preview checks were not run."
+        : run.actions.publish
+          ? "The build passed but publishing did not report a live URL."
+          : "Files are ready to preview.",
       glyph: "✓",
       tone: "success",
       canOpenLive: false,
@@ -448,6 +456,7 @@ export type BuildRunSnapshot = {
   task_id?: string | null;
   status: BuildRunStatus;
   stage_states: Array<[BuildStageId, StageState]>;
+  workspace_only?: boolean;
   deployment_status: DeploymentStatus | null;
   url: string | null;
   environment: BuildEnvironment;
@@ -466,6 +475,7 @@ export function toRunSnapshot(run: BuildRun): BuildRunSnapshot {
     task_id: run.taskId ?? null,
     status: run.status,
     stage_states: run.stages.map((stage) => [stage.id, stage.state]),
+    workspace_only: run.workspaceOnly === true,
     deployment_status: run.deployment?.status ?? null,
     url: run.deployment?.status === "live" ? run.deployment.url : null,
     environment: run.environment,
@@ -503,7 +513,8 @@ export function runFromSnapshot(snapshot: Partial<BuildRunSnapshot> & { run_id: 
     taskId: snapshot.task_id ?? null,
     cancelRequested: snapshot.status === "cancelled",
     status,
-    actions: { build: true, publish: status === "succeeded", preview: false },
+    actions: { build: true, publish: status === "succeeded" && snapshot.workspace_only !== true, preview: false },
+    workspaceOnly: snapshot.workspace_only === true,
     environment: snapshot.environment === "preview" ? "preview" : "production",
     stages,
     changes: [],

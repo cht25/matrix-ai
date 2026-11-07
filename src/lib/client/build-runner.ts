@@ -41,6 +41,10 @@ export type BuildStartInput = {
   conversationId?: string | null;
   /** Temporary chats never touch conversation storage — no thread is written. */
   isTemporary?: boolean;
+  /** Preserve whether this workspace task was initiated from Code or Agent mode. */
+  mode?: "code" | "agent";
+  /** Generate and persist source files without claiming build or preview validation. */
+  workspaceOnly?: boolean;
   /** Attached text/code files, stored as real project files by the pipeline. */
   attachments?: Array<{ name: string; content: string }>
   actions?: { build?: boolean; publish?: boolean; preview?: boolean; fix?: boolean };
@@ -102,6 +106,8 @@ export async function streamBuildRun(
         project_id: input.projectId ?? null,
         conversation_id: input.conversationId ?? null,
         is_temporary: input.isTemporary === true,
+        mode: input.mode === "code" ? "code" : "agent",
+        workspace_only: input.workspaceOnly === true,
         attachments: (input.attachments ?? []).map((file) => ({ name: file.name, content: file.content })),
         actions: input.actions ?? null,
         slug: input.slug ?? null,

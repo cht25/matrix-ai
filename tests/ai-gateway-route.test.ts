@@ -17,7 +17,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { type FirestoreStub } from "./helpers/firestore-stub";
-import { startProviderStub, type StubBehavior } from "./helpers/provider-stub";
+import { startProviderStub, type StubBehavior, type StubCall } from "./helpers/provider-stub";
 import { classifyGatewayResponse, failureCopy } from "../src/lib/api-errors";
 import { resetHealthCacheForTests } from "../src/lib/ai/provider-health";
 
@@ -52,9 +52,11 @@ async function post(body: unknown) {
 
 const stubHolder: { current: StubBehavior } = { current: { kind: "ok", content: "PROBE-OK" } };
 let baseUrl = "";
+let providerCalls: StubCall[] = [];
 
 beforeAll(async () => {
   const started = await startProviderStub(stubHolder);
+  providerCalls = started.calls;
   baseUrl = `http://127.0.0.1:${started.port}/v1`;
   // Register the local OpenAI-compatible provider as the admin runtime route —
   // the same code path production uses for system_settings/ai_provider.
@@ -110,6 +112,31 @@ describe("AI gateway — happy paths (real route, real HTTP provider)", () => {
     expect(res.json?.reply).toBe("AGENT-OK");
     expect(res.json?.mode).toBe("agent");
     expect(res.json?.provider).toBe("OpenAI");
+  });
+
+  it("executes a model-requested read-only Agent tool through the audited gateway", async () => {
+    stub._state.docs.set("projects/project-owned-by-probe", {
+      owner_id: "probe-user-1", title: "My real project", stack: "static-web", revision: 2,
+      file_count: 1, archived_at: null, updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+    });
+    stubHolder.current = {
+      kind: "tool_call_then_ok", toolName: "projects.list", arguments: "{}",
+      finalContent: "Your project is My real project.",
+    };
+    const start = providerCalls.length;
+    const res = await post({ action: "chat", mode: "agent", stream: false, message: "Look at my projects and summarize them.", request_id: "itest-agent-tool-1" });
+    expect(res.status).toBe(200);
+    expect(res.json?.reply).toBe("Your project is My real project.");
+    expect(res.json?.analytics).toMatchObject({ toolsExecuted: 1 });
+    const calls = providerCalls.slice(start).filter((call) => call.url.endsWith("/chat/completions"));
+    expect(calls).toHaveLength(2);
+    expect(calls[0].body?.tools).toEqual(expect.arrayContaining([expect.objectContaining({ function: expect.objectContaining({ name: "projects.list" }) })]));
+    expect(calls[1].body?.messages).toEqual(expect.arrayContaining([expect.objectContaining({ role: "tool", tool_call_id: "call-1" })]));
+    const audit = [...stub._state.docs.values()];
+    expect(audit).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: "agent.tool_selected", target_id: "projects.list" }),
+      expect.objectContaining({ action: "tool.ok", target_id: "projects.list" }),
+    ]));
   });
 });
 

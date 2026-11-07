@@ -146,6 +146,8 @@ export async function POST(req: NextRequest) {
   }
 
   const actions = parseActions(body, prompt);
+  const chatMode: "code" | "agent" = body.mode === "code" ? "code" : "agent";
+  const workspaceOnly = body.workspace_only === true && chatMode === "code" && !actions.publish && !actions.preview;
   // Only environments the hosting provider reports as supported can be asked
   // for; anything else falls back to the default rather than silently failing.
   const environment: "preview" | "production" = body.environment === "preview" ? "preview" : "production";
@@ -216,6 +218,8 @@ export async function POST(req: NextRequest) {
       taskId,
       prompt,
       actions,
+      workspaceOnly,
+      chatMode,
       environment,
       slug: typeof body.slug === "string" ? body.slug : null,
       allowOverride: body.allow_override === true,
@@ -253,6 +257,8 @@ export async function POST(req: NextRequest) {
           taskId,
           prompt,
           actions,
+          workspaceOnly,
+          chatMode,
           environment,
           slug: typeof body.slug === "string" ? body.slug : null,
           allowOverride: body.allow_override === true,

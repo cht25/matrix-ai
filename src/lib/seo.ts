@@ -2,29 +2,45 @@
 // Canonical origin for SEO artifacts (`/sitemap.xml`, `/robots.txt`) AND all
 // public URL generation (published sites, deployment links, canonical URLs).
 //
-// SINGLE SOURCE OF TRUTH for the production base URL:
-//   • If NEXT_PUBLIC_APP_URL is set to a real https:// URL, use it.
-//   • Otherwise fall back to the hardcoded production origin so generated
-//     URLs never ship `http://localhost:3000` or a bare *.onrender.com domain
-//     to search engines, public pages or published sites.
-//
-// The canonical production domain is https://matrix.thamjj13.top.
+// This value is configuration-driven, never derived from an untrusted Host or
+// forwarded header. A malformed, credential-bearing, local/private, or
+// production-insecure value falls back to the fixed production origin.
 // =============================================================================
 
 export const PRODUCTION_ORIGIN = "https://matrix.thamjj13.top";
 
+function isLocalOrPrivateHostname(input: string): boolean {
+  const withoutBrackets = input.toLowerCase().replace("[", "").replace("]", "");
+  const host = withoutBrackets.endsWith(".") ? withoutBrackets.slice(0, -1) : withoutBrackets;
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal") || host === "host.docker.internal") return true;
+  if (host === "::" || host === "::1" || host.startsWith("fc") || host.startsWith("fd") ||
+      host.startsWith("fe8") || host.startsWith("fe9") || host.startsWith("fea") || host.startsWith("feb") || host.startsWith("::ffff:")) return true;
+  const parts = host.split(".");
+  const ipv4 = parts.length === 4 && parts.every((part) => part.length > 0 && [...part].every((char) => char >= "0" && char <= "9") && Number(part) <= 255);
+  if (ipv4) {
+    const [a, b] = parts.map(Number);
+    return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
+      (a === 100 && b >= 64 && b <= 127);
+  }
+  return false;
+}
+
 /**
- * Returns the authoritative base origin for all public URLs.
- * Safe to call in server and edge contexts. Never returns localhost.
+ * Returns the authoritative base origin for public URLs. `NEXT_PUBLIC_APP_URL`
+ * is an explicit deployment setting, not a request Host header. Paths are
+ * discarded so callers can safely append `/s/...`, `/family`, etc.
  */
 export function siteOrigin(): string {
   const candidate = (process.env.NEXT_PUBLIC_APP_URL ?? "").trim();
-  const usable =
-    candidate.length > 0 &&
-    /^https?:\/\//i.test(candidate) &&
-    !/^https?:\/\/localhost(:\d+)?$/i.test(candidate) &&
-    !/^https?:\/\/127\.0\.0\.1(:\d+)?$/i.test(candidate) &&
-    !/^https?:\/\/0\.0\.0\.0(:\d+)?$/i.test(candidate);
-
-  return (usable ? candidate : PRODUCTION_ORIGIN).replace(/\/+$/, "");
+  try {
+    const url = new URL(candidate);
+    const protocolAllowed = url.protocol === "https:" || (process.env.NODE_ENV !== "production" && url.protocol === "http:");
+    const host = url.hostname.toLowerCase();
+    const valid = protocolAllowed && !url.username && !url.password && !url.search && !url.hash &&
+      host.length > 0 && !isLocalOrPrivateHostname(host);
+    return valid ? url.origin : PRODUCTION_ORIGIN;
+  } catch {
+    return PRODUCTION_ORIGIN;
+  }
 }

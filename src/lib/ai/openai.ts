@@ -15,11 +15,13 @@ import type {
   AIProvider,
   AIProviderRequest,
   AIProviderResponse,
+  AIProviderToolCall,
 } from "@/lib/ai/groq";
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
 import { assistantContentOnly, assistantDeltaContent, createReasoningStreamFilter } from "@/lib/ai/reasoning";
 import { fetchModelCatalog, verifyCatalogModel } from "@/lib/ai/model-catalog";
 import { cachedRealHealthCheck, healthCacheKey } from "@/lib/ai/provider-health";
+import { siteOrigin } from "@/lib/seo";
 
 /** Strip a full chat-completions URL down to the API base URL. */
 export function normalizeCompatibleBaseUrl(input: string): string {
@@ -49,15 +51,27 @@ function isReasoningModel(model: string): boolean {
   return /o[1-9]|gpt-5|gpt-oss|qwen|deepseek|reasoning/i.test(model);
 }
 
+function parseToolCalls(value: unknown): AIProviderToolCall[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 10).flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const call = entry as Record<string, unknown>;
+    const fn = call.function && typeof call.function === "object" ? call.function as Record<string, unknown> : null;
+    if (typeof call.id !== "string" || !call.id.trim() || typeof fn?.name !== "string" || typeof fn.arguments !== "string") return [];
+    return [{ id: call.id.slice(0, 128), type: "function" as const, function: { name: fn.name.slice(0, 64), arguments: fn.arguments.slice(0, 12_000) } }];
+  });
+}
+
 export class OpenAICompatibleProvider implements AIProvider {
   readonly providerName = "OpenAI";
+  readonly supportsToolCalls = true;
   private readonly baseUrl: string;
 
   constructor(
     private readonly apiKey: string,
     baseUrl: string,
     private readonly label = "OpenAI-compatible",
-    private readonly appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://matrix-ai.app",
+    private readonly appUrl = siteOrigin(),
     /** Model used for the honest one-token health probe (the admin chat model). */
     private readonly healthCheckModel?: string,
   ) {
@@ -103,6 +117,10 @@ export class OpenAICompatibleProvider implements AIProvider {
     // Newer OpenAI-compatible reasoning models prefer max_completion_tokens.
     if (isReasoningModel(req.model)) {
       body.max_completion_tokens = maxTokens;
+    }
+    if (req.tools?.length) {
+      body.tools = req.tools;
+      body.tool_choice = "auto";
     }
     return body;
   }
@@ -175,7 +193,7 @@ export class OpenAICompatibleProvider implements AIProvider {
     }
 
     let data: {
-      choices?: { message?: { content?: unknown }; finish_reason?: string }[];
+      choices?: { message?: { content?: unknown; tool_calls?: AIProviderToolCall[] }; finish_reason?: string }[];
       model?: string;
       usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     };
@@ -188,6 +206,7 @@ export class OpenAICompatibleProvider implements AIProvider {
       content: assistantContentOnly(data.choices?.[0]?.message),
       model: data.model ?? req.model,
       finishReason: data.choices?.[0]?.finish_reason,
+      toolCalls: parseToolCalls(data.choices?.[0]?.message?.tool_calls),
       usage: {
         promptTokens: data.usage?.prompt_tokens ?? 0,
         completionTokens: data.usage?.completion_tokens ?? 0,
@@ -243,7 +262,13 @@ export class OpenAICompatibleProvider implements AIProvider {
             const event = JSON.parse(payload) as {
               error?: { message?: string };
               choices?: { delta?: { content?: unknown; reasoning_content?: unknown; reasoning?: unknown } }[];
+              usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
             };
+            if (event.usage) {
+              const promptTokens = event.usage.prompt_tokens ?? 0;
+              const completionTokens = event.usage.completion_tokens ?? 0;
+              req.onUsage?.({ promptTokens, completionTokens, totalTokens: event.usage.total_tokens ?? promptTokens + completionTokens });
+            }
             if (event.error) {
               throw new AIProviderError({
                 provider: "OpenAI",

@@ -12,6 +12,7 @@
 
 import "server-only";
 import crypto from "node:crypto";
+import { Readable } from "node:stream";
 import { v2 as cloudinary } from "cloudinary";
 import { env, isCloudinaryConfigured } from "@/lib/env";
 
@@ -66,6 +67,79 @@ export function createUploadSignature(uid: string, kind: UploadFolder, filename:
     signature,
     deliveryType,
   };
+}
+
+
+export type PrivateAudioUpload = {
+  publicId: string;
+  version: number;
+  format: string;
+  bytes: number;
+};
+
+/** Upload user speech as an authenticated Cloudinary video-resource asset. */
+export async function uploadPrivateAudio(uid: string, bytes: Buffer, filename: string): Promise<PrivateAudioUpload> {
+  const c = sdk();
+  if (!c) throw new Error("UPLOADS_NOT_CONFIGURED");
+  const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-50).replace(/\.[a-z0-9]+$/i, "") || "voice";
+  const publicId = `${Date.now()}-${crypto.randomUUID()}-${safeName}`;
+  return new Promise((resolve, reject) => {
+    const upload = c.uploader.upload_stream({
+      resource_type: "video",
+      type: "authenticated",
+      folder: `chat-audio/${uid}`,
+      public_id: publicId,
+      overwrite: false,
+      unique_filename: false,
+      use_filename: false,
+    }, (error, result) => {
+      if (error || !result) {
+        reject(new Error(error?.message ?? "CLOUDINARY_AUDIO_UPLOAD_FAILED"));
+        return;
+      }
+      resolve({
+        publicId: result.public_id,
+        version: Number(result.version ?? 0),
+        format: String(result.format ?? ""),
+        bytes: Number(result.bytes ?? bytes.length),
+      });
+    });
+    Readable.from(bytes).pipe(upload);
+  });
+}
+
+/** Fetch private speech bytes only from an owner-checked server route. */
+export async function downloadPrivateAudio(publicId: string, format: string): Promise<{ bytes: Buffer; contentType: string } | null> {
+  const c = sdk();
+  if (!c || !/^[a-z0-9]{2,8}$/i.test(format)) return null;
+  const url = c.url(publicId, { type: "authenticated", resource_type: "video", sign_url: true, secure: true, format });
+  try {
+    const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(20_000), cache: "no-store" });
+    if (!response.ok) return null;
+    return {
+      bytes: Buffer.from(await response.arrayBuffer()),
+      contentType: response.headers.get("content-type") || `audio/${format.toLowerCase()}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function deletePrivateAudio(publicId: string): Promise<boolean> {
+  const c = sdk();
+  if (!c) return false;
+  try {
+    const result = await c.uploader.destroy(publicId, { resource_type: "video", type: "authenticated", invalidate: true });
+    return result.result === "ok" || result.result === "not found";
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteUserChatAudio(uid: string): Promise<void> {
+  const c = sdk();
+  if (!c) return;
+  await c.api.delete_resources_by_prefix(`chat-audio/${uid}/`, { resource_type: "video", type: "authenticated" }).catch(() => {});
 }
 
 /**

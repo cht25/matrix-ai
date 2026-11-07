@@ -1,4 +1,5 @@
 // Centralised env access. Server-only secrets are never exposed to the client.
+import { PRODUCTION_ORIGIN } from "@/lib/seo";
 // Real services only: there is intentionally no demo mode. If the Firebase
 // config is missing/invalid the app renders honest configuration errors
 // instead of pretending to work.
@@ -60,7 +61,7 @@ export const env = {
   // NOTE: deploy.ts, sitemap.ts and robots.ts now use siteOrigin() from seo.ts
   // as the single source of truth for public URL generation. This field is
   // retained for backwards compatibility but should not be used for new code.
-  appUrl: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
+  appUrl: process.env.NEXT_PUBLIC_APP_URL ?? PRODUCTION_ORIGIN,
   cloudinary: {
     cloudName: clean(process.env.CLOUDINARY_CLOUD_NAME ?? ""),
     apiKey: clean(process.env.CLOUDINARY_API_KEY ?? ""),

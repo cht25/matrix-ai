@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { agentGenerationIncomplete, filesFromSnippet, isCodingRequest, parseAgentResponse, safeAgentPath } from "../src/lib/ai/agent";
+import { agentGenerationIncomplete, filesFromSnippet, formatProjectFilesForContext, isCodingRequest, parseAgentResponse, safeAgentPath, shouldWithholdProjectFile } from "../src/lib/ai/agent";
 import { OPENROUTER_MODELS, OpenRouterProvider } from "../src/lib/ai/openrouter";
 
 const originalFetch = globalThis.fetch;
@@ -27,6 +27,29 @@ describe("Agent artifact protocol", () => {
     expect(parsed.files[0].language).toBe("html");
   });
 
+  it("provides complete existing source to the coder while withholding secrets and oversized files", () => {
+    const context = formatProjectFilesForContext([
+      { path: "src/app.ts", content: "export const app = true;" },
+      { path: ".env", content: "GROQ_API_KEY=sk-secret-value" },
+      { path: "config.ts", content: 'const API_KEY = "sk-12345678901234567890";' },
+      { path: "assets/logo.png", content: "base64data", encoding: "base64" },
+      { path: "src/large.ts", content: "x".repeat(25_000) },
+    ], "Edit src/app.ts");
+    expect(context.includedPaths).toEqual(["src/app.ts"]);
+    expect(context.omittedPaths).toEqual([".env", "config.ts", "assets/logo.png", "src/large.ts"]);
+    expect(context.text).toContain("PROJECT FILE: src/app.ts");
+    expect(context.text).toContain("export const app = true;");
+    expect(context.text).toContain("Do not recreate or overwrite these files");
+    expect(context.text).toContain(".env");
+    expect(context.text).toContain("src/large.ts");
+    expect(context.text).not.toContain("sk-secret-value");
+    expect(context.text).not.toContain("sk-12345678901234567890");
+    expect(context.text).not.toContain("base64data");
+    expect(shouldWithholdProjectFile(".env", "TOKEN=secret-value")).toBe(true);
+    expect(shouldWithholdProjectFile("firebase-adminsdk-prod.json", "{}")).toBe(true);
+    expect(shouldWithholdProjectFile("src/app.ts", "const safe = true;")).toBe(false);
+  });
+
   it("rejects traversal, absolute and .git paths", () => {
     expect(safeAgentPath("../secret.txt")).toBeNull();
     expect(safeAgentPath("/etc/passwd")).toBeNull();
@@ -51,10 +74,31 @@ describe("Agent artifact protocol", () => {
     expect(parsed.reply).not.toContain("<p>About</p>");
   });
 
-  it("leaves bare filename-less code fences in the reply (not files)", () => {
+  it("leaves bare filename-less code fences in the reply by default", () => {
     const parsed = parseAgentResponse("Conceptual answer:\n\n```html\n<span>example</span>\n```\n");
     expect(parsed.files).toEqual([]);
     expect(parsed.reply).toContain("<span>example</span>");
+  });
+
+  it("promotes a complete raw HTML document only in explicit project-generation mode", () => {
+    const raw = "<!doctype html><html><head><title>Demo</title></head><body><main>Hello</main></body></html>";
+    expect(parseAgentResponse(raw).files).toEqual([]);
+    const generated = parseAgentResponse(raw, { allowRawHtmlDocument: true });
+    expect(generated.files).toEqual([{ path: "index.html", content: raw, language: "html" }]);
+    expect(generated.reply).toContain("Created 1 project file");
+  });
+
+  it("assigns safe conventional paths to filename-less fences only in project-generation mode", () => {
+    const parsed = parseAgentResponse(
+      "Generated files:\n\n```html\n<main>Hello</main>\n```\n```css\nmain { color: green }\n```\n```javascript\nconsole.log('ready')\n```",
+      { allowUnlabelledFences: true },
+    );
+    expect(parsed.files.map((file) => file.path)).toEqual(["index.html", "styles.css", "app.js"]);
+    expect(parsed.files.map((file) => file.language)).toEqual(["html", "css", "javascript"]);
+    expect(parsed.reply).toBe("Generated files:");
+
+    const python = parseAgentResponse("```python\ndef main():\n    return 1\n```", { allowUnlabelledFences: true });
+    expect(python.files[0]).toMatchObject({ path: "main.py", language: "python" });
   });
 
   it("strips dangling protocol markers from the reply", () => {

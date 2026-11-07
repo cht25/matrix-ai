@@ -12,19 +12,36 @@ import { fetchModelCatalog, verifyCatalogModel, type CatalogModel } from "@/lib/
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
 import { assistantContentOnly, assistantDeltaContent, createReasoningStreamFilter } from "@/lib/ai/reasoning";
 
+export type AIProviderToolCall = {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+};
+
+export type AIProviderToolDefinition = {
+  type: "function";
+  function: { name: string; description: string; parameters: Record<string, unknown> };
+};
+
 export type AIMessage = {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
   content: string;
+  tool_calls?: AIProviderToolCall[];
+  tool_call_id?: string;
+  name?: string;
 };
 
 export type AIProviderRequest = {
   model: string;
   messages: AIMessage[];
+  tools?: AIProviderToolDefinition[];
   temperature?: number;
   maxTokens?: number;
   imageDataUrl?: string; // for vision-capable models
   signal?: AbortSignal;
   requestId?: string;
+  /** Provider-reported usage for streaming, when the upstream sends it. */
+  onUsage?: (usage: AIProviderResponse["usage"]) => void;
 };
 
 export type AIProviderResponse = {
@@ -32,14 +49,17 @@ export type AIProviderResponse = {
   model: string;
   usage: { promptTokens: number; completionTokens: number; totalTokens: number };
   finishReason?: string;
+  toolCalls?: AIProviderToolCall[];
 };
 
 export interface AIProvider {
+  /** True only when this configured endpoint has a tool-call-capable adapter. */
+  readonly supportsToolCalls?: boolean;
   chat(req: AIProviderRequest): Promise<AIProviderResponse>;
   /** Optional streaming support — yields text deltas as they arrive. */
   streamChat?(req: AIProviderRequest): AsyncGenerator<string>;
   /** Real reachability check against the upstream API (never cached, never faked). */
-  healthCheck(): Promise<boolean>;
+  healthCheck(model?: string): Promise<boolean>;
   listModels?(): Promise<CatalogModel[]>;
 }
 
@@ -212,7 +232,13 @@ export class GroqProvider implements AIProvider {
             const json = JSON.parse(payload) as {
               error?: { message?: string; type?: string };
               choices?: { delta?: { content?: string | null; reasoning_content?: string | null } }[];
+              usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
             };
+            if (json.usage) {
+              const promptTokens = json.usage.prompt_tokens ?? 0;
+              const completionTokens = json.usage.completion_tokens ?? 0;
+              req.onUsage?.({ promptTokens, completionTokens, totalTokens: json.usage.total_tokens ?? promptTokens + completionTokens });
+            }
             if (json.error) {
               throw new AIProviderError({
                 provider: "Groq",

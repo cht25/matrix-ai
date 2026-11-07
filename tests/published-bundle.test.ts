@@ -38,6 +38,33 @@ describe("buildPublishedFiles", () => {
     expect(outFiles.some((f) => f.path === "js/app.js")).toBe(true);
   });
 
+  it("escapes public env values for inline-script context without changing their runtime value", () => {
+    const attack = `</script><script>globalThis.compromised=true</script>&\u2028`;
+    const { outFiles } = buildPublishedFiles(project, { PUBLIC_MESSAGE: attack });
+    const html = outFiles.find((file) => file.path === "index.html")!.content;
+    expect(html).not.toContain(attack);
+    expect(html).not.toContain("</script><script>globalThis.compromised");
+    const serialized = html.match(/<script data-matrix-env>window\.MATRIX_ENV=(.*?);<\/script>/s)?.[1];
+    expect(serialized).toBeDefined();
+    expect(JSON.parse(serialized!).PUBLIC_MESSAGE).toBe(attack);
+  });
+
+  it("keeps oversized standalone HTML under the Firestore document budget and preserves remaining file refs", () => {
+    const scripts = Array.from({ length: 6 }, (_, index) => ({
+      path: `chunk-${index}.js`,
+      language: "javascript",
+      content: "x".repeat(190_000),
+    }));
+    const html = `<html><head>${scripts.map((file) => `<script src="${file.path}"></script>`).join("")}</head><body></body></html>`;
+    const { outFiles } = buildPublishedFiles([{ path: "index.html", language: "html", content: html }, ...scripts]);
+    const index = outFiles.find((file) => file.path === "index.html")!;
+
+    expect(Buffer.byteLength(index.content, "utf8")).toBeLessThan(900_000);
+    expect(index.content).toContain('<script src="chunk-4.js"></script>');
+    expect(index.content).toContain('<script src="chunk-5.js"></script>');
+    expect(outFiles.filter((file) => file.path.endsWith(".js"))).toHaveLength(6);
+  });
+
   it("leaves remote CDN references untouched", () => {
     const files: ProjectFile[] = [
       {

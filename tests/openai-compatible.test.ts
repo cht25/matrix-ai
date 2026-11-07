@@ -4,6 +4,7 @@ import { OpenAICompatibleProvider, normalizeCompatibleBaseUrl, isCompatibleBaseU
 const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  vi.unstubAllEnvs();
 });
 
 describe("OpenAI-compatible endpoint parsing", () => {
@@ -40,6 +41,44 @@ describe("OpenAICompatibleProvider", () => {
     expect(body.model).toBe("my-model");
     expect(body.messages[0].content).toBe("hi");
     expect(body.max_tokens).toBe(1024);
+  });
+
+  it("uses the validated canonical origin for OpenRouter request metadata", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://localhost:3000");
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: "hello" } }], model: "my-model", usage: {} }),
+    }) as unknown as typeof fetch;
+
+    const provider = new OpenAICompatibleProvider("sk-private", "https://openrouter.ai/api/v1");
+    await provider.chat({ model: "my-model", messages: [{ role: "user", content: "hi" }] });
+    const [, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(init.headers["HTTP-Referer"]).toBe("https://matrix.thamjj13.top");
+    expect(init.headers["HTTP-Referer"]).not.toContain("localhost");
+  });
+
+  it("sends function tools and returns model tool calls without requiring text content", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: null, tool_calls: [{ id: "call-1", type: "function", function: { name: "projects.list", arguments: "{}" } }] }, finish_reason: "tool_calls" }],
+        model: "my-model",
+        usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 },
+      }),
+    }) as unknown as typeof fetch;
+    const provider = new OpenAICompatibleProvider("sk-private", "https://provider.example/v1");
+    const result = await provider.chat({
+      model: "my-model",
+      messages: [{ role: "user", content: "list my projects" }],
+      tools: [{ type: "function", function: { name: "projects.list", description: "List owned projects", parameters: { type: "object", properties: {} } } }],
+    });
+    expect(provider.supportsToolCalls).toBe(true);
+    expect(result.content).toBe("");
+    expect(result.toolCalls).toEqual([{ id: "call-1", type: "function", function: { name: "projects.list", arguments: "{}" } }]);
+    const body = JSON.parse(String((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body));
+    expect(body.tool_choice).toBe("auto");
+    expect(body.tools[0].function.name).toBe("projects.list");
   });
 
   it("sends images as OpenAI-compatible message content", async () => {
@@ -91,17 +130,20 @@ describe("OpenAICompatibleProvider streaming", () => {
         sse("framework you can use right now.\n\n"),
         sse("1. Step "),
         sse("one.\n"),
+        `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 9, completion_tokens: 17, total_tokens: 26 } })}\n\n`,
         "data: [DONE]\n\n",
       ]),
     }) as unknown as typeof fetch;
 
     const provider = new OpenAICompatibleProvider("sk-private", "https://provider.example/v1");
     let out = "";
-    for await (const delta of provider.streamChat({ model: "qwen/qwen3.6-27b", messages: [{ role: "user", content: "hi" }] })) {
+    let usage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined;
+    for await (const delta of provider.streamChat({ model: "qwen/qwen3.6-27b", messages: [{ role: "user", content: "hi" }], onUsage: (reported) => { usage = reported; } })) {
       out += delta;
     }
 
     expect(out).toBe("Here's a lean, repeatable framework you can use right now.\n\n1. Step one.\n");
+    expect(usage).toEqual({ promptTokens: 9, completionTokens: 17, totalTokens: 26 });
   });
 
   it("yields nothing for a reasoning-only stream", async () => {

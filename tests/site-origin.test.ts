@@ -62,9 +62,36 @@ describe("siteOrigin() — single source of truth for public URLs", () => {
     expect(seo.siteOrigin()).toBe("https://custom.example.com");
   });
 
-  it("strips trailing slashes from the result", async () => {
-    const seo = await loadSeo("https://matrix.thamjj13.top///");
+  it("normalizes a configured URL to its origin before appending public routes", async () => {
+    const seo = await loadSeo("https://custom.example.com/some/path/");
+    expect(seo.siteOrigin()).toBe("https://custom.example.com");
+  });
+
+  it("rejects credentials, query strings, fragments, and private targets", async () => {
+    for (const value of [
+      "https://user:pass@matrix.example",
+      "https://matrix.example?next=/attacker",
+      "https://matrix.example/#fragment",
+      "https://192.168.1.3",
+      "https://10.0.0.8",
+      "https://[::1]",
+      "https://metadata.google.internal",
+    ]) {
+      const seo = await loadSeo(value);
+      expect(seo.siteOrigin(), value).toBe("https://matrix.thamjj13.top");
+    }
+  });
+
+  it("requires HTTPS for configured production origins", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const seo = await loadSeo("http://matrix.example.com");
     expect(seo.siteOrigin()).toBe("https://matrix.thamjj13.top");
+  });
+
+  it("uses the canonical production origin rather than localhost as the unused legacy env.appUrl fallback", async () => {
+    vi.resetModules();
+    const { env } = await import("../src/lib/env");
+    expect(env.appUrl).toBe("https://matrix.thamjj13.top");
   });
 
   it("PRODUCTION_ORIGIN is the canonical matrix subdomain", async () => {

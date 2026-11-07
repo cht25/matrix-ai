@@ -47,6 +47,14 @@ export function describeTools() {
   }));
 }
 
+/** Only reviewed, read-only tools are advertised to the chat model. */
+export function modelCallableTools() {
+  return toolRegistry.schemasForModel({ modelCallableOnly: true }).map((tool) => ({
+    type: "function" as const,
+    function: { name: tool.name, description: tool.description, parameters: tool.input_schema as Record<string, unknown> },
+  }));
+}
+
 async function auditTool(
   d: Db,
   user: SessionUser,
@@ -79,7 +87,7 @@ export async function executeAgentTool(
   user: SessionUser,
   toolId: string,
   args: unknown,
-  opts: { approvalId?: string; dryRun?: boolean } = {},
+  opts: { approvalId?: string; dryRun?: boolean; modelInitiated?: boolean } = {},
 ): Promise<ToolResult & { request_id: string }> {
   const requestId = `tool_${Date.now().toString(36)}_${crypto.randomBytes(4).toString("hex")}`;
   if (toolRateLimited(user.uid)) {
@@ -90,6 +98,10 @@ export async function executeAgentTool(
   if (!spec) {
     await auditTool(d, user, toolId, "denied", "UNKNOWN_TOOL", requestId);
     return { ok: false, error: "UNKNOWN_TOOL", request_id: requestId };
+  }
+  if (opts.modelInitiated && spec.modelCallable !== true) {
+    await auditTool(d, user, toolId, "denied", "MODEL_TOOL_NOT_ALLOWED", requestId);
+    return { ok: false, error: "MODEL_TOOL_NOT_ALLOWED", request_id: requestId };
   }
   if (user.deviceId && spec.scopes.some((scope) => !user.scopes?.includes(scope))) {
     await auditTool(d, user, toolId, "denied", "DEVICE_SCOPE_DENIED", requestId);
@@ -111,7 +123,7 @@ export async function executeAgentTool(
   };
   const approvalValidator = async () => consumeToolApproval(d, user, opts.approvalId ?? "", toolId, args);
   const result = await toolRegistry.call(ctx, toolId, args, authorizer, approvalValidator);
-  if (spec.auditRequired || result.ok === false) {
+  if (spec.auditRequired || result.ok === false || opts.modelInitiated) {
     await auditTool(d, user, toolId, result.ok ? "ok" : "error", result.error ?? result.message ?? "executed", requestId);
   }
   if (!result.ok && (result.error === "APPROVAL_REQUIRED" || result.error === "APPROVAL_INVALID")) {

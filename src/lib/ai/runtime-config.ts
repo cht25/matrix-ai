@@ -219,7 +219,7 @@ export async function testAIProviderConfig(d: Db, mode: "general" | "agent" = "g
   const config = await readAIProviderConfig(d);
   const route = mode === "agent" ? createRuntimeAgentRoute(config) : createRuntimeAIRoute(config);
   if (!route) throw new RpcError("AI_PROVIDER_NOT_CONFIGURED", 400);
-  const ok = await route.client.healthCheck();
+  const ok = await route.client.healthCheck(route.model);
   return {
     ok,
     provider: route.provider,
