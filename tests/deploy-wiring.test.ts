@@ -33,7 +33,16 @@ describe("chat routes build requests through the real pipeline", () => {
 
   it("runs the pipeline instead of the plain chat path", () => {
     expect(CHAT).toContain("streamBuildRun(");
-    expect(CHAT).toContain("runBuildTurn(message, buildIntent, turnId, pending)");
+    expect(CHAT).toContain("shouldCreateCodeWorkspace(rawMessage, pending)");
+    expect(CHAT).toContain("workspaceOnly");
+    expect(BUILD_ROUTE).toContain("workspace_only === true && chatMode === \"code\"");
+    expect(BUILD_ROUTE).toContain('bearer.split(".").length === 3');
+    expect(read("src/lib/server/build.ts")).toContain("allowUnlabelledFences: true, allowRawHtmlDocument: true");
+    expect(read("src/lib/server/build.ts")).toContain("agentGenerationIncomplete(raw)");
+    expect(read("src/lib/server/build.ts")).toContain("formatProjectFilesForContext(before, input.prompt)");
+    expect(read("src/lib/server/build.ts")).toContain("withheldExistingPaths.has(file.path.toLowerCase())");
+    expect(read("src/lib/server/build.ts")).toContain("shouldWithholdProjectFile(file.path, file.content, \"utf8\")");
+    expect(read("src/lib/server/build.ts")).toContain("No partial file was saved");
     expect(CHAT).toContain("<BuildStatusCard run={buildRun}");
     expect(CHAT).toContain("cancelBuildRun");
   });

@@ -6,6 +6,7 @@ import { createServer, type Server } from "node:http";
 export type StubBehavior =
   | { kind: "ok"; content: string; reasoningField?: string }
   | { kind: "ok_empty" }
+  | { kind: "tool_call_then_ok"; toolName: string; arguments: string; finalContent: string }
   | { kind: "status"; status: number; body?: string; contentType?: string }
   | { kind: "stream"; deltas: string[]; endWithDone?: boolean }
   | { kind: "stream_then_die"; deltas: string[] }
@@ -15,11 +16,14 @@ export type StubCall = { method: string; url: string; auth: string; body: Record
 
 export function startProviderStub(behaviorHolder: { current: StubBehavior }): Promise<{ server: Server; port: number; calls: StubCall[] }> {
   const calls: StubCall[] = [];
+  let activeBehavior: StubBehavior | null = null;
+  let behaviorRequests = 0;
   const server = createServer((req, res) => {
     let raw = "";
     req.on("data", (chunk) => (raw += chunk));
     req.on("end", () => {
       const behavior = behaviorHolder.current;
+      if (behavior !== activeBehavior) { activeBehavior = behavior; behaviorRequests = 0; }
       calls.push({
         method: req.method ?? "",
         url: req.url ?? "",
@@ -42,17 +46,18 @@ export function startProviderStub(behaviorHolder: { current: StubBehavior }): Pr
         res.end(behavior.body ?? JSON.stringify({ error: { message: `stub ${behavior.status}` } }));
         return;
       }
-      if (behavior.kind === "ok" || behavior.kind === "ok_empty") {
+      if (behavior.kind === "ok" || behavior.kind === "ok_empty" || behavior.kind === "tool_call_then_ok") {
+        behaviorRequests += 1;
+        const sendToolCall = behavior.kind === "tool_call_then_ok" && behaviorRequests === 1;
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({
             model: "stub-model-1",
             choices: [{
-              message: {
-                content: behavior.kind === "ok" ? behavior.content : null,
-                ...(behavior.kind === "ok" && behavior.reasoningField ? { reasoning: behavior.reasoningField } : {}),
-              },
-              finish_reason: "stop",
+              message: sendToolCall
+                ? { content: null, tool_calls: [{ id: "call-1", type: "function", function: { name: behavior.toolName, arguments: behavior.arguments } }] }
+                : { content: behavior.kind === "ok" ? behavior.content : behavior.kind === "tool_call_then_ok" ? behavior.finalContent : null },
+              finish_reason: sendToolCall ? "tool_calls" : "stop",
             }],
             usage: { prompt_tokens: 5, completion_tokens: 7, total_tokens: 12 },
           }),

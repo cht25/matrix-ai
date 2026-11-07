@@ -22,7 +22,7 @@ import { verifySession, type SessionUser } from "@/lib/firebase/session";
 import { verifyDeviceCredential, DEVICE_TOKEN_PREFIX, deviceScopeResponse } from "@/lib/firebase/device-session";
 import { redactPII, containsCredentials, leakedPII } from "@/lib/ai/pii";
 import { classify } from "@/lib/ai/domain";
-import { type AIMessage, type AIProvider } from "@/lib/ai/groq";
+import { type AIMessage, type AIProvider, type AIProviderResponse } from "@/lib/ai/groq";
 import { AI_CONFIG, createAIRoutesFromDb, createScanRoutesFromDb, resolveSelectedAIRoute, logAIConfiguration, type AIRouteTarget } from "@/lib/ai/config";
 import { completeWithFallback, streamWithFallback } from "@/lib/ai/executor";
 import { AIProviderError, logGatewayFailure, logProviderFailure, providerPublicCode } from "@/lib/ai/provider-error";
@@ -41,7 +41,7 @@ import { validateImageUpload } from "@/lib/ai/upload-validation";
 import { ragSearch } from "@/lib/server/rpc";
 import { downloadImage } from "@/lib/server/cloudinary";
 import { descDoc } from "@/lib/server/sort";
-import { recordAgentToolSelection } from "@/lib/server/tool-gateway";
+import { executeAgentTool, modelCallableTools, recordAgentToolSelection } from "@/lib/server/tool-gateway";
 import { mutationCsrfResponse } from "@/lib/server/request-security";
 
 export const runtime = "nodejs";
@@ -262,10 +262,12 @@ async function finalizeChat(d: Db, opts: {
   files?: AgentFile[];
   projectId?: string | null;
   requestId?: string;
+  usage?: AIProviderResponse["usage"];
+  usageStatus?: "ok" | "partial";
 }) {
   const {
     provider, providerName, user, conversationId, isTemporary, message, redactedMessage, reply,
-    history, redaction, started, model, mode, codingDetected, files = [], projectId = null, requestId,
+    history, redaction, started, model, mode, codingDetected, files = [], projectId = null, requestId, usage, usageStatus,
   } = opts;
   const convRef = d.collection("conversations").doc(conversationId);
 
@@ -356,7 +358,7 @@ async function finalizeChat(d: Db, opts: {
     }
   }
 
-  await logUsage(d, user.uid, model, "chat", {}, Date.now() - started, "ok", requestId);
+  await logUsage(d, user.uid, model, "chat", usage ?? {}, Date.now() - started, usageStatus ?? "ok", requestId);
 }
 
 function normaliseTextAttachments(value: unknown): TextAttachment[] {
@@ -476,6 +478,12 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     }
   }
   const convRef = d.collection("conversations").doc(convId);
+  const audioAssetId = typeof body.audio_asset_id === "string" ? body.audio_asset_id.trim() : "";
+  if (audioAssetId) {
+    if (!/^[a-f0-9-]{36}$/i.test(audioAssetId)) return json({ error: "AUDIO_NOT_FOUND" }, 404, requestId);
+    const audioAsset = await d.collection("chat_audio_assets").doc(audioAssetId).get().catch(() => null);
+    if (!audioAsset || !audioAsset.exists || audioAsset.data()?.user_id !== user.uid) return json({ error: "AUDIO_NOT_FOUND" }, 404, requestId);
+  }
   let activeProjectId: string | null = null;
   const requestedProjectId = typeof body.project_id === "string" && body.project_id.trim() ? body.project_id.trim().slice(0, 128) : null;
   if (requestedProjectId) {
@@ -500,6 +508,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
           detected: redaction.detected.map((x) => x.type),
           mode,
           attachment_names: attachments.map((file) => file.name),
+          ...(audioAssetId ? { audio_asset_id: audioAssetId } : {}),
         },
         created_at: nowTs(),
       });
@@ -615,11 +624,12 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   ];
 
   // --- Provider streaming path (Chat and Agent) --------------------------------
-  if (wantStream && targets[0]?.client.streamChat) {
+  if (wantStream && mode !== "agent" && targets[0]?.client.streamChat) {
     let done = false;
     let full = "";
     let activeTarget: AIRouteTarget = targets[0];
     let usedFallback = false;
+    let streamUsage: AIProviderResponse["usage"] | undefined;
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         const emit = (obj: Record<string, unknown>) => {
@@ -640,6 +650,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
               temperature: codingDetected ? 0.3 : 0.5,
               maxTokens: codingDetected ? 3200 : 1600,
               requestId,
+              onUsage: (usage) => { streamUsage = usage; },
             },
             (target, fallback) => {
               activeTarget = target;
@@ -669,8 +680,8 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
           const analytics = computeAnalytics({
             started,
             firstTokenAt: started,
-            promptTokens: 0,
-            completionTokens: streamedReply.split(/\s+/).length,
+            promptTokens: streamUsage?.promptTokens ?? 0,
+            completionTokens: streamUsage?.completionTokens ?? 0,
             agentSteps: 1,
             toolsExecuted: 0,
           });
@@ -679,7 +690,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
             await finalizeChat(d, {
               provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
               redactedMessage: redaction.redacted, reply: streamedReply, history, redaction, started,
-              model: activeTarget.model, mode, codingDetected, files: streamedFiles, projectId, requestId,
+              model: activeTarget.model, mode, codingDetected, files: streamedFiles, projectId, requestId, usage: streamUsage,
             });
           } catch (error) {
             degraded = true;
@@ -704,7 +715,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
           const msg = e instanceof Error ? e.message : "stream error";
           if (msg !== "CLIENT_DISCONNECTED") {
             logProviderFailure(e, requestId);
-            await logUsage(d, user.uid, activeTarget.model, "chat", {}, Date.now() - started, "error", requestId);
+            if (!full.trim()) await logUsage(d, user.uid, activeTarget.model, "chat", streamUsage ?? {}, Date.now() - started, "error", requestId);
           }
           // Persist whatever actually streamed so Stop / disconnect doesn't
           // throw the reply away — the client can keep it on screen too.
@@ -713,11 +724,11 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
               await finalizeChat(d, {
                 provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
                 redactedMessage: redaction.redacted, reply: full, history, redaction, started,
-                model: activeTarget.model, mode, codingDetected, requestId,
+                model: activeTarget.model, mode, codingDetected, requestId, usage: streamUsage, usageStatus: "partial",
               });
               done = true;
             } catch {
-              /* best-effort persist */
+              if (msg !== "CLIENT_DISCONNECTED") await logUsage(d, user.uid, activeTarget.model, "chat", streamUsage ?? {}, Date.now() - started, "partial", requestId);
             }
           }
           if (msg !== "CLIENT_DISCONNECTED") {
@@ -746,18 +757,67 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   // --- Non-streaming conversation path (never writes project files) ----------
   let rawReply: string;
   let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  let toolsExecuted = 0;
+  let toolCallsProcessed = 0;
+  let toolRounds = 0;
   let activeTarget: AIRouteTarget = targets[0];
   try {
-    const result = await completeWithFallback(targets, {
-      messages,
+    const safeTools = mode === "agent" && targets[0].client.supportsToolCalls ? modelCallableTools() : [];
+    const agentMessages = [...messages];
+    let result = await completeWithFallback(targets, {
+      messages: agentMessages,
+      ...(safeTools.length ? { tools: safeTools } : {}),
       temperature: mode === "agent" ? 0.25 : 0.5,
       maxTokens: mode === "agent" ? 16384 : codingDetected ? 4096 : 1600,
       requestId,
     });
     activeTarget = result.target;
-    rawReply = result.response.content;
-    usage = result.response.usage;
+    usage = { ...result.response.usage };
 
+    // Model-directed execution is limited to explicitly reviewed read-only
+    // tools. Every invocation still passes through the authenticated gateway,
+    // which validates args, scopes, permissions, rate limits, and audits it.
+    // Side-effecting tools remain manual/approval-gated and are not advertised.
+    while (safeTools.length && result.response.toolCalls?.length && toolRounds < 4) {
+      toolRounds += 1;
+      const calls = result.response.toolCalls;
+      agentMessages.push({ role: "assistant", content: result.response.content ?? "", tool_calls: calls });
+      for (const call of calls) {
+        const name = typeof call.function?.name === "string" ? call.function.name : "";
+        let toolResult: { ok: boolean; data?: Record<string, unknown>; message?: string; error?: string; request_id?: string };
+        await recordAgentToolSelection(d, user.uid, name.slice(0, 64), "Provider model requested an Agent tool.");
+        toolCallsProcessed += 1;
+        if (toolCallsProcessed > 3) {
+          toolResult = { ok: false, error: "AGENT_TOOL_CALL_LIMIT" };
+        } else {
+          try {
+            const parsed = JSON.parse(call.function.arguments || "{}");
+            if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Tool arguments must be a JSON object.");
+            toolResult = await executeAgentTool(d, user, name, parsed, { modelInitiated: true });
+            toolsExecuted += 1;
+          } catch (error) {
+            toolResult = { ok: false, error: error instanceof Error ? error.message.slice(0, 160) : "INVALID_TOOL_ARGUMENTS" };
+          }
+        }
+        const toolCallId = typeof call.id === "string" ? call.id.slice(0, 128) : "invalid_tool_call";
+        agentMessages.push({ role: "tool", tool_call_id: toolCallId, name: name.slice(0, 64), content: JSON.stringify(toolResult).slice(0, 6000) });
+      }
+      result = await completeWithFallback([result.target], {
+        messages: agentMessages,
+        ...(toolCallsProcessed < 3 ? { tools: safeTools } : {}),
+        temperature: 0.25,
+        maxTokens: 4096,
+        requestId,
+      });
+      activeTarget = result.target;
+      usage = {
+        promptTokens: usage.promptTokens + result.response.usage.promptTokens,
+        completionTokens: usage.completionTokens + result.response.usage.completionTokens,
+        totalTokens: usage.totalTokens + result.response.usage.totalTokens,
+      };
+    }
+    rawReply = result.response.content;
+    if (!rawReply.trim()) throw new Error("AGENT_TOOL_LOOP_RETURNED_NO_FINAL_ANSWER");
   } catch (error) {
     logProviderFailure(error, requestId);
     await logUsage(d, user.uid, activeTarget?.model ?? selectedModel, "chat", {}, Date.now() - started, "error", requestId);
@@ -788,7 +848,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     await finalizeChat(d, {
       provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
       redactedMessage: redaction.redacted, reply, history, redaction, started,
-      model: activeTarget.model, mode, codingDetected, files, projectId, requestId,
+      model: activeTarget.model, mode, codingDetected, files, projectId, requestId, usage,
     });
   } catch (error) {
     // The AI answered — never convert that into a request failure. Surface the
@@ -814,7 +874,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
       promptTokens: usage.promptTokens,
       completionTokens: usage.completionTokens,
       agentSteps: 1,
-      toolsExecuted: 0,
+      toolsExecuted,
     }),
     ...(finalizeFailed ? { storage_degraded: true } : {}),
     request_id: requestId,
@@ -1076,7 +1136,7 @@ async function handleHealth(mode: ChatMode = "general") {
   if (!targets.length) return json({ status: "unconfigured", mode }, 503);
   for (let i = 0; i < targets.length; i += 1) {
     const target = targets[i];
-    if (await target.client.healthCheck()) {
+    if (await target.client.healthCheck(target.model)) {
       return json({
         status: "online",
         mode,

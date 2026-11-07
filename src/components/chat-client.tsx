@@ -19,13 +19,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
-  BrainCircuit, Code2, Download, ExternalLink, FileSearch, Globe, GraduationCap, Image as ImageIcon,
-  Lock, MonitorPlay, Paperclip, Play, RefreshCcw, Send, ShieldAlert, Sparkles, Square,
+  BrainCircuit, Code2, Download, ExternalLink, FileSearch, Globe, GraduationCap, Image as ImageIcon, Mic,
+  Lock, MonitorPlay, Paperclip, Play, RefreshCcw, Send, ShieldAlert, Sparkles, Square, Trash2,
   WandSparkles, X, Zap,
 } from "lucide-react";
 import { AutoSpeakToggle } from "@/components/chat-speech-controls";
 import {
-  primeSpeech, readAutoSpeakPreference, speakMarkdown, stopSpeech, writeAutoSpeakPreference,
+  primeSpeech, readAutoSpeakPreference, speakMarkdown, speechTextFromMarkdown, stopSpeech, writeAutoSpeakPreference,
 } from "@/lib/chat-speech";
 import { firebaseBrowserConfigured, waitForAuthUser } from "@/lib/firebase/client";
 import { rpc, uploadOwnedFile } from "@/lib/client/api";
@@ -59,7 +59,7 @@ import { ArtifactCard } from "@/components/artifact-panel";
 import { ResponseProgress } from "@/components/response-status";
 import { ModeQuickActions, LiveTaskGraph, type GraphNode } from "@/components/mode-workspace";
 import { buildActionsFor, detectBuildIntent, detectImageAssetRequest, shouldRunBuildPipeline, type BuildIntent } from "@/lib/ai/build-intent";
-import { mayExecuteAgent } from "@/lib/ai/execution-policy";
+import { mayExecuteAgent, shouldCreateCodeWorkspace } from "@/lib/ai/execution-policy";
 import { streamBuildRun } from "@/lib/client/build-runner";
 import { BuildStatusCard } from "@/components/build/build-progress";
 import { DeploySuccessPopup } from "@/components/build/deploy-card";
@@ -241,6 +241,15 @@ export function ChatClient({
   // --- speech -------------------------------------------------------------
   const [autoSpeak, setAutoSpeak] = useState(true);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const [voiceAsset, setVoiceAsset] = useState<{ id: string; playbackUrl: string } | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const generatedAudioRef = useRef<HTMLAudioElement | null>(null);
+  const generatedAudioUrlRef = useRef<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   // State updates are batched; this synchronous guard prevents a fast Enter +
@@ -280,6 +289,14 @@ export function ChatClient({
   }, []);
 
   useEffect(() => { autoSpeakRef.current = autoSpeak; }, [autoSpeak]);
+
+  useEffect(() => () => {
+    try { recorderRef.current?.stop(); } catch { /* recorder already stopped */ }
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
+    generatedAudioRef.current?.pause();
+    if (generatedAudioUrlRef.current) URL.revokeObjectURL(generatedAudioUrlRef.current);
+  }, []);
   useEffect(() => { localeRef.current = locale; }, [locale]);
 
   const scrollToBottom = useCallback(() => {
@@ -330,6 +347,7 @@ export function ChatClient({
     abortRef.current?.abort();
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     stopSpeech();
+    stopGeneratedSpeech();
   }, []);
 
   // Keep the composer above the iOS/Android keyboard.
@@ -398,6 +416,7 @@ export function ChatClient({
   function switchMode(next: ChatMode) {
     if (next === mode || isTemporary || streaming) return;
     stopSpeech();
+    stopGeneratedSpeech();
     setSpeakingId(null);
     if (convIdRef.current || messages.length > 0) {
       router.push(`/chat?mode=${next}&new=${Date.now()}`);
@@ -585,24 +604,64 @@ export function ChatClient({
     writeAutoSpeakPreference(next);
     if (!next) {
       stopSpeech();
+      stopGeneratedSpeech();
       setSpeakingId(null);
     }
   }
 
-  function listenTo(id: string, text: string, isLatest = false) {
+  function stopGeneratedSpeech() {
+    generatedAudioRef.current?.pause();
+    generatedAudioRef.current = null;
+    if (generatedAudioUrlRef.current) URL.revokeObjectURL(generatedAudioUrlRef.current);
+    generatedAudioUrlRef.current = null;
+  }
+
+  async function listenTo(id: string, text: string, isLatest = false) {
     if (mode === "agent") return;
     if (speakingId === id || (speakingId === "auto" && isLatest)) {
       stopSpeech();
+      stopGeneratedSpeech();
       setSpeakingId(null);
       return;
     }
-    primeSpeech();
-    const ok = speakMarkdown(text, {
-      locale: localeRef.current,
-      onend: () => setSpeakingId((current) => (current === id ? null : current)),
-      onerror: () => setSpeakingId((current) => (current === id ? null : current)),
-    });
-    setSpeakingId(ok ? id : null);
+    stopSpeech();
+    stopGeneratedSpeech();
+    setSpeakingId(id);
+    const plain = speechTextFromMarkdown(text);
+    try {
+      const response = await fetch("/api/voice/speech", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: plain }),
+      });
+      if (!response.ok) throw new Error("Gemini speech is not configured or unavailable");
+      const url = URL.createObjectURL(await response.blob());
+      const audio = new Audio(url);
+      generatedAudioUrlRef.current = url;
+      generatedAudioRef.current = audio;
+      audio.onended = () => {
+        stopGeneratedSpeech();
+        setSpeakingId((current) => (current === id ? null : current));
+      };
+      audio.onerror = () => {
+        stopGeneratedSpeech();
+        setSpeakingId((current) => (current === id ? null : current));
+        setNotice("AI-generated speech could not be played by this browser.");
+      };
+      await audio.play();
+    } catch {
+      // Keep the existing browser voice as a truthful accessibility fallback;
+      // the generated-audio endpoint never fabricates a successful response.
+      setNotice("Gemini speech is unavailable right now; using your device's built-in voice instead.");
+      primeSpeech();
+      const ok = speakMarkdown(text, {
+        locale: localeRef.current,
+        onend: () => setSpeakingId((current) => (current === id ? null : current)),
+        onerror: () => setSpeakingId((current) => (current === id ? null : current)),
+      });
+      if (!ok) setSpeakingId(null);
+    }
   }
 
   function maybeAutoSpeak(text: string) {
@@ -617,6 +676,97 @@ export function ChatClient({
     setSpeakingId(ok ? "auto" : null);
   }
 
+  async function deleteVoiceAsset(id: string) {
+    try {
+      const response = await fetch(`/api/voice/audio/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "same-origin" });
+      if (!response.ok) throw new Error("The private recording could not be deleted from storage.");
+      setVoiceAsset((current) => current?.id === id ? null : current);
+      setMessages((current) => current.map((message) => {
+        if (message.metadata?.audio_asset_id !== id) return message;
+        return { ...message, metadata: { ...message.metadata, audio_asset_id: undefined } };
+      }));
+      setNotice("Private voice recording deleted. The transcript remains in the chat.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Voice deletion failed. Try again.");
+    }
+  }
+
+  async function uploadAndTranscribeVoice(blob: Blob, filename: string) {
+    if (!blob.size) { setNotice("No audio was captured. Try recording again."); return; }
+    setTranscribing(true);
+    setNotice(null);
+    try {
+      const form = new FormData();
+      form.append("audio", blob, filename);
+      form.append("language", localeRef.current === "bn" ? "bn-BD" : "en-US");
+      const response = await fetch("/api/voice/transcribe", { method: "POST", credentials: "same-origin", body: form });
+      const data = await response.json().catch(() => ({})) as { transcript?: string; audio_asset_id?: string; playback_url?: string; error?: string };
+      if (data.audio_asset_id && data.playback_url) setVoiceAsset({ id: data.audio_asset_id, playbackUrl: data.playback_url });
+      if (!response.ok || !data.transcript?.trim()) {
+        setNotice(data.audio_asset_id
+          ? `The recording is safely stored and playable, but transcription did not complete (${data.error ?? "TRANSCRIPTION_FAILED"}).`
+          : `Voice recording failed (${data.error ?? response.status}). Check microphone, Gemini and private storage configuration.`);
+        return;
+      }
+      setInput((current) => [current.trim(), data.transcript!.trim()].filter(Boolean).join(current.trim() ? "\n" : ""));
+      setNotice("Transcript ready. Review it, then send when you are ready.");
+      requestAnimationFrame(autosize);
+    } catch (error) {
+      setNotice(error instanceof Error ? `Voice upload failed: ${error.message}` : "Voice upload failed. Try again.");
+    } finally {
+      setTranscribing(false);
+    }
+  }
+
+  async function toggleVoiceRecording() {
+    const active = recorderRef.current;
+    if (active?.state === "recording") {
+      active.stop();
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setNotice("Voice recording is unsupported by this browser or device.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"]
+        .find((candidate) => MediaRecorder.isTypeSupported(candidate));
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      recorderRef.current = recorder;
+      recorder.ondataavailable = (event) => { if (event.data.size) audioChunksRef.current.push(event.data); };
+      recorder.onerror = () => {
+        setRecording(false);
+        setNotice("The browser could not record audio. Check microphone permission and try again.");
+        stream.getTracks().forEach((track) => track.stop());
+      };
+      recorder.onstop = () => {
+        setRecording(false);
+        if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
+        recordingTimeoutRef.current = null;
+        stream.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+        const type = recorder.mimeType || "audio/webm";
+        const extension = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : type.includes("wav") ? "wav" : "webm";
+        void uploadAndTranscribeVoice(new Blob(audioChunksRef.current, { type }), `voice-${Date.now()}.${extension}`);
+        audioChunksRef.current = [];
+      };
+      recorder.start(1000);
+      setRecording(true);
+      setNotice("Microphone is active. Your recording is uploaded privately when you stop.");
+      recordingTimeoutRef.current = setTimeout(() => {
+        if (recorder.state === "recording") recorder.stop();
+      }, 90_000);
+    } catch (error) {
+      setRecording(false);
+      setNotice(error instanceof Error ? `Microphone permission failed: ${error.message}` : "Microphone permission failed.");
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    }
+  }
+
   async function streamMessage(
     message: string,
     opts: {
@@ -627,6 +777,7 @@ export function ChatClient({
       attachments?: PendingAttachment[];
       intent?: IntentResult;
       turnId?: string;
+      audioAssetId?: string | null;
     } = {},
   ) {
     if (requestInFlightRef.current) return;
@@ -668,6 +819,7 @@ export function ChatClient({
         : emptyExecution(),
     );
     stopSpeech();
+    stopGeneratedSpeech();
     setSpeakingId(null);
     if (!isAgentRun && autoSpeakRef.current) primeSpeech();
 
@@ -710,7 +862,7 @@ export function ChatClient({
         credentials: "same-origin",
         body: JSON.stringify({
           action: isImage ? "image" : isOrchestrator ? "orchestrate" : "chat",
-          stream: !isImage && !isOrchestrator,
+          stream: !isImage && !isOrchestrator && messageMode !== "agent",
           conversation_id: convIdRef.current,
           project_id: agentProjectId,
           is_temporary: isTemporary,
@@ -722,6 +874,7 @@ export function ChatClient({
           study_level: studyLevel,
           explain_style: explainStyle,
           message,
+          audio_asset_id: opts.audioAssetId ?? undefined,
           attachments: sentAttachments.map(({ name, content, type }) => ({ name, content, type })),
           language: locale,
           regenerate: opts.regenerate === true,
@@ -963,6 +1116,7 @@ export function ChatClient({
   async function send(e?: { preventDefault(): void }, messageOverride?: string) {
     e?.preventDefault();
     const pending = messageOverride ? [] : attachments;
+    const audioAssetId = messageOverride ? null : voiceAsset?.id ?? null;
     let message = (messageOverride ?? input).trim() || (pending.length ? "Review these attached files and help me with them." : "");
     if (!message || streaming || requestInFlightRef.current) return;
     // Composer capabilities are opt-in hints, never automatic invocations.
@@ -974,6 +1128,7 @@ export function ChatClient({
     setInput("");
     lastAttachmentsRef.current = pending;
     setAttachments([]);
+    setVoiceAsset(null);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
 
     // --- intent detection happens on the user's own words -----------------
@@ -990,6 +1145,7 @@ export function ChatClient({
       metadata: {
         mode,
         attachment_names: pending.map((file) => file.name),
+        ...(audioAssetId ? { audio_asset_id: audioAssetId } : {}),
         intent: intent.intent,
         artifact_type: intent.artifact,
         turn_id: turnId,
@@ -1013,14 +1169,19 @@ export function ChatClient({
     });
     if (buildIntent.needsClarification) {
       setNotice(buildIntent.clarification ?? "Describe what to build and I will create, validate and (if you ask) publish it.");
-      await streamMessage(message, { attachments: pending, intent, turnId });
+      await streamMessage(message, { attachments: pending, intent, turnId, audioAssetId });
+      return;
+    }
+    const codeWorkspaceRequest = mode === "code" && shouldCreateCodeWorkspace(rawMessage, pending);
+    if (codeWorkspaceRequest && !buildIntent.publish && !buildIntent.preview) {
+      await runBuildTurn(message, { ...buildIntent, build: true, publish: false, preview: false, fix: false }, turnId, pending, true);
       return;
     }
     if (mayExecuteAgent(mode, buildIntent) && shouldRunBuildPipeline(buildIntent)) {
-      await runBuildTurn(message, buildIntent, turnId, pending);
+      await runBuildTurn(message, buildIntent, turnId, pending, false);
       return;
     }
-    await streamMessage(message, { attachments: pending, intent, turnId });
+    await streamMessage(message, { attachments: pending, intent, turnId, audioAssetId });
   }
 
   /**
@@ -1043,6 +1204,7 @@ export function ChatClient({
     buildIntent: BuildIntent,
     turnId: string,
     sentAttachments: PendingAttachment[] = [],
+    workspaceOnly = false,
   ) {
     if (requestInFlightRef.current) return;
     requestInFlightRef.current = true;
@@ -1057,11 +1219,14 @@ export function ChatClient({
     setActiveStartedAt(startedAt);
     setStreamedText("");
     stopSpeech();
+    stopGeneratedSpeech();
 
     const controller = new AbortController();
     buildControllerRef.current = controller;
     abortRef.current = controller;
-    const actions = buildActionsFor(buildIntent);
+    const actions = workspaceOnly
+      ? { ...buildActionsFor(buildIntent), build: true, publish: false, preview: false, fix: false }
+      : buildActionsFor(buildIntent);
     const imageRequests = detectImageAssetRequest(message) ? imageRequestsFor(message) : [];
     // Attachments travel as files, not as pasted text: the pipeline stores them
     // in the project so the validator, preview and host all see the real source.
@@ -1085,6 +1250,8 @@ export function ChatClient({
           projectId: agentProjectId,
           conversationId: convIdRef.current,
           isTemporary,
+          mode: mode === "code" ? "code" : "agent",
+          workspaceOnly,
           actions,
           imageRequests,
           // Attachments go to the pipeline as files, not as pasted text: they
@@ -1148,7 +1315,9 @@ export function ChatClient({
     const replyText =
       settled.reply.trim() ||
       (run?.status === "succeeded"
-        ? liveUrl
+        ? workspaceOnly
+          ? `Wrote ${run.fileCount || artifacts.length} project file${(run.fileCount || artifacts.length) === 1 ? "" : "s"} to the workspace. Review the files there; build checks and deployment were not run.`
+          : liveUrl
           ? `Built and published ${run.fileCount || artifacts.length || attachmentFiles.length} project file${run.fileCount === 1 ? "" : "s"}. The live address is below.`
           : `Build and validation passed. ${run.fileCount || artifacts.length} file${run.fileCount === 1 ? "" : "s"} are ready to preview.`
         : buildError
@@ -1159,7 +1328,7 @@ export function ChatClient({
       replyText,
       { turnId },
       {
-        mode: "agent",
+        mode: mode === "code" ? "code" : "agent",
         project_id: projectId ?? undefined,
         build: run ? toRunSnapshot(run) : undefined,
         deployment: run?.deployment
@@ -1563,6 +1732,7 @@ export function ChatClient({
                     <div className="min-w-0 max-w-[88%] sm:max-w-[75%]">
                       <div className="rounded-[16px] border border-border bg-surface-2 px-4 py-2.5 text-[14.5px] leading-relaxed text-ink">
                         <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                        {message.metadata?.audio_asset_id ? <div className="mt-2 flex items-center gap-1.5"><audio controls preload="none" className="h-9 min-w-0 max-w-full" src={`/api/voice/audio/${encodeURIComponent(message.metadata.audio_asset_id)}`} aria-label="Recorded voice message" /><button type="button" onClick={() => void deleteVoiceAsset(message.metadata!.audio_asset_id!)} className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-surface hover:text-danger" aria-label="Delete private voice recording"><Trash2 size={13} /></button></div> : null}
                         {message.metadata?.attachment_names?.length ? (
                           <div className="mt-2 flex flex-wrap gap-1.5 border-t border-border pt-2">
                             {message.metadata.attachment_names.map((name) => (
@@ -1697,6 +1867,7 @@ export function ChatClient({
         <div ref={bottomRef} />
       </div>
 
+      {recording ? <p className="mt-2 shrink-0 text-[13px] text-danger">Recording… tap the microphone to stop.</p> : transcribing ? <p className="mt-2 shrink-0 text-[13px] text-ink-2">Uploading your private recording and transcribing it…</p> : null}
       {notice ? <p className="mt-2 shrink-0 text-[13px] text-ink-2">{notice}</p> : null}
 
       <div className="shrink-0 pt-3">
@@ -1725,6 +1896,7 @@ export function ChatClient({
           ) : null}
         </div>
 
+        {voiceAsset ? <div className="mx-auto mb-2 flex max-w-2xl items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2"><audio controls preload="none" className="h-9 min-w-0 flex-1" src={voiceAsset.playbackUrl} aria-label="Recorded voice draft" /><button type="button" onClick={() => void deleteVoiceAsset(voiceAsset.id)} className="grid h-8 w-8 place-items-center rounded-md text-ink-3 hover:bg-surface-2" aria-label="Delete private voice recording"><Trash2 size={14} /></button></div> : null}
         {attachments.length ? (
           <div className="mx-auto mb-2 flex max-w-2xl flex-wrap gap-1.5" aria-label="Attached files">
             {attachments.map((file) => (
@@ -1783,6 +1955,7 @@ export function ChatClient({
             {/* Lightweight capability switches — clicking one activates the
                 capability, it never invokes it on its own. */}
             <div className="flex min-w-0 items-center gap-0.5">
+              {mode !== "code" && mode !== "agent" ? <button type="button" onClick={() => void toggleVoiceRecording()} disabled={streaming || transcribing} aria-label={recording ? "Stop voice recording" : transcribing ? "Transcribing voice recording" : "Record a voice message"} title={recording ? "Stop recording" : transcribing ? "Transcribing…" : "Record a voice message"} className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors duration-150", recording ? "bg-danger text-white" : "text-ink-3 hover:bg-surface-2 hover:text-ink")}><Mic size={16} strokeWidth={1.7} /></button> : null}
               <button type="button" onClick={() => fileRef.current?.click()} disabled={streaming} aria-label="Attach a file" title="Attach a file" className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] text-ink-3 transition-colors duration-150 hover:bg-surface-2 hover:text-ink disabled:opacity-40">
                 <Paperclip size={16} strokeWidth={1.7} />
               </button>

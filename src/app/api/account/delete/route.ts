@@ -10,7 +10,7 @@ import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import { getSessionUser } from "@/lib/firebase/session";
 import { nowTs } from "@/lib/firebase/admin";
 import { env } from "@/lib/env";
-import { deleteUserAssets } from "@/lib/server/cloudinary";
+import { deleteUserAssets, deleteUserChatAudio } from "@/lib/server/cloudinary";
 import { mutationCsrfResponse } from "@/lib/server/request-security";
 
 export const runtime = "nodejs";
@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
 
   // 1. Remove private Cloudinary assets owned by the user (screenshots + ID
   //    documents). Failures must not block account deletion.
-  await deleteUserAssets(uid).catch(() => {});
+  await Promise.all([deleteUserAssets(uid).catch(() => {}), deleteUserChatAudio(uid).catch(() => {})]);
 
   // 2. Delete user-owned documents (conversations cascade their messages).
   const convs = await d.collection("conversations").where("user_id", "==", uid).limit(500).get();
@@ -91,6 +91,7 @@ export async function POST(req: NextRequest) {
     deleteQuery(d.collection("security_events"), "user_id", uid),
     deleteQuery(d.collection("user_sessions"), "user_id", uid),
     deleteQuery(d.collection("ai_usage_logs"), "user_id", uid),
+    deleteQuery(d.collection("chat_audio_assets"), "user_id", uid),
     deleteQuery(d.collection("deployments"), "owner_id", uid),
   ]);
   const userProjects = await d.collection("projects").where("owner_id", "==", uid).limit(50).get();

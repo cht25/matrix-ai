@@ -41,7 +41,8 @@ export const AI_CONFIG = {
  * logged, so the operator can see and fix it from the Admin panel.
  */
 class FallbackSafeProvider implements AIProvider {
-  constructor(private readonly inner: AIProvider) {}
+  readonly supportsToolCalls: boolean;
+  constructor(private readonly inner: AIProvider) { this.supportsToolCalls = inner.supportsToolCalls === true; }
 
   async chat(req: AIProviderRequest): Promise<AIProviderResponse> {
     try {
@@ -60,8 +61,8 @@ class FallbackSafeProvider implements AIProvider {
     }
   }
 
-  async healthCheck(): Promise<boolean> {
-    return this.inner.healthCheck();
+  async healthCheck(model?: string): Promise<boolean> {
+    return this.inner.healthCheck(model);
   }
 }
 

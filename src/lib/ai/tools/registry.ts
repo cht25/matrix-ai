@@ -145,6 +145,8 @@ export interface ToolSpec<I = unknown> {
   approvalRequired: boolean;
   auditRequired: boolean;
   rateLimitPerMinute: number;
+  /** Explicitly safe for model-driven invocation; defaults to manual/UI only. */
+  modelCallable?: boolean;
   inputSchema: ZodTypeAny;
   handler: ToolHandler<I>;
 }
@@ -214,8 +216,8 @@ export class ToolRegistry {
   }
 
   /** JSON schemas exposed to models — request-only, never execution rights. */
-  schemasForModel(): Array<{ name: string; description: string; input_schema: unknown }> {
-    return this.list().map((t) => ({
+  schemasForModel(options: { modelCallableOnly?: boolean } = {}): Array<{ name: string; description: string; input_schema: unknown }> {
+    return this.list().filter((tool) => !options.modelCallableOnly || tool.modelCallable === true).map((t) => ({
       name: t.id,
       description: t.description,
       input_schema: zodToJsonSchema(t.inputSchema),
@@ -289,15 +291,20 @@ export class ToolRegistry {
       }
       throw err;
     }
-    const timeout = new Promise<ToolResult>((_, reject) =>
-      setTimeout(() => reject(new Error(`TOOL_TIMEOUT after ${spec.timeoutSeconds}s`)), spec.timeoutSeconds * 1000),
-    );
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<ToolResult>((_, reject) => {
+      timeoutHandle = setTimeout(() => reject(new Error(`TOOL_TIMEOUT after ${spec.timeoutSeconds}s`)), spec.timeoutSeconds * 1000);
+    });
     try {
       return await Promise.race([spec.handler(ctx, input), timeout]);
     } catch (err) {
       const message = err instanceof Error ? err.message : "TOOL_FAILED";
       // Honest failure — never fabricate success.
       return { ok: false, error: message.slice(0, 300) };
+    } finally {
+      // A completed tool must not leave a long-lived timer retaining the
+      // request context or keeping a serverless worker warm unnecessarily.
+      if (timeoutHandle) clearTimeout(timeoutHandle);
     }
   }
 }

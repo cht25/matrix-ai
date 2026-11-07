@@ -1,12 +1,36 @@
 #!/usr/bin/env node
+import { isIP } from 'node:net';
 // Deploy as a separate always-on worker. It never executes model-generated code.
 const secret = process.env.AUTOMATION_WORKER_SECRET?.trim();
 if (!secret || secret.length < 32) {
   console.error('AUTOMATION_WORKER_SECRET must contain at least 32 characters.');
   process.exit(1);
 }
-const target = new URL('/api/jobs/automations', process.env.MATRIX_WORKER_TARGET_URL || 'http://127.0.0.1:3000');
-if (!['https:', 'http:'].includes(target.protocol)) throw new Error('Invalid worker target');
+const targetInput = process.env.MATRIX_WORKER_TARGET_URL?.trim();
+if (!targetInput) {
+  console.error('MATRIX_WORKER_TARGET_URL must be set to the deployed MATRIX application URL.');
+  process.exit(1);
+}
+const targetOrigin = new URL(targetInput);
+function isPrivateHost(input) {
+  const rawHost = input.toLowerCase().replaceAll('[', '').replaceAll(']', '');
+  const host = rawHost.endsWith('.') ? rawHost.slice(0, -1) : rawHost;
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
+  const version = isIP(host);
+  if (version === 4) {
+    const [a, b] = host.split('.').map(Number);
+    return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+  }
+  if (version === 6) return !host.startsWith('2') && !host.startsWith('3');
+  return false;
+}
+const developmentHttp = process.env.NODE_ENV === 'development' && targetOrigin.protocol === 'http:' && isPrivateHost(targetOrigin.hostname);
+if (targetOrigin.username || targetOrigin.password || targetOrigin.search || targetOrigin.hash || isPrivateHost(targetOrigin.hostname) && !developmentHttp || (targetOrigin.protocol !== 'https:' && !developmentHttp)) {
+  console.error('MATRIX_WORKER_TARGET_URL must be a valid HTTPS origin (HTTP localhost is development-only).');
+  process.exit(1);
+}
+const target = new URL('/api/jobs/automations', targetOrigin.origin);
 const interval = Math.max(10_000, Number(process.env.AUTOMATION_POLL_MS) || 30_000);
 let stopped = false;
 let timer;

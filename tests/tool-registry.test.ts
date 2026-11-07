@@ -115,6 +115,21 @@ describe("ToolRegistry", () => {
     expect(res).toEqual({ ok: true, data: { echo: "hello" } });
   });
 
+  it("clears a completed tool's timeout timer instead of retaining request state", async () => {
+    const reg = makeRegistry();
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+    try {
+      await expect(reg.call(ctx, "demo.read", { q: "done" }, allowAll)).resolves.toMatchObject({ ok: true });
+      const scheduled = setTimeoutSpy.mock.results[0]?.value;
+      expect(scheduled).toBeDefined();
+      expect(clearTimeoutSpy).toHaveBeenCalledWith(scheduled);
+    } finally {
+      setTimeoutSpy.mockRestore();
+      clearTimeoutSpy.mockRestore();
+    }
+  });
+
   it("returns honest errors — never fabricates success — on handler failure", async () => {
     const reg = new ToolRegistry();
     reg.register({
@@ -139,10 +154,11 @@ describe("ToolRegistry", () => {
     expect(res.error).toContain("provider exploded");
   });
 
-  it("exposes model-facing schemas", () => {
+  it("exposes only explicitly approved tools in the model-callable schema view", () => {
     const reg = makeRegistry();
+    reg.register({ ...reg.get("demo.read")!, id: "demo.safe", modelCallable: true });
     const schemas = reg.schemasForModel();
-    expect(schemas.map((s) => s.name)).toEqual(["demo.read", "demo.danger"]);
-    expect(schemas[0].input_schema).toBeTypeOf("object");
+    expect(schemas.map((s) => s.name)).toEqual(["demo.read", "demo.safe", "demo.danger"]);
+    expect(reg.schemasForModel({ modelCallableOnly: true }).map((s) => s.name)).toEqual(["demo.safe"]);
   });
 });

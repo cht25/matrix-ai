@@ -22,7 +22,7 @@ describe("Phase 14 — mandatory repair cases", () => {
   it("1. Normal Chat cannot execute Agent file/build work", () => {
     const intent = detectBuildIntent("Build and publish a website", { projectFileCount: 0 });
     expect(mayExecuteAgent("general", intent)).toBe(false);
-    expect(mayExecuteAgent("code", intent)).toBe(false);
+    expect(mayExecuteAgent("code", intent)).toBe(true);
     expect(read("src/app/api/ai/route.ts")).not.toContain("applyProjectFiles(");
   });
 

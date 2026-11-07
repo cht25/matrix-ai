@@ -2,19 +2,25 @@ import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { detectBuildIntent } from "@/lib/ai/build-intent";
-import { mayExecuteAgent, requestChatMode } from "@/lib/ai/execution-policy";
+import { mayExecuteAgent, requestChatMode, shouldCreateCodeWorkspace } from "@/lib/ai/execution-policy";
 import { effectiveMode, selectCapability, detectIntent } from "@/lib/ai/intent";
 import { Markdown, parseBlocks } from "@/components/markdown";
 import { looksLikeRawMarkup, parseFenceInfo } from "@/lib/code-blocks";
 import { readFileSync } from "node:fs";
 
 describe("strict Chat / Coding / Agent separation", () => {
-  it("normal chat and coding assistance never acquire build authority", () => {
+  it("keeps general chat passive and distinguishes Code workspace requests from questions", () => {
     const intent = detectBuildIntent("Build me a responsive website", { projectFileCount: 0 });
     expect(intent.build).toBe(true);
     expect(mayExecuteAgent("general", intent)).toBe(false);
-    expect(mayExecuteAgent("code", intent)).toBe(false);
+    expect(mayExecuteAgent("code", intent)).toBe(true);
     expect(mayExecuteAgent("agent", intent)).toBe(true);
+    expect(shouldCreateCodeWorkspace("Create a Python function that sorts a list")).toBe(true);
+    expect(shouldCreateCodeWorkspace("Write code for this task")).toBe(true);
+    expect(shouldCreateCodeWorkspace("Create a recipe for lentil soup")).toBe(false);
+    expect(shouldCreateCodeWorkspace("Explain how Python list sorting works")).toBe(false);
+    expect(shouldCreateCodeWorkspace("Can you explain how to create a React component?")).toBe(false);
+    expect(shouldCreateCodeWorkspace("What does this TypeScript function do?", [{ name: "main.ts", content: "const x = 1" }])).toBe(false);
     expect(selectCapability(detectIntent("Inspect the repo and run tests"), "general")).toBe("chat");
     expect(effectiveMode(detectIntent("Build a website"), "code")).toBe("code");
   });
@@ -44,6 +50,18 @@ describe("coding assistance rendering", () => {
     expect(blocks[1]).toMatchObject({ lang: "css", filename: "src/styles.css", code: "p {\n  color: green;\n}" });
     expect(parseFenceInfo("tsx src/App.tsx").filename).toBe("src/App.tsx");
   });
+  it("detects unfenced HTML fragments after a short sentence and styles/scripts", () => {
+    const reply = "Here is the page you asked for.\n\n<style>body{color:green}</style><article><h1>Hello</h1></article>";
+    expect(looksLikeRawMarkup(reply)).toBe(true);
+    const rendered = renderToStaticMarkup(createElement(Markdown, { text: reply }));
+    expect(rendered).toContain("Copy code");
+    expect(rendered).toContain("Download");
+    expect(rendered).toContain("&lt;style");
+    expect(rendered).toContain("&lt;/style");
+    expect(rendered).not.toContain("<style>body");
+    expect(looksLikeRawMarkup("There are < 3 items.")).toBe(false);
+  });
+
   it("renders raw HTML as escaped highlighted code with Copy and Download, never trusted markup", () => {
     const raw = '<div class="feature-card"><svg viewBox="0 0 24 24"></svg><li>Card</li></div>';
     expect(looksLikeRawMarkup(raw)).toBe(true);

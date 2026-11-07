@@ -22,6 +22,7 @@ import {
   log,
   runFromSnapshot,
   setDeployment,
+  skipStage,
   stageProgress,
   succeedRun,
   summarizeChanges,
@@ -114,6 +115,24 @@ describe("succeedRun gating", () => {
     run = completeStage(run, "publish", T0 + 2, "not published");
     expect(succeedRun(run, T0 + 3).status).toBe("succeeded");
   });
+
+  it("records Code-mode file persistence as completed generation with checks honestly skipped", () => {
+    let run = createBuildRun({ id: "code-run", projectId: "p1", actions: { build: true, publish: false, preview: false }, workspaceOnly: true, now: T0 });
+    run = completeStage(run, "plan", T0 + 1, "Project ready");
+    run = completeStage(run, "generate", T0 + 2, "Wrote 1 file");
+    for (const id of ["install", "build", "validate", "publish"] as const) {
+      run = skipStage(run, id, T0 + 3, "Not run for Code-mode file generation.");
+    }
+    run = { ...run, fileCount: 1 };
+    run = succeedRun(run, T0 + 4);
+    expect(run.status).toBe("succeeded");
+    expect(buildRunCopy(run)).toMatchObject({ title: "Files saved to workspace", detail: expect.stringContaining("checks were not run") });
+    expect(run.stages.find((stage) => stage.id === "generate")?.state).toBe("completed");
+    expect(run.stages.find((stage) => stage.id === "validate")?.state).toBe("skipped");
+    expect(run.validation).toBeNull();
+    expect(run.previewUrl).toBeNull();
+    expect(run.deployment).toBeNull();
+  });
 });
 
 describe("applyStaleness — no card is ever stuck on Publishing", () => {
@@ -161,6 +180,15 @@ describe("run-store roundtrip", () => {
     expect(restored?.deployment?.slug).toBe("my-site");
     expect(restored?.deployment?.overridden).toBe(true);
     expect(storedDeploymentStatus(restored)).toBe("deploying");
+  });
+
+  it("preserves workspace-only semantics across Firestore and chat snapshots", () => {
+    const run = succeedRun(createBuildRun({ id: "code-run", projectId: "p1", actions: { build: true, publish: false, preview: false }, workspaceOnly: true, now: T0 }), T0 + 1);
+    const stored = runFromFirestore(toFirestoreRun(run), T0);
+    expect(stored?.workspaceOnly).toBe(true);
+    const snapshotRun = runFromSnapshot(toRunSnapshot(run), T0);
+    expect(snapshotRun.workspaceOnly).toBe(true);
+    expect(buildRunCopy(snapshotRun).title).toBe("Files saved to workspace");
   });
 
   it("writes no undefined fields and bounded logs", () => {

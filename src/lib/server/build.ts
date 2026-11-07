@@ -25,7 +25,7 @@ import type { AIMessage } from "@/lib/ai/groq";
 import { completeWithFallback } from "@/lib/ai/executor";
 import { createAIRoutesFromDb, type AIRouteTarget } from "@/lib/ai/config";
 import { AGENT_SYSTEM_PROMPT } from "@/lib/ai/prompts";
-import { parseAgentResponse } from "@/lib/ai/agent";
+import { agentGenerationIncomplete, formatProjectFilesForContext, parseAgentResponse, shouldWithholdProjectFile } from "@/lib/ai/agent";
 import { planFromRequest, type BuildIntent } from "@/lib/ai/build-intent";
 import { generateImage } from "@/lib/ai/image/generate";
 import { isImageGenerationConfigured } from "@/lib/ai/image/config";
@@ -66,6 +66,9 @@ export type BuildPipelineInput = {
   attachments?: Array<{ path: string; content: string }>;
   /** Store the assistant turn in the conversation (skipped for temp chats). */
   isTemporary?: boolean;
+  /** Code-mode file generation persists source but deliberately skips build claims. */
+  workspaceOnly?: boolean;
+  chatMode?: "code" | "agent";
   onEvent?: (event: { run: BuildRun; stage?: BuildStageId; copy?: ReturnType<typeof buildRunCopy> }) => void;
 };
 
@@ -81,6 +84,7 @@ function hashPrompt(prompt: string): string {
 export async function runBuildPipeline(input: BuildPipelineInput): Promise<BuildPipelineResult> {
   const { d, user, provider, runId } = input;
   const now = () => Date.now();
+  const workspaceOnly = input.workspaceOnly === true && input.chatMode === "code" && !input.actions.publish && !input.actions.preview;
   let reply = "";
   let resolvedProjectId: string | null = input.projectId ?? null;
   const done = (run: BuildRun): BuildPipelineResult => ({ run, reply, projectId: resolvedProjectId });
@@ -91,6 +95,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     requestId: input.requestId ?? null,
     taskId: input.taskId ?? null,
     actions: input.actions,
+    workspaceOnly,
     environment: input.environment ?? "production",
     maxAttempts: Math.min(input.maxFixAttempts ?? MAX_FIX_ATTEMPTS, 5),
     now: now(),
@@ -196,6 +201,9 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       }
     }
     const before = await loadProjectFiles(d, projectId);
+    const projectFilesContext = formatProjectFilesForContext(before, input.prompt);
+    const existingProjectContext = projectFilesContext.text;
+    const withheldExistingPaths = new Set(projectFilesContext.omittedPaths.map((path) => path.toLowerCase()));
     const slug = (input.slug ?? "").trim() || plan.slug;
     await finish("plan", `Project ready · ${before.length} existing file${before.length === 1 ? "" : "s"} · address /s/${slug}.`);
 
@@ -224,24 +232,35 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         { role: "system", content: AGENT_SYSTEM_PROMPT },
         {
           role: "system",
-          content: [
-            "MATRIX build pipeline: emit complete, publishable files only.",
-            `Project title: ${plan.title}. Entry page must be index.html at the project root.`,
-            before.length ? `Existing project files: ${before.map((file) => file.path).join(", ")}. Return every file you change, complete.` : "This is a new project.",
-            input.attachments?.length
-              ? `The user attached these files as the source of truth: ${input.attachments.map((item) => item.path).join(", ")}. Keep their behaviour; do not invent contents for them.`
-              : "",
-            assets.length
-              ? `Generated image assets already exist in the project and MUST be referenced with relative paths: ${assets.map((asset) => `${asset.path} (${asset.width}x${asset.height})`).join(", ")}.`
-              : "Do not reference local binary images that do not exist. Use inline SVG or CSS art.",
-            "Static hosting only: plain HTML, CSS and JavaScript. No bundler, no npm install, no server code.",
-          ].join("\n"),
+          content: workspaceOnly
+            ? [
+                "MATRIX Code workspace: return complete, requested source files using the appropriate language and safe relative paths. Do not force index.html unless the user asked for a website or web page.",
+                `Project title: ${plan.title}.`,
+                before.length ? `Existing project files: ${before.map((file) => file.path).join(", ")}. Preserve the existing stack and conventions; return every changed file in full and avoid unrelated rewrites.` : "This is a new project. Choose sensible filenames and a minimal, conventional structure for the requested language or framework.",
+                input.attachments?.length
+                  ? `The user attached these files as the source of truth: ${input.attachments.map((item) => item.path).join(", ")}. Keep their behaviour; do not invent contents for them.`
+                  : "",
+                "Return complete files with the MATRIX_FILE protocol. Do not claim commands, tests, builds, or previews were run. Never include secrets or unsafe paths.",
+              ].filter(Boolean).join("\n")
+            : [
+                "MATRIX build pipeline: emit complete, publishable files only.",
+                `Project title: ${plan.title}. Entry page must be index.html at the project root.`,
+                before.length ? `Existing project files: ${before.map((file) => file.path).join(", ")}. Return every file you change, complete.` : "This is a new project.",
+                input.attachments?.length
+                  ? `The user attached these files as the source of truth: ${input.attachments.map((item) => item.path).join(", ")}. Keep their behaviour; do not invent contents for them.`
+                  : "",
+                assets.length
+                  ? `Generated image assets already exist in the project and MUST be referenced with relative paths: ${assets.map((asset) => `${asset.path} (${asset.width}x${asset.height})`).join(", ")}.`
+                  : "Do not reference local binary images that do not exist. Use inline SVG or CSS art.",
+                "Static hosting only: plain HTML, CSS and JavaScript. No bundler, no npm install, no server code.",
+              ].filter(Boolean).join("\n"),
         },
+        ...(existingProjectContext ? [{ role: "user" as const, content: existingProjectContext }] : []),
         {
           role: "user",
           content: [
             input.prompt || "Build the project described above.",
-            ...(input.attachments ?? []).slice(0, 3).map((item) => `\n\n--- attached ${item.path} ---\n${item.content.slice(0, 3_000)}`),
+            ...(input.attachments ?? []).slice(0, 8).map((item) => `\n\nUser attachment stored as ${item.path}; use its complete source from the preceding project context only if it was included there.`),
           ].join(""),
         },
       ];
@@ -253,10 +272,47 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         const detail = error instanceof Error ? error.message : "provider error";
         return await abort("AI_PROVIDER_FAILED", `MATRIX could not reach the coding provider (${detail.slice(0, 120)}), so no files were written.`, "generate");
       }
-      const parsed = parseAgentResponse(raw);
+      if (agentGenerationIncomplete(raw)) {
+        note("generate", "warn", "The provider response ended mid-file; requesting one completion before saving.");
+        await emit("generate");
+        try {
+          const continuation = await completeWithFallback(routes, {
+            messages: [
+              ...messages,
+              { role: "assistant", content: raw },
+              { role: "user", content: "Your previous response was cut off. Return complete MATRIX_FILE block(s) for the requested project. Do not claim completion until every file is closed with <<<END_MATRIX_FILE>>> and do not repeat file content already provided." },
+            ],
+            temperature: 0.1,
+            maxTokens: 16384,
+            requestId: input.requestId ? `${input.requestId}-continue` : undefined,
+          });
+          const continued = continuation.response.content ?? "";
+          const continuedFiles = parseAgentResponse(continued, { allowUnlabelledFences: true, allowRawHtmlDocument: true }).files;
+          raw = continuedFiles.length ? continued : `${raw}\n${continued}`;
+        } catch (error) {
+          note("generate", "warn", `Completion retry failed (${error instanceof Error ? error.message.slice(0, 80) : "provider error"}).`);
+          await emit("generate");
+        }
+      }
+      const parsed = parseAgentResponse(raw, { allowUnlabelledFences: true, allowRawHtmlDocument: true });
       reply = parsed.reply;
       if (!parsed.files.length) {
-        return await abort("AI_NO_FILES", "The coding provider answered without any project files, so nothing was written or published.", "generate");
+        const incomplete = agentGenerationIncomplete(raw);
+        return await abort(
+          incomplete ? "AI_OUTPUT_INCOMPLETE" : "AI_NO_FILES",
+          incomplete
+            ? "The coding provider stopped before completing a project file. No partial file was saved; retry the request or use a provider with a larger output limit."
+            : "The coding provider answered without any project files, so nothing was written or published.",
+          "generate",
+        );
+      }
+      const sensitiveOutput = parsed.files.find((file) => shouldWithholdProjectFile(file.path, file.content, "utf8"));
+      if (sensitiveOutput) {
+        return await abort("AI_OUTPUT_SENSITIVE_FILE", "The generated output included a secret-bearing or sensitive file. MATRIX saved none of the generated files; move secrets to server-side configuration and retry.", "generate");
+      }
+      const withheldOverwrite = parsed.files.find((file) => withheldExistingPaths.has(file.path.toLowerCase()));
+      if (withheldOverwrite) {
+        return await abort("AI_OUTPUT_WITHHELD_FILE", "The requested change targets an existing file withheld from the provider for safety or size. MATRIX saved no generated files; attach a safe, complete copy or remove the secret from that file first.", "generate");
       }
       const applied = await applyProjectFiles(d, user, {
         project_id: projectId,
@@ -271,6 +327,19 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     }
 
     if (!files.length) return await abort("NO_FILES", `Project ${projectId} has no files to build (0 files). Generate or upload source files before building.`, "build");
+
+    if (workspaceOnly) {
+      // File-writing is a real project operation, but is not a claim that the
+      // source can be built or previewed by this static-hosting pipeline.
+      for (const stage of ["install", "build", "validate", "publish"] as BuildStageId[]) {
+        await skipped(stage, "Not run for Code-mode file generation; no build or deployment was requested.");
+      }
+      run = { ...run, fileCount: files.length };
+      run = succeedRun(run, now());
+      reply = `Wrote ${files.length} project file${files.length === 1 ? "" : "s"} to the workspace. Review the files there; build checks and deployment were not run.`;
+      await emit();
+      return done(run);
+    }
 
     // ------------------------------------------- dependencies/build/validate --
     await begin("install", "Checking declared dependencies.");
@@ -328,7 +397,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       ];
       try {
         const fix = await completeWithFallback(routes, { messages: fixMessages, temperature: 0.1, maxTokens: 16384, requestId: input.requestId ?? undefined });
-        const fixed = parseAgentResponse(fix.response.content ?? "");
+        const fixed = parseAgentResponse(fix.response.content ?? "", { allowUnlabelledFences: true, allowRawHtmlDocument: true });
         if (fixed.files.length) {
           await applyProjectFiles(d, user, { project_id: projectId, files: fixed.files as ProjectFile[], source: "agent" });
           files = await loadProjectFiles(d, projectId);
@@ -463,7 +532,7 @@ async function persistBuildMessage(
       role: "assistant",
       content: text,
       metadata: {
-        mode: "agent",
+        mode: input.chatMode ?? "agent",
         project_id: run.projectId,
         build: toRunSnapshot(run),
         deployment: run.deployment
@@ -479,7 +548,7 @@ async function persistBuildMessage(
       },
       created_at: nowTs(),
     });
-    await d.collection("conversations").doc(input.conversationId).set({ updated_at: nowTs(), mode: "agent" }, { merge: true });
+    await d.collection("conversations").doc(input.conversationId).set({ updated_at: nowTs(), mode: input.chatMode ?? "agent" }, { merge: true });
   } catch {
     /* chat persistence is best-effort; the run itself is already stored */
   }
@@ -592,6 +661,7 @@ export async function startBuildRun(
     prompt: string;
     intent?: BuildIntent;
     actions?: BuildActions;
+    workspaceOnly?: boolean;
     slug?: string | null;
     allowOverride?: boolean;
     imageRequests?: ImageAssetRequest[];
@@ -619,6 +689,7 @@ export async function startBuildRun(
           conversationId: p.conversationId ?? null,
           requestId: p.requestId ?? null,
           actions,
+          workspaceOnly: p.workspaceOnly === true,
           now: Date.now(),
         }),
       ),

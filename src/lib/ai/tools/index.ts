@@ -35,6 +35,7 @@ toolRegistry.register({
   approvalRequired: false,
   auditRequired: false,
   rateLimitPerMinute: 30,
+  modelCallable: true,
   inputSchema: z.object({}),
   handler: async (ctx): Promise<ToolResult> => {
     const projects = await listProjects(asDb(ctx), asUser(ctx));
@@ -54,6 +55,7 @@ toolRegistry.register({
   approvalRequired: false,
   auditRequired: false,
   rateLimitPerMinute: 30,
+  modelCallable: true,
   inputSchema: z.object({ project_id: z.string().min(1).max(128) }),
   handler: async (ctx, input: { project_id: string }): Promise<ToolResult> => {
     const project = await getProject(asDb(ctx), asUser(ctx), input.project_id);
@@ -74,6 +76,7 @@ toolRegistry.register({
   approvalRequired: false,
   auditRequired: false,
   rateLimitPerMinute: 20,
+  modelCallable: true,
   inputSchema: z.object({}),
   handler: async (ctx): Promise<ToolResult> => {
     const connection = await getGithubConnection(ctx.uid);
@@ -94,6 +97,7 @@ toolRegistry.register({
   approvalRequired: false,
   auditRequired: true,
   rateLimitPerMinute: 20,
+  modelCallable: true,
   inputSchema: z.object({ max: z.number().int().min(1).max(100).default(30) }),
   handler: async (ctx, input: { max: number }): Promise<ToolResult> => {
     try {
@@ -119,6 +123,7 @@ toolRegistry.register({
   approvalRequired: false,
   auditRequired: false,
   rateLimitPerMinute: 30,
+  modelCallable: true,
   inputSchema: z.object({ project_id: z.string().min(1).max(128) }),
   handler: async (ctx, input: { project_id: string }): Promise<ToolResult> => {
     const run = await latestBuildRunForProject(asDb(ctx), asUser(ctx), input.project_id);
@@ -140,6 +145,7 @@ toolRegistry.register({
   approvalRequired: false,
   auditRequired: false,
   rateLimitPerMinute: 30,
+  modelCallable: true,
   inputSchema: z.object({}),
   handler: async (ctx): Promise<ToolResult> => {
     const devices = await listDevices(asDb(ctx), ctx.uid);
@@ -160,6 +166,7 @@ toolRegistry.register({
   approvalRequired: false,
   auditRequired: false,
   rateLimitPerMinute: 30,
+  modelCallable: true,
   inputSchema: z.object({}),
   handler: async (ctx): Promise<ToolResult> => {
     const families = await listFamiliesForUser(asDb(ctx), ctx.uid);

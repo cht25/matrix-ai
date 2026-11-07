@@ -14,6 +14,7 @@ import type {
 import { fetchModelCatalog, verifyCatalogModel } from "@/lib/ai/model-catalog";
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
 import { assistantContentOnly, assistantDeltaContent, createReasoningStreamFilter } from "@/lib/ai/reasoning";
+import { siteOrigin } from "@/lib/seo";
 
 // The :free variant is intentional. A paid/custom model can still be selected
 // explicitly with OPENROUTER_CODING_MODEL; it is never silently rewritten.
@@ -28,7 +29,7 @@ export class OpenRouterProvider implements AIProvider {
 
   constructor(
     private readonly apiKey: string,
-    private readonly appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://matrix-ai.app",
+    private readonly appUrl = siteOrigin(),
   ) {}
 
   private headers(requestId?: string): Record<string, string> {
@@ -167,7 +168,13 @@ export class OpenRouterProvider implements AIProvider {
             const event = JSON.parse(payload) as {
               error?: { message?: string };
               choices?: { delta?: { content?: unknown; reasoning?: unknown; reasoning_content?: unknown } }[];
+              usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
             };
+            if (event.usage) {
+              const promptTokens = event.usage.prompt_tokens ?? 0;
+              const completionTokens = event.usage.completion_tokens ?? 0;
+              req.onUsage?.({ promptTokens, completionTokens, totalTokens: event.usage.total_tokens ?? promptTokens + completionTokens });
+            }
             if (event.error) {
               throw new AIProviderError({
                 provider: "OpenRouter",

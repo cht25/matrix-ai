@@ -3,6 +3,7 @@ import type { AIProvider } from "@/lib/ai/groq";
 import { createProvider, MODELS } from "@/lib/ai/groq";
 import { createCodingProvider, OPENROUTER_MODELS } from "@/lib/ai/openrouter";
 import { createOpenAICompatibleProvider } from "@/lib/ai/openai";
+import { GeminiProvider } from "@/lib/ai/gemini";
 import { AnthropicProvider } from "@/lib/ai/anthropic";
 import { AIProviderError } from "@/lib/ai/provider-error";
 
@@ -36,9 +37,10 @@ export function environmentProviders(): RegisteredProvider[] {
   }
   const geminiKey = configured(process.env.GEMINI_API_KEY);
   if (geminiKey) {
-    const baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai";
+    const baseUrl = "https://generativelanguage.googleapis.com/v1beta";
     const model = process.env.GEMINI_MODEL?.trim() || "";
-    result.push({ id: "gemini", name: "Gemini", client: createOpenAICompatibleProvider({ apiKey: geminiKey, baseUrl, label: "Gemini", model }), baseUrl, defaultModel: model, codingModel: model, visionModel: process.env.GEMINI_VISION_MODEL?.trim() || "" });
+    const codingModel = process.env.GEMINI_CODING_MODEL?.trim() || model;
+    result.push({ id: "gemini", name: "Gemini", client: new GeminiProvider(geminiKey), baseUrl, defaultModel: model, codingModel, visionModel: process.env.GEMINI_VISION_MODEL?.trim() || "" });
   }
   const anthropicKey = configured(process.env.ANTHROPIC_API_KEY);
   if (anthropicKey) {
@@ -56,7 +58,8 @@ export function environmentProviders(): RegisteredProvider[] {
 /** Preflight exact model IDs. Listing is cached; actual completion still checks entitlement. */
 export class CatalogValidatedProvider implements AIProvider {
   private verified = new Map<string, number>();
-  constructor(private readonly inner: AIProvider) {}
+  readonly supportsToolCalls: boolean;
+  constructor(private readonly inner: AIProvider) { this.supportsToolCalls = inner.supportsToolCalls === true; }
   private async verify(model: string) {
     if (!this.inner.listModels) throw new Error("Provider does not expose a model catalog");
     const expires = this.verified.get(model) ?? 0;
@@ -74,6 +77,6 @@ export class CatalogValidatedProvider implements AIProvider {
     if (!this.inner.streamChat) throw new Error("Provider does not support streaming");
     yield* this.inner.streamChat(req);
   }
-  async healthCheck() { return this.inner.healthCheck(); }
+  async healthCheck(model?: string) { return this.inner.healthCheck(model); }
   async listModels() { return this.inner.listModels?.() ?? []; }
 }

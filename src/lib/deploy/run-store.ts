@@ -58,6 +58,7 @@ export function toFirestoreRun(run: BuildRun): Json {
     status: run.status,
     environment: run.environment,
     actions: { build: run.actions.build, publish: run.actions.publish, preview: run.actions.preview, fix: run.actions.fix === true },
+    workspaceOnly: run.workspaceOnly === true,
     stages: run.stages.map((stage) => ({
       id: stage.id,
       state: stage.state,
@@ -177,6 +178,7 @@ export function runFromFirestore(raw: unknown, now: number): BuildRun | null {
       preview: actions.preview === true,
       fix: actions.fix === true,
     } satisfies BuildActions,
+    workspaceOnly: data.workspaceOnly === true,
     environment: (data.environment === "preview" ? "preview" : "production") as BuildEnvironment,
     stages,
     changes: Array.isArray(data.changes)

@@ -71,7 +71,7 @@ export async function GET() {
   if (generalTargets.length) {
     ai = "unavailable";
     for (const target of generalTargets) {
-      if (await target.client.healthCheck()) {
+      if (await target.client.healthCheck(target.model)) {
         ai = "online";
         break;
       }
@@ -85,7 +85,7 @@ export async function GET() {
   const codingTargets = await createAIRoutesFromDb(runtimeDb, true);
   for (let i = 0; i < codingTargets.length; i += 1) {
     const target = codingTargets[i];
-    if (await target.client.healthCheck()) {
+    if (await target.client.healthCheck(target.model)) {
       codingAi = "online";
       codingProvider = target.provider;
       codingModel = target.model;

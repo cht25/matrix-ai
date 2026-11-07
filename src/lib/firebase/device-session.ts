@@ -6,6 +6,12 @@ import { getSessionUser, type SessionUser } from "@/lib/firebase/session";
 
 export const DEVICE_TOKEN_PREFIX = "matrix_device.";
 export const DEVICE_CREDENTIAL_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Build/deploy APIs accept Firebase ID tokens, never Matrix scoped device tokens. */
+export function isFirebaseIdTokenCandidate(token: string): boolean {
+  return !token.startsWith(DEVICE_TOKEN_PREFIX) && token.split(".").length === 3 && token.trim() === token;
+}
+
 export function deviceCredentialHash(deviceId: string, secret: string): string {
   return crypto.createHash("sha256").update(`${deviceId}.${secret}`).digest("hex");
 }

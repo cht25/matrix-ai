@@ -50,7 +50,7 @@ export async function completeWithFallback(
           model: target.model,
           messages: request.messages,
         });
-        if (!response.content?.trim()) {
+        if (!response.content?.trim() && !response.toolCalls?.length) {
           throw new AIProviderError({
             provider: target.provider,
             model: target.model,

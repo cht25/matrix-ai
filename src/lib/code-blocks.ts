@@ -24,10 +24,36 @@ export function parseFenceInfo(info: string, previousLine = "", index = 0): { la
   if (language === "text" && filename) language = EXT_LANG[filename.split(".").pop() ?? ""] ?? "text";
   return { language, filename: filenameForCode(language, index, filename) };
 }
-/** Detect an unfenced markup answer without ever interpreting it as HTML. */
+/** Detect unfenced HTML/markup answers, including a short prose lead-in. */
 export function looksLikeRawMarkup(text: string): boolean {
-  const value = text.trim();
-  return !value.includes("```") && /^(?:<!doctype html|<html[\s>]|<(?:div|section|main|svg|ul|li|form|header|nav)[\s>])/i.test(value) && /<\/[a-z][\w-]*\s*>/i.test(value);
+  const source = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  const value = source.trim();
+  if (!value || value.includes("```")) return false;
+  const lower = value.toLowerCase();
+  if (lower.startsWith("<!doctype html") || lower.startsWith("<html ") || lower.startsWith("<html>")) return true;
+
+  // Detect balanced tag-rich replies even if the model adds one sentence first.
+  const tags: Array<{ name: string; closing: boolean }> = [];
+  let cursor = 0;
+  while ((cursor = value.indexOf("<", cursor)) >= 0) {
+    const end = value.indexOf(">", cursor + 1);
+    if (end < 0) break;
+    let token = value.slice(cursor + 1, end).trim();
+    cursor = end + 1;
+    if (!token || token.startsWith("!") || token.startsWith("?")) continue;
+    const closing = token.startsWith("/");
+    if (closing) token = token.slice(1).trimStart();
+    const name = token.split(" ")[0].split("\t")[0].split("/")[0].toLowerCase();
+    if (!name || !((name[0] >= "a" && name[0] <= "z") || name.includes(":"))) continue;
+    if ([...name].some((char) => !((char >= "a" && char <= "z") || (char >= "0" && char <= "9") || char === "-" || char === ":"))) continue;
+    tags.push({ name, closing });
+  }
+  if (tags.some((tag) => tag.closing) && tags.some((tag) => !tag.closing) && tags.length >= 2) return true;
+
+  // A standalone or incomplete HTML fragment is safer as escaped source.
+  const first = value.startsWith("<") ? value.slice(1).split(" ")[0].split(">")[0].split("/")[0].toLowerCase() : "";
+  const standalone = new Set(["html", "head", "body", "script", "style", "svg", "div", "main", "section", "article", "header", "footer", "nav", "form", "table", "thead", "tbody", "tr", "td", "th", "ul", "ol", "li", "p", "h1", "h2", "h3", "h4", "h5", "h6", "button", "input", "textarea", "select", "label", "a", "img", "canvas", "video", "audio", "template", "details", "summary"]);
+  return standalone.has(first);
 }
 export type HighlightToken = { text: string; kind: "plain" | "comment" | "string" | "keyword" | "number" | "tag" | "attribute" };
 const KEYWORDS = new Set("const let var function return if else for while class extends new import from export default async await try catch throw typeof instanceof interface type enum public private static void null undefined true false def elif None True False print select insert update delete where create table".split(" "));

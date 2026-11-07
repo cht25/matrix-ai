@@ -80,6 +80,12 @@ describe("tool gateway", () => {
     expect(audits.length).toBe(1);
   });
 
+  it("does not let model output invoke tools outside the reviewed model-callable allowlist", async () => {
+    const d = makeDb();
+    const res = await executeAgentTool(d, user, "test.ping", { n: 8 }, { modelInitiated: true });
+    expect(res).toMatchObject({ ok: false, error: "MODEL_TOOL_NOT_ALLOWED" });
+  });
+
   it("blocks HIGH-risk tools without an approval id and records a security event", async () => {
     const d = makeDb();
     const res = await executeAgentTool(d, user, "test.danger", {});
