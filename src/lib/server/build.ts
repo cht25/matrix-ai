@@ -167,6 +167,10 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       run = { ...run, projectId };
       note("plan", "info", `Created project "${plan.title}".`);
     }
+    if (projectId) {
+      const projectMeta = await d.collection("projects").doc(projectId).get();
+      run = { ...run, projectTitle: String(projectMeta.data()?.title ?? plan.title).slice(0, 80) };
+    }
     if (!projectId) return await abort("PROJECT_REQUIRED", "There is no project to build yet. Describe what to create and I will make it.", "plan");
     // Attached source files are stored as project records before anything else
     // happens, so validation, preview and publishing all see the user's real
@@ -266,7 +270,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       await finish("generate", `Wrote ${applied.count} file${applied.count === 1 ? "" : "s"} · ${files.length} in the project.`);
     }
 
-    if (!files.length) return await abort("NO_FILES", "The project has no files to build.", "build");
+    if (!files.length) return await abort("NO_FILES", `Project ${projectId} has no files to build (0 files). Generate or upload source files before building.`, "build");
 
     // ------------------------------------------- dependencies/build/validate --
     await begin("install", "Checking declared dependencies.");

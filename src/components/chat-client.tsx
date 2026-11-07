@@ -1861,6 +1861,10 @@ export function ChatClient({
             setPublishPopup(null);
             setWorkspaceOpen(true);
           }}
+          onRollback={() => {
+            setPublishPopup(null);
+            setWorkspaceOpen(true);
+          }}
         />
       ) : null}
 

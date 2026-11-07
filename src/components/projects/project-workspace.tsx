@@ -85,6 +85,7 @@ export function ProjectWorkspace({
   const [fileOps, setFileOps] = useState<FileOp[]>([]);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [previewKey, setPreviewKey] = useState(0);
+  const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runAbort = useRef<AbortController | null>(null);
 
@@ -513,13 +514,20 @@ export function ProjectWorkspace({
                 ) : null}
               </div>
             </div>
+            <div className="mb-2 flex items-center gap-1" role="group" aria-label="Preview device">
+              {(["desktop", "mobile"] as const).map((device) => (
+                <button key={device} type="button" onClick={() => setPreviewDevice(device)} aria-pressed={previewDevice === device} className={`min-h-8 rounded-md border px-2.5 text-xs font-medium ${previewDevice === device ? "border-accent/50 bg-accent-soft text-accent" : "border-border text-ink-2 hover:text-ink"}`}>
+                  {device === "desktop" ? "Desktop" : "Mobile"}
+                </button>
+              ))}
+            </div>
             {project ? (
               <iframe
                 key={previewKey}
                 title="Project live preview"
                 sandbox="allow-scripts allow-forms allow-modals"
                 src={`${previewSrc}?v=${previewKey}`}
-                className="h-full w-full border-0 bg-white"
+                className={`h-full border-0 bg-white ${previewDevice === "mobile" ? "mx-auto w-[390px] max-w-full rounded-lg border border-border" : "w-full"}`}
               />
             ) : (
               <div className="grid flex-1 place-items-center text-sm text-ink-3">

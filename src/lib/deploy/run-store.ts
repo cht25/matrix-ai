@@ -50,6 +50,7 @@ export function toFirestoreRun(run: BuildRun): Json {
   return {
     id: run.id,
     projectId: run.projectId ?? null,
+    projectTitle: run.projectTitle ?? null,
     conversationId: run.conversationId ?? null,
     requestId: run.requestId ?? null,
     taskId: run.taskId ?? null,
@@ -164,6 +165,7 @@ export function runFromFirestore(raw: unknown, now: number): BuildRun | null {
   return {
     id,
     projectId: nullableStr(data.projectId),
+    projectTitle: nullableStr(data.projectTitle),
     conversationId: nullableStr(data.conversationId),
     requestId: nullableStr(data.requestId),
     taskId: nullableStr(data.taskId),

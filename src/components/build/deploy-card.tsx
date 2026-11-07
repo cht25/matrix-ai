@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  Check, ChevronDown, Copy, ExternalLink, FileCode2, FolderTree, Globe2, Rocket, Terminal, X,
+  Check, ChevronDown, Copy, ExternalLink, FileCode2, FolderTree, Globe2, RefreshCcw, Rocket, Terminal, X,
 } from "lucide-react";
 import type { BuildRun } from "@/lib/deploy/stages";
 import { buildRunCopy, stageProgress } from "@/lib/deploy/stages";
@@ -233,6 +233,7 @@ export function DeploySuccessPopup({
   onViewProject,
   onDeploymentDetails,
   onAssets,
+  onRollback,
 }: {
   run: BuildRun | null;
   url: string | null;
@@ -242,6 +243,7 @@ export function DeploySuccessPopup({
   onViewProject?: () => void;
   onDeploymentDetails?: () => void;
   onAssets?: () => void;
+  onRollback?: () => void;
 }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -267,7 +269,7 @@ export function DeploySuccessPopup({
           </span>
           <div className="min-w-0 flex-1">
             <p className="eyebrow text-ink-3">Matrix deploy</p>
-            <h2 className="truncate text-[15px] font-semibold text-ink">Project published</h2>
+            <h2 className="truncate text-[15px] font-semibold text-ink">{run.projectTitle || "Project"} published</h2>
             <p className="mt-0.5 text-[12px] text-ink-2">Your project is now live.</p>
           </div>
           <button type="button" onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-3 hover:bg-surface-2 hover:text-ink" aria-label="Close">
@@ -293,8 +295,9 @@ export function DeploySuccessPopup({
               <dt className="eyebrow text-[9.5px] text-ink-3">Deployment</dt>
               <dd className="mt-0.5 flex items-center gap-1.5 font-semibold text-ink">
                 <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />
-                {environment}
+                {environment} · live
               </dd>
+              <dd className="mt-0.5 break-all font-mono text-[10px] text-ink-3">{run.deployment?.id ?? "—"}</dd>
             </div>
             <div className="rounded-lg border border-border bg-surface-2/70 px-2.5 py-1.5">
               <dt className="eyebrow text-[9.5px] text-ink-3">Build</dt>
@@ -307,6 +310,7 @@ export function DeploySuccessPopup({
             <div className="rounded-lg border border-border bg-surface-2/70 px-2.5 py-1.5">
               <dt className="eyebrow text-[9.5px] text-ink-3">Hosting</dt>
               <dd className="mt-0.5 truncate font-semibold text-ink">{run.deployment?.slug ? `/s/${run.deployment.slug}` : "MATRIX"}</dd>
+              <dd className="mt-0.5 text-[10px] text-ink-3">{run.finishedAt ? new Date(run.finishedAt).toLocaleString() : "Just now"}</dd>
             </div>
           </dl>
 
@@ -324,6 +328,11 @@ export function DeploySuccessPopup({
             {onAssets ? (
               <button type="button" onClick={onAssets} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-border px-2.5 text-[12px] font-medium text-ink-2 hover:border-accent/50 hover:text-ink">
                 <Globe2 size={12} /> Assets &amp; URLs
+              </button>
+            ) : null}
+            {onRollback && run.deployment?.rollbackAvailable ? (
+              <button type="button" onClick={onRollback} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-border px-2.5 text-[12px] font-medium text-ink-2 hover:border-accent/50 hover:text-ink">
+                <RefreshCcw size={12} /> Rollback
               </button>
             ) : null}
           </div>

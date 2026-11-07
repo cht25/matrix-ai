@@ -97,6 +97,7 @@ export type BuildActions = {
 export type BuildRun = {
   id: string;
   projectId: string | null;
+  projectTitle?: string | null;
   conversationId: string | null;
   requestId: string | null;
   taskId: string | null;
@@ -136,6 +137,7 @@ export function initialStages(): BuildStage[] {
 export function createBuildRun(input: {
   id: string;
   projectId?: string | null;
+  projectTitle?: string | null;
   conversationId?: string | null;
   requestId?: string | null;
   taskId?: string | null;
@@ -147,6 +149,7 @@ export function createBuildRun(input: {
   return {
     id: input.id,
     projectId: input.projectId ?? null,
+    projectTitle: input.projectTitle ?? null,
     conversationId: input.conversationId ?? null,
     requestId: input.requestId ?? null,
     taskId: input.taskId ?? null,
@@ -440,6 +443,7 @@ export function changeCounts(changes: FileChange[]): { created: number; modified
 export type BuildRunSnapshot = {
   run_id: string;
   project_id?: string | null;
+  project_title?: string | null;
   conversation_id?: string | null;
   task_id?: string | null;
   status: BuildRunStatus;
@@ -457,6 +461,7 @@ export function toRunSnapshot(run: BuildRun): BuildRunSnapshot {
   return {
     run_id: run.id,
     project_id: run.projectId ?? null,
+    project_title: run.projectTitle ?? null,
     conversation_id: run.conversationId ?? null,
     task_id: run.taskId ?? null,
     status: run.status,
@@ -492,6 +497,7 @@ export function runFromSnapshot(snapshot: Partial<BuildRunSnapshot> & { run_id: 
   return {
     id: snapshot.run_id,
     projectId: snapshot.project_id ?? null,
+    projectTitle: snapshot.project_title ?? null,
     conversationId: snapshot.conversation_id ?? null,
     requestId: null,
     taskId: snapshot.task_id ?? null,
