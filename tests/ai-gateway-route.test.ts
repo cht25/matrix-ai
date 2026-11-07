@@ -172,7 +172,7 @@ describe("AI gateway — failure handling (regression: the old generic 500s are 
   });
 
   it("unauthenticated requests are rejected before any provider call", async () => {
-    const res = await POST(new NextRequest("http://localhost:3000/api/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "chat", message: "hi" }) }));
+    const res = await POST(new NextRequest("http://localhost:3000/api/ai", { method: "POST", headers: { "Content-Type": "application/json", Origin: "http://localhost:3000" }, body: JSON.stringify({ action: "chat", message: "hi" }) }));
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: "UNAUTHENTICATED" });
   });

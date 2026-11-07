@@ -158,5 +158,8 @@
       ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    { "collectionGroup": "automations", "fieldPath": "next_run_at", "indexes": [{ "order": "ASCENDING", "queryScope": "COLLECTION" }] },
+    { "collectionGroup": "canvas_documents", "fieldPath": "document", "indexes": [] }
+  ]
 }

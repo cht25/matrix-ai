@@ -20,6 +20,7 @@ import { detectBuildIntent } from "@/lib/ai/build-intent";
 import { RpcError } from "@/lib/server/errors";
 import type { BuildActions } from "@/lib/deploy/stages";
 import { logGatewayFailure } from "@/lib/ai/provider-error";
+import { mutationCsrfResponse } from "@/lib/server/request-security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,6 +40,7 @@ async function getUser(req: NextRequest): Promise<SessionUser | null> {
       return null;
     }
   }
+  if (req.headers.has("authorization")) return null;
   const cookie = req.cookies.get("__session")?.value;
   if (!cookie) return null;
   try {
@@ -118,6 +120,8 @@ function parseImageRequests(body: Record<string, unknown>): ImageAssetRequest[] 
 }
 
 export async function POST(req: NextRequest) {
+  const csrf = mutationCsrfResponse(req);
+  if (csrf) return csrf;
   let body: Record<string, unknown>;
   try {
     body = (await req.json()) as Record<string, unknown>;

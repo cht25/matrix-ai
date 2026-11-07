@@ -13,7 +13,11 @@
 // =============================================================================
 
 import "server-only";
+import { FieldValue } from "firebase-admin/firestore";
+import { encryptSecret, decryptSecret, canEncryptSecrets } from "@/lib/ai/image/config";
 import { Db, nowTs } from "@/lib/firebase/admin";
+import { verifyCatalogModel } from "@/lib/ai/model-catalog";
+import { isProviderEndpointAllowed } from "@/lib/ai/endpoint-policy";
 import { RpcError } from "@/lib/server/errors";
 import type { AIProvider } from "@/lib/ai/groq";
 import { createOpenAICompatibleProvider, isCompatibleBaseUrl, normalizeCompatibleBaseUrl } from "@/lib/ai/openai";
@@ -71,7 +75,11 @@ function asIso(value: unknown): string {
 
 async function readRecord(d: Db): Promise<Record<string, unknown>> {
   const snap = await d.collection(COLLECTION).doc(DOC_ID).get();
-  return snap.exists ? (snap.data() ?? {}) : {};
+  const record = snap.exists ? (snap.data() ?? {}) : {};
+  // Read legacy plaintext records without breaking existing deployments; the
+  // next approved save encrypts and removes the legacy field.
+  const apiKey = typeof record.api_key_encrypted === "string" ? decryptSecret(record.api_key_encrypted) : typeof record.api_key === "string" ? record.api_key : "";
+  return { ...record, api_key: apiKey };
 }
 
 /**
@@ -96,13 +104,13 @@ export async function readAIProviderConfig(d: Db): Promise<StoredAIProviderConfi
   };
 }
 
-function clientFor(config: StoredAIProviderConfig): AIProvider {
+function clientFor(config: StoredAIProviderConfig, model = config.model): AIProvider {
   return createOpenAICompatibleProvider({
     apiKey: config.api_key,
     baseUrl: config.base_url,
     label: config.label,
     // The honest health probe runs a one-token completion against THIS model.
-    model: config.model,
+    model,
   });
 }
 
@@ -125,7 +133,7 @@ export function createRuntimeAgentRoute(config: StoredAIProviderConfig | null): 
   return {
     provider: "OpenAI",
     model: config.agent_model?.trim() || config.model,
-    client: clientFor(config),
+    client: clientFor(config, config.agent_model?.trim() || config.model),
   };
 }
 
@@ -155,7 +163,7 @@ export async function saveAIProviderConfig(
   input: { base_url: string; model: string; agent_model?: string; api_key?: string; enabled?: boolean; label?: string },
 ): Promise<PublicAIProviderConfig> {
   const normalizedBase = normalizeCompatibleBaseUrl(input.base_url);
-  if (!normalizedBase || !isCompatibleBaseUrl(normalizedBase)) {
+  if (!normalizedBase || !isCompatibleBaseUrl(normalizedBase) || !isProviderEndpointAllowed(normalizedBase)) {
     throw new RpcError("AI_PROVIDER_BASE_URL_INVALID", 400);
   }
   const model = input.model.trim();
@@ -176,6 +184,17 @@ export async function saveAIProviderConfig(
   if (!keyConfigured(apiKey)) {
     throw new RpcError("AI_PROVIDER_API_KEY_REQUIRED", 400);
   }
+  if (!canEncryptSecrets()) throw new RpcError("SECRET_STORAGE_UNAVAILABLE", 503);
+
+  // Validate the NEW IDs against the configured account before replacing a
+  // working configuration. A catalog never invents a replacement model.
+  for (const id of new Set([model, ...(agentModel ? [agentModel] : [])])) {
+    try {
+      await verifyCatalogModel({ baseUrl: normalizedBase, apiKey, refresh: true }, id);
+    } catch (error) {
+      throw new RpcError(error instanceof Error ? error.message.slice(0, 300) : "AI_PROVIDER_MODEL_INVALID", 400);
+    }
+  }
 
   await d.collection(COLLECTION).doc(DOC_ID).set(
     {
@@ -184,7 +203,9 @@ export async function saveAIProviderConfig(
       model,
       agent_model: agentModel,
       label,
-      api_key: apiKey,
+      api_key_encrypted: encryptSecret(apiKey),
+      api_key_last4: apiKey.slice(-4),
+      api_key: FieldValue.delete(),
       updated_by: updaterUid,
       updated_at: nowTs(),
     },

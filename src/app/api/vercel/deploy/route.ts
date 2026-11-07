@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSessionUser } from "@/lib/firebase/session";
 import { createVercelDeployment, waitForDeployment, getVercelDeployment, RpcError } from "@/lib/server/vercel";
+import { mutationCsrfResponse } from "@/lib/server/request-security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,6 +33,8 @@ function rateLimited(uid: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
+  const csrf = mutationCsrfResponse(req);
+  if (csrf) return csrf;
   const origin = req.headers.get("origin");
   if (origin) {
     const allowed = req.headers.get("x-forwarded-host")?.split(",")[0].trim() || req.nextUrl.host;

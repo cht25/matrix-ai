@@ -90,6 +90,10 @@ export async function executeAgentTool(
     await auditTool(d, user, toolId, "denied", "UNKNOWN_TOOL", requestId);
     return { ok: false, error: "UNKNOWN_TOOL", request_id: requestId };
   }
+  if (user.deviceId && spec.scopes.some((scope) => !user.scopes?.includes(scope))) {
+    await auditTool(d, user, toolId, "denied", "DEVICE_SCOPE_DENIED", requestId);
+    return { ok: false, error: "DEVICE_SCOPE_DENIED", request_id: requestId };
+  }
   const ctx: ToolContext = {
     db: d,
     uid: user.uid,

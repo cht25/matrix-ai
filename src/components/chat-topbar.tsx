@@ -11,7 +11,8 @@
 //   [Mode ▾] [Model ▾]                                   ● Ready   [Settings ▾]
 // =============================================================================
 
-import { FlaskConical, MonitorPlay, Settings2, SlidersHorizontal, Volume2 } from "lucide-react";
+import Link from "next/link";
+import { Cpu, FlaskConical, MonitorPlay, Settings2, SlidersHorizontal, Volume2 } from "lucide-react";
 import { MATRIX_MODES, MODEL_LANES, type ChatMode, type ModelLane, type ResponseStrategy } from "@/lib/ai/modes";
 import { MenuItem, MenuLabel, MenuSeparator, Popover } from "@/components/popover";
 import { cn } from "@/lib/utils";
@@ -88,6 +89,7 @@ export function ChatTopBar({
             <option key={item.id} value={item.id}>{item.label}</option>
           ))}
         </select>
+        <Link href="/models" className={cn(SELECT, "hidden text-ink-2 sm:inline-flex")} title="Choose a verified model"><Cpu size={14} /> Models</Link>
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">

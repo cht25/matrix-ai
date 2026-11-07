@@ -94,8 +94,10 @@ export async function ensureUserDocuments(
   } else if (!String(prev?.avatar_url ?? "").trim() && photoURL) {
     await profileRef.set({ avatar_url: photoURL, updated_at: nowTs() }, { merge: true });
   }
-  await d.collection("user_security_settings").doc(uid).set(
-    {
+  const settingsRef = d.collection("user_security_settings").doc(uid);
+  const settingsSnap = await settingsRef.get();
+  if (!settingsSnap.exists) {
+    await settingsRef.set({
       memory_enabled: true,
       chat_history_enabled: true,
       notifications_email: true,
@@ -103,9 +105,8 @@ export async function ensureUserDocuments(
       notifications_security_alerts: true,
       created_at: nowTs(),
       updated_at: nowTs(),
-    },
-    { merge: true },
-  );
+    });
+  }
   // Track a device session row (users can revoke their own sessions).
   await d.collection("user_sessions").add({
     user_id: uid,

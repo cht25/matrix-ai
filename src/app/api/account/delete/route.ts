@@ -11,6 +11,7 @@ import { getSessionUser } from "@/lib/firebase/session";
 import { nowTs } from "@/lib/firebase/admin";
 import { env } from "@/lib/env";
 import { deleteUserAssets } from "@/lib/server/cloudinary";
+import { mutationCsrfResponse } from "@/lib/server/request-security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,6 +31,8 @@ async function deleteQuery(collection: FirebaseFirestore.CollectionReference, fi
 }
 
 export async function POST(req: NextRequest) {
+  const csrf = mutationCsrfResponse(req);
+  if (csrf) return csrf;
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
 

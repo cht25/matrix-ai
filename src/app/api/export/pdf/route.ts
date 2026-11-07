@@ -8,6 +8,7 @@
 
 import { NextResponse } from "next/server";
 import { renderDocumentPdf } from "@/lib/pdf/documents";
+import { mutationCsrfResponse } from "@/lib/server/request-security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,6 +16,8 @@ export const dynamic = "force-dynamic";
 const MAX_CONTENT = 400_000;
 
 export async function POST(req: Request) {
+  const csrf = mutationCsrfResponse(req);
+  if (csrf) return csrf;
   let payload: unknown;
   try {
     payload = await req.json();

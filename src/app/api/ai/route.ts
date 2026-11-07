@@ -19,10 +19,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, adminAuth, nowTs } from "@/lib/firebase/admin";
 import { verifySession, type SessionUser } from "@/lib/firebase/session";
+import { verifyDeviceCredential, DEVICE_TOKEN_PREFIX, deviceScopeResponse } from "@/lib/firebase/device-session";
 import { redactPII, containsCredentials, leakedPII } from "@/lib/ai/pii";
 import { classify } from "@/lib/ai/domain";
 import { type AIMessage, type AIProvider } from "@/lib/ai/groq";
-import { AI_CONFIG, createAIRoutesFromDb, createScanRoutesFromDb, logAIConfiguration, type AIRouteTarget } from "@/lib/ai/config";
+import { AI_CONFIG, createAIRoutesFromDb, createScanRoutesFromDb, resolveSelectedAIRoute, logAIConfiguration, type AIRouteTarget } from "@/lib/ai/config";
 import { completeWithFallback, streamWithFallback } from "@/lib/ai/executor";
 import { AIProviderError, logGatewayFailure, logProviderFailure, providerPublicCode } from "@/lib/ai/provider-error";
 import { stripReasoningContent } from "@/lib/ai/reasoning";
@@ -40,6 +41,7 @@ import { downloadImage } from "@/lib/server/cloudinary";
 import { descDoc } from "@/lib/server/sort";
 import { applyProjectFiles, ensureProject } from "@/lib/server/projects";
 import { recordAgentToolSelection } from "@/lib/server/tool-gateway";
+import { mutationCsrfResponse } from "@/lib/server/request-security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -95,6 +97,9 @@ async function claimRequest(d: Db, userId: string, requestId: string): Promise<b
 
 async function getUser(req: NextRequest): Promise<SessionUser | null> {
   const bearer = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (bearer?.startsWith(DEVICE_TOKEN_PREFIX)) {
+    try { return await verifyDeviceCredential(adminDb(), bearer); } catch { return null; }
+  }
   if (bearer && bearer.split(".").length === 3) {
     try {
       const decoded = await adminAuth().verifyIdToken(bearer, true);
@@ -103,6 +108,7 @@ async function getUser(req: NextRequest): Promise<SessionUser | null> {
       return null;
     }
   }
+  if (req.headers.has("authorization")) return null;
   const cookie = req.cookies.get("__session")?.value;
   if (!cookie) return null;
   try {
@@ -533,7 +539,16 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const route = decideRoute({ mode, message, attachments, lane, strategy });
   const codingDetected = route.coding || mode === "agent" || isCodingRequest(message, attachments);
   const preferFallback = body.prefer_fallback === true;
-  const targets = await createAIRoutesFromDb(d, codingDetected, preferFallback);
+  let targets = await createAIRoutesFromDb(d, codingDetected, preferFallback);
+  if (typeof body.model_id === "string" && body.model_id.trim()) {
+    try {
+      const selected = await resolveSelectedAIRoute(d, String(body.provider_id ?? ""), body.model_id.trim());
+      targets = [selected, ...targets.filter((target) => !(target.providerId === selected.providerId && target.model === selected.model))];
+    } catch (error) {
+      logProviderFailure(error, requestId);
+      return json({ error: "AI_MODEL_NOT_AVAILABLE", detail: error instanceof Error ? error.message : "Select a model from the verified catalog." }, 400, requestId);
+    }
+  }
   const selectedModel = targets[0]?.model ?? (codingDetected ? AI_CONFIG.coding.model : AI_CONFIG.general.model);
   if (!targets.length) {
     await logUsage(d, user.uid, "none", "chat", {}, Date.now() - started, "error", requestId);
@@ -1155,6 +1170,8 @@ async function handleHealth(mode: ChatMode = "general") {
 // Router
 // ---------------------------------------------------------------------------
 export async function POST(req: NextRequest) {
+  const csrf = mutationCsrfResponse(req);
+  if (csrf) return csrf;
   const requestId = crypto.randomUUID();
   logAIConfiguration();
   try {
@@ -1168,7 +1185,12 @@ export async function POST(req: NextRequest) {
     if (!user) return json({ error: "UNAUTHENTICATED" }, 401);
 
     const d = adminDb();
-    if (action === "chat") return await handleChat(d, user, body);
+    if (action === "chat") {
+      const denied = deviceScopeResponse(user, "chat:write");
+      if (denied) return denied;
+      return await handleChat(d, user, body);
+    }
+    if (user.deviceId) return json({ error: "DEVICE_SCOPE_DENIED" }, 403);
     if (action === "scan") return await handleScan(d, user, body);
     if (action === "image") return await handleImage(d, user, body);
     if (action === "orchestrate") return await handleOrchestrate(d, user, body);

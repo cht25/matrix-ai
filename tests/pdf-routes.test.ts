@@ -12,7 +12,7 @@ const BANGLA = "আমি বাংলায় পরীক্ষা করছ�
 function jsonRequest(body: unknown) {
   return new Request("http://localhost/api/export/pdf", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Origin: "http://localhost" },
     body: JSON.stringify(body),
   });
 }
@@ -36,7 +36,7 @@ describe("POST /api/export/pdf", () => {
   it("rejects empty, oversized and malformed requests", async () => {
     expect((await exportPdf(jsonRequest({ content: "   " }))).status).toBe(400);
     expect((await exportPdf(jsonRequest({ content: "x".repeat(500_000) }))).status).toBe(413);
-    const broken = new Request("http://localhost/api/export/pdf", { method: "POST", body: "not json" });
+    const broken = new Request("http://localhost/api/export/pdf", { method: "POST", headers: { Origin: "http://localhost" }, body: "not json" });
     expect((await exportPdf(broken)).status).toBe(400);
   });
 });

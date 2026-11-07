@@ -4,6 +4,7 @@ import { getSessionUser } from "@/lib/firebase/session";
 import { applyProjectFiles, loadProjectFiles } from "@/lib/server/projects";
 import { createZip, readZip } from "@/lib/projects/zip";
 import { isImagePath } from "@/lib/projects/paths";
+import { mutationCsrfResponse } from "@/lib/server/request-security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,6 +29,8 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
 }
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const csrf = mutationCsrfResponse(req);
+  if (csrf) return csrf;
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
   const { id } = await ctx.params;

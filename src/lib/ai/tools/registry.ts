@@ -99,6 +99,7 @@ export type ToolCategory =
   | "automation"
   | "knowledge"
   | "voice"
+  | "notifications"
   | "general";
 
 /** Execution context handed to handlers. `db` is the Admin SDK Firestore. */

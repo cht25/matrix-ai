@@ -76,19 +76,19 @@ describe("Agent artifact protocol", () => {
 });
 
 describe("OpenRouterProvider", () => {
-  it("uses OpenRouter and NVIDIA Nemotron 3 Ultra with server-side auth", async () => {
+  it("uses the explicitly supplied OpenRouter model with server-side auth", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ choices: [{ message: { content: "done" } }], model: OPENROUTER_MODELS.coding, usage: { total_tokens: 9 } }),
+      json: async () => ({ choices: [{ message: { content: "done" } }], model: "test-provider/test-coder", usage: { total_tokens: 9 } }),
     }) as unknown as typeof fetch;
     const provider = new OpenRouterProvider("sk-or-test", "https://matrix.example");
-    const result = await provider.chat({ model: OPENROUTER_MODELS.coding, messages: [{ role: "user", content: "build" }] });
+    const result = await provider.chat({ model: "test-provider/test-coder", messages: [{ role: "user", content: "build" }] });
     expect(result.content).toBe("done");
     const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(String(url)).toBe("https://openrouter.ai/api/v1/chat/completions");
     expect(init.headers.Authorization).toBe("Bearer sk-or-test");
     const body = JSON.parse(String(init.body));
-    expect(body.model).toContain("nvidia/nemotron-3-ultra");
+    expect(body.model).toBe("test-provider/test-coder");
     expect(body.max_completion_tokens).toBeDefined();
   });
 });

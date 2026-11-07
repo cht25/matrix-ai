@@ -74,7 +74,7 @@ const { POST } = await import("../src/app/api/rpc/route");
 async function call(action: string, args: Record<string, unknown> = {}) {
   const req = new Request("http://localhost/api/rpc", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Origin: "http://localhost" },
     body: JSON.stringify({ action, ...args }),
   });
   const res = await POST(req as never);

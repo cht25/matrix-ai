@@ -8,7 +8,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { adminDb } from "@/lib/firebase/admin";
-import { getSessionUser, type SessionUser } from "@/lib/firebase/session";
+import { type SessionUser } from "@/lib/firebase/session";
+import { getApiSessionUser, hasDeviceScope, rpcDeviceScope } from "@/lib/firebase/device-session";
 import { RpcError } from "@/lib/server/rpc";
 import * as rpc from "@/lib/server/rpc";
 import * as aiRuntime from "@/lib/ai/runtime-config";
@@ -21,12 +22,15 @@ import * as family from "@/lib/server/family";
 import * as agentTasks from "@/lib/server/agent-tasks";
 import * as agentDeploy from "@/lib/server/agent-deploy";
 import * as automations from "@/lib/server/automations";
+import * as canvas from "@/lib/server/canvas";
+import { canvasDocumentSchema } from "@/lib/canvas";
 import { designTokensSchema } from "@/lib/design/tokens";
 import { latestBuildRunForProject, readBuildRun } from "@/lib/server/build";
 import { nowTs } from "@/lib/firebase/admin";
 import { ascDoc, descDoc } from "@/lib/server/sort";
 import { ADMIN_ROLES, NO_ROLE } from "@/lib/roles";
 import { ALL_ADMIN_PERMISSION_CODES } from "@/lib/admin-rbac";
+import { mutationCsrfResponse } from "@/lib/server/request-security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -72,6 +76,8 @@ function isAllowedAvatarUrl(url: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
+  const csrf = mutationCsrfResponse(req);
+  if (csrf) return csrf;
   let body: Record<string, unknown>;
   try {
     body = (await req.json()) as Record<string, unknown>;
@@ -80,25 +86,13 @@ export async function POST(req: NextRequest) {
   }
   const action = str(body.action);
 
-  // Same-origin enforcement (defense in depth alongside SameSite=Lax): a
-  // browser POST that presents an Origin pointing at another site is CSRF.
-  const origin = req.headers.get("origin");
-  if (origin) {
-    const allowed = req.headers.get("x-forwarded-host")?.split(",")[0].trim() || req.nextUrl.host;
-    let sameOrigin = false;
-    try {
-      sameOrigin = new URL(origin).host === allowed;
-    } catch {
-      sameOrigin = false;
-    }
-    if (!sameOrigin) return fail("BAD_ORIGIN", 403);
-  }
-
-  const user = await getSessionUser();
+  const user = await getApiSessionUser(req);
   if (!user) return fail("UNAUTHENTICATED", 401);
 
   const d = adminDb();
   try {
+    const scope = rpcDeviceScope(action);
+    if (user.deviceId && (!scope || !hasDeviceScope(user, scope))) return fail("DEVICE_SCOPE_DENIED", 403);
     const handler = ACTIONS[action];
     if (!handler) return fail("UNKNOWN_ACTION", 400);
     const result = await handler(d, user, body);
@@ -117,6 +111,23 @@ export async function POST(req: NextRequest) {
 }
 
 const ACTIONS: Record<string, Handler> = {
+  canvas_create: (d, u, b) => canvas.createCanvas(d, u, { title: z.string().min(1).max(120).parse(b.title), project_id: b.project_id ? z.string().max(128).parse(b.project_id) : null }),
+  canvas_import: (d, u, b) => canvas.createCanvas(d, u, { title: z.string().min(1).max(120).parse(b.title), document: canvasDocumentSchema.parse(b.document) }),
+  canvas_list: (d, u) => canvas.listCanvases(d, u),
+  canvas_get: (d, u, b) => canvas.getCanvas(d, u, z.string().min(1).max(128).parse(b.id)),
+  canvas_save: (d, u, b) => canvas.saveCanvas(d, u, { id: z.string().min(1).max(128).parse(b.id), revision: z.number().int().min(1).parse(b.revision), title: z.string().min(1).max(120).parse(b.title), project_id: b.project_id ? z.string().max(128).parse(b.project_id) : null, document: canvasDocumentSchema.parse(b.document) }),
+  canvas_delete: (d, u, b) => canvas.deleteCanvas(d, u, z.string().min(1).max(128).parse(b.id)),
+  canvas_version_create: (d, u, b) => canvas.saveCanvasVersion(d, u, z.string().min(1).max(128).parse(b.id)),
+  canvas_versions: (d, u, b) => canvas.listCanvasVersions(d, u, z.string().min(1).max(128).parse(b.id)),
+  canvas_version_restore: (d, u, b) => canvas.restoreCanvasVersion(d, u, z.string().min(1).max(128).parse(b.id), z.string().min(1).max(128).parse(b.version_id)),
+
+  model_preference_set: async (d, u, b) => {
+    const providerId = z.string().max(80).parse(b.provider_id ?? "");
+    const modelId = z.string().max(220).parse(b.model_id ?? "");
+    if (providerId || modelId) await import("@/lib/ai/config").then((m) => m.resolveSelectedAIRoute(d, providerId, modelId));
+    await d.collection("user_security_settings").doc(u.uid).set({ ai_provider_id: providerId, ai_model_id: modelId, updated_at: nowTs() }, { merge: true });
+    return { provider_id: providerId, model_id: modelId };
+  },
   // --- onboarding / identity --------------------------------------------------
   complete_profile: (d, u, b) =>
     rpc.completeProfile(d, u, {
@@ -201,8 +212,17 @@ const ACTIONS: Record<string, Handler> = {
       trigger: str(b.trigger),
       schedule: b.schedule ? str(b.schedule) : null,
       actions: b.actions,
+      time: b.time ? str(b.time) : undefined,
+      timezone: b.timezone ? str(b.timezone) : undefined,
     }),
   automation_list: (d, u) => automations.listAutomations(d, u),
+  automation_scheduler_status: async (d) => {
+    const snap = await d.collection("system_settings").doc("automation_worker").get();
+    const value = snap.data()?.last_success_at;
+    return { configured: (process.env.AUTOMATION_WORKER_SECRET?.trim().length ?? 0) >= 32, last_success_at: value?.toDate?.().toISOString() ?? null };
+  },
+  automation_runs_list: (d, u, b) => automations.listAutomationRuns(d, u, b.id ? z.string().max(128).parse(b.id) : undefined),
+  automation_update: (d, u, b) => automations.updateAutomation(d, u, z.string().min(1).max(128).parse(b.id), { name: z.string().min(2).max(80).parse(b.name), description: str(b.description), trigger: str(b.trigger), schedule: b.schedule ? str(b.schedule) : null, actions: b.actions, time: b.time ? str(b.time) : undefined, timezone: b.timezone ? str(b.timezone) : undefined }),
   automation_status: (d, u, b) =>
     automations.setAutomationStatus(d, u, z.string().min(1).parse(b.id), z.enum(["active", "paused", "disabled"]).parse(b.status)),
   automation_delete: (d, u, b) => automations.deleteAutomation(d, u, z.string().min(1).parse(b.id)),

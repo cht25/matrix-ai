@@ -54,16 +54,14 @@
    strategic neon accent (mint) plus blue (information) and purple (AI).
    -------------------------------------------------------------------------- */
 [data-theme="dark"] {
-  --bg: #070b12;
-  --bg-grad:
-    radial-gradient(900px 420px at 50% -18%, rgba(0, 245, 160, 0.05), transparent 60%),
-    radial-gradient(700px 340px at 92% 4%, rgba(139, 92, 246, 0.05), transparent 58%);
+  --bg: #090b0e;
+  --bg-grad: none;
   --grid-line: rgba(148, 163, 184, 0.045);
 
-  --surface: #0d131d;
-  --surface-2: #121a26;
-  --surface-3: #182232;
-  --sidebar: #090e17;
+  --surface: #111419;
+  --surface-2: #191e25;
+  --surface-3: #222933;
+  --sidebar: #0c0f14;
 
   --text: #f8fafc;
   --text-secondary: #cbd5e1;
@@ -72,17 +70,17 @@
   --border: rgba(148, 163, 184, 0.14);
   --border-strong: rgba(148, 163, 184, 0.26);
 
-  --primary: #00f5a0;
-  --primary-hover: #00d98d;
-  --primary-contrast: #04140d;
-  --primary-soft: rgba(0, 245, 160, 0.12);
+  --primary: #3897ff;
+  --primary-hover: #65adff;
+  --primary-contrast: #06101e;
+  --primary-soft: rgba(56, 151, 255, 0.13);
 
   --blue: #38bdf8;
   --blue-soft: rgba(56, 189, 248, 0.12);
   --purple: #8b5cf6;
   --purple-soft: rgba(139, 92, 246, 0.14);
 
-  --success: #00f5a0;
+  --success: #34d399;
   --success-soft: rgba(0, 245, 160, 0.12);
   --warning: #fbbf24;
   --warning-soft: rgba(251, 191, 36, 0.12);

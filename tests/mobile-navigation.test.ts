@@ -34,10 +34,10 @@ describe("mobile navigation has NO hamburger", () => {
 });
 
 describe("primary bottom navigation", () => {
-  const nav = read("src/components/mobile-nav.tsx");
+  const nav = read("src/lib/navigation.ts");
 
-  it("exposes Chat, Agent, Canvas, Family and Devices plus More", () => {
-    for (const label of ["Chat", "Agent", "Canvas", "Family", "Devices", "More"]) {
+  it("exposes Chat, Agent, Automations and Devices plus More", () => {
+    for (const label of ["Chat", "Agent", "Automations", "Devices", "More"]) {
       expect(nav).toContain(`"${label}"`);
     }
   });

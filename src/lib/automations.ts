@@ -35,6 +35,9 @@ export type Automation = {
   run_count: number;
   created_at: string;
   updated_at: string;
+  time?: string;
+  timezone?: string;
+  next_run_at?: string | null;
 };
 
 export function isAutomationTrigger(value: unknown): value is AutomationTrigger {

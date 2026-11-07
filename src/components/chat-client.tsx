@@ -176,6 +176,16 @@ export function ChatClient({
 
   // --- capability selection (secondary; lives in the top bar / settings) ---
   const [lane, setLane] = useState<ModelLane>("auto");
+  const [modelPreference, setModelPreference] = useState<{ provider_id: string; model_id: string }>({ provider_id: "", model_id: "" });
+  useEffect(() => {
+    if (isTemporary) return;
+    let active = true;
+    void fetch("/api/models", { credentials: "same-origin", cache: "no-store" }).then(async (response) => {
+      if (!response.ok) return null;
+      return response.json() as Promise<{ preference?: { provider_id: string; model_id: string } }>;
+    }).then((data) => { if (active && data?.preference) setModelPreference(data.preference); }).catch(() => {});
+    return () => { active = false; };
+  }, [isTemporary]);
   const [strategy, setStrategy] = useState<ResponseStrategy>("balanced");
   const [studyLevel, setStudyLevel] = useState<StudyLevel>("college");
   const [explainStyle, setExplainStyle] = useState<ExplainStyle>("simple");
@@ -702,6 +712,8 @@ export function ChatClient({
           is_temporary: isTemporary,
           mode: messageMode,
           lane,
+          provider_id: modelPreference.provider_id || undefined,
+          model_id: modelPreference.model_id || undefined,
           strategy,
           study_level: studyLevel,
           explain_style: explainStyle,
@@ -1453,7 +1465,7 @@ export function ChatClient({
           onToggleAutoSpeak={toggleAutoSpeak}
           demoMode={demoMode}
           onToggleDemo={() => setDemoMode((value) => !value)}
-          routingLabel={routingLabel}
+          routingLabel={modelPreference.model_id ? `${modelPreference.provider_id} · ${modelPreference.model_id}` : routingLabel}
           workspaceCount={mode === "agent" ? agentFiles.length : 0}
           onOpenWorkspace={() => setWorkspaceOpen(true)}
           autoSpeakLabels={{ on: t("chat.autoSpeakOn"), off: t("chat.autoSpeakOff") }}
