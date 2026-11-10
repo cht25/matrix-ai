@@ -183,4 +183,16 @@ describe("POST /api/rpc admin_set_role", () => {
     const r = await call("admin_role_catalog");
     expect(r.status).toBe(403);
   });
+
+  it("only system.settings admins can read or mutate the managed AI provider registry", async () => {
+    sessionUid = "regular-user";
+    const denied = await call("admin_ai_managed_providers_get");
+    expect(denied.status).toBe(403);
+    expect(denied.body).toMatchObject({ error: { code: "PERMISSION_DENIED" } });
+
+    sessionUid = "actor-super";
+    const allowed = await call("admin_ai_managed_providers_get");
+    expect(allowed.status).toBe(200);
+    expect(allowed.body).toMatchObject({ success: true, data: [] });
+  });
 });

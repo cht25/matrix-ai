@@ -10,6 +10,7 @@ import { OPENROUTER_MODELS, createCodingProvider } from "@/lib/ai/openrouter";
 import { createRuntimeAgentRoute, createRuntimeAIRoute, readAIProviderConfig, type RuntimeAIRoute } from "@/lib/ai/runtime-config";
 import { environmentProviders, CatalogValidatedProvider, type RegisteredProvider } from "@/lib/ai/provider-registry";
 import { AIProviderError, type AIProviderName } from "@/lib/ai/provider-error";
+import { getManagedProviderCatalogEntries, getManagedProviderRoutes } from "@/lib/ai/managed-providers";
 
 export type AIRouteTarget = {
   provider: AIProviderName;
@@ -154,10 +155,16 @@ export async function createAIRoutesFromDb(
   preferFallback = false,
 ): Promise<AIRouteTarget[]> {
   const envTargets = createAIRoutes(coding, false);
+  let managedTargets: Awaited<ReturnType<typeof getManagedProviderRoutes>> = [];
   let runtimeRoute: RuntimeAIRoute | null = null;
   let runtimeConfig: Awaited<ReturnType<typeof readAIProviderConfig>> = null;
 
   if (d) {
+    try {
+      managedTargets = await getManagedProviderRoutes(d, coding ? "agent" : "chat");
+    } catch (error) {
+      console.error("[MATRIX] Managed AI provider registry could not be read; using remaining providers.", error instanceof Error ? error.message.slice(0, 160) : "unknown");
+    }
     try {
       runtimeConfig = await readAIProviderConfig(d);
       runtimeRoute = createRuntimeAIRoute(runtimeConfig);
@@ -169,7 +176,15 @@ export async function createAIRoutesFromDb(
     }
   }
 
-  if (!runtimeRoute) return createAIRoutes(coding, preferFallback);
+  const managedRouteTargets: AIRouteTarget[] = managedTargets.map((target) => ({
+    ...target,
+    client: new FallbackSafeProvider(new CatalogValidatedProvider(target.client)),
+  }));
+
+  if (!runtimeRoute) {
+    const configured = [...managedRouteTargets, ...envTargets];
+    return preferFallback ? [...envTargets, ...managedRouteTargets] : configured.length ? configured : createAIRoutes(coding, preferFallback);
+  }
 
   // Agent / coding requests use the dedicated Agent model when the admin has
   // saved one; otherwise they share the chat model.
@@ -181,7 +196,9 @@ export async function createAIRoutesFromDb(
   // `preferFallback` is used by retry/probe flows; it deliberately puts the
   // environment provider first so the admin config is only used after the
   // fallback has been checked.
-  return preferFallback ? [...envTargets, ...runtimeTargets] : [...runtimeTargets, ...envTargets];
+  return preferFallback
+    ? [...envTargets, ...runtimeTargets, ...managedRouteTargets]
+    : [...managedRouteTargets, ...runtimeTargets, ...envTargets];
 }
 
 /**
@@ -196,7 +213,13 @@ export async function createScanRoutesFromDb(d: Db | null): Promise<AIRouteTarge
     : null;
 
   let runtimeRoute: RuntimeAIRoute | null = null;
+  let managedTargets: Awaited<ReturnType<typeof getManagedProviderRoutes>> = [];
   if (d) {
+    try {
+      managedTargets = await getManagedProviderRoutes(d, "vision");
+    } catch (error) {
+      console.error("[MATRIX] Managed vision provider registry could not be read; using remaining providers.", error instanceof Error ? error.message.slice(0, 160) : "unknown");
+    }
     try {
       const config = await readAIProviderConfig(d);
       runtimeRoute = createRuntimeAIRoute(config);
@@ -208,7 +231,7 @@ export async function createScanRoutesFromDb(d: Db | null): Promise<AIRouteTarge
     }
   }
 
-  const routes: AIRouteTarget[] = [];
+  const routes: AIRouteTarget[] = managedTargets.map((target) => ({ ...target, client: new FallbackSafeProvider(new CatalogValidatedProvider(target.client)) }));
   if (runtimeRoute) routes.push({ ...runtimeRoute, client: new FallbackSafeProvider(runtimeRoute.client) });
   if (envTarget) routes.push(envTarget);
   return routes;
@@ -229,6 +252,7 @@ export async function providerCatalogEntries(d: Db | null): Promise<RegisteredPr
     const config = await readAIProviderConfig(d);
     const route = createRuntimeAIRoute(config);
     if (config && route) entries.unshift({ id: "compatible", name: config.label || "OpenAI-compatible", client: route.client, baseUrl: config.base_url, defaultModel: config.model, codingModel: config.agent_model || config.model, visionModel: "" });
+    entries.unshift(...await getManagedProviderCatalogEntries(d));
   }
   return entries;
 }
