@@ -20,17 +20,20 @@ const previousEnv = {
   localHttp: process.env.AI_ALLOW_LOCAL_HTTP,
 };
 
-function fakeDb() {
+function fakeDb(beforeTransaction?: () => void) {
   return {
     collection: () => ({
       doc: () => ({
         get: async () => ({ exists: Boolean(saved), data: () => saved ?? {} }),
       }),
     }),
-    runTransaction: async (work: (tx: { get: (ref: unknown) => Promise<unknown>; set: (ref: unknown, data: Record<string, unknown>) => void }) => Promise<unknown>) => work({
-      get: async () => ({ exists: Boolean(saved), data: () => saved ?? {} }),
-      set: (_ref, data) => { saved = { ...(saved ?? {}), ...data }; },
-    }),
+    runTransaction: async (work: (tx: { get: (ref: unknown) => Promise<unknown>; set: (ref: unknown, data: Record<string, unknown>) => void }) => Promise<unknown>) => {
+      beforeTransaction?.();
+      return work({
+        get: async () => ({ exists: Boolean(saved), data: () => saved ?? {} }),
+        set: (_ref, data) => { saved = { ...(saved ?? {}), ...data }; },
+      });
+    },
   };
 }
 
@@ -122,6 +125,32 @@ describe("admin-managed AI provider registry", () => {
     await setManagedModelFlags(db, { provider_id: provider.id, model_id: "chat-model", enabled: true, use_for_agent: true });
     expect((await getManagedProviderRoutes(db, "agent")).map((route) => route.model)).toEqual(["chat-model"]);
     expect(decryptSecret(String(((saved?.providers as Array<Record<string, unknown>>)[0]).api_key_encrypted))).toBe("preserved-secret");
+  });
+
+  it("rejects a stale provider edit instead of overwriting concurrent admin changes", async () => {
+    const initial = fakeDb() as never;
+    const provider = await saveManagedProvider(initial, "admin-1", {
+      name: "Concurrent edit",
+      kind: "openai-compatible",
+      base_url: base,
+      api_key: "concurrency-key",
+      enabled: true,
+      models: [selectedModels[0]],
+    });
+    const racedDb = fakeDb(() => {
+      const record = (saved?.providers as Array<Record<string, unknown>>)[0];
+      record.updated_at = "changed-by-another-admin";
+    }) as never;
+
+    await expect(saveManagedProvider(racedDb, "admin-2", {
+      id: provider.id,
+      name: provider.name,
+      kind: provider.kind,
+      base_url: provider.base_url,
+      api_key: "",
+      enabled: true,
+      models: provider.models,
+    })).rejects.toMatchObject({ code: "AI_MANAGED_PROVIDER_CONFLICT", status: 409 });
   });
 
   it("refuses model IDs that the provider does not list", async () => {

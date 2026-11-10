@@ -89,7 +89,7 @@ function publicProvider(record: ManagedProviderStored): ManagedProviderPublic {
 }
 function recordsFrom(value: unknown): ManagedProviderStored[] {
   if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
+  return value.slice(0, MAX_PROVIDERS).flatMap((entry) => {
     if (!entry || typeof entry !== "object") return [];
     const item = entry as Record<string, unknown>;
     if (typeof item.id !== "string" || typeof item.name !== "string" || !isKind(item.kind) || typeof item.api_key_encrypted !== "string") return [];
@@ -228,6 +228,10 @@ export async function saveManagedProvider(d: Db, updaterUid: string, input: Mana
     const current = recordsFrom(snap.exists ? snap.data()?.providers : []);
     const previous = current.find((record) => record.id === id);
     if (input.id && !previous) return configError("AI_MANAGED_PROVIDER_NOT_FOUND", 404);
+    // The catalog was checked outside the transaction. Refuse to overwrite a
+    // provider edited in the meantime; the admin must reload and re-verify its
+    // model selection against the latest endpoint/key.
+    if (input.id && previous?.updated_at !== existing?.updated_at) return configError("AI_MANAGED_PROVIDER_CONFLICT", 409);
     let encryptedKey = previous?.api_key_encrypted ?? "";
     let last4 = previous?.api_key_last4 ?? "";
     if (submittedKey) {
@@ -314,9 +318,13 @@ export async function getManagedProviderCatalogEntries(d: Db | null): Promise<Re
     const active = record.models.filter((model) => model.enabled && (model.use_for_chat || model.use_for_agent || model.use_for_vision));
     if (!active.length) continue;
     let apiKey = "";
-    try { apiKey = decryptSecret(record.api_key_encrypted); } catch { continue; }
+    let baseUrl = "";
+    try {
+      apiKey = decryptSecret(record.api_key_encrypted);
+      baseUrl = normalizeBaseUrl(record.kind, record.base_url);
+    } catch { continue; }
     if (!keyConfigured(apiKey)) continue;
-    const inner = createClient(record.kind, apiKey, record.base_url, record.name);
+    const inner = createClient(record.kind, apiKey, baseUrl, record.name);
     const activeIds = new Set(active.map((model) => model.id));
     const client: AIProvider = {
       chat: (request) => inner.chat(request),
@@ -329,7 +337,7 @@ export async function getManagedProviderCatalogEntries(d: Db | null): Promise<Re
       id: `managed-${record.id}`,
       name: record.name,
       client,
-      baseUrl: record.base_url,
+      baseUrl,
       defaultModel: active.find((model) => model.use_for_chat)?.id ?? "",
       codingModel: active.find((model) => model.use_for_agent)?.id ?? "",
       visionModel: active.find((model) => model.use_for_vision)?.id ?? "",
@@ -347,12 +355,16 @@ export async function getManagedProviderRoutes(d: Db | null, mode: "chat" | "age
     if (routes.length >= MAX_ACTIVE_ROUTES_PER_TASK) break;
     if (!record.enabled) continue;
     let apiKey = "";
-    try { apiKey = decryptSecret(record.api_key_encrypted); } catch { continue; }
+    let baseUrl = "";
+    try {
+      apiKey = decryptSecret(record.api_key_encrypted);
+      baseUrl = normalizeBaseUrl(record.kind, record.base_url);
+    } catch { continue; }
     if (!keyConfigured(apiKey)) continue;
     for (const model of record.models) {
       if (routes.length >= MAX_ACTIVE_ROUTES_PER_TASK) break;
       if (!model.enabled || !model[`use_for_${mode}`]) continue;
-      const client = createClient(record.kind, apiKey, record.base_url, record.name, model.id);
+      const client = createClient(record.kind, apiKey, baseUrl, record.name, model.id);
       routes.push({ provider: record.kind === "gemini" ? "Gemini" : record.kind === "anthropic" ? "Anthropic" : "OpenAI", model: model.id, client, providerId: record.id });
     }
   }

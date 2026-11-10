@@ -34,6 +34,7 @@ const ERROR_COPY: Record<string, string> = {
   AI_MANAGED_PROVIDER_ENDPOINT_INVALID: "Use a valid public HTTPS OpenAI-compatible endpoint. Local HTTP requires explicit server configuration.",
   AI_PROVIDER_CATALOG_FAILED: "Could not reach the provider model catalog. Check the API key, endpoint, and provider availability.",
   AI_MANAGED_MODEL_NOT_IN_CATALOG: "A selected model is no longer listed by the provider. Refresh the catalog and choose available model IDs.",
+  AI_MANAGED_PROVIDER_CONFLICT: "This provider changed while you were editing it. Reload the provider and verify the model catalog again before saving.",
   SECRET_STORAGE_UNAVAILABLE: "Server-side secret encryption is not configured; no provider key was saved.",
 };
 
@@ -236,11 +237,11 @@ export function ManagedAIProviders() {
                   <p className="mt-1 text-xs text-ink-3">{provider.models.filter((model) => model.enabled).length} active / {provider.models.length} listed models</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button type="button" variant={provider.enabled ? "outline" : "secondary"} disabled={busyId === provider.id} onClick={() => void toggleProvider(provider)}>
+                  <Button type="button" variant={provider.enabled ? "outline" : "secondary"} disabled={Boolean(busyId) || Boolean(draft)} onClick={() => void toggleProvider(provider)}>
                     {busyId === provider.id ? <Spinner /> : provider.enabled ? "Deactivate provider" : "Activate provider"}
                   </Button>
-                  <Button type="button" variant="ghost" disabled={Boolean(busyId)} onClick={() => startEdit(provider)}>Edit</Button>
-                  <Button type="button" variant="danger" disabled={Boolean(busyId)} onClick={() => void deleteProvider(provider)}>Remove</Button>
+                  <Button type="button" variant="ghost" disabled={Boolean(busyId) || Boolean(draft)} onClick={() => startEdit(provider)}>Edit</Button>
+                  <Button type="button" variant="danger" disabled={Boolean(busyId) || Boolean(draft)} onClick={() => void deleteProvider(provider)}>Remove</Button>
                 </div>
               </div>
               {provider.models.length ? (
@@ -297,7 +298,7 @@ export function ManagedAIProviders() {
             <Field label="Provider API" htmlFor="managed-provider-kind">
               <Select id="managed-provider-kind" disabled={Boolean(draft.id)} value={draft.kind} onChange={(event) => {
                 const kind = event.target.value as ManagedProviderKind;
-                setDraft({ ...draft, kind, base_url: kind === "openai-compatible" ? "" : NATIVE_ENDPOINTS[kind] });
+                setDraft({ ...draft, kind, base_url: kind === "openai-compatible" ? "" : NATIVE_ENDPOINTS[kind], api_key: "", models: [] });
                 setCatalog([]);
               }}>
                 <option value="openai-compatible">OpenAI-compatible endpoint</option>
@@ -328,19 +329,28 @@ export function ManagedAIProviders() {
 
           {catalog.length ? (
             <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-              <Field label="Choose one or more models to add" htmlFor="managed-model-catalog">
-                <Select
-                  id="managed-model-catalog"
-                  multiple
-                  size={Math.min(8, Math.max(4, catalog.length))}
-                  value={selectedIds}
-                  onChange={(event) => setSelectedIds(Array.from(event.target.selectedOptions, (option) => option.value))}
-                  className="min-h-32"
-                >
-                  {catalog.map((model) => <option key={model.id} value={model.id}>{model.label === model.id ? model.id : `${model.label} · ${model.id}`}</option>)}
-                </Select>
+              <Field label="Choose one or more models to add">
+                <div className="max-h-64 space-y-1 overflow-y-auto rounded-xl border border-border bg-surface p-2">
+                  {catalog.map((model) => {
+                    const checked = selectedIds.includes(model.id);
+                    return (
+                      <label key={model.id} className="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-2 text-sm hover:bg-surface-2">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => setSelectedIds((current) => checked ? current.filter((id) => id !== model.id) : [...current, model.id])}
+                          className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--accent)]"
+                        />
+                        <span className="min-w-0">
+                          <span className="block break-all font-mono text-xs text-ink">{model.id}</span>
+                          {model.label !== model.id ? <span className="block text-xs text-ink-3">{model.label}</span> : null}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
               </Field>
-              <Button type="button" variant="secondary" onClick={addSelectedModels} disabled={!selectedIds.length}>Add selected models</Button>
+              <Button type="button" variant="secondary" onClick={addSelectedModels} disabled={!selectedIds.length}>Add selected models ({selectedIds.length})</Button>
             </div>
           ) : null}
 
