@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { rpc, RpcCallError } from "@/lib/client/api";
-import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
-import { Alert, Badge, Button, Card, Field, Input, Spinner } from "@/components/ui";
+import { rpc } from "@/lib/client/api";
+import { errorCodeOf } from "@/lib/admin-errors";
+import { Alert, Badge, Button, Card, Field, Input, Select, Spinner } from "@/components/ui";
+import type { CatalogModel } from "@/lib/ai/model-catalog";
 
 type PublicConfig = {
   configured: boolean;
@@ -26,6 +27,7 @@ const ERROR_MAP: Record<string, string> = {
   AI_PROVIDER_MODEL_INVALID: "Enter a model ID (for example gpt-4o-mini or gpt-4.1-mini).",
   AI_PROVIDER_API_KEY_REQUIRED: "An API key is required when no key is already saved. Leave the field blank only to keep the existing key.",
   AI_PROVIDER_NOT_CONFIGURED: "Save the provider settings before testing the connection.",
+  AI_PROVIDER_CATALOG_FAILED: "The provider did not return a model catalog. Check the endpoint and key, then try again.",
 };
 
 export function AiProviderSettings() {
@@ -38,6 +40,8 @@ export function AiProviderSettings() {
   const [enabled, setEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState<"general" | "agent" | null>(null);
+  const [catalog, setCatalog] = useState<CatalogModel[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
   const [message, setMessage] = useState<Message>(null);
 
   async function load() {
@@ -86,6 +90,28 @@ export function AiProviderSettings() {
       setMessage({ tone: "danger", text: ERROR_MAP[code] ?? "Could not save AI provider settings." });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function loadModels() {
+    if (!baseUrl.trim()) {
+      setMessage({ tone: "warning", text: "Enter the provider endpoint before loading its model catalog." });
+      return;
+    }
+    setCatalogLoading(true);
+    setMessage(null);
+    try {
+      const result = await rpc<{ models: CatalogModel[]; verifiedAt: string }>("admin_ai_provider_models", {
+        base_url: baseUrl,
+        api_key: apiKey,
+      });
+      setCatalog(result.models);
+      setMessage({ tone: "success", text: `Loaded ${result.models.length} model IDs from the configured provider account. Select one below or enter a model ID manually.` });
+    } catch (error) {
+      const code = errorCodeOf(error, "AI_PROVIDER_CATALOG_FAILED");
+      setMessage({ tone: code === "AI_PROVIDER_API_KEY_REQUIRED" ? "warning" : "danger", text: ERROR_MAP[code] ?? ERROR_MAP.AI_PROVIDER_CATALOG_FAILED });
+    } finally {
+      setCatalogLoading(false);
     }
   }
 
@@ -163,6 +189,16 @@ export function AiProviderSettings() {
             autoComplete="off"
             spellCheck={false}
           />
+          {catalog.length > 0 ? (
+            <Select
+              aria-label="Select a chat model from the provider catalog"
+              value={catalog.some((item) => item.id === model) ? model : ""}
+              onChange={(event) => setModel(event.target.value)}
+            >
+              <option value="">Choose a verified account model…</option>
+              {catalog.map((item) => <option key={item.id} value={item.id}>{item.label === item.id ? item.id : `${item.label} · ${item.id}`}</option>)}
+            </Select>
+          ) : null}
         </Field>
 
         <Field label="Agent / coding model (optional)" htmlFor="ai-agent-model" hint="Used only for Agent mode — building and fixing projects. Leave blank to use the chat model. Pick a larger, long-output coding model here, for example gpt-4.1, qwen/qwen3-coder, claude-sonnet-4 or deepseek/deepseek-chat.">
@@ -174,6 +210,16 @@ export function AiProviderSettings() {
             autoComplete="off"
             spellCheck={false}
           />
+          {catalog.length > 0 ? (
+            <Select
+              aria-label="Select an Agent model from the provider catalog"
+              value={catalog.some((item) => item.id === agentModel) ? agentModel : ""}
+              onChange={(event) => setAgentModel(event.target.value)}
+            >
+              <option value="">Use the chat model for Agent mode</option>
+              {catalog.map((item) => <option key={item.id} value={item.id}>{item.label === item.id ? item.id : `${item.label} · ${item.id}`}</option>)}
+            </Select>
+          ) : null}
         </Field>
 
         <Field
@@ -190,6 +236,13 @@ export function AiProviderSettings() {
             autoComplete="new-password"
           />
         </Field>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="button" variant="outline" onClick={() => void loadModels()} disabled={catalogLoading || saving || testing !== null}>
+            {catalogLoading ? <Spinner /> : "Load available AI models"}
+          </Button>
+          <span className="text-xs text-ink-3">Uses this endpoint and saved key, or the unsaved key above. The key is not saved by this action.</span>
+        </div>
 
         <label className="flex items-center gap-2 text-sm text-ink-2">
           <input

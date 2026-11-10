@@ -414,6 +414,15 @@ const ACTIONS: Record<string, Handler> = {
     await rpc.logAudit(d, u.uid, "ai_provider_settings_updated", "system_settings", "ai_provider", "");
     return result;
   },
+  admin_ai_provider_models: async (d, u, b) => {
+    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
+    const result = await aiRuntime.listAIProviderModels(d, {
+      base_url: z.string().min(1).max(500).parse(b.base_url),
+      api_key: z.string().max(4096).parse(b.api_key ?? ""),
+    });
+    await rpc.logAudit(d, u.uid, "ai_provider_model_catalog_loaded", "system_settings", "ai_provider", "");
+    return result;
+  },
   admin_ai_provider_test: async (d, u, b) => {
     if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
     const mode = b?.mode === "agent" ? "agent" : "general";
