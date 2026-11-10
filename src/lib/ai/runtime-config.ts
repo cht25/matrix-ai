@@ -16,7 +16,7 @@ import "server-only";
 import { FieldValue } from "firebase-admin/firestore";
 import { encryptSecret, decryptSecret, canEncryptSecrets } from "@/lib/ai/image/config";
 import { Db, nowTs } from "@/lib/firebase/admin";
-import { verifyCatalogModel } from "@/lib/ai/model-catalog";
+import { fetchModelCatalog, verifyCatalogModel, type CatalogResult } from "@/lib/ai/model-catalog";
 import { isProviderEndpointAllowed } from "@/lib/ai/endpoint-policy";
 import { RpcError } from "@/lib/server/errors";
 import type { AIProvider } from "@/lib/ai/groq";
@@ -155,6 +155,30 @@ export async function getAIProviderConfigPublic(d: Db): Promise<PublicAIProvider
     updated_at: asIso(record.updated_at),
     label: typeof record.label === "string" && record.label.trim() ? record.label.trim() : "OpenAI-compatible",
   };
+}
+
+/** Fetch model IDs from the admin-selected endpoint without persisting a draft key. */
+export async function listAIProviderModels(
+  d: Db,
+  input: { base_url: string; api_key?: string },
+): Promise<CatalogResult> {
+  const baseUrl = normalizeCompatibleBaseUrl(input.base_url);
+  if (!baseUrl || !isCompatibleBaseUrl(baseUrl) || !isProviderEndpointAllowed(baseUrl)) {
+    throw new RpcError("AI_PROVIDER_BASE_URL_INVALID", 400);
+  }
+
+  const record = await readRecord(d);
+  const suppliedKey = input.api_key?.trim() ?? "";
+  const apiKey = suppliedKey || (typeof record.api_key === "string" ? record.api_key : "");
+  if (!keyConfigured(apiKey)) throw new RpcError("AI_PROVIDER_API_KEY_REQUIRED", 400);
+
+  try {
+    return await fetchModelCatalog({ baseUrl, apiKey, provider: "OpenAI", refresh: true });
+  } catch {
+    // Provider errors can contain request details; return a stable code and
+    // keep the credentials/draft endpoint out of the RPC response and logs.
+    throw new RpcError("AI_PROVIDER_CATALOG_FAILED", 502);
+  }
 }
 
 export async function saveAIProviderConfig(

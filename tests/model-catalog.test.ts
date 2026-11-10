@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import { parseModelCatalog, fetchModelCatalog, verifyCatalogModel, resetModelCatalogCache } from "@/lib/ai/model-catalog";
 import { CatalogValidatedProvider, environmentProviders } from "@/lib/ai/provider-registry";
-import { createRuntimeAgentRoute } from "@/lib/ai/runtime-config";
+import { createRuntimeAgentRoute, listAIProviderModels } from "@/lib/ai/runtime-config";
 import { isProviderEndpointAllowed } from "@/lib/ai/endpoint-policy";
 import { AnthropicProvider } from "@/lib/ai/anthropic";
 import type { AIProvider } from "@/lib/ai/groq";
@@ -54,6 +54,34 @@ describe("verified model registry", () => {
     expect(requests[0].url).toBe("/v1/messages");
     expect(requests[0].body?.system).toBe("Be concise");
     expect(requests[0].body?.messages).toEqual([{ role: "user", content: "Hello" }]);
+  });
+  it("lists the configured account's real model IDs without saving a draft API key", async () => {
+    const previous = process.env.AI_ALLOW_LOCAL_HTTP;
+    process.env.AI_ALLOW_LOCAL_HTTP = "true";
+    try {
+      const db = {
+        collection: () => ({ doc: () => ({ get: async () => ({ exists: true, data: () => ({ api_key: "saved-account-key" }) }) }) }),
+      };
+      const catalog = await listAIProviderModels(db as never, { base_url: base, api_key: "" });
+      expect(catalog.models.map((model) => model.id)).toEqual(["account-agent", "account-chat"]);
+      expect(requests[0].auth).toBe("Bearer saved-account-key");
+      expect(requests[0].url).toBe("/v1/models");
+    } finally {
+      if (previous === undefined) delete process.env.AI_ALLOW_LOCAL_HTTP;
+      else process.env.AI_ALLOW_LOCAL_HTTP = previous;
+    }
+  });
+  it("rejects model discovery without a configured or supplied key", async () => {
+    const previous = process.env.AI_ALLOW_LOCAL_HTTP;
+    process.env.AI_ALLOW_LOCAL_HTTP = "true";
+    try {
+      const db = { collection: () => ({ doc: () => ({ get: async () => ({ exists: false }) }) }) };
+      await expect(listAIProviderModels(db as never, { base_url: base })).rejects.toMatchObject({ code: "AI_PROVIDER_API_KEY_REQUIRED" });
+      expect(requests).toHaveLength(0);
+    } finally {
+      if (previous === undefined) delete process.env.AI_ALLOW_LOCAL_HTTP;
+      else process.env.AI_ALLOW_LOCAL_HTTP = previous;
+    }
   });
   it("blocks metadata/private targets and requires explicit local HTTP opt-in", () => {
     expect(isProviderEndpointAllowed("https://169.254.169.254/latest")).toBe(false);

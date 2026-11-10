@@ -1,22 +1,17 @@
 import Link from "next/link";
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { db, getCurrentUser } from "@/lib/data";
 import { isAdmin } from "@/lib/server/rpc";
 import { Card } from "@/components/ui";
 
-export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  const pathname = (await headers()).get("x-matrix-pathname") ?? "";
-  // Bootstrap must stay reachable before any admin exists.
-  if (pathname === "/admin/setup" || pathname.startsWith("/admin/setup/")) {
-    return children;
-  }
-
+/** Every admin page except the one-time bootstrap route is protected here. */
+export default async function ProtectedAdminLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 
   try {
     const existing = await db().collection("admin_role_assignments").limit(1).get();
+    // Let the overview redirect the first signed-in operator to /admin/setup.
     if (existing.empty) return children;
   } catch {
     /* fall through to the access check */

@@ -24,11 +24,15 @@ const ImageProviderSettings = lazy(() =>
 const AiUsagePanel = lazy(() =>
   import("@/components/admin/ai-usage-panel").then((m) => ({ default: m.AiUsagePanel })),
 );
+const ManagedAIProviders = lazy(() =>
+  import("@/components/admin/managed-ai-providers").then((m) => ({ default: m.ManagedAIProviders })),
+);
 
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "text", label: "Text models" },
   { id: "image", label: "Image generation" },
+  { id: "providers", label: "Providers & models" },
   { id: "usage", label: "Usage" },
 ] as const;
 
@@ -63,6 +67,7 @@ export function AiConfigTabs({ initialTab = "overview" }: { initialTab?: TabId }
         {tab === "overview" ? <ProviderStatus /> : null}
         {tab === "text" ? <AiProviderSettings /> : null}
         {tab === "image" ? <ImageProviderSettings /> : null}
+        {tab === "providers" ? <ManagedAIProviders /> : null}
         {tab === "usage" ? <AiUsagePanel /> : null}
       </Suspense>
     </div>
