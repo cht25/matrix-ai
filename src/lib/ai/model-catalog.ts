@@ -69,3 +69,42 @@ export async function verifyCatalogModel(input: Parameters<typeof fetchModelCata
 }
 
 export function resetModelCatalogCache(): void { cache.clear(); pending.clear(); }
+
+/**
+ * List a provider's real catalog through its own adapter when it has one.
+ *
+ * `AIProvider.listModels` is the single source of truth: Gemini parses
+ * Google's `/v1beta/models` shape, Anthropic sends `x-api-key`, and an
+ * OpenAI-compatible endpoint uses the bearer catalog. Falling back to the raw
+ * OpenAI shape is only for adapters without native catalog support.
+ */
+export async function listProviderModels(
+  client: { listModels?: () => Promise<CatalogModel[]> },
+  fallback: Parameters<typeof fetchModelCatalog>[0],
+): Promise<CatalogResult> {
+  if (typeof client.listModels === "function") {
+    const models = await client.listModels();
+    if (!models.length) throw new Error("Provider returned no usable model IDs");
+    return { models, verifiedAt: new Date().toISOString() };
+  }
+  return fetchModelCatalog({ ...fallback, refresh: true });
+}
+
+/** Verify one model ID using the provider's own catalog (cached per adapter). */
+export async function verifyProviderModel(
+  client: { listModels?: () => Promise<CatalogModel[]> },
+  fallback: Parameters<typeof fetchModelCatalog>[0],
+  model: string,
+  provider: AIProviderName,
+): Promise<void> {
+  const catalog = await listProviderModels(client, fallback);
+  if (!catalog.models.some((item) => item.id === model)) {
+    throw new AIProviderError({
+      provider,
+      model,
+      status: 404,
+      type: "invalid_request",
+      detail: `Model ${model} is not present in this provider's account catalog. Choose a listed model; MATRIX will not guess a replacement.`,
+    });
+  }
+}

@@ -1,9 +1,9 @@
 import "server-only";
 import type { AIProvider } from "@/lib/ai/groq";
 import { createProvider, MODELS } from "@/lib/ai/groq";
-import { createCodingProvider, OPENROUTER_MODELS } from "@/lib/ai/openrouter";
+
 import { createOpenAICompatibleProvider } from "@/lib/ai/openai";
-import { GeminiProvider } from "@/lib/ai/gemini";
+import { GeminiProvider, GEMINI_API_BASE_URL } from "@/lib/ai/gemini";
 import { AnthropicProvider } from "@/lib/ai/anthropic";
 import { AIProviderError } from "@/lib/ai/provider-error";
 
@@ -27,8 +27,11 @@ export function environmentProviders(): RegisteredProvider[] {
   const result: RegisteredProvider[] = [];
   const groq = createProvider();
   if (groq) result.push({ id: "groq", name: "Groq", client: groq, baseUrl: "https://api.groq.com/openai/v1", defaultModel: MODELS.chat, codingModel: process.env.GROQ_CODING_MODEL?.trim() || MODELS.chat, visionModel: MODELS.vision });
-  const router = createCodingProvider();
-  if (router) result.push({ id: "openrouter", name: "OpenRouter", client: router, baseUrl: "https://openrouter.ai/api/v1", defaultModel: process.env.OPENROUTER_CHAT_MODEL?.trim() || OPENROUTER_MODELS.coding, codingModel: OPENROUTER_MODELS.coding, visionModel: "" });
+  // OpenRouter is intentionally NOT a default provider: the main model is
+  // Google Gemini. An operator who wants OpenRouter selects it explicitly as
+  // the main model (Admin → AI configuration) or adds it as a managed
+  // provider, so a saved OpenRouter key can never quietly become the brain of
+  // the assistant.
   const openaiKey = configured(process.env.OPENAI_API_KEY);
   if (openaiKey) {
     const baseUrl = process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1";
@@ -37,7 +40,7 @@ export function environmentProviders(): RegisteredProvider[] {
   }
   const geminiKey = configured(process.env.GEMINI_API_KEY);
   if (geminiKey) {
-    const baseUrl = "https://generativelanguage.googleapis.com/v1beta";
+    const baseUrl = GEMINI_API_BASE_URL;
     const model = process.env.GEMINI_MODEL?.trim() || "";
     const codingModel = process.env.GEMINI_CODING_MODEL?.trim() || model;
     result.push({ id: "gemini", name: "Gemini", client: new GeminiProvider(geminiKey), baseUrl, defaultModel: model, codingModel, visionModel: process.env.GEMINI_VISION_MODEL?.trim() || "" });

@@ -68,6 +68,75 @@ class MatrixApi {
     return data;
   }
 
+  /// Cross-account Family pairing (`matrix-family-pair:v1.<token>`).
+  /// Signs in with the member's OWN Firebase account — no shared login needed.
+  Future<Map<String, dynamic>> pairFamilyDevice({
+    required String pairToken,
+    required String deviceName,
+    String deviceType = 'phone',
+    String platform = 'android',
+  }) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw ApiException('UNAUTHENTICATED', 401);
+    final accountJwt = await _accountToken();
+    final response = await _sendRaw(
+      'POST',
+      MatrixConfig.baseUri.resolve('/api/rpc'),
+      accountJwt,
+      {
+        'action': 'family_pairing_complete',
+        'pair_token': pairToken,
+        'device_name': deviceName,
+        'device_type': deviceType,
+        'platform': platform,
+      },
+    );
+    final envelope = _decode(response);
+    if (response.statusCode != 200 || envelope['success'] != true) {
+      final err = envelope['error'];
+      final code = err is String ? err : (err is Map ? (err['code'] ?? 'PAIRING_FAILED') : 'PAIRING_FAILED');
+      throw ApiException(code.toString(), response.statusCode);
+    }
+    final data = Map<String, dynamic>.from(envelope['data'] as Map? ?? {});
+    if (data['access_token'] != null) {
+      await _storage.write(key: 'matrix_device_credential', value: jsonEncode({
+        'access_token': data['access_token'],
+        'expires_at': data['access_token_expires_at'],
+        'owner_uid': user.uid,
+        'device_id': data['device_id'],
+        'family_id': data['family_id'],
+      }));
+    }
+    return data;
+  }
+
+  /// Sync own + family opt-in app usage, hidden apps, and browser history.
+  Future<Map<String, dynamic>> reportDeviceActivity({
+    required int screenTimeMinutes,
+    required List<Map<String, dynamic>> apps,
+    required List<Map<String, dynamic>> hiddenApps,
+    required List<Map<String, dynamic>> browserHistory,
+    String? deviceName,
+  }) async {
+    final deviceId = await currentDeviceId();
+    return rpc('device_activity_report', {
+      if (deviceId != null) 'device_id': deviceId,
+      if (deviceName != null) 'device_name': deviceName,
+      'platform': 'android',
+      'screen_time_minutes': screenTimeMinutes,
+      'apps': apps,
+      'hidden_apps': hiddenApps,
+      'browser_history': browserHistory,
+    });
+  }
+
+  /// Poll active family screen-mirror sessions and Google Family Link lock state.
+  Future<Map<String, dynamic>> activeMirrorAndLock() => rpc('family_mirror_active');
+
+  /// Child one-tap disable of screen mirroring (requires parent re-grant to resume).
+  Future<Map<String, dynamic>> disableFamilyMirroring(String familyId) =>
+      rpc('family_mirror_consent', {'family_id': familyId, 'consent': 'revoke'});
+
   static Future<String?> currentDeviceId() async {
     final raw = await _storage.read(key: 'matrix_device_credential');
     if (raw == null || raw.isEmpty) return null;

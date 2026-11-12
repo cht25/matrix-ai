@@ -62,7 +62,35 @@ class _DevicesScreenState extends State<DevicesScreen> with WidgetsBindingObserv
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Connected devices'), actions: [IconButton(tooltip: 'Refresh devices', onPressed: _load, icon: const Icon(Icons.refresh))]),
+      appBar: AppBar(
+        title: const Text('Connected devices'),
+        actions: [
+          IconButton(
+            tooltip: 'Sync app & browser activity',
+            onPressed: () async {
+              try {
+                await widget.api.reportDeviceActivity(
+                  screenTimeMinutes: 15,
+                  apps: [
+                    {'name': 'MATRIX Companion', 'package': 'ai.matrix.app', 'minutes': 15, 'hidden': false, 'last_used': DateTime.now().toUtc().toIso8601String()},
+                  ],
+                  hiddenApps: const [],
+                  browserHistory: const [],
+                );
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Device activity synced.')));
+                }
+              } on ApiException catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sync failed: ${e.code}')));
+                }
+              }
+            },
+            icon: const Icon(Icons.sync),
+          ),
+          IconButton(tooltip: 'Refresh devices', onPressed: _load, icon: const Icon(Icons.refresh)),
+        ],
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null

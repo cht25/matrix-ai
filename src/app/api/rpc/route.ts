@@ -20,6 +20,8 @@ import * as projects from "@/lib/server/projects";
 import * as deploy from "@/lib/server/deploy";
 import * as design from "@/lib/server/design";
 import * as family from "@/lib/server/family";
+import * as pairing from "@/lib/server/pairing";
+import * as esp32 from "@/lib/server/esp32";
 import * as agentTasks from "@/lib/server/agent-tasks";
 import * as toolApprovals from "@/lib/server/tool-approvals";
 import * as agentDeploy from "@/lib/server/agent-deploy";
@@ -186,6 +188,106 @@ const ACTIONS: Record<string, Handler> = {
     family.revokeMember(d, u, { family_id: z.string().min(1).parse(b.family_id), member_id: z.string().min(1).parse(b.member_id) }),
   family_list: (d, u) => family.listFamiliesForUser(d, u.uid),
   family_members: (d, u, b) => family.listMembers(d, u, z.string().min(1).parse(b.family_id)),
+  family_overview: (d, u, b) => family.familyOverview(d, u, z.string().min(1).parse(b.family_id)),
+  family_rename: (d, u, b) =>
+    family.renameFamily(d, u, { family_id: z.string().min(1).parse(b.family_id), name: z.string().min(2).max(80).parse(b.name) }),
+  family_invitation_resend: (d, u, b) => family.resendInvitation(d, u, z.string().min(1).max(200).parse(b.invitation_id)),
+  family_member_detail: (d, u, b) =>
+    family.memberDetail(d, u, { family_id: z.string().min(1).parse(b.family_id), member_id: z.string().min(1).parse(b.member_id) }),
+  family_features_update: (d, u, b) =>
+    family.updateMemberFeatures(d, u, {
+      family_id: z.string().min(1).parse(b.family_id),
+      member_id: z.string().min(1).parse(b.member_id),
+      features: z.array(z.string().max(40)).max(20).parse(b.features),
+    }),
+  family_primary_transfer: (d, u, b) =>
+    family.transferPrimary(d, u, { family_id: z.string().min(1).parse(b.family_id), member_id: z.string().min(1).parse(b.member_id) }),
+  family_mirror_start: (d, u, b) =>
+    family.startMirrorSession(d, u, {
+      family_id: z.string().min(1).parse(b.family_id),
+      member_id: z.string().min(1).parse(b.member_id),
+      device_id: b.device_id ? z.string().max(128).parse(b.device_id) : undefined,
+    }),
+  family_mirror_stop: (d, u, b) => family.stopMirrorSession(d, u, z.string().min(1).max(128).parse(b.session_id)),
+  family_mirror_status: (d, u, b) => family.mirrorSessionStatus(d, u, z.string().min(1).max(128).parse(b.session_id)),
+  family_mirror_consent: (d, u, b) =>
+    family.setMirrorConsent(d, u, {
+      family_id: z.string().min(1).parse(b.family_id),
+      consent: z.enum(["grant", "revoke"]).parse(b.consent),
+    }),
+  family_mirror_grant: (d, u, b) =>
+    family.grantMirrorAccess(d, u, { family_id: z.string().min(1).parse(b.family_id), member_id: z.string().min(1).parse(b.member_id) }),
+  family_pairing_create: (d, u, b) =>
+    family.createFamilyPairing(d, u, {
+      family_id: z.string().min(1).parse(b.family_id),
+      member_id: b.member_id ? z.string().min(1).parse(b.member_id) : undefined,
+      device_label: b.device_label ? z.string().max(80).parse(b.device_label) : undefined,
+    }),
+  family_pairing_complete: (d, u, b) =>
+    family.completeFamilyPairing(d, u, {
+      pair_token: z.string().min(20).max(300).parse(b.pair_token),
+      device_name: z.string().min(1).max(80).parse(b.device_name),
+      device_type: z.string().min(1).max(40).parse(b.device_type),
+      platform: z.string().min(1).max(40).parse(b.platform),
+    }),
+  family_devices: (d, u, b) => family.listFamilyDevices(d, u, z.string().min(1).parse(b.family_id)),
+  family_device_revoke: (d, u, b) => family.revokeFamilyDevice(d, u, z.string().min(1).max(128).parse(b.device_id)),
+  family_activity_report: (d, u, b) =>
+    family.reportFamilyActivity(d, u, {
+      device_id: z.string().min(1).max(128).parse(b.device_id),
+      screen_time_minutes: b.screen_time_minutes === undefined ? 0 : z.number().min(0).max(1440).parse(b.screen_time_minutes),
+      apps: b.apps,
+      browser_history: b.browser_history,
+      hidden_apps: b.hidden_apps,
+    }),
+  family_mirror_frame_upload: (d, u, b) =>
+    family.uploadMirrorFrame(d, u, {
+      session_id: b.session_id ? z.string().max(128).parse(b.session_id) : undefined,
+      storage_path: b.storage_path ? z.string().max(240).parse(b.storage_path) : undefined,
+      image_data_url: b.image_data_url ? z.string().max(4_500_000).parse(b.image_data_url) : undefined,
+    }),
+  family_mirror_active: (d, u) => family.activeMirrorAndLockForUser(d, u),
+  family_device_lock: (d, u, b) =>
+    family.setDeviceLock(d, u, {
+      family_id: z.string().min(1).parse(b.family_id),
+      member_id: z.string().min(1).parse(b.member_id),
+      locked: z.boolean().parse(b.locked),
+      reason: b.reason ? z.string().max(160).parse(b.reason) : undefined,
+    }),
+  family_request_parent_access: (d, u, b) =>
+    family.requestParentAccess(d, u, {
+      family_id: z.string().min(1).parse(b.family_id),
+      kind: z.enum(["unlock_device", "disable_mirror", "adjust_supervision"]).parse(b.kind),
+      note: b.note ? z.string().max(240).parse(b.note) : undefined,
+    }),
+  // --- Own-device companion telemetry + ESP32 hardware bridge ---------------
+  device_activity_report: (d, u, b) =>
+    pairing.reportOwnDeviceActivity(d, u, {
+      device_id: b.device_id ? z.string().max(128).parse(b.device_id) : undefined,
+      device_name: b.device_name ? z.string().max(80).parse(b.device_name) : undefined,
+      platform: b.platform ? z.string().max(40).parse(b.platform) : undefined,
+      screen_time_minutes: b.screen_time_minutes === undefined ? undefined : z.number().min(0).max(1440).parse(b.screen_time_minutes),
+      apps: b.apps,
+      hidden_apps: b.hidden_apps,
+      browser_history: b.browser_history,
+    }),
+  device_activity_latest: (d, u) => pairing.getOwnDeviceActivity(d, u),
+  esp32_pairing_create: (d, u, b) =>
+    esp32.createEsp32Pairing(d, u, {
+      label: b.label ? z.string().max(64).parse(b.label) : undefined,
+      board: b.board ? z.string().max(32).parse(b.board) : undefined,
+      capabilities: b.capabilities,
+      family_id: b.family_id ? z.string().max(120).parse(b.family_id) : null,
+    }),
+  esp32_list: (d, u) => esp32.listEsp32Nodes(d, u),
+  esp32_update: (d, u, b) =>
+    esp32.updateEsp32Node(d, u, {
+      id: z.string().min(1).max(128).parse(b.id),
+      lamp: b.lamp === undefined ? undefined : z.number().min(0).max(255).parse(b.lamp),
+      focus_mode: b.focus_mode === undefined ? undefined : z.boolean().parse(b.focus_mode),
+      label: b.label === undefined ? undefined : z.string().max(64).parse(b.label),
+    }),
+  esp32_revoke: (d, u, b) => esp32.revokeEsp32Node(d, u, z.string().min(1).max(128).parse(b.id)),
 
   // --- Agent tasks & checkpoints (server-written execution trail) -------------
   agent_task_create: (d, u, b) =>
@@ -405,28 +507,32 @@ const ACTIONS: Record<string, Handler> = {
   admin_ai_provider_save: async (d, u, b) => {
     if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
     const result = await aiRuntime.saveAIProviderConfig(d, u.uid, {
+      kind: b.kind === undefined ? undefined : z.enum(aiRuntime.MAIN_MODEL_KINDS).parse(b.kind),
       base_url: str(b.base_url),
-      model: str(b.model),
+      model: z.string().min(1).max(220).parse(b.model),
       agent_model: str(b.agent_model),
+      vision_model: str(b.vision_model),
       api_key: typeof b.api_key === "string" ? b.api_key : "",
       enabled: bool(b.enabled, true),
-      label: str(b.label, "OpenAI-compatible"),
+      label: str(b.label, ""),
+      allow_unverified: bool(b.allow_unverified, false),
     });
-    await rpc.logAudit(d, u.uid, "ai_provider_settings_updated", "system_settings", "ai_provider", "");
+    await rpc.logAudit(d, u.uid, "ai_provider_settings_updated", "system_settings", "ai_provider", result.kind);
     return result;
   },
   admin_ai_provider_models: async (d, u, b) => {
     if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
     const result = await aiRuntime.listAIProviderModels(d, {
-      base_url: z.string().min(1).max(500).parse(b.base_url),
+      base_url: b.base_url === undefined ? "" : z.string().max(500).parse(b.base_url),
       api_key: z.string().max(4096).parse(b.api_key ?? ""),
+      kind: b.kind === undefined ? undefined : z.enum(aiRuntime.MAIN_MODEL_KINDS).parse(b.kind),
     });
     await rpc.logAudit(d, u.uid, "ai_provider_model_catalog_loaded", "system_settings", "ai_provider", "");
     return result;
   },
   admin_ai_provider_test: async (d, u, b) => {
     if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
-    const mode = b?.mode === "agent" ? "agent" : "general";
+    const mode = b?.mode === "agent" ? "agent" : b?.mode === "vision" ? "vision" : "general";
     const result = await aiRuntime.testAIProviderConfig(d, mode);
     await rpc.logAudit(d, u.uid, "ai_provider_settings_tested", "system_settings", "ai_provider", mode);
     return result;
@@ -467,6 +573,7 @@ const ACTIONS: Record<string, Handler> = {
       api_key: z.string().max(4096).parse(b.api_key ?? ""),
       enabled: bool(b.enabled),
       models,
+      allow_unverified: bool(b.allow_unverified, false),
     });
     await rpc.logAudit(d, u.uid, "ai_managed_provider_saved", "system_settings", saved.id, "");
     return saved;

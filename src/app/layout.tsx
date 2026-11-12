@@ -11,6 +11,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/lib/theme";
 import { LocaleProvider } from "@/lib/i18n/client";
 import { BRAND_ICON_URL, BRAND_WORDMARK_URL } from "@/lib/brand";
+import { MatrixRain } from "@/components/matrix-rain";
 
 export const metadata: Metadata = {
   title: {
@@ -65,7 +66,9 @@ export const viewport: Viewport = {
 // Runs before first paint so there is no theme flash. LIGHT is the default
 // for everyone who never picked a theme — only a stored preference or an
 // explicit "system" choice can land on dark.
-const THEME_SCRIPT = `try{var t=localStorage.getItem('matrix-theme')||'dark';var r=t==='light'||t==='dark'?t:(t==='system'&&matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.setAttribute('data-theme',r);var l=localStorage.getItem('matrix-lang');if(l==='bn'||l==='en')document.documentElement.setAttribute('lang',l);}catch(e){document.documentElement.setAttribute('data-theme','dark')}`;
+// Applies the stored theme, language AND background preference before first
+// paint, so the MATRIX rain layer never flashes on for someone who turned it off.
+const THEME_SCRIPT = `try{var t=localStorage.getItem('matrix-theme')||'dark';var r=t==='light'||t==='dark'?t:(t==='system'&&matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.setAttribute('data-theme',r);var l=localStorage.getItem('matrix-lang');if(l==='bn'||l==='en')document.documentElement.setAttribute('lang',l);var rain=localStorage.getItem('matrix-rain');document.documentElement.setAttribute('data-rain',rain==='off'||rain==='subtle'||rain==='normal'||rain==='heavy'?rain:'normal');}catch(e){document.documentElement.setAttribute('data-theme','dark');document.documentElement.setAttribute('data-rain','normal')}`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -77,6 +80,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body>
+        <MatrixRain />
         <ThemeProvider>
           <LocaleProvider>
             <a href="#main" className="skip-link">

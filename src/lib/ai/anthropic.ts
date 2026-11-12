@@ -2,9 +2,11 @@ import type { AIProvider, AIProviderRequest, AIProviderResponse } from "@/lib/ai
 import { fetchModelCatalog } from "@/lib/ai/model-catalog";
 import { providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
 
+export const ANTHROPIC_API_BASE_URL = "https://api.anthropic.com/v1";
+
 /** Native Messages API; Anthropic is not represented as an OpenAI endpoint. */
 export class AnthropicProvider implements AIProvider {
-  constructor(private readonly apiKey: string, private readonly baseUrl = "https://api.anthropic.com/v1") {}
+  constructor(private readonly apiKey: string, private readonly baseUrl = ANTHROPIC_API_BASE_URL) {}
   private headers() { return { "x-api-key": this.apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" }; }
   async listModels() { return (await fetchModelCatalog({ baseUrl: this.baseUrl, headers: this.headers(), provider: "Anthropic" })).models; }
   async healthCheck(): Promise<boolean> { try { return (await this.listModels()).length > 0; } catch { return false; } }

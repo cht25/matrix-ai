@@ -63,9 +63,9 @@ export const env = {
   // retained for backwards compatibility but should not be used for new code.
   appUrl: process.env.NEXT_PUBLIC_APP_URL ?? PRODUCTION_ORIGIN,
   cloudinary: {
-    cloudName: clean(process.env.CLOUDINARY_CLOUD_NAME ?? ""),
-    apiKey: clean(process.env.CLOUDINARY_API_KEY ?? ""),
-    apiSecret: clean(process.env.CLOUDINARY_API_SECRET ?? ""),
+    get cloudName() { return clean(process.env.CLOUDINARY_CLOUD_NAME ?? ""); },
+    get apiKey() { return clean(process.env.CLOUDINARY_API_KEY ?? ""); },
+    get apiSecret() { return clean(process.env.CLOUDINARY_API_SECRET ?? ""); },
   },
   serviceEmail,
   serviceKeyRaw,

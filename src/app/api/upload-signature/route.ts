@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
   const kind =
     body.kind === "identity" ? "identity-documents" :
     body.kind === "screenshot" ? "security-screenshots" :
+    body.kind === "mirror" ? "mirror-frames" :
     body.kind === "avatar" ? "avatars" :
     null;
   if (!kind) return NextResponse.json({ error: "KIND_INVALID" }, { status: 400 });

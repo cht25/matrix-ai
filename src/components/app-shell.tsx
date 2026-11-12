@@ -20,6 +20,7 @@ import { ThemeToggle } from "@/lib/theme";
 import { ToastProvider } from "@/components/toast";
 import { SignOutButton } from "@/components/sign-out-button";
 import { NotificationsBell } from "@/components/notifications-bell";
+import { MirrorAndLockBanner } from "@/components/family/mirror-banner";
 import { UserAvatar } from "@/components/avatar";
 import { MobileNav } from "@/components/mobile-nav";
 import { groupConversations, groupLabel, formatTime, type SidebarConversation } from "@/lib/chat-utils";
@@ -473,6 +474,7 @@ export function AppShell({
               </Link>
             </div>
           ) : null}
+          <MirrorAndLockBanner />
           <div
             className={cn(
               immersive

@@ -484,6 +484,23 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     const audioAsset = await d.collection("chat_audio_assets").doc(audioAssetId).get().catch(() => null);
     if (!audioAsset || !audioAsset.exists || audioAsset.data()?.user_id !== user.uid) return json({ error: "AUDIO_NOT_FOUND" }, 404, requestId);
   }
+  const imageStoragePath = typeof body.image_storage_path === "string" ? body.image_storage_path.trim() : "";
+  let chatImageDataUrl: string | undefined;
+  if (imageStoragePath) {
+    if (!imageStoragePath.startsWith(`security-screenshots/${user.uid}/`)) {
+      await logSafety(d, user.uid, "safety_refusal", "chat image ownership violation");
+      return json({ error: "STORAGE_OWNERSHIP_VIOLATION" }, 403, requestId);
+    }
+    const imgBuf = await downloadImage(imageStoragePath);
+    if (!imgBuf) return json({ error: "FILE_NOT_FOUND" }, 404, requestId);
+    const imgBytes = new Uint8Array(imgBuf);
+    const imgCheck = validateImageUpload(imgBytes, null);
+    if (!imgCheck.ok) {
+      await logSafety(d, user.uid, "safety_refusal", "invalid chat image upload: " + imgCheck.error);
+      return json({ error: imgCheck.error }, 400, requestId);
+    }
+    chatImageDataUrl = `data:${imgCheck.mime};base64,${Buffer.from(imgBytes).toString("base64")}`;
+  }
   let activeProjectId: string | null = null;
   const requestedProjectId = typeof body.project_id === "string" && body.project_id.trim() ? body.project_id.trim().slice(0, 128) : null;
   if (requestedProjectId) {
@@ -554,6 +571,13 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const codingDetected = route.coding || mode === "agent" || isCodingRequest(message, attachments);
   const preferFallback = body.prefer_fallback === true;
   let targets = await createAIRoutesFromDb(d, codingDetected, preferFallback);
+  if (chatImageDataUrl) {
+    const visionTargets = await createScanRoutesFromDb(d);
+    if (visionTargets.length) {
+      const seen = new Set(visionTargets.map((t) => `${t.provider}:${t.model}`));
+      targets = [...visionTargets, ...targets.filter((t) => !seen.has(`${t.provider}:${t.model}`))];
+    }
+  }
   if (typeof body.model_id === "string" && body.model_id.trim()) {
     try {
       const selected = await resolveSelectedAIRoute(d, String(body.provider_id ?? ""), body.model_id.trim());
@@ -647,6 +671,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
             targets,
             {
               messages,
+              ...(chatImageDataUrl ? { imageDataUrl: chatImageDataUrl } : {}),
               temperature: codingDetected ? 0.3 : 0.5,
               maxTokens: codingDetected ? 3200 : 1600,
               requestId,
@@ -766,6 +791,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     const agentMessages = [...messages];
     let result = await completeWithFallback(targets, {
       messages: agentMessages,
+      ...(chatImageDataUrl ? { imageDataUrl: chatImageDataUrl } : {}),
       ...(safeTools.length ? { tools: safeTools } : {}),
       temperature: mode === "agent" ? 0.25 : 0.5,
       maxTokens: mode === "agent" ? 16384 : codingDetected ? 4096 : 1600,
@@ -1057,16 +1083,25 @@ async function handleScan(d: Db, user: SessionUser, body: Record<string, unknown
 
   const targets = await createScanRoutesFromDb(d);
   if (!targets.length) return json({ error: "AI_GATEWAY_NOT_CONFIGURED" }, 503, requestId);
+  // Vision is a real capability, not an assumption: the first route must have a
+  // model configured for image understanding. A text-only main model with no
+  // vision alternative is reported honestly instead of sending an image to a
+  // provider that silently ignores it.
+  if (!targets.some((target) => Boolean(target.model))) return json({ error: "VISION_NOT_CONFIGURED" }, 503, requestId);
   const model = targets[0].model;
 
   const dataUrl = `data:${check.mime};base64,${Buffer.from(bytes).toString("base64")}`;
 
   const agentReference = body.purpose === "agent_reference";
+  const generalQuestion = typeof body.prompt === "string" ? body.prompt.trim().slice(0, 1500) : "";
+  const sourceLabel = typeof body.source === "string" && body.source.trim() ? body.source.trim().slice(0, 40) : "screenshot";
   const prompt = agentReference
     ? `Describe this image as implementation context for a software coding agent. Identify the visible layout, hierarchy, components, spacing, colours, typography, states, text purpose and responsive clues. If it is an object rather than an interface, describe the object's relevant visible properties and what the user may want to reproduce. Be precise and concise. Never transcribe personal information, access tokens, account details or private messages; use neutral placeholders instead. Do not give cybersecurity risk advice unless the image itself is a security warning.`
-    : `Analyse this screenshot for a teen cybersecurity education platform. The user uploaded it to ask whether it is suspicious. ` +
-      `Answer with EXACTLY these sections:\nRisk (low/medium/high/critical)\nConfidence (0-100%)\nWhat I noticed\nWhy it matters\nWhat to do now\nWhat not to do\nIf you already clicked/shared information\nReporting options\n` +
-      `Rules: never repeat personal information visible in the image (refer to it as "your details"); never invent reporting websites; if none are known, say to use the platform's verified reporting resources; be calm and non-judgmental.`;
+    : generalQuestion
+      ? `${generalQuestion}\n\n(Never repeat sensitive personal tokens or passwords visible in the image; refer to them as "your details".)`
+      : `Analyse this ${sourceLabel} screenshot for a teen cybersecurity education platform. The user uploaded it to ask whether it is suspicious. ` +
+        `Answer with EXACTLY these sections:\nRisk (low/medium/high/critical)\nConfidence (0-100%)\nWhat I noticed\nWhy it matters\nWhat to do now\nWhat not to do\nIf you already clicked/shared information\nReporting options\n` +
+        `Rules: never repeat personal information visible in the image (refer to it as "your details"); never invent reporting websites; if none are known, say to use the platform's verified reporting resources; be calm and non-judgmental.`;
 
   let reply = "";
   let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -1116,6 +1151,15 @@ async function handleScan(d: Db, user: SessionUser, body: Record<string, unknown
   }
 
   await logUsage(d, user.uid, usedModel, "scan", usage, Date.now() - started, "ok", requestId);
+  await d.collection("notifications").add({
+    user_id: user.uid,
+    type: "scan",
+    title: `Screenshot analysis complete (${risk} risk)`,
+    body: `Your ${sourceLabel} screenshot was analysed on Cloudinary private storage.`,
+    link: "/scanner",
+    read_at: null,
+    created_at: nowTs(),
+  }).catch(() => {});
   return json({ analysis_id: analysis.id, risk_level: risk, confidence, reply, request_id: requestId }, 200, requestId);
 }
 

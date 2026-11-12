@@ -180,3 +180,80 @@
 @media (prefers-reduced-motion: reduce) {
   .sheet, .sheet-scrim { animation: none; }
 }
+
+/* --- modal dialog (desktop counterpart of the bottom sheet) ---------------- */
+.modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+}
+
+.modal-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 6, 14, 0.66);
+  backdrop-filter: blur(2px);
+  animation: sheet-fade var(--ease) both;
+}
+
+.modal {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: min(34rem, 100%);
+  max-height: min(86dvh, 52rem);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-pop);
+  animation: modal-in var(--ease-slow) both;
+}
+.modal-sm { width: min(26rem, 100%); }
+.modal-lg { width: min(48rem, 100%); }
+
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: var(--space-4);
+}
+
+.modal-footer {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 639px) {
+  .modal-layer { padding: 0; align-items: end; }
+  .modal,
+  .modal-sm,
+  .modal-lg {
+    width: 100%;
+    max-height: 88dvh;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal { animation: none; }
+  .modal-scrim { animation: none; }
+}

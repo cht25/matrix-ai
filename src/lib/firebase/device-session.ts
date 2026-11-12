@@ -27,7 +27,10 @@ const millis = (value: unknown) => Number((value as { toMillis?: () => number })
 export async function verifyDeviceCredential(d: Db, token: string, nowMs = Date.now()): Promise<SessionUser | null> {
   const parsed = parseDeviceToken(token);
   if (!parsed) return null;
-  const snap = await d.collection("devices").doc(parsed.deviceId).get();
+  let snap = await d.collection("devices").doc(parsed.deviceId).get();
+  if (!snap.exists) {
+    snap = await d.collection("family_devices").doc(parsed.deviceId).get();
+  }
   if (!snap.exists) return null;
   const data = snap.data()!;
   if (data.revoked_at || millis(data.access_token_expires_at) <= nowMs || typeof data.access_token_hash !== "string") return null;
@@ -56,8 +59,14 @@ export function deviceScopeResponse(user: SessionUser, scope: string): Response 
   return hasDeviceScope(user, scope) ? null : Response.json({ error: "DEVICE_SCOPE_DENIED" }, { status: 403 });
 }
 export function rpcDeviceScope(action: string, method = "POST"): string | null {
+  void method;
   if (action.startsWith("conversation_")) return /^(conversation_list|conversation_get|conversation_history|conversation_messages)$/.test(action) ? "chat:read" : "chat:write";
   if (action.startsWith("notifications_")) return action === "notifications_list" ? "notifications:read" : "notifications:write";
   if (action === "onboarding_status") return "account:read";
+  if (action === "device_activity_report") return "devices:write";
+  if (action === "device_activity_latest") return "devices:read";
+  if (action === "family_activity_report") return "family:report";
+  if (action === "family_mirror_frame_upload" || action === "family_mirror_active" || action === "family_mirror_consent" || action === "family_mirror_stop") return "family:mirror";
+  if (action === "family_list" || action === "family_overview" || action === "family_request_parent_access") return "family:read";
   return null;
 }

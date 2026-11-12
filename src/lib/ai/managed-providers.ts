@@ -44,6 +44,9 @@ export type ManagedProviderStored = Omit<ManagedProviderPublic, "api_key_set"> &
   api_key_encrypted: string;
   updated_by: string;
 };
+
+/** In-memory form of the stored record; timestamps are ISO strings on disk. */
+function nowIso(): string { return nowTs().toDate().toISOString(); }
 export type ManagedProviderDraft = {
   id?: string;
   name: string;
@@ -52,6 +55,8 @@ export type ManagedProviderDraft = {
   api_key?: string;
   enabled: boolean;
   models: ManagedModelConfig[];
+  /** Skip the live catalog verification (explicit operator decision). */
+  allow_unverified?: boolean;
 };
 
 function isKind(value: unknown): value is ManagedProviderKind {
@@ -184,10 +189,10 @@ export async function saveManagedProvider(d: Db, updaterUid: string, input: Mana
 
   const existingRecords = await readStored(d);
   const existing = existingRecords.find((record) => record.id === id);
-  if (input.id && (!existing || existing.kind !== input.kind)) return configError("AI_MANAGED_PROVIDER_NOT_FOUND", 404);
+  if (input.id && !existing) return configError("AI_MANAGED_PROVIDER_NOT_FOUND", 404);
   const submittedKey = input.api_key?.trim() ?? "";
   let apiKey = submittedKey;
-  if (!apiKey && existing) {
+  if (!apiKey && existing && existing.kind === input.kind) {
     try { apiKey = decryptSecret(existing.api_key_encrypted); } catch { return configError("SECRET_STORAGE_UNAVAILABLE", 503); }
   }
   if (!keyConfigured(apiKey)) return configError("AI_PROVIDER_API_KEY_REQUIRED");
@@ -195,7 +200,8 @@ export async function saveManagedProvider(d: Db, updaterUid: string, input: Mana
 
   const uniqueIds = new Set<string>();
   const requestedModels = input.models.map((model) => {
-    const modelId = typeof model.id === "string" ? model.id.trim() : "";
+    const rawId = typeof model.id === "string" ? model.id.trim() : "";
+    const modelId = input.kind === "gemini" ? rawId.replace(/^models\//, "") : rawId;
     if (!modelId || modelId.length > 220 || uniqueIds.has(modelId)) return configError("AI_MANAGED_PROVIDER_MODELS_INVALID");
     uniqueIds.add(modelId);
     return {
@@ -208,19 +214,27 @@ export async function saveManagedProvider(d: Db, updaterUid: string, input: Mana
     };
   });
 
-  let catalog: CatalogModel[];
-  try {
-    const client = createClient(input.kind, apiKey, baseUrl, name);
-    catalog = await client.listModels?.() ?? [];
-  } catch {
-    throw new RpcError("AI_PROVIDER_CATALOG_FAILED", 502);
+  // Verify every requested ID against the provider's real account catalog.
+  // `allow_unverified` exists for endpoints that do not expose /models (some
+  // Azure and gateway deployments); the operator takes explicit responsibility,
+  // which is far better than a save that can never succeed.
+  let models = requestedModels;
+  if (input.allow_unverified !== true) {
+    let catalog: CatalogModel[];
+    try {
+      const client = createClient(input.kind, apiKey, baseUrl, name);
+      catalog = await client.listModels?.() ?? [];
+    } catch {
+      throw new RpcError("AI_PROVIDER_CATALOG_FAILED", 502);
+    }
+    if (!catalog.length) throw new RpcError("AI_PROVIDER_CATALOG_FAILED", 502);
+    const catalogById = new Map(catalog.map((model) => [model.id, model]));
+    models = requestedModels.map((model) => {
+      const verified = catalogById.get(model.id);
+      if (!verified) return configError("AI_MANAGED_MODEL_NOT_IN_CATALOG", 400);
+      return { ...model, label: verified.label || model.label };
+    });
   }
-  const catalogById = new Map(catalog.map((model) => [model.id, model]));
-  const models = requestedModels.map((model) => {
-    const verified = catalogById.get(model.id);
-    if (!verified) return configError("AI_MANAGED_MODEL_NOT_IN_CATALOG", 400);
-    return { ...model, label: verified.label || model.label };
-  });
 
   const ref = d.collection(COLLECTION).doc(DOC_ID);
   const saved = await d.runTransaction(async (tx) => {
@@ -249,7 +263,7 @@ export async function saveManagedProvider(d: Db, updaterUid: string, input: Mana
       api_key_encrypted: encryptedKey,
       api_key_last4: last4,
       models,
-      updated_at: nowTs().toDate().toISOString(),
+      updated_at: nowIso(),
       updated_by: updaterUid,
     };
     const index = current.findIndex((record) => record.id === id);
@@ -280,7 +294,7 @@ async function mutateProvider(
 }
 
 export async function setManagedProviderEnabled(d: Db, providerId: string, enabled: boolean): Promise<ManagedProviderPublic[]> {
-  return mutateProvider(d, providerId, (providers) => providers.map((provider) => provider.id === providerId ? { ...provider, enabled, updated_at: nowTs().toDate().toISOString() } : provider));
+  return mutateProvider(d, providerId, (providers) => providers.map((provider) => provider.id === providerId ? { ...provider, enabled, updated_at: nowIso() } : provider));
 }
 
 export async function setManagedModelFlags(
@@ -293,7 +307,7 @@ export async function setManagedModelFlags(
     if (!found) return configError("AI_MANAGED_MODEL_NOT_FOUND", 404);
     return {
       ...provider,
-      updated_at: nowTs().toDate().toISOString(),
+      updated_at: nowIso(),
       models: provider.models.map((model) => model.id === input.model_id ? {
         ...model,
         ...(typeof input.enabled === "boolean" ? { enabled: input.enabled } : {}),
@@ -330,7 +344,18 @@ export async function getManagedProviderCatalogEntries(d: Db | null): Promise<Re
       chat: (request) => inner.chat(request),
       ...(inner.streamChat ? { streamChat: (request) => inner.streamChat!(request) } : {}),
       healthCheck: (model) => inner.healthCheck(model),
-      listModels: async () => (await inner.listModels?.() ?? []).filter((model) => activeIds.has(model.id)),
+      listModels: async () => {
+        try {
+          const live = (await inner.listModels?.() ?? []).filter((model) => activeIds.has(model.id));
+          const seen = new Set(live.map((model) => model.id));
+          const extras = active
+            .filter((model) => !seen.has(model.id))
+            .map((model) => ({ id: model.id, label: model.label || model.id }));
+          return [...live, ...extras].sort((a, b) => a.id.localeCompare(b.id));
+        } catch {
+          return active.map((model) => ({ id: model.id, label: model.label || model.id })).sort((a, b) => a.id.localeCompare(b.id));
+        }
+      },
       supportsToolCalls: inner.supportsToolCalls,
     };
     entries.push({

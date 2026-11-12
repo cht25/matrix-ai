@@ -6,7 +6,7 @@ import { ThemeToggle } from "@/lib/theme";
 /** Dedicated admin frame, intentionally separate from the chat/sidebar shell. */
 export function AdminStandaloneShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-bg text-ink">
+    <div className="min-h-screen text-ink">
       <header className="sticky top-0 z-30 border-b border-border bg-surface/95 backdrop-blur">
         <div className="mx-auto flex min-h-16 max-w-[1600px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
           <div className="flex min-w-0 items-center gap-4">

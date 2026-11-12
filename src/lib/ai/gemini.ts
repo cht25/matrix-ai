@@ -5,6 +5,15 @@ import { cachedRealHealthCheck, healthCacheKey } from "@/lib/ai/provider-health"
 
 export const GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 
+/**
+ * Shipped default main model.
+ *
+ * This is a *suggested* ID, not a guarantee: every save/test call is validated
+ * against the authenticated Gemini catalog, so a retired model surfaces as a
+ * clear "not in this account catalog" error instead of a silent failure.
+ */
+export const GEMINI_DEFAULT_MODEL = "gemini-2.5-flash";
+
 export function parseGeminiModelCatalog(payload: unknown): CatalogModel[] {
   const models = (payload as { models?: unknown } | null)?.models;
   if (!Array.isArray(models)) return [];

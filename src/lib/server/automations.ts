@@ -127,6 +127,17 @@ export async function runAutomation(d: Db, user: SessionUser, id: string, opts: 
       tx.set(ref, { last_run_at: nowTs(), last_run_ok: ok, run_count: Number(current.data()?.run_count ?? 0) + 1, lease_until: null, lease_token: null, updated_at: nowTs() }, { merge: true });
     });
     await d.collection("audit_logs").add({ actor_id: user.uid, action: ok ? "automation.run" : "automation.run_failed", target_type: "automation", target_id: id, reason: `${results.length} action(s), ok=${ok}`, metadata: { run_id: runRef.id }, created_at: nowTs() });
+    if (!actions.some((a) => a.tool === "notifications.create")) {
+      await d.collection("notifications").add({
+        user_id: user.uid,
+        type: "automation",
+        title: ok ? `Workflow completed: ${String(data.name ?? "Automation")}` : `Workflow failed: ${String(data.name ?? "Automation")}`,
+        body: ok ? `Ran ${results.length} step(s) successfully.` : "One or more steps stopped — check Run history.",
+        link: "/automations",
+        read_at: null,
+        created_at: nowTs(),
+      }).catch(() => {});
+    }
     return { ok, results, run_id: runRef.id };
   } catch (error) {
     await runRef.set({ status: "failed", ok: false, error: "EXECUTION_FAILED", results: results.map(historyResult), finished_at: nowTs() }, { merge: true }).catch(() => {});

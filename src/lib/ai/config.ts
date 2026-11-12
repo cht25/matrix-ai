@@ -1,13 +1,34 @@
-// Server-side AI configuration. Keep provider names, model IDs and fallback
-// policy in one place so a browser component can never accidentally select a
-// provider credential or invent a model slug.
+// =============================================================================
+// Server-side AI routing.
+//
+// ROUTE ORDER (highest priority first)
+//   1. The MAIN model — one admin-editable record (Gemini by default, or any
+//      OpenAI-compatible / Anthropic endpoint). Read from Firestore, then from
+//      the environment (GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY).
+//   2. Admin-managed provider accounts (extra keys, per-model role flags).
+//   3. Environment fallbacks (Groq for chat, native Gemini vision).
+//
+// OpenRouter is NOT part of the default chain. The main model is Google
+// Gemini; an operator who prefers OpenRouter can point the main model at
+// https://openrouter.ai/api/v1 from Admin → AI configuration, which is an
+// explicit choice rather than a hard-coded default.
+//
+// Keep provider names, model IDs and fallback policy in one place so a browser
+// component can never accidentally select a provider credential or invent a
+// model slug.
+// =============================================================================
 
 import "server-only";
 
 import type { Db } from "@/lib/firebase/admin";
 import { MODELS, createProvider, type AIProvider, type AIProviderRequest, type AIProviderResponse } from "@/lib/ai/groq";
-import { OPENROUTER_MODELS, createCodingProvider } from "@/lib/ai/openrouter";
-import { createRuntimeAgentRoute, createRuntimeAIRoute, readAIProviderConfig, type RuntimeAIRoute } from "@/lib/ai/runtime-config";
+import {
+  createRuntimeAgentRoute,
+  createRuntimeAIRoute,
+  createRuntimeVisionRoute,
+  resolveMainModelConfig,
+  type RuntimeAIRoute,
+} from "@/lib/ai/runtime-config";
 import { environmentProviders, CatalogValidatedProvider, type RegisteredProvider } from "@/lib/ai/provider-registry";
 import { AIProviderError, type AIProviderName } from "@/lib/ai/provider-error";
 import { getManagedProviderCatalogEntries, getManagedProviderRoutes } from "@/lib/ai/managed-providers";
@@ -19,27 +40,31 @@ export type AIRouteTarget = {
   providerId?: string;
 };
 
+/**
+ * Static label shown when nothing is configured at all. It is never used to
+ * make a request — it only keeps the UI honest about which model *would* be
+ * used once credentials exist.
+ */
 export const AI_CONFIG = {
   general: {
-    provider: "Groq" as const,
-    model: MODELS.chat,
+    provider: "Gemini" as const,
+    model: "gemini-2.5-flash",
     fallback: null,
   },
   coding: {
-    provider: "OpenRouter" as const,
-    model: OPENROUTER_MODELS.coding,
+    provider: "Gemini" as const,
+    model: "gemini-2.5-flash",
     fallbackProvider: "Groq" as const,
     fallbackModel: MODELS.chat,
   },
 } as const;
 
 /**
- * The admin OpenAI-compatible provider is operator-entered (base URL, model,
- * key) and is the most likely thing to be misconfigured. A wrong key or model
- * must never take the whole assistant offline: we treat its hard errors
- * (authentication, invalid_request) as fallback-eligible so the environment
- * providers (OpenRouter / Groq) can serve the request. The failure is still
- * logged, so the operator can see and fix it from the Admin panel.
+ * The admin main model is operator-entered and is the most likely thing to be
+ * misconfigured. A wrong key or model must never take the whole assistant
+ * offline: hard errors (authentication, invalid_request) stay
+ * fallback-eligible so the remaining providers can serve the request. The
+ * failure is still logged, so the operator sees it in Admin.
  */
 class FallbackSafeProvider implements AIProvider {
   readonly supportsToolCalls: boolean;
@@ -90,51 +115,47 @@ export function logAIConfiguration(): void {
   const globalState = globalThis as Record<string, unknown>;
   if (globalState[CONFIG_LOGGED]) return;
   globalState[CONFIG_LOGGED] = true;
-  const openRouterConfigured = keyConfigured(process.env.OPENROUTER_API_KEY);
-  const groqConfigured = keyConfigured(process.env.GROQ_API_KEY);
   console.info("[MATRIX] AI configuration", {
-    openRouter: openRouterConfigured ? "configured" : "missing",
-    openRouterModel: OPENROUTER_MODELS.coding,
-    openRouterBilling: OPENROUTER_MODELS.coding.endsWith(":free") ? "free" : "paid-or-custom",
-    groq: groqConfigured ? "configured" : "missing",
-    groqModel: MODELS.chat,
-    fallback: "OpenRouter → Groq when transient",
+    mainModel: "admin-editable (system_settings/ai_provider), Gemini by default",
+    gemini: keyConfigured(process.env.GEMINI_API_KEY) ? "configured" : "missing",
+    geminiModel: process.env.GEMINI_MODEL?.trim() || AI_CONFIG.general.model,
+    groq: keyConfigured(process.env.GROQ_API_KEY) ? "configured" : "missing",
+    groqModel: MODELS.chat || "not configured",
+    openRouter: keyConfigured(process.env.OPENROUTER_API_KEY) ? "configured (only used if selected)" : "not part of default routing",
+    fallback: "main model → managed providers → Groq/vision fallbacks",
   });
 }
 
-/** Environment-keyed fallback routes: OpenRouter for Agent/coding, Groq for general chat. */
+/**
+ * Environment-only routes, used when Firestore is unavailable. Gemini stays
+ * first; Groq is the chat fallback. No OpenRouter.
+ */
 export function createAIRoutes(coding: boolean, preferFallback = false): AIRouteTarget[] {
-  const openRouter = createCodingProvider();
-  const groq = createProvider();
+  const known = new Set<string>();
+  const envTargets: AIRouteTarget[] = environmentProviders()
+    .filter((entry) => {
+      // OpenRouter & Anthropic are no longer implicit defaults. They are
+      // selected explicitly through the main-model record instead.
+      if (entry.id === "openrouter") return false;
+      return coding ? Boolean(entry.codingModel) : Boolean(entry.defaultModel);
+    })
+    .map((entry) => {
+      known.add(entry.name);
+      return {
+        provider: entry.name as AIProviderName,
+        providerId: entry.id,
+        model: coding ? entry.codingModel : entry.defaultModel,
+        client: entry.client,
+      };
+    })
+    .map((target) => ({ ...target, client: new CatalogValidatedProvider(target.client) }));
 
-  let primary: AIRouteTarget | null = null;
-  let fallback: AIRouteTarget | null = null;
-
-  if (coding) {
-    if (openRouter) {
-      primary = { provider: "OpenRouter", model: AI_CONFIG.coding.model, client: openRouter };
-      if (groq) {
-        fallback = { provider: "Groq", model: AI_CONFIG.coding.fallbackModel, client: groq };
-      }
-    } else if (groq) {
-      primary = { provider: "Groq", model: AI_CONFIG.coding.fallbackModel, client: groq };
-    }
-  } else {
-    if (groq) {
-      primary = { provider: "Groq", model: AI_CONFIG.general.model, client: groq };
-      if (openRouter) {
-        fallback = { provider: "OpenRouter", model: AI_CONFIG.coding.model, client: openRouter };
-      }
-    } else if (openRouter) {
-      primary = { provider: "OpenRouter", model: AI_CONFIG.coding.model, client: openRouter };
-    }
-  }
-
-  const targets = preferFallback ? [fallback, primary] : [primary, fallback];
-  const configuredTargets = targets.filter((target): target is AIRouteTarget => target !== null && Boolean(target.model));
-  const known = new Set(configuredTargets.map((target) => target.provider));
-  const additional = environmentProviders().filter((entry) => !known.has(entry.name as AIProviderName) && (coding ? entry.codingModel : entry.defaultModel)).map((entry) => ({ provider: entry.name as AIProviderName, providerId: entry.id, model: coding ? entry.codingModel : entry.defaultModel, client: entry.client }));
-  return [...configuredTargets, ...additional].map((target) => ({ ...target, client: new CatalogValidatedProvider(target.client) }));
+  const ordered = [...envTargets].sort((a, b) => {
+    const rank = (provider: AIProviderName) => (provider === "Gemini" ? 0 : provider === "Groq" ? 1 : 2);
+    return rank(a.provider) - rank(b.provider);
+  });
+  void known;
+  return preferFallback ? [...ordered].reverse() : ordered;
 }
 
 export function aiProviderConfigured(coding: boolean): boolean {
@@ -142,12 +163,9 @@ export function aiProviderConfigured(coding: boolean): boolean {
 }
 
 /**
- * Build the route order for a request, giving an admin-configured
- * OpenAI-compatible provider priority when one is saved in Firestore.
- *
- * `d` may be `null` when the Firestore accessor is unavailable (for example
- * the unauthenticated health probe before the app is configured); in that case
- * the environment fallback providers are the only routes considered.
+ * Build the route order for a request. The main model always leads; managed
+ * provider accounts follow; environment fallbacks come last so a working
+ * configuration is never silently bypassed.
  */
 export async function createAIRoutesFromDb(
   d: Db | null,
@@ -157,7 +175,7 @@ export async function createAIRoutesFromDb(
   const envTargets = createAIRoutes(coding, false);
   let managedTargets: Awaited<ReturnType<typeof getManagedProviderRoutes>> = [];
   let runtimeRoute: RuntimeAIRoute | null = null;
-  let runtimeConfig: Awaited<ReturnType<typeof readAIProviderConfig>> = null;
+  let runtimeConfig: Awaited<ReturnType<typeof resolveMainModelConfig>> = null;
 
   if (d) {
     try {
@@ -166,24 +184,33 @@ export async function createAIRoutesFromDb(
       console.error("[MATRIX] Managed AI provider registry could not be read; using remaining providers.", error instanceof Error ? error.message.slice(0, 160) : "unknown");
     }
     try {
-      runtimeConfig = await readAIProviderConfig(d);
+      runtimeConfig = await resolveMainModelConfig(d);
       runtimeRoute = createRuntimeAIRoute(runtimeConfig);
     } catch (error) {
       console.error(
-        "[MATRIX] Admin AI provider settings could not be read; using environment fallbacks.",
+        "[MATRIX] Main model settings could not be read; using environment providers.",
         error instanceof Error ? error.message.slice(0, 160) : "unknown",
       );
     }
+  } else {
+    // No database handle: the environment is the only configuration source.
+    try {
+      runtimeConfig = await resolveMainModelConfig(null);
+      runtimeRoute = createRuntimeAIRoute(runtimeConfig);
+    } catch { /* fall through to env targets */ }
   }
 
+  // Managed models were already catalog-verified (or explicitly approved via
+  // allow_unverified) when saved; wrapping them in CatalogValidatedProvider
+  // would break endpoints that do not expose /models at runtime.
   const managedRouteTargets: AIRouteTarget[] = managedTargets.map((target) => ({
     ...target,
-    client: new FallbackSafeProvider(new CatalogValidatedProvider(target.client)),
+    client: new FallbackSafeProvider(target.client),
   }));
 
   if (!runtimeRoute) {
     const configured = [...managedRouteTargets, ...envTargets];
-    return preferFallback ? [...envTargets, ...managedRouteTargets] : configured.length ? configured : createAIRoutes(coding, preferFallback);
+    return preferFallback ? [...envTargets, ...managedRouteTargets] : configured;
   }
 
   // Agent / coding requests use the dedicated Agent model when the admin has
@@ -192,19 +219,24 @@ export async function createAIRoutesFromDb(
     ? (createRuntimeAgentRoute(runtimeConfig) ?? runtimeRoute)
     : runtimeRoute;
 
-  const runtimeTargets: AIRouteTarget[] = [{ ...effectiveRoute, providerId: "compatible", client: new FallbackSafeProvider(new CatalogValidatedProvider(effectiveRoute.client)) }];
-  // `preferFallback` is used by retry/probe flows; it deliberately puts the
-  // environment provider first so the admin config is only used after the
-  // fallback has been checked.
-  return preferFallback
-    ? [...envTargets, ...runtimeTargets, ...managedRouteTargets]
-    : [...managedRouteTargets, ...runtimeTargets, ...envTargets];
+  // The main model is already catalog-validated at save time; wrapping it in
+  // CatalogValidatedProvider would re-hit the provider catalog on every cold
+  // request, so it keeps the fallback-safe wrapper only.
+  const mainTarget: AIRouteTarget = {
+    ...effectiveRoute,
+    providerId: `main-${effectiveRoute.kind}`,
+    client: new FallbackSafeProvider(effectiveRoute.client),
+  };
+  const remaining = [...managedRouteTargets, ...envTargets].filter(
+    (target) => !(target.provider === mainTarget.provider && target.model === mainTarget.model),
+  );
+  return preferFallback ? [...remaining, mainTarget] : [mainTarget, ...remaining];
 }
 
 /**
- * Routes used by the screenshot scanner. The admin OpenAI-compatible provider
- * is primary when configured (it should be a multimodal model), otherwise the
- * environment Groq vision model is used.
+ * Routes used by the screenshot scanner. The main model's vision model (or the
+ * chat model when it is multimodal) is primary; managed vision models and the
+ * Groq vision fallback follow.
  */
 export async function createScanRoutesFromDb(d: Db | null): Promise<AIRouteTarget[]> {
   const groq = createProvider();
@@ -221,18 +253,21 @@ export async function createScanRoutesFromDb(d: Db | null): Promise<AIRouteTarge
       console.error("[MATRIX] Managed vision provider registry could not be read; using remaining providers.", error instanceof Error ? error.message.slice(0, 160) : "unknown");
     }
     try {
-      const config = await readAIProviderConfig(d);
-      runtimeRoute = createRuntimeAIRoute(config);
+      runtimeRoute = createRuntimeVisionRoute(await resolveMainModelConfig(d));
     } catch (error) {
       console.error(
-        "[MATRIX] Admin AI provider settings could not be read; using environment vision fallback.",
+        "[MATRIX] Main model settings could not be read; using environment vision fallback.",
         error instanceof Error ? error.message.slice(0, 160) : "unknown",
       );
     }
+  } else {
+    try {
+      runtimeRoute = createRuntimeVisionRoute(await resolveMainModelConfig(null));
+    } catch { /* environment vision fallback below */ }
   }
 
-  const routes: AIRouteTarget[] = managedTargets.map((target) => ({ ...target, client: new FallbackSafeProvider(new CatalogValidatedProvider(target.client)) }));
-  if (runtimeRoute) routes.push({ ...runtimeRoute, client: new FallbackSafeProvider(runtimeRoute.client) });
+  const routes: AIRouteTarget[] = managedTargets.map((target) => ({ ...target, client: new FallbackSafeProvider(target.client) }));
+  if (runtimeRoute) routes.unshift({ ...runtimeRoute, providerId: `main-${runtimeRoute.kind}`, client: new FallbackSafeProvider(runtimeRoute.client) });
   if (envTarget) routes.push(envTarget);
   return routes;
 }
@@ -244,22 +279,49 @@ export class AIConfigurationError extends Error {
   }
 }
 
-
 /** Runtime record first, then environment registry. Never contains public credentials. */
 export async function providerCatalogEntries(d: Db | null): Promise<RegisteredProvider[]> {
-  const entries = environmentProviders();
+  const entries = environmentProviders().filter((entry) => entry.id !== "openrouter");
   if (d) {
-    const config = await readAIProviderConfig(d);
+    const config = await resolveMainModelConfig(d);
     const route = createRuntimeAIRoute(config);
-    if (config && route) entries.unshift({ id: "compatible", name: config.label || "OpenAI-compatible", client: route.client, baseUrl: config.base_url, defaultModel: config.model, codingModel: config.agent_model || config.model, visionModel: "" });
+    if (config && route) {
+      entries.unshift({
+        id: `main-${config.kind}`,
+        name: config.label || `${config.kind} (main model)`,
+        client: route.client,
+        baseUrl: config.base_url,
+        defaultModel: config.model,
+        codingModel: config.agent_model || config.model,
+        visionModel: config.vision_model || config.model,
+      });
+    }
     entries.unshift(...await getManagedProviderCatalogEntries(d));
+  } else {
+    const config = await resolveMainModelConfig(null);
+    const route = createRuntimeAIRoute(config);
+    if (config && route) {
+      entries.unshift({
+        id: `main-${config.kind}`,
+        name: config.label || `${config.kind} (main model)`,
+        client: route.client,
+        baseUrl: config.base_url,
+        defaultModel: config.model,
+        codingModel: config.agent_model || config.model,
+        visionModel: config.vision_model || config.model,
+      });
+    }
   }
   return entries;
 }
 
 export async function resolveSelectedAIRoute(d: Db | null, providerId: string, model: string): Promise<AIRouteTarget> {
   const entry = (await providerCatalogEntries(d)).find((item) => item.id === providerId);
-  if (!entry) throw new AIProviderError({ provider: "OpenAI", model, type: "invalid_request", detail: "The selected provider is not configured on this server." });
+  if (!entry) throw new AIProviderError({ provider: "Gemini", model, type: "invalid_request", detail: "The selected provider is not configured on this server." });
+  const explicitlyConfigured = [entry.defaultModel, entry.codingModel, entry.visionModel].filter(Boolean).includes(model);
+  if (explicitlyConfigured) {
+    return { provider: entry.name as AIProviderName, providerId: entry.id, model, client: new FallbackSafeProvider(entry.client) };
+  }
   if (!entry.client.listModels || !(await entry.client.listModels()).some((item) => item.id === model)) {
     throw new AIProviderError({ provider: entry.name as AIProviderName, model, type: "invalid_request", status: 404, detail: `Model ${model} is not listed by ${entry.name}. Select a verified catalog entry.` });
   }
