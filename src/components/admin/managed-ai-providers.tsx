@@ -38,8 +38,17 @@ const ERROR_COPY: Record<string, string> = {
   SECRET_STORAGE_UNAVAILABLE: "Server-side secret encryption is not configured; no provider key was saved.",
 };
 
+const PROVIDER_PRESETS: Array<{ label: string; name: string; kind: ManagedProviderKind; base_url: string; sampleModel: string }> = [
+  { label: "Google Gemini", name: "Google Gemini", kind: "gemini", base_url: NATIVE_ENDPOINTS.gemini, sampleModel: "gemini-2.5-flash" },
+  { label: "Groq", name: "Groq Cloud", kind: "openai-compatible", base_url: "https://api.groq.com/openai/v1", sampleModel: "llama-3.3-70b-versatile" },
+  { label: "OpenAI", name: "OpenAI", kind: "openai-compatible", base_url: "https://api.openai.com/v1", sampleModel: "gpt-4.1-mini" },
+  { label: "Anthropic", name: "Anthropic Claude", kind: "anthropic", base_url: NATIVE_ENDPOINTS.anthropic, sampleModel: "claude-sonnet-4-5" },
+  { label: "Together AI", name: "Together AI", kind: "openai-compatible", base_url: "https://api.together.xyz/v1", sampleModel: "meta-llama/Llama-3.3-70B-Instruct-Turbo" },
+  { label: "OpenRouter", name: "OpenRouter (optional)", kind: "openai-compatible", base_url: "https://openrouter.ai/api/v1", sampleModel: "" },
+];
+
 function freshDraft(): Draft {
-  return { name: "", kind: "openai-compatible", base_url: "", api_key: "", enabled: true, models: [] };
+  return { name: "Google Gemini", kind: "gemini", base_url: NATIVE_ENDPOINTS.gemini, api_key: "", enabled: true, models: [] };
 }
 function copyProvider(provider: ManagedProviderPublic): Draft {
   return {
@@ -62,6 +71,7 @@ export function ManagedAIProviders() {
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [catalog, setCatalog] = useState<CatalogModel[]>([]);
+  const [manualModel, setManualModel] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -84,18 +94,21 @@ export function ManagedAIProviders() {
     setDraft(freshDraft());
     setCatalog([]);
     setSelectedIds([]);
+    setManualModel("");
     setNotice(null);
   }
   function startEdit(provider: ManagedProviderPublic) {
     setDraft(copyProvider(provider));
     setCatalog([]);
     setSelectedIds([]);
+    setManualModel("");
     setNotice(null);
   }
   function closeDraft() {
     setDraft(null);
     setCatalog([]);
     setSelectedIds([]);
+    setManualModel("");
   }
 
   async function fetchModels() {
@@ -120,6 +133,24 @@ export function ManagedAIProviders() {
     }
   }
 
+  function addManualModel() {
+    if (!draft) return;
+    const raw = manualModel.trim();
+    const id = draft.kind === "gemini" ? raw.replace(/^models\//, "") : raw;
+    if (!id) return;
+    if (draft.models.some((model) => model.id === id)) {
+      setNotice({ tone: "info", text: "That model ID is already in this provider configuration." });
+      return;
+    }
+    const visionReady = draft.kind === "gemini" || draft.kind === "anthropic" || /vision|vl|4o|gemini|claude|pixtral/i.test(id);
+    setDraft({
+      ...draft,
+      models: [...draft.models, { id, label: id, enabled: true, use_for_chat: true, use_for_agent: true, use_for_vision: visionReady }],
+    });
+    setManualModel("");
+    setNotice({ tone: "info", text: `Added ${id}. Click save (or “Save without catalog check” if the endpoint hides /models).` });
+  }
+
   function addSelectedModels() {
     if (!draft) return;
     const existing = new Set(draft.models.map((model) => model.id));
@@ -135,23 +166,51 @@ export function ManagedAIProviders() {
     if (!added.length) setNotice({ tone: "info", text: "Those model IDs are already in this provider configuration." });
   }
 
-  async function saveProvider() {
+  async function saveProvider(allowUnverified = false) {
     if (!draft) return;
-    if (!draft.models.length) {
-      setNotice({ tone: "warning", text: "Load the provider catalog and add at least one model before saving." });
+    const pendingRaw = manualModel.trim();
+    const pendingId = draft.kind === "gemini" ? pendingRaw.replace(/^models\//, "") : pendingRaw;
+    const effectiveModels =
+      pendingId && !draft.models.some((model) => model.id === pendingId)
+        ? [
+            ...draft.models,
+            {
+              id: pendingId,
+              label: pendingId,
+              enabled: true,
+              use_for_chat: true,
+              use_for_agent: true,
+              use_for_vision: draft.kind === "gemini" || draft.kind === "anthropic" || /vision|vl|4o|gemini|claude|pixtral/i.test(pendingId),
+            },
+          ]
+        : draft.models;
+    const effectiveName = draft.name.trim() || KIND_LABEL[draft.kind];
+    if (!effectiveModels.length) {
+      setNotice({ tone: "warning", text: "Fetch the provider catalog or enter at least one model ID before saving." });
       return;
     }
     setSaving(true);
     setNotice(null);
     try {
-      const saved = await rpc<ManagedProviderPublic>("admin_ai_managed_provider_save", draft);
+      const saved = await rpc<ManagedProviderPublic>("admin_ai_managed_provider_save", {
+        ...draft,
+        name: effectiveName,
+        models: effectiveModels,
+        allow_unverified: allowUnverified,
+      });
       setProviders((current) => current.some((provider) => provider.id === saved.id)
         ? current.map((provider) => provider.id === saved.id ? saved : provider)
         : [...current, saved]);
-      setNotice({ tone: "success", text: `${saved.name} saved with ${saved.models.length} provider-verified model(s).` });
+      setNotice({ tone: "success", text: `${saved.name} saved with ${saved.models.length} model(s).` });
       closeDraft();
     } catch (error) {
-      setNotice({ tone: "danger", text: errorText(error, "Provider settings could not be saved.") });
+      const code = errorCodeOf(error, "");
+      setNotice({
+        tone: "danger",
+        text: code === "AI_PROVIDER_CATALOG_FAILED" || code === "AI_MANAGED_MODEL_NOT_IN_CATALOG"
+          ? `${errorText(error, "Provider settings could not be saved.")} If this endpoint does not publish a /models catalog, use "Save without catalog check".`
+          : errorText(error, "Provider settings could not be saved."),
+      });
     } finally {
       setSaving(false);
     }
@@ -287,22 +346,54 @@ export function ManagedAIProviders() {
 
       {draft ? (
         <Card className="space-y-4">
-          <div>
+          <div className="space-y-2">
             <p className="eyebrow">{draft.id ? "Edit provider" : "New provider"}</p>
             <h3 className="mt-1 text-lg font-semibold text-ink">Provider account and model access</h3>
+            {!draft.id ? (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {PROVIDER_PRESETS.map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => {
+                      setDraft({
+                        ...draft,
+                        name: preset.name,
+                        kind: preset.kind,
+                        base_url: preset.base_url,
+                        models: preset.sampleModel
+                          ? [{
+                              id: preset.sampleModel,
+                              label: preset.sampleModel,
+                              enabled: true,
+                              use_for_chat: true,
+                              use_for_agent: true,
+                              use_for_vision: preset.kind === "gemini" || preset.kind === "anthropic",
+                            }]
+                          : [],
+                      });
+                      setCatalog([]);
+                    }}
+                    className="rounded-lg border border-border bg-surface-2 px-2.5 py-1 text-xs font-medium text-ink-2 transition-colors hover:border-accent hover:text-ink"
+                  >
+                    + {preset.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
           <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Admin label" htmlFor="managed-provider-name" hint="For example: Production OpenRouter, Gemini research, or Team Groq.">
+            <Field label="Admin label" htmlFor="managed-provider-name" hint="For example: Gemini Research, Team Groq, or Production Claude.">
               <Input id="managed-provider-name" maxLength={80} value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Provider name" />
             </Field>
             <Field label="Provider API" htmlFor="managed-provider-kind">
-              <Select id="managed-provider-kind" disabled={Boolean(draft.id)} value={draft.kind} onChange={(event) => {
+              <Select id="managed-provider-kind" value={draft.kind} onChange={(event) => {
                 const kind = event.target.value as ManagedProviderKind;
                 setDraft({ ...draft, kind, base_url: kind === "openai-compatible" ? "" : NATIVE_ENDPOINTS[kind], api_key: "", models: [] });
                 setCatalog([]);
               }}>
-                <option value="openai-compatible">OpenAI-compatible endpoint</option>
                 <option value="gemini">Google Gemini API</option>
+                <option value="openai-compatible">OpenAI-compatible endpoint</option>
                 <option value="anthropic">Anthropic Claude API</option>
               </Select>
             </Field>
@@ -325,6 +416,26 @@ export function ManagedAIProviders() {
               {catalogLoading ? <Spinner /> : "Fetch account model catalog"}
             </Button>
             <span className="text-xs text-ink-3">The list comes from this provider's real authenticated catalog; MATRIX does not invent model IDs.</span>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+            <Field label="Add a model ID manually" htmlFor="managed-manual-model" hint="Press Enter or click Add model. Works for any model ID; use “Save without catalog check” if the endpoint hides /models.">
+              <Input
+                id="managed-manual-model"
+                value={manualModel}
+                onChange={(event) => setManualModel(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    addManualModel();
+                  }
+                }}
+                placeholder={draft.kind === "gemini" ? "e.g. gemini-2.5-flash" : draft.kind === "anthropic" ? "e.g. claude-sonnet-4-5" : "e.g. gpt-4.1-mini"}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </Field>
+            <Button type="button" variant="secondary" disabled={!manualModel.trim()} onClick={addManualModel}>Add model</Button>
           </div>
 
           {catalog.length ? (
@@ -384,8 +495,11 @@ export function ManagedAIProviders() {
             Provider active
           </label>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={() => void saveProvider()} disabled={saving || catalogLoading}>
+            <Button type="button" onClick={() => void saveProvider(false)} disabled={saving || catalogLoading}>
               {saving ? <Spinner /> : draft.id ? "Save provider changes" : "Add provider and models"}
+            </Button>
+            <Button type="button" variant="outline" onClick={() => void saveProvider(true)} disabled={saving || catalogLoading || (!draft.models.length && !manualModel.trim())}>
+              Save without catalog check
             </Button>
             <Button type="button" variant="outline" onClick={closeDraft} disabled={saving}>Cancel</Button>
           </div>

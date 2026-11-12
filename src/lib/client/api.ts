@@ -81,7 +81,7 @@ const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
  * the server — the same contract the Supabase/Firebase-Storage versions used.
  */
 export async function uploadOwnedFile(
-  folder: "security-screenshots" | "identity-documents" | "avatars",
+  folder: "security-screenshots" | "identity-documents" | "avatars" | "mirror-frames",
   file: File | Blob,
   filename?: string,
 ): Promise<string> {
@@ -91,11 +91,15 @@ export async function uploadOwnedFile(
   // Client-side gate (same limits the old storage rules enforced). The server
   // re-validates magic bytes when it analyses the file.
   if (file.size <= 0 || file.size > MAX_IMAGE_BYTES) throw new RpcCallError("FILE_TOO_LARGE", 400);
-  const mime = file instanceof File ? file.type : "";
+  const mime = file instanceof File ? file.type : (file.type || "");
   if (mime && !ALLOWED_IMAGE_TYPES.includes(mime)) throw new RpcCallError("UNSUPPORTED_TYPE", 400);
 
   const name = filename ?? (file instanceof File ? file.name : `upload-${Date.now()}`);
-  const kind = folder === "identity-documents" ? "identity" : folder === "avatars" ? "avatar" : "screenshot";
+  const kind =
+    folder === "identity-documents" ? "identity" :
+    folder === "avatars" ? "avatar" :
+    folder === "mirror-frames" ? "mirror" :
+    "screenshot";
   const grantRes = await fetch("/api/upload-signature", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -118,7 +122,6 @@ export async function uploadOwnedFile(
   form.append("file", file);
   form.append("api_key", grant.apiKey);
   form.append("timestamp", String(grant.timestamp));
-  form.append("folder", grant.folder);
   form.append("public_id", grant.publicId);
   form.append("signature", grant.signature);
   if (grant.deliveryType !== "upload") form.append("type", "authenticated");
@@ -134,6 +137,9 @@ export async function uploadOwnedFile(
     throw new RpcCallError("UPLOAD_FAILED", upload.status);
   }
   if (folder === "avatars" && uploaded.secure_url) return uploaded.secure_url;
-  // Storage path contract: folder-prefixed public_id + extension.
-  return `${uploaded.public_id}.${uploaded.format ?? "jpg"}`;
+  const resolvedId = uploaded.public_id.startsWith(`${grant.folder}/`)
+    ? uploaded.public_id
+    : `${grant.folder}/${uploaded.public_id}`;
+  const ext = (uploaded.format || (mime === "image/png" ? "png" : mime === "image/webp" ? "webp" : "jpg")).toLowerCase();
+  return `${resolvedId}.${ext}`;
 }

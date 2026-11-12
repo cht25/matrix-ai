@@ -18,7 +18,10 @@
     "emulators": "firebase emulators:start --only auth,firestore,storage",
     "deploy": "firebase deploy --only firestore:rules,firestore:indexes,storage",
     "migrate:roles": "node scripts/migrate-roles.mjs",
-    "migrate:roles:dry-run": "node scripts/migrate-roles.mjs --dry-run"
+    "migrate:roles:dry-run": "node scripts/migrate-roles.mjs --dry-run",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@fontsource/inter": "^5.3.0",

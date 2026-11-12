@@ -1,281 +1,347 @@
 "use client";
 
-import { useEffect, useState } from "react";
+// Admin → AI configuration → Main model.
+//
+// One card that owns the single most important setting in MATRIX: which model
+// answers chat, Agent/coding and vision requests. It supports three provider
+// protocols (Google Gemini REST, OpenAI-compatible, Anthropic Messages),
+// fetches the real account catalog, lets the operator pick model IDs, and
+// stores the key encrypted — the raw key never returns to this page.
+//
+// Everything is editable: kind, endpoint, chat model, Agent model, vision
+// model and enable/disable. Live tests prove each lane actually answers.
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { CheckCircle2, RefreshCw, ShieldCheck, Sparkles, Zap } from "lucide-react";
 import { rpc } from "@/lib/client/api";
 import { errorCodeOf } from "@/lib/admin-errors";
 import { Alert, Badge, Button, Card, Field, Input, Select, Spinner } from "@/components/ui";
-import type { CatalogModel } from "@/lib/ai/model-catalog";
+import { cn } from "@/lib/utils";
+
+type Kind = "gemini" | "openai-compatible" | "anthropic";
 
 type PublicConfig = {
   configured: boolean;
   enabled: boolean;
+  kind: Kind;
+  kind_label: string;
   base_url: string;
   model: string;
   agent_model: string;
+  vision_model: string;
   api_key_set: boolean;
   api_key_last4: string;
   updated_by: string;
   updated_at: string;
   label: string;
+  suggested_models: string[];
+  environment_key: boolean;
+  source: "database" | "environment" | "none";
 };
 
+type CatalogModel = { id: string; label: string };
 type Message = { tone: "info" | "success" | "warning" | "danger"; text: string } | null;
 
-const ERROR_MAP: Record<string, string> = {
-  PERMISSION_DENIED: "Your role does not include the system.settings permission, which is required to manage the AI provider.",
-  AI_PROVIDER_BASE_URL_INVALID: "The endpoint must be a valid http(s) URL without credentials (for example https://api.openai.com/v1).",
-  AI_PROVIDER_MODEL_INVALID: "Enter a model ID (for example gpt-4o-mini or gpt-4.1-mini).",
-  AI_PROVIDER_API_KEY_REQUIRED: "An API key is required when no key is already saved. Leave the field blank only to keep the existing key.",
-  AI_PROVIDER_NOT_CONFIGURED: "Save the provider settings before testing the connection.",
-  AI_PROVIDER_CATALOG_FAILED: "The provider did not return a model catalog. Check the endpoint and key, then try again.",
+const KINDS: Array<{ id: Kind; label: string; hint: string }> = [
+  { id: "gemini", label: "Google Gemini API", hint: "Native generateContent REST — the shipped main model." },
+  { id: "openai-compatible", label: "OpenAI-compatible", hint: "OpenAI, Groq, OpenRouter, Together, vLLM, Ollama…" },
+  { id: "anthropic", label: "Anthropic Claude API", hint: "Native Messages API." },
+];
+
+const NATIVE_ENDPOINT: Record<Exclude<Kind, "openai-compatible">, string> = {
+  gemini: "https://generativelanguage.googleapis.com/v1beta",
+  anthropic: "https://api.anthropic.com/v1",
 };
+
+const ERROR_MAP: Record<string, string> = {
+  PERMISSION_DENIED: "Your role does not include the system.settings permission, which is required to manage the main model.",
+  AI_PROVIDER_BASE_URL_INVALID: "Enter a valid public HTTPS base URL without credentials (for example https://api.openai.com/v1).",
+  AI_PROVIDER_MODEL_INVALID: "That model ID is not in this account's catalog. Load the catalog and pick a listed ID.",
+  AI_PROVIDER_API_KEY_REQUIRED: "An API key is required the first time. Leave the field blank only to keep the saved key.",
+  AI_PROVIDER_NOT_CONFIGURED: "Save the model settings before running a live test.",
+  AI_PROVIDER_CATALOG_FAILED: "The provider catalog could not be verified. Check the key, endpoint and provider status, then retry.",
+  SECRET_STORAGE_UNAVAILABLE: "Server-side secret encryption is not configured (set PROVIDER_SECRET_KEY). Nothing was saved.",
+  BAD_REQUEST: "Some of the values are not valid. Check the endpoint and model IDs.",
+};
+
+function errorText(error: unknown, fallback: string): string {
+  const code = errorCodeOf(error, "REQUEST_FAILED");
+  return ERROR_MAP[code] ?? fallback;
+}
 
 export function AiProviderSettings() {
   const [config, setConfig] = useState<PublicConfig | null>(null);
   const [loading, setLoading] = useState(true);
+  const [kind, setKind] = useState<Kind>("gemini");
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [agentModel, setAgentModel] = useState("");
+  const [visionModel, setVisionModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [enabled, setEnabled] = useState(true);
+  const [useEnvKey, setUseEnvKey] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState<"general" | "agent" | null>(null);
+  const [testing, setTesting] = useState<"general" | "agent" | "vision" | null>(null);
   const [catalog, setCatalog] = useState<CatalogModel[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [message, setMessage] = useState<Message>(null);
+  const [lastTest, setLastTest] = useState<Record<string, { ok: boolean; text: string }>>({});
 
-  async function load() {
+  const applyConfig = useCallback((value: PublicConfig) => {
+    setConfig(value);
+    setKind(value.kind);
+    setBaseUrl(value.base_url || (value.kind === "openai-compatible" ? "" : NATIVE_ENDPOINT[value.kind]));
+    setModel(value.model);
+    setAgentModel(value.agent_model ?? "");
+    setVisionModel(value.vision_model ?? "");
+    setEnabled(value.enabled);
+    setApiKey("");
+    setUseEnvKey(value.environment_key);
+  }, []);
+
+  const load = useCallback(async () => {
     setLoading(true);
     setMessage(null);
     try {
-      const value = await rpc<PublicConfig>("admin_ai_provider_get");
-      setConfig(value);
-      setBaseUrl(value.base_url);
-      setModel(value.model);
-      setAgentModel(value.agent_model ?? "");
-      setApiKey("");
-      setEnabled(value.enabled);
+      applyConfig(await rpc<PublicConfig>("admin_ai_provider_get"));
     } catch (error) {
-      const code = errorCodeOf(error, "LOAD_FAILED");
-      setMessage({
-        tone: code === "PERMISSION_DENIED" ? "warning" : "danger",
-        text: ERROR_MAP[code] ?? "Could not load AI provider settings.",
-      });
+      setMessage({ tone: errorCodeOf(error, "") === "PERMISSION_DENIED" ? "warning" : "danger", text: errorText(error, "Could not load the main model settings.") });
     } finally {
       setLoading(false);
     }
-  }
+  }, [applyConfig]);
 
-  useEffect(() => {
-    void load();
-  }, []);
+  useEffect(() => { void load(); }, [load]);
 
-  async function save() {
-    setSaving(true);
-    setMessage(null);
-    try {
-      const value = await rpc<PublicConfig>("admin_ai_provider_save", {
-        base_url: baseUrl,
-        model,
-        agent_model: agentModel,
-        api_key: apiKey,
-        enabled,
-        label: "OpenAI-compatible",
-      });
-      setConfig(value);
-      setApiKey("");
-      setMessage({ tone: "success", text: "AI provider settings saved. New chat and Agent requests will use this endpoint and model." });
-    } catch (error) {
-      const code = errorCodeOf(error, "SAVE_FAILED");
-      setMessage({ tone: "danger", text: ERROR_MAP[code] ?? "Could not save AI provider settings." });
-    } finally {
-      setSaving(false);
-    }
-  }
+  const suggested = useMemo(() => {
+    const rows = [...(config?.kind === kind ? config.suggested_models : [])];
+    if (kind === "gemini" && !rows.length) rows.push("gemini-2.5-flash", "gemini-2.5-pro");
+    return Array.from(new Set([...rows, ...catalog.map((item) => item.id)])).slice(0, 400);
+  }, [catalog, config?.kind, config?.suggested_models, kind]);
 
   async function loadModels() {
-    if (!baseUrl.trim()) {
-      setMessage({ tone: "warning", text: "Enter the provider endpoint before loading its model catalog." });
-      return;
-    }
     setCatalogLoading(true);
     setMessage(null);
     try {
       const result = await rpc<{ models: CatalogModel[]; verifiedAt: string }>("admin_ai_provider_models", {
+        kind,
         base_url: baseUrl,
         api_key: apiKey,
       });
       setCatalog(result.models);
-      setMessage({ tone: "success", text: `Loaded ${result.models.length} model IDs from the configured provider account. Select one below or enter a model ID manually.` });
+      setMessage({ tone: "success", text: `Loaded ${result.models.length} real model IDs from this provider account.` });
     } catch (error) {
-      const code = errorCodeOf(error, "AI_PROVIDER_CATALOG_FAILED");
-      setMessage({ tone: code === "AI_PROVIDER_API_KEY_REQUIRED" ? "warning" : "danger", text: ERROR_MAP[code] ?? ERROR_MAP.AI_PROVIDER_CATALOG_FAILED });
+      setCatalog([]);
+      setMessage({ tone: "danger", text: errorText(error, "The provider did not return a model catalog.") });
     } finally {
       setCatalogLoading(false);
     }
   }
 
-  async function test(mode: "general" | "agent") {
-    if (!config?.configured) {
-      setMessage({ tone: "warning", text: ERROR_MAP.AI_PROVIDER_NOT_CONFIGURED });
+  async function save(allowUnverified = false) {
+    if (!model.trim()) {
+      setMessage({ tone: "warning", text: "Choose the chat model ID first." });
       return;
     }
+    setSaving(true);
+    setMessage(null);
+    try {
+      const value = await rpc<PublicConfig>("admin_ai_provider_save", {
+        kind,
+        base_url: baseUrl,
+        model: model.trim(),
+        agent_model: agentModel.trim(),
+        vision_model: visionModel.trim(),
+        api_key: apiKey,
+        enabled,
+        label: KINDS.find((entry) => entry.id === kind)?.label ?? "",
+        allow_unverified: allowUnverified,
+      });
+      applyConfig(value);
+      setLastTest({});
+      setMessage({ tone: "success", text: "Main model saved. The next chat, Agent and vision request uses it." });
+    } catch (error) {
+      const code = errorCodeOf(error, "");
+      setMessage({
+        tone: code === "AI_PROVIDER_MODEL_INVALID" ? "warning" : "danger",
+        text: `${errorText(error, "Could not save the main model.")}${code === "AI_PROVIDER_MODEL_INVALID" ? " You can still save an unlisted ID if the provider rejects catalog listing." : ""}`,
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function test(mode: "general" | "agent" | "vision") {
     setTesting(mode);
     setMessage(null);
     try {
-      const result = await rpc<{ ok: boolean; provider: string; model: string; base_url: string; detail: string }>("admin_ai_provider_test", { mode });
-      setMessage({
-        tone: result.ok ? "success" : "danger",
-        text: result.ok
-          ? `${mode === "agent" ? "Agent model" : "Chat model"} OK · ${result.provider} · ${result.model}`
-          : result.detail,
-      });
+      const result = await rpc<{ ok: boolean; provider: string; model: string; detail: string }>("admin_ai_provider_test", { mode });
+      setLastTest((current) => ({ ...current, [mode]: { ok: result.ok, text: result.ok ? `${result.provider} · ${result.model}` : result.detail } }));
+      setMessage({ tone: result.ok ? "success" : "danger", text: result.ok ? `${mode === "agent" ? "Agent" : mode === "vision" ? "Vision" : "Chat"} lane answered live: ${result.provider} · ${result.model}` : result.detail });
     } catch (error) {
-      const code = errorCodeOf(error, "TEST_FAILED");
-      setMessage({ tone: "danger", text: ERROR_MAP[code] ?? "Connection test failed." });
+      setMessage({ tone: "danger", text: errorText(error, "Live connection test failed.") });
     } finally {
       setTesting(null);
     }
   }
 
   if (loading) {
-    return (
-      <Card className="space-y-3">
-        <div className="flex items-center gap-2 text-sm text-ink-3"><Spinner /> Loading AI provider settings…</div>
-      </Card>
-    );
+    return <Card className="space-y-3"><div className="flex items-center gap-2 text-sm text-ink-3"><Spinner /> Loading the main model…</div></Card>;
   }
 
+  const sourceLabel = config?.source === "database"
+    ? config.enabled ? "Saved · active" : "Saved · disabled"
+    : config?.source === "environment" ? "Environment key" : "Not configured";
+
   return (
-    <Card className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h1 className="font-display text-xl font-semibold text-ink">AI provider</h1>
-          <p className="mt-1 text-sm text-ink-2">
-            Set the OpenAI-compatible endpoint, model and API key used by the assistant.
-            The key stays on the server and is never sent to the browser.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {config?.configured ? (
-            <Badge className={config.enabled ? "!border-success/40 !text-success" : "!border-warning/40 !text-warning"}>
-              {config.enabled ? (config.api_key_set ? "Configured" : "Not configured") : "Disabled"}
-            </Badge>
-          ) : (
-            <Badge className="!border-warning/40 !text-warning">Using environment fallback</Badge>
-          )}
-        </div>
-      </div>
+    <div className="space-y-4">
+      <Card className="space-y-5">
+        <header className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="eyebrow">Main model · routing</p>
+            <h2 className="mt-1 font-display text-xl font-semibold text-ink">The one model that answers everything</h2>
+            <p className="mt-1 max-w-2xl text-sm leading-relaxed text-ink-2">
+              MATRIX routes chat, Agent/coding and vision through this configuration first. Change the provider, endpoint
+              or model and the next request uses it — no redeploy. Keys are encrypted server-side and never sent back to the browser.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge className={cn(config?.configured && config.enabled ? "!border-success/40 !text-success" : "!border-warning/40 !text-warning")}>{sourceLabel}</Badge>
+            {config?.api_key_set ? <Badge>key ···{config.api_key_last4}</Badge> : null}
+            {config?.environment_key ? <Badge>env key</Badge> : null}
+          </div>
+        </header>
 
-      <div className="grid gap-4">
-        <Field label="OpenAI-compatible endpoint" htmlFor="ai-base-url" hint="Examples: https://api.openai.com/v1 or https://openrouter.ai/api/v1. A full .../chat/completions URL is accepted too.">
-          <Input
-            id="ai-base-url"
-            type="url"
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="https://api.openai.com/v1"
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </Field>
+        {message ? <Alert tone={message.tone}>{message.text}</Alert> : null}
 
-        <Field label="Chat model" htmlFor="ai-model" hint="The model ID used for everyday chat, for example gpt-4o-mini, gpt-4.1-mini or qwen/qwen3-coder.">
-          <Input
-            id="ai-model"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            placeholder="gpt-4o-mini"
-            autoComplete="off"
-            spellCheck={false}
-          />
-          {catalog.length > 0 ? (
-            <Select
-              aria-label="Select a chat model from the provider catalog"
-              value={catalog.some((item) => item.id === model) ? model : ""}
-              onChange={(event) => setModel(event.target.value)}
+        <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Main model provider">
+          {KINDS.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              role="radio"
+              aria-checked={kind === entry.id}
+              onClick={() => {
+                setKind(entry.id);
+                setCatalog([]);
+                if (entry.id !== "openai-compatible") setBaseUrl(NATIVE_ENDPOINT[entry.id]);
+              }}
+              className={cn(
+                "rounded-xl border p-3 text-left transition-colors",
+                kind === entry.id ? "border-accent bg-accent-soft" : "border-border hover:bg-surface-2",
+              )}
             >
-              <option value="">Choose a verified account model…</option>
+              <span className="flex items-center justify-between gap-2 text-sm font-semibold text-ink">
+                {entry.label}
+                {kind === entry.id ? <CheckCircle2 size={16} className="text-accent" /> : null}
+              </span>
+              <span className="mt-1 block text-xs text-ink-3">{entry.hint}</span>
+            </button>
+          ))}
+        </div>
+
+        {kind === "openai-compatible" ? (
+          <Field label="Base URL" htmlFor="main-base-url" hint="Examples: https://api.openai.com/v1 · https://openrouter.ai/api/v1 · https://api.groq.com/openai/v1. A full /chat/completions URL is accepted and normalised.">
+            <Input id="main-base-url" type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.openai.com/v1" autoComplete="off" spellCheck={false} />
+          </Field>
+        ) : (
+          <Field label="Native endpoint" htmlFor="main-native-url" hint="Fixed by the protocol adapter on purpose: Gemini and Anthropic are called through their own APIs, never through an OpenAI shim.">
+            <Input id="main-native-url" value={NATIVE_ENDPOINT[kind]} readOnly disabled />
+          </Field>
+        )}
+
+        <div className="grid gap-4">
+          <Field label="Chat model" htmlFor="main-model" hint="Used for everyday chat and any request that is not Agent/coding or vision.">
+            <Input id="main-model" list="main-model-options" value={model} onChange={(event) => setModel(event.target.value)} placeholder={kind === "gemini" ? "gemini-2.5-flash" : kind === "anthropic" ? "claude-sonnet-4-5" : "gpt-4.1-mini"} autoComplete="off" spellCheck={false} />
+          </Field>
+          <Field label="Agent / coding model (optional)" htmlFor="main-agent-model" hint="Leave blank to use the chat model for Agent work. A strong coding model here keeps chat fast and Agent capable.">
+            <Input id="main-agent-model" list="main-model-options" value={agentModel} onChange={(event) => setAgentModel(event.target.value)} placeholder="Same as chat model" autoComplete="off" spellCheck={false} />
+          </Field>
+          <Field label="Vision model (optional)" htmlFor="main-vision-model" hint="Used by the screenshot scanner. Gemini flash/pro are multimodal; leave blank to reuse the chat model.">
+            <Input id="main-vision-model" list="main-model-options" value={visionModel} onChange={(event) => setVisionModel(event.target.value)} placeholder="Same as chat model" autoComplete="off" spellCheck={false} />
+          </Field>
+          <datalist id="main-model-options">
+            {suggested.map((id) => <option key={id} value={id} />)}
+          </datalist>
+          {catalog.length ? (
+            <Select
+              aria-label="Pick a model from the verified provider catalog"
+              value={[model, agentModel, visionModel].includes(catalog[0]?.id ?? "") ? catalog[0].id : ""}
+              onChange={(event) => { if (event.target.value) setModel(event.target.value); }}
+            >
+              <option value="">Pick a verified catalog model…</option>
               {catalog.map((item) => <option key={item.id} value={item.id}>{item.label === item.id ? item.id : `${item.label} · ${item.id}`}</option>)}
             </Select>
           ) : null}
-        </Field>
-
-        <Field label="Agent / coding model (optional)" htmlFor="ai-agent-model" hint="Used only for Agent mode — building and fixing projects. Leave blank to use the chat model. Pick a larger, long-output coding model here, for example gpt-4.1, qwen/qwen3-coder, claude-sonnet-4 or deepseek/deepseek-chat.">
-          <Input
-            id="ai-agent-model"
-            value={agentModel}
-            onChange={(e) => setAgentModel(e.target.value)}
-            placeholder="Same as chat model (leave blank)"
-            autoComplete="off"
-            spellCheck={false}
-          />
-          {catalog.length > 0 ? (
-            <Select
-              aria-label="Select an Agent model from the provider catalog"
-              value={catalog.some((item) => item.id === agentModel) ? agentModel : ""}
-              onChange={(event) => setAgentModel(event.target.value)}
-            >
-              <option value="">Use the chat model for Agent mode</option>
-              {catalog.map((item) => <option key={item.id} value={item.id}>{item.label === item.id ? item.id : `${item.label} · ${item.id}`}</option>)}
-            </Select>
-          ) : null}
-        </Field>
+        </div>
 
         <Field
           label="API key"
-          htmlFor="ai-api-key"
-          hint={config?.api_key_set ? `An API key is already saved (ending in ${config.api_key_last4}). Leave blank to keep it.` : "Required on first save."}
+          htmlFor="main-api-key"
+          hint={config?.api_key_set
+            ? `A key ending ${config.api_key_last4} is stored encrypted. Leave blank to keep it; enter a new value to rotate it.`
+            : "Required the first time. Stored encrypted (AES-256-GCM) and never returned to this page."}
         >
-          <Input
-            id="ai-api-key"
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={config?.api_key_set ? "•••••••••••• (blank keeps current key)" : "sk-…"}
-            autoComplete="new-password"
-          />
+          <Input id="main-api-key" type="password" autoComplete="new-password" value={apiKey} onChange={(event) => { setApiKey(event.target.value); setUseEnvKey(false); }} placeholder={config?.api_key_set ? "•••••••• (blank keeps the saved key)" : "Provider API key"} />
         </Field>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <Button type="button" variant="outline" onClick={() => void loadModels()} disabled={catalogLoading || saving || testing !== null}>
-            {catalogLoading ? <Spinner /> : "Load available AI models"}
-          </Button>
-          <span className="text-xs text-ink-3">Uses this endpoint and saved key, or the unsaved key above. The key is not saved by this action.</span>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-2/60 p-3">
+          <label className="inline-flex items-center gap-2 text-sm text-ink-2">
+            <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
+            Main model active
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-ink-2">
+            <input type="checkbox" checked={useEnvKey} onChange={(event) => setUseEnvKey(event.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
+            Use the server environment key when none is saved
+          </label>
         </div>
 
-        <label className="flex items-center gap-2 text-sm text-ink-2">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => setEnabled(e.target.checked)}
-            className="h-4 w-4 accent-[var(--accent)]"
-          />
-          Use this provider for chat, Agent/coding and screenshot analysis
-        </label>
-      </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" onClick={() => void save(false)} disabled={saving || catalogLoading}>
+            {saving ? <Spinner /> : <ShieldCheck size={15} />} Save main model
+          </Button>
+          <Button type="button" variant="outline" onClick={() => void save(true)} disabled={saving || catalogLoading}>
+            Save without catalog check
+          </Button>
+          <Button type="button" variant="outline" onClick={() => void loadModels()} disabled={catalogLoading || saving}>
+            {catalogLoading ? <Spinner /> : <RefreshCw size={15} />} Load account catalog
+          </Button>
+        </div>
 
-      {message ? <Alert tone={message.tone}>{message.text}</Alert> : null}
+        <div className="grid gap-2 border-t border-border pt-4 sm:grid-cols-3">
+          {(["general", "agent", "vision"] as const).map((mode) => {
+            const state = lastTest[mode];
+            return (
+              <div key={mode} className="rounded-xl border border-border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium capitalize text-ink">{mode === "general" ? "Chat" : mode}</span>
+                  {state ? <Badge className={state.ok ? "!border-success/40 !text-success" : "!border-danger/40 !text-danger"}>{state.ok ? "Live" : "Failed"}</Badge> : <Badge>Not tested</Badge>}
+                </div>
+                <p className="mt-1 truncate text-xs text-ink-3">{state?.text ?? "No live check yet."}</p>
+                <Button type="button" variant="ghost" className="mt-2 !min-h-8 !px-2" onClick={() => void test(mode)} disabled={Boolean(testing) || !config?.configured}>
+                  {testing === mode ? <Spinner /> : <Zap size={14} />} Test {mode === "general" ? "chat" : mode}
+                </Button>
+              </div>
+            );
+          })}
+        </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" onClick={save} disabled={saving || testing !== null}>
-          {saving ? <Spinner /> : "Save provider settings"}
-        </Button>
-        <Button type="button" variant="outline" onClick={() => void test("general")} disabled={testing !== null || saving}>
-          {testing === "general" ? <Spinner /> : "Test chat model"}
-        </Button>
-        <Button type="button" variant="outline" onClick={() => void test("agent")} disabled={testing !== null || saving}>
-          {testing === "agent" ? <Spinner /> : "Test Agent model"}
-        </Button>
-        <Button type="button" variant="ghost" onClick={load}>Reload</Button>
-      </div>
+        <Alert>
+          A catalog match proves the model ID exists for this account; it is not a billing guarantee. Every save validates the
+          IDs you entered, so a retired model fails loudly instead of silently degrading the assistant.
+        </Alert>
+      </Card>
 
-      <p className="text-xs leading-relaxed text-ink-3">
-        Chat uses the <strong>chat model</strong>; Agent mode uses the <strong>Agent/coding model</strong> when one is set
-        (it falls back to the chat model, then to the environment providers: OpenRouter/Nemotron for Agent, Groq for chat).
-        Use the two test buttons to confirm each model ID is accepted by the endpoint. Admin changes apply to the next
-        request — no restart is needed. The API key stays on the server and is never sent to the browser.
-      </p>
-    </Card>
+      <Card className="space-y-2">
+        <h3 className="flex items-center gap-2 font-semibold text-ink"><Sparkles size={16} className="text-accent" /> What uses this model</h3>
+        <ul className="space-y-1 text-sm text-ink-2">
+          <li>· Chat and temporary chat — the <strong>chat model</strong>.</li>
+          <li>· Agent mode, coding auto-routing and the build pipeline — the <strong>Agent model</strong> when set, otherwise the chat model.</li>
+          <li>· Screenshot scanner and image understanding — the <strong>vision model</strong> when set, otherwise the chat model.</li>
+          <li>· Extra provider accounts added under <em>Providers &amp; models</em> run after this one, and environment fallbacks last.</li>
+        </ul>
+        {config?.updated_at ? <p className="text-xs text-ink-3">Last saved {new Date(config.updated_at).toLocaleString()}{config.updated_by ? ` by ${config.updated_by}` : ""}.</p> : null}
+      </Card>
+    </div>
   );
 }

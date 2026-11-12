@@ -39,13 +39,18 @@ env:
   - variable: CLOUDINARY_API_SECRET
     availability: [RUNTIME]
     secret: CLOUDINARY_API_SECRET
+  - variable: GEMINI_API_KEY
+    availability: [RUNTIME]
+    secret: GEMINI_API_KEY
+  - variable: GEMINI_MODEL
+    availability: [RUNTIME]
   - variable: GROQ_API_KEY
     availability: [RUNTIME]
     secret: GROQ_API_KEY
-  - variable: OPENROUTER_API_KEY
+  - variable: RESEND_API_KEY
     availability: [RUNTIME]
-    secret: OPENROUTER_API_KEY
-  - variable: OPENROUTER_CODING_MODEL
+    secret: RESEND_API_KEY
+  - variable: RESEND_FROM_EMAIL
     availability: [RUNTIME]
   - variable: GITHUB_CLIENT_ID
     availability: [RUNTIME]

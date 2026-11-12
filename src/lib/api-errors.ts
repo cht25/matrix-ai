@@ -106,6 +106,7 @@ export function failureCopy(kind: ApiFailureKind): ApiFailure {
 
 const CODE_TO_KIND: Record<string, ApiFailureKind> = {
   AI_GATEWAY_NOT_CONFIGURED: "not-configured",
+  VISION_NOT_CONFIGURED: "not-configured",
   CODING_MODEL_NOT_CONFIGURED: "not-configured",
   CHAT_STORAGE_UNAVAILABLE: "storage",
   SCAN_STORAGE_UNAVAILABLE: "storage",

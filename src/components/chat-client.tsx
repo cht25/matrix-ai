@@ -29,6 +29,7 @@ import {
 } from "@/lib/chat-speech";
 import { firebaseBrowserConfigured, waitForAuthUser } from "@/lib/firebase/client";
 import { rpc, uploadOwnedFile } from "@/lib/client/api";
+import { notifyWorkDone } from "@/lib/client/work-notifications";
 import { Button, Textarea } from "@/components/ui";
 import { Markdown } from "@/components/markdown";
 import { MatrixMark, MatrixWordmark } from "@/components/logo";
@@ -173,6 +174,8 @@ export function ChatClient({
   const [lastUserMessage, setLastUserMessage] = useState<string | null>(lastUserContent(initialMessages));
   const [keyboardInset, setKeyboardInset] = useState(0);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [pendingImage, setPendingImage] = useState<{ name: string; storagePath: string; previewUrl: string; size: number } | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<ApiFailure | null>(null);
 
@@ -265,6 +268,7 @@ export function ChatClient({
   /** Latest committed conversation, read while a request is in flight. */
   const messagesRef = useRef<ChatMessage[]>(initialMessages);
   const lastAttachmentsRef = useRef<PendingAttachment[]>([]);
+  const lastImagePathRef = useRef<string | null>(null);
   const autoSpeakRef = useRef(true);
   const localeRef = useRef(locale);
   /** Built artifacts, kept so Open/Save never rebuilds twice. */
@@ -775,6 +779,7 @@ export function ChatClient({
       regenerate?: boolean;
       preferFallback?: boolean;
       attachments?: PendingAttachment[];
+      imageStoragePath?: string | null;
       intent?: IntentResult;
       turnId?: string;
       audioAssetId?: string | null;
@@ -784,13 +789,15 @@ export function ChatClient({
     requestInFlightRef.current = true;
     const replaceLastAssistant = opts.replaceLastAssistant === true;
     const sentAttachments = opts.attachments ?? [];
+    const imageStoragePath = opts.imageStoragePath ?? null;
     const turnId = opts.turnId ?? crypto.randomUUID();
 
     // --- intent detection → capability selection -------------------------
     const intent = opts.intent ?? detectIntent(message, { mode, codeCapability: codeHint, agentMode: mode === "agent" });
-    const capability = selectCapability(intent, mode);
+    // When an image is attached, we are analysing an uploaded image — never generating one.
+    const capability = imageStoragePath ? "chat" : selectCapability(intent, mode);
     const messageMode = effectiveMode(intent, mode);
-    const isImage = capability === "image";
+    const isImage = !imageStoragePath && capability === "image";
     const isOrchestrator = capability === "orchestrate";
     const isAgentRun = capability === "agent";
     // Plain chat keeps no execution trace at all: no activity, no analytics.
@@ -875,6 +882,7 @@ export function ChatClient({
           explain_style: explainStyle,
           message,
           audio_asset_id: opts.audioAssetId ?? undefined,
+          image_storage_path: imageStoragePath ?? undefined,
           attachments: sentAttachments.map(({ name, content, type }) => ({ name, content, type })),
           language: locale,
           regenerate: opts.regenerate === true,
@@ -1063,6 +1071,12 @@ export function ChatClient({
       if (!committed && collected.trim()) {
         commit(collected);
         maybeAutoSpeak(collected);
+        void notifyWorkDone({
+          title: "MATRIX finished responding",
+          body: firstHeading(collected, "Your answer is ready."),
+          link: gotConversationId ? `/chat/${gotConversationId}` : "/chat",
+          onlyWhenBackgrounded: true,
+        });
       }
       if (trackExecution) {
         setExecution((current) => finishExecution(current, streamError && !collected.trim() ? "failed" : "complete"));
@@ -1116,9 +1130,12 @@ export function ChatClient({
   async function send(e?: { preventDefault(): void }, messageOverride?: string) {
     e?.preventDefault();
     const pending = messageOverride ? [] : attachments;
+    const attachedImage = messageOverride ? null : pendingImage;
     const audioAssetId = messageOverride ? null : voiceAsset?.id ?? null;
-    let message = (messageOverride ?? input).trim() || (pending.length ? "Review these attached files and help me with them." : "");
-    if (!message || streaming || requestInFlightRef.current) return;
+    let message =
+      (messageOverride ?? input).trim() ||
+      (attachedImage ? "Analyse this attached image clearly and thoroughly." : pending.length ? "Review these attached files and help me with them." : "");
+    if (!message || streaming || uploadingImage || requestInFlightRef.current) return;
     // Composer capabilities are opt-in hints, never automatic invocations.
     const rawMessage = message;
     if (!messageOverride) {
@@ -1127,7 +1144,12 @@ export function ChatClient({
     }
     setInput("");
     lastAttachmentsRef.current = pending;
+    lastImagePathRef.current = attachedImage?.storagePath ?? null;
     setAttachments([]);
+    if (attachedImage) {
+      URL.revokeObjectURL(attachedImage.previewUrl);
+      setPendingImage(null);
+    }
     setVoiceAsset(null);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
 
@@ -1138,13 +1160,17 @@ export function ChatClient({
       agentMode: mode === "agent",
     });
     const turnId = crypto.randomUUID();
+    const allAttachmentNames = [
+      ...(attachedImage ? [attachedImage.name] : []),
+      ...pending.map((file) => file.name),
+    ];
     setMessages((current) => [...current, {
       role: "user",
       content: message,
       created_at: new Date().toISOString(),
       metadata: {
         mode,
-        attachment_names: pending.map((file) => file.name),
+        attachment_names: allAttachmentNames,
         ...(audioAssetId ? { audio_asset_id: audioAssetId } : {}),
         intent: intent.intent,
         artifact_type: intent.artifact,
@@ -1169,7 +1195,7 @@ export function ChatClient({
     });
     if (buildIntent.needsClarification) {
       setNotice(buildIntent.clarification ?? "Describe what to build and I will create, validate and (if you ask) publish it.");
-      await streamMessage(message, { attachments: pending, intent, turnId, audioAssetId });
+      await streamMessage(message, { attachments: pending, imageStoragePath: attachedImage?.storagePath ?? null, intent, turnId, audioAssetId });
       return;
     }
     const codeWorkspaceRequest = mode === "code" && shouldCreateCodeWorkspace(rawMessage, pending);
@@ -1181,7 +1207,7 @@ export function ChatClient({
       await runBuildTurn(message, buildIntent, turnId, pending, false);
       return;
     }
-    await streamMessage(message, { attachments: pending, intent, turnId, audioAssetId });
+    await streamMessage(message, { attachments: pending, imageStoragePath: attachedImage?.storagePath ?? null, intent, turnId, audioAssetId });
   }
 
   /**
@@ -1354,6 +1380,17 @@ export function ChatClient({
       // Keep the live card visible for this turn only as long as the popup is
       // open; after it is dismissed the committed message row carries the link.
       setBuildRun(null);
+      void notifyWorkDone({
+        title: "MATRIX published your build",
+        body: `Live at ${liveUrl}`,
+        link: liveUrl,
+      });
+    } else if (run?.status === "succeeded") {
+      void notifyWorkDone({
+        title: "MATRIX build finished",
+        body: `${run.fileCount || artifacts.length} project file(s) ready.`,
+        link: projectId ? `/projects/${projectId}` : "/projects",
+      });
     }
   }
 
@@ -1390,6 +1427,7 @@ export function ChatClient({
       regenerate: true,
       reuseUser: true,
       attachments: lastAttachmentsRef.current,
+      imageStoragePath: lastImagePathRef.current,
     });
   }
 
@@ -1401,7 +1439,11 @@ export function ChatClient({
       const msg = lastUserMessage;
       setMessages((current) => [...current, { role: "user", content: msg, created_at: new Date().toISOString() }]);
     }
-    void streamMessage(lastUserMessage, { reuseUser: Boolean(convIdRef.current), attachments: lastAttachmentsRef.current });
+    void streamMessage(lastUserMessage, {
+      reuseUser: Boolean(convIdRef.current),
+      attachments: lastAttachmentsRef.current,
+      imageStoragePath: lastImagePathRef.current,
+    });
   }
 
   function tryAnotherModel() {
@@ -1415,6 +1457,7 @@ export function ChatClient({
       reuseUser: Boolean(convIdRef.current),
       preferFallback: true,
       attachments: lastAttachmentsRef.current,
+      imageStoragePath: lastImagePathRef.current,
     });
   }
 
@@ -1467,9 +1510,31 @@ export function ChatClient({
     }
 
     if (mode !== "agent") {
-      setMessages((current) => [...current, { role: "user", content: `Attachment: ${file.name}`, created_at: new Date().toISOString() }]);
-      if (autoSpeakRef.current) primeSpeech();
+      setUploadingImage(true);
+      try {
+        const user = await waitForAuthUser();
+        if (!user) {
+          setFailure(failureCopy("auth"));
+          return;
+        }
+        const path = await uploadOwnedFile("security-screenshots", file);
+        if (!path) {
+          setFailure({ ...failureCopy("server"), title: "Upload failed", detail: "The image could not be uploaded to Cloudinary. Please try again." });
+          return;
+        }
+        setPendingImage((prev) => {
+          if (prev) URL.revokeObjectURL(prev.previewUrl);
+          return { name: file.name || "image.png", storagePath: path, previewUrl: URL.createObjectURL(file), size: file.size };
+        });
+        setNotice(`${file.name || "Image"} uploaded privately to Cloudinary. Add a question or press Send to analyse it.`);
+      } catch (err) {
+        setFailure(classifyRequestException(err));
+      } finally {
+        setUploadingImage(false);
+      }
+      return;
     }
+
     setStreaming(true);
     setStreamedText("");
     const controller = new AbortController();
@@ -1494,7 +1559,7 @@ export function ChatClient({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ action: "scan", storage_path: path, purpose: mode === "agent" ? "agent_reference" : "security_scan" }),
+        body: JSON.stringify({ action: "scan", storage_path: path, purpose: "agent_reference" }),
         signal: controller.signal,
       });
       clearIdleTimer();
@@ -1508,21 +1573,16 @@ export function ChatClient({
         setFailure(classifyGatewayResponse(502, typeof data.error === "string" ? data.error : null));
         return;
       }
-      if (mode === "agent") {
-        setAttachments((current) => [
-          ...current.filter((item) => item.name !== file.name),
-          {
-            name: file.name,
-            type: "text/plain",
-            content: `Visual reference derived from the attached image ${file.name}:\n${data.reply}`,
-            size: file.size,
-          },
-        ]);
-        setNotice(`${file.name} was inspected and is ready as Agent context. Add an instruction, then send.`);
-      } else {
-        setMessages((current) => [...current, { role: "assistant", content: data.reply!, created_at: new Date().toISOString() }]);
-        maybeAutoSpeak(data.reply!);
-      }
+      setAttachments((current) => [
+        ...current.filter((item) => item.name !== file.name),
+        {
+          name: file.name,
+          type: "text/plain",
+          content: `Visual reference derived from the attached image ${file.name}:\n${data.reply}`,
+          size: file.size,
+        },
+      ]);
+      setNotice(`${file.name} was inspected and is ready as Agent context. Add an instruction, then send.`);
     } catch (err) {
       const userStopped = err instanceof DOMException && err.name === "AbortError";
       if (!userStopped) setFailure(classifyRequestException(err));
@@ -1897,6 +1957,35 @@ export function ChatClient({
         </div>
 
         {voiceAsset ? <div className="mx-auto mb-2 flex max-w-2xl items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2"><audio controls preload="none" className="h-9 min-w-0 flex-1" src={voiceAsset.playbackUrl} aria-label="Recorded voice draft" /><button type="button" onClick={() => void deleteVoiceAsset(voiceAsset.id)} className="grid h-8 w-8 place-items-center rounded-md text-ink-3 hover:bg-surface-2" aria-label="Delete private voice recording"><Trash2 size={14} /></button></div> : null}
+        {pendingImage || uploadingImage ? (
+          <div className="mx-auto mb-2 flex max-w-2xl items-center justify-between gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2">
+            {uploadingImage ? (
+              <span className="text-xs text-ink-2">Uploading image privately to Cloudinary…</span>
+            ) : pendingImage ? (
+              <>
+                <span className="flex min-w-0 items-center gap-2.5">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={pendingImage.previewUrl} alt={pendingImage.name} className="h-10 w-10 shrink-0 rounded-md border border-border object-cover" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-xs font-medium text-ink">{pendingImage.name}</span>
+                    <span className="block text-[11px] text-ink-3">{Math.max(1, Math.round(pendingImage.size / 1024))} KB · Cloudinary private · ask anything or press Send</span>
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    URL.revokeObjectURL(pendingImage.previewUrl);
+                    setPendingImage(null);
+                  }}
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-surface hover:text-danger"
+                  aria-label="Remove attached image"
+                >
+                  <X size={13} />
+                </button>
+              </>
+            ) : null}
+          </div>
+        ) : null}
         {attachments.length ? (
           <div className="mx-auto mb-2 flex max-w-2xl flex-wrap gap-1.5" aria-label="Attached files">
             {attachments.map((file) => (
@@ -1938,6 +2027,16 @@ export function ChatClient({
             onChange={(e) => {
               setInput(e.target.value);
               requestAnimationFrame(autosize);
+            }}
+            onPaste={(e) => {
+              const item = Array.from(e.clipboardData?.items ?? []).find((entry) => entry.type.startsWith("image/"));
+              if (item) {
+                const file = item.getAsFile();
+                if (file) {
+                  e.preventDefault();
+                  void handleFile(file);
+                }
+              }
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {

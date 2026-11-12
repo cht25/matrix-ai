@@ -232,6 +232,35 @@ service cloud.firestore {
     match /family_invitations/{id} {
       allow read, write: if false; // tokens are hashed; server-only
     }
+    match /family_devices/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false; // access_token_hash + pairing run server-side only
+    }
+    match /family_activity/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false; // companion telemetry gated server-side by feature consent
+    }
+    match /family_mirror_requests/{id} {
+      allow read: if (signedIn() && (resource.data.target_uid == request.auth.uid || resource.data.viewer_uid == request.auth.uid)) || adminClaim();
+      allow write: if false; // two-key consent + private Cloudinary frame paths server-only
+    }
+
+    // --- Own-device telemetry & ESP32 hardware bridge -------------------------
+    match /device_activity/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false;
+    }
+    match /esp32_pairings/{id} {
+      allow read, write: if false; // hashed single-use pairing codes — server only
+    }
+    match /esp32_devices/{id} {
+      allow read: if (signedIn() && resource.data.owner_uid == request.auth.uid) || adminClaim();
+      allow write: if false; // hashed bearer tokens + anti-replay seq — server only
+    }
+    match /esp32_events/{id} {
+      allow read: if (signedIn() && resource.data.owner_uid == request.auth.uid) || adminClaim();
+      allow write: if false;
+    }
 
     // --- Automations -------------------------------------------------------------------
     match /automations/{id} {

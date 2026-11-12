@@ -217,3 +217,147 @@ export async function revokeDevice(d: Db, user: SessionUser, deviceId: string): 
   });
   return true;
 }
+
+// ---------------------------------------------------------------------------
+// Own-device telemetry (app usage, hidden apps, browser history, screen time)
+// Reported by the Tauri desktop app or Flutter mobile companion app.
+// ---------------------------------------------------------------------------
+
+export type OwnDeviceActivitySnapshot = {
+  id: string;
+  device_id: string;
+  device_name: string;
+  platform: string;
+  reported_at: string;
+  screen_time_minutes: number;
+  apps: Array<{ name: string; package: string; minutes: number; hidden: boolean; last_used: string }>;
+  hidden_apps: Array<{ name: string; package: string; minutes: number; hidden: boolean; last_used: string }>;
+  browser_history: Array<{ url: string; title: string; visited_at: string }>;
+};
+
+function sanitizeOwnApps(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 200).flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const row = entry as Record<string, unknown>;
+    const name = typeof row.name === "string" ? row.name.trim().slice(0, 120) : "";
+    if (!name) return [];
+    return [{
+      name,
+      package: typeof row.package === "string" ? row.package.slice(0, 160) : "",
+      minutes: Math.max(0, Math.min(1440, Math.round(Number(row.minutes ?? 0)))),
+      hidden: row.hidden === true,
+      last_used: typeof row.last_used === "string" ? row.last_used.slice(0, 40) : "",
+    }];
+  });
+}
+
+function sanitizeOwnHistory(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 300).flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const row = entry as Record<string, unknown>;
+    const url = typeof row.url === "string" ? row.url.trim().slice(0, 500) : "";
+    if (!url) return [];
+    return [{
+      url,
+      title: typeof row.title === "string" ? row.title.slice(0, 200) : "",
+      visited_at: typeof row.visited_at === "string" ? row.visited_at.slice(0, 40) : "",
+    }];
+  });
+}
+
+export async function reportOwnDeviceActivity(
+  d: Db,
+  user: SessionUser,
+  input: {
+    device_id?: string;
+    device_name?: string;
+    platform?: string;
+    screen_time_minutes?: number;
+    apps?: unknown;
+    hidden_apps?: unknown;
+    browser_history?: unknown;
+  },
+): Promise<{ ok: true; reported_at: string }> {
+  const deviceId = (input.device_id || user.deviceId || "primary").slice(0, 120);
+  let deviceName = (input.device_name ?? "").trim().slice(0, 80);
+  let platform = (input.platform ?? "").trim().slice(0, 40) || "desktop";
+  if (deviceId && deviceId !== "primary") {
+    const devSnap = await d.collection(DEVICES).doc(deviceId).get().catch(() => null);
+    if (devSnap?.exists && devSnap.data()?.user_id === user.uid) {
+      deviceName = deviceName || String(devSnap.data()?.device_name ?? "Device");
+      platform = String(devSnap.data()?.platform ?? platform);
+      await devSnap.ref.set({ last_seen_at: nowTs() }, { merge: true }).catch(() => {});
+    }
+  }
+  const apps = sanitizeOwnApps(input.apps);
+  const explicitHidden = sanitizeOwnApps(input.hidden_apps);
+  const hiddenFromApps = apps.filter((a) => a.hidden);
+  const seenHidden = new Set(explicitHidden.map((a) => `${a.name}:${a.package}`));
+  const hiddenApps = [
+    ...explicitHidden,
+    ...hiddenFromApps.filter((a) => !seenHidden.has(`${a.name}:${a.package}`)),
+  ];
+  const browserHistory = sanitizeOwnHistory(input.browser_history);
+  const screenMinutes = Math.max(
+    0,
+    Math.min(1440, Math.round(input.screen_time_minutes ?? apps.reduce((sum, a) => sum + a.minutes, 0))),
+  );
+  const now = nowTs();
+  await d.collection("device_activity").doc(`${user.uid}_${deviceId}`).set({
+    user_id: user.uid,
+    device_id: deviceId,
+    device_name: deviceName || "This device",
+    platform,
+    screen_time_minutes: screenMinutes,
+    apps,
+    hidden_apps: hiddenApps,
+    browser_history: browserHistory,
+    reported_at: now,
+    updated_at: now,
+  });
+
+  // Also mirror into family_activity when the user has a family-linked device
+  // so family supervision sees fresh telemetry from a single companion sync.
+  const famDevices = await d.collection("family_devices").where("user_id", "==", user.uid).get().catch(() => null);
+  const activeFamDevice = famDevices?.docs.find((doc) => !doc.data().revoked_at);
+  if (activeFamDevice) {
+    await d.collection("family_activity").add({
+      user_id: user.uid,
+      family_id: String(activeFamDevice.data().family_id ?? ""),
+      member_id: String(activeFamDevice.data().member_id ?? ""),
+      device_id: activeFamDevice.id,
+      screen_time_minutes: screenMinutes,
+      apps,
+      hidden_apps: hiddenApps,
+      browser_history: browserHistory,
+      reported_at: now,
+      created_at: now,
+    }).catch(() => {});
+    await activeFamDevice.ref.set({ last_seen_at: now }, { merge: true }).catch(() => {});
+  }
+
+  return { ok: true, reported_at: now.toDate().toISOString() };
+}
+
+export async function getOwnDeviceActivity(d: Db, user: SessionUser): Promise<OwnDeviceActivitySnapshot[]> {
+  const snap = await d.collection("device_activity").where("user_id", "==", user.uid).get();
+  return snap.docs
+    .map((doc) => {
+      const data = doc.data();
+      const reportedAt = (data.reported_at as { toDate?: () => Date } | undefined)?.toDate?.().toISOString() ?? "";
+      return {
+        id: doc.id,
+        device_id: String(data.device_id ?? ""),
+        device_name: String(data.device_name ?? "This device"),
+        platform: String(data.platform ?? "desktop"),
+        reported_at: reportedAt,
+        screen_time_minutes: Number(data.screen_time_minutes ?? 0),
+        apps: Array.isArray(data.apps) ? data.apps.slice(0, 80) : [],
+        hidden_apps: Array.isArray(data.hidden_apps) ? data.hidden_apps.slice(0, 60) : [],
+        browser_history: Array.isArray(data.browser_history) ? data.browser_history.slice(0, 100) : [],
+      };
+    })
+    .sort((a, b) => b.reported_at.localeCompare(a.reported_at));
+}
