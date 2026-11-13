@@ -41,7 +41,7 @@ function configured(value: string | undefined): string {
 export function environmentProviders(): RegisteredProvider[] {
   const result: RegisteredProvider[] = [];
 
-  const glmKey = configured(process.env.GLM_API_KEY);
+  const glmKey = configured(process.env.ZAI_API_KEY) || configured(process.env.GLM_API_KEY);
   if (glmKey) {
     const baseUrl = resolveGlmBaseUrl(process.env.GLM_BASE_URL);
     const defaultModel = process.env.GLM_MODEL?.trim() || GLM_DEFAULT_MODEL;

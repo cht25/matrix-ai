@@ -41,7 +41,9 @@ export const GLM_KNOWN_MODELS: ReadonlyArray<CatalogModel> = [
 
 export function resolveGlmBaseUrl(explicit?: string): string {
   const candidate = (explicit || process.env.GLM_BASE_URL || "").trim();
-  return normalizeCompatibleBaseUrl(candidate || GLM_API_BASE_URL) || GLM_API_BASE_URL;
+  // A Z.ai international key must not silently go to the mainland gateway.
+  const defaultBase = process.env.ZAI_API_KEY?.trim() ? GLM_INTL_API_BASE_URL : GLM_API_BASE_URL;
+  return normalizeCompatibleBaseUrl(candidate || defaultBase) || defaultBase;
 }
 
 function parseToolCalls(value: unknown): AIProviderToolCall[] {

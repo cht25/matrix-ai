@@ -75,6 +75,12 @@ export type BuildPipelineInput = {
 
 export type BuildPipelineResult = { run: BuildRun; reply: string; projectId: string | null };
 
+/** Static hosting cannot execute server runtimes. Keep source editing available
+ * for these languages without fabricating a successful web deployment. */
+export function requiresNonStaticRuntime(prompt: string): boolean {
+  return /\b(?:python|django|flask|fastapi|rust|cargo|golang|go\s+(?:app|service|program|server|cli)|java|spring\s+boot|c\+\+|c#|dotnet|\.net|php|laravel|ruby|rails|kotlin|swift|dart|flutter|node\.js\s+server|express\s+server|backend|api\s+server|command.line|cli\s+app)(?:\b|(?<=[+#]))/i.test(prompt);
+}
+
 const MAX_FIX_ATTEMPTS = 2;
 const MAX_IMAGE_ASSETS = 4;
 
@@ -85,7 +91,9 @@ function hashPrompt(prompt: string): string {
 export async function runBuildPipeline(input: BuildPipelineInput): Promise<BuildPipelineResult> {
   const { d, user, provider, runId } = input;
   const now = () => Date.now();
-  const workspaceOnly = input.workspaceOnly === true && input.chatMode === "code" && !input.actions.publish && !input.actions.preview;
+  const nonStatic = requiresNonStaticRuntime(input.prompt);
+  const workspaceOnly = !input.actions.publish && !input.actions.preview &&
+    ((input.workspaceOnly === true && input.chatMode === "code") || (nonStatic && input.actions.build));
   let reply = "";
   let resolvedProjectId: string | null = input.projectId ?? null;
   const done = (run: BuildRun): BuildPipelineResult => ({ run, reply, projectId: resolvedProjectId });
@@ -160,6 +168,9 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     await emit();
     // ---------------------------------------------------------------- plan --
     await begin("plan", "Resolving project, entry page and public address.");
+    if (nonStatic && (input.actions.publish || input.actions.preview)) {
+      return await abort("RUNTIME_NOT_SUPPORTED", "MATRIX hosting supports static HTML/CSS/JavaScript only. This request needs an isolated runtime/build provider; no preview or deployment was attempted. Ask to save the source without preview/publishing, or connect a compatible host.", "plan");
+    }
     const plan = planFromRequest(input.prompt || "MATRIX project");
     let projectId = await resolveAgentProject(d, user, { projectId: input.projectId, conversationId: input.conversationId, prompt: input.prompt });
     resolvedProjectId = projectId;
@@ -347,7 +358,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       }
       run = { ...run, fileCount: files.length };
       run = succeedRun(run, now());
-      reply = `Wrote ${files.length} project file${files.length === 1 ? "" : "s"} to the workspace. Review the files there; build checks and deployment were not run.`;
+      reply = `Wrote ${files.length} project file${files.length === 1 ? "" : "s"} to the workspace. Review the files there; ${nonStatic ? "this language needs an isolated runtime to execute or deploy" : "build checks and deployment were not run"}.`;
       await emit();
       return done(run);
     }

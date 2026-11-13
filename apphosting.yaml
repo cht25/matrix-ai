@@ -43,6 +43,14 @@ env:
   - variable: GLM_API_KEY
     availability: [RUNTIME]
     secret: GLM_API_KEY
+  # GLM_BASE_URL overrides the default mainland endpoint. If using Z.ai,
+  # set GLM_BASE_URL=https://api.z.ai/api/paas/v4 here or in the console,
+  # and supply the matching GLM_API_KEY secret (ZAI_API_KEY is also accepted
+  # when configured separately; do not require two secrets).
+  - variable: GLM_BASE_URL
+    availability: [RUNTIME]
+  - variable: GLM_IMAGE_BASE_URL
+    availability: [RUNTIME]
   - variable: GLM_MODEL
     value: glm-4.7
     availability: [RUNTIME]

@@ -44,6 +44,16 @@ services:
         sync: false
       - key: GLM_API_KEY
         sync: false
+      # Z.ai international keys use ZAI_API_KEY (defaults to api.z.ai).
+      # Existing GLM_API_KEY uses the mainland endpoint unless GLM_BASE_URL is set.
+      - key: ZAI_API_KEY
+        sync: false
+      - key: GLM_BASE_URL
+        sync: false
+      - key: GLM_IMAGE_BASE_URL
+        sync: false
+      - key: GLM_IMAGE_API_KEY
+        sync: false
       - key: GLM_MODEL
         value: glm-4.7
       - key: GLM_CODING_MODEL

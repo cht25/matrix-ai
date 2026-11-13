@@ -5,12 +5,12 @@
 //   · The API key is stored encrypted (AES-256-GCM) in
 //     `system_settings/image_provider` and is NEVER returned to the browser.
 //   · The public projection exposes only: configured, provider, model, last4.
-//   · The browser calls MATRIX; MATRIX calls Together AI. The key is never in
+//   · The browser calls MATRIX; MATRIX calls the configured image provider. The key is never in
 //     client JS, localStorage, a NEXT_PUBLIC_ variable or the HTML source.
 //   · Audit entries record that the configuration changed — never the key.
 //
-// If nothing is saved, the TOGETHER_API_KEY environment variable is used as a
-// fallback so existing deployments keep working after this upgrade.
+// If nothing is saved, GLM/Z.ai environment credentials are used first;
+// TOGETHER_API_KEY is a secondary fallback.
 // =============================================================================
 
 import "server-only";
@@ -116,7 +116,7 @@ function defaultModelFor(provider: ImageProviderId): string {
 /**
  * Resolve the credentials the server should use right now.
  * Priority: Admin-saved encrypted Firestore record → GLM environment key
- * (`GLM_IMAGE_API_KEY` or `GLM_API_KEY`) → `TOGETHER_API_KEY` fallback.
+ * (`GLM_IMAGE_API_KEY`, `ZAI_API_KEY`, or `GLM_API_KEY`) → `TOGETHER_API_KEY` fallback.
  */
 export async function resolveImageCredentials(
   d: Db,
@@ -134,7 +134,7 @@ export async function resolveImageCredentials(
     }
   }
   // Primary environment image provider: GLM (CogView / Z.ai).
-  const glmKey = (process.env.GLM_IMAGE_API_KEY || process.env.GLM_API_KEY || "").trim();
+  const glmKey = (process.env.GLM_IMAGE_API_KEY || process.env.ZAI_API_KEY || process.env.GLM_API_KEY || "").trim();
   if (isRealSecret(glmKey)) {
     return {
       provider: "glm",
