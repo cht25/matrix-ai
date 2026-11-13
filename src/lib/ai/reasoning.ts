@@ -220,3 +220,17 @@ export function stripReasoningContent(input: string): string {
   out = out.replace(/\n{3,}/g, "\n\n").trim();
   return out;
 }
+
+/** True when a provider SSE delta carries private reasoning activity (without exposing text). */
+export function hasReasoningDelta(delta: unknown): boolean {
+  if (!delta || typeof delta !== "object") return false;
+  const record = delta as Record<string, unknown>;
+  for (const key of ["reasoning_content", "reasoning", "thought", "thinking"]) {
+    const val = record[key];
+    if (typeof val === "string" && val.length > 0) return true;
+  }
+  const content = record.content;
+  if (typeof content === "string" && /<(?:think|thinking|thought|reasoning|analysis)\b/i.test(content)) return true;
+  return false;
+}
+

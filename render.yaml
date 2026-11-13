@@ -30,7 +30,7 @@ services:
       # (https://thamjj13.top) unless that host is also added under
       # Render → Custom Domains, or visitors will see a plain-text Not Found.
       - key: NEXT_PUBLIC_APP_URL
-        sync: false
+        value: https://matrix.thamjj13.top
       # Server-only Admin SDK + AI gateway secrets.
       - key: FIREBASE_CLIENT_EMAIL
         sync: false
@@ -42,12 +42,20 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
-      - key: GEMINI_API_KEY
+      - key: GLM_API_KEY
         sync: false
-      - key: GEMINI_MODEL
-        value: gemini-2.5-flash
+      - key: GLM_MODEL
+        value: glm-4.7
+      - key: GLM_CODING_MODEL
+        value: glm-4.7
+      - key: GLM_VISION_MODEL
+        value: glm-4.6v
+      - key: GLM_IMAGE_MODEL
+        value: cogview-4
       - key: GROQ_API_KEY
         sync: false
+      - key: GROQ_CHAT_MODEL
+        value: openai/gpt-oss-120b
       - key: RESEND_API_KEY
         sync: false
       - key: RESEND_FROM_EMAIL

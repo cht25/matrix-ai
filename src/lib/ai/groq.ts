@@ -10,7 +10,7 @@
 
 import { fetchModelCatalog, verifyCatalogModel, type CatalogModel } from "@/lib/ai/model-catalog";
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
-import { assistantContentOnly, assistantDeltaContent, createReasoningStreamFilter } from "@/lib/ai/reasoning";
+import { assistantContentOnly, assistantDeltaContent, createReasoningStreamFilter, hasReasoningDelta } from "@/lib/ai/reasoning";
 
 export type AIProviderToolCall = {
   id: string;
@@ -42,6 +42,8 @@ export type AIProviderRequest = {
   requestId?: string;
   /** Provider-reported usage for streaming, when the upstream sends it. */
   onUsage?: (usage: AIProviderResponse["usage"]) => void;
+  /** Signals real model reasoning activity without exposing raw chain-of-thought. */
+  onReasoningActivity?: (phase: "start" | "delta" | "done") => void;
 };
 
 export type AIProviderResponse = {
@@ -249,9 +251,16 @@ export class GroqProvider implements AIProvider {
               });
             }
             // Drop reasoning deltas (Groq sends them as `delta.reasoning_content`)
-            // so only the real answer reaches the user.
-            const visible = reasoningFilter.push(assistantDeltaContent(json.choices?.[0]?.delta));
-            if (visible) yield visible;
+            // so only the real answer reaches the user, while signaling live activity.
+            const deltaObj = json.choices?.[0]?.delta;
+            if (hasReasoningDelta(deltaObj)) {
+              req.onReasoningActivity?.("delta");
+            }
+            const visible = reasoningFilter.push(assistantDeltaContent(deltaObj));
+            if (visible) {
+              req.onReasoningActivity?.("done");
+              yield visible;
+            }
           } catch (error) {
             if (error instanceof SyntaxError) continue;
             throw error;
@@ -273,15 +282,17 @@ export class GroqProvider implements AIProvider {
   }
 }
 
-// Server-side model defaults. Vision requires an operator-verified provider ID.
+export const GPT_OSS_DEFAULT_MODEL = "openai/gpt-oss-120b";
+
+// Server-side model defaults. Low-load routing uses openai/gpt-oss-120b; vision requires an operator-verified provider ID.
 export const MODELS = {
-  chat: process.env.GROQ_CHAT_MODEL?.trim() || "",
-  vision: process.env.GROQ_VISION_MODEL?.trim() || "",
-  fast: process.env.GROQ_FAST_MODEL?.trim() || process.env.GROQ_CHAT_MODEL?.trim() || "",
+  get chat() { return process.env.GROQ_CHAT_MODEL?.trim() || process.env.GPT_OSS_MODEL?.trim() || GPT_OSS_DEFAULT_MODEL; },
+  get vision() { return process.env.GROQ_VISION_MODEL?.trim() || ""; },
+  get fast() { return process.env.GROQ_FAST_MODEL?.trim() || process.env.GPT_OSS_MODEL?.trim() || process.env.GROQ_CHAT_MODEL?.trim() || GPT_OSS_DEFAULT_MODEL; },
 } as const;
 
 export function createProvider(): AIProvider | null {
-  const key = process.env.GROQ_API_KEY;
-  if (!key || key.endsWith("...")) return null;
+  const key = (process.env.GROQ_API_KEY || process.env.GPT_OSS_API_KEY)?.trim();
+  if (!key || key.endsWith("...") || key.startsWith("YOUR-") || key.startsWith("replace-with")) return null;
   return new GroqProvider(key);
 }

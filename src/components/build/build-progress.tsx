@@ -57,23 +57,30 @@ export function BuildStatusCard({
   onCancel?: () => void;
   cancelling?: boolean;
 }) {
+  const [stagesOpen, setStagesOpen] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
   if (!run) return null;
   const progress = stageProgress(run);
   const live = run.status === "running" || run.status === "requested";
+  const showDetails = stagesOpen || run.status === "failed";
+
   return (
     <section
-      className={cn("sandbox-card mt-3 max-w-xl overflow-hidden rounded-xl border border-border bg-surface", className)}
+      className={cn("sandbox-card mt-2.5 max-w-xl overflow-hidden rounded-xl border border-border bg-surface", className)}
       aria-label="Matrix build status"
       aria-live="polite"
     >
-      <header className="flex items-center gap-2.5 border-b border-border px-3 py-2">
-        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-accent/30 bg-accent-soft text-accent" aria-hidden="true">
-          {live ? <Spinner className="h-3.5 w-3.5" /> : <Activity size={13} strokeWidth={2} />}
+      <header className="flex items-center gap-2.5 px-3 py-2">
+        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-accent/30 bg-accent-soft text-accent" aria-hidden="true">
+          {live ? <Spinner className="h-3 w-3" /> : <Activity size={12} strokeWidth={2} />}
         </span>
-        <div className="min-w-0 flex-1">
-          <p className="eyebrow text-ink-3">Matrix build</p>
-          <p className="truncate text-[12.5px] font-semibold text-ink">
+        <button
+          type="button"
+          onClick={() => setStagesOpen((v) => !v)}
+          aria-expanded={showDetails}
+          className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+        >
+          <span className="min-w-0 truncate text-[12px] font-semibold text-ink">
             {run.status === "succeeded"
               ? run.actions.publish
                 ? "Build and publish finished"
@@ -82,12 +89,13 @@ export function BuildStatusCard({
                 ? "Build stopped"
                 : run.status === "cancelled"
                   ? "Build cancelled"
-                  : `BUILDING PROJECT · ${progress.activeLabel}`}
-          </p>
-        </div>
-        <span className="shrink-0 font-mono text-[11px] text-ink-3">
-          {progress.completed} / {progress.total} steps
-        </span>
+                  : `Building · ${progress.activeLabel}`}
+          </span>
+          <span className="inline-flex shrink-0 items-center gap-1.5 font-mono text-[10.5px] text-ink-3">
+            {progress.completed}/{progress.total} steps
+            <ChevronDown size={12} className={cn("transition-transform", showDetails && "rotate-180")} aria-hidden="true" />
+          </span>
+        </button>
         {live && onCancel ? (
           <button type="button" onClick={onCancel} disabled={cancelling || run.cancelRequested} className="shrink-0 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-ink-2 hover:text-ink disabled:opacity-50">
             {run.cancelRequested || cancelling ? "Cancelling…" : "Cancel"}
@@ -95,56 +103,61 @@ export function BuildStatusCard({
         ) : null}
       </header>
 
-      <div className="px-3 py-2.5">
-        <Progress value={progress.percent} className="mb-2.5" />
-        <ol className="grid gap-1.5">
-          {run.stages.map((stage) => (
-            <li key={stage.id} className={cn("flex items-start gap-2 rounded-lg border px-2.5 py-1.5 text-[12px]", stateClass(stage.state))}>
-              <span className={cn("mt-px shrink-0 font-mono text-[13px] leading-none", stage.state === "running" && "pulse-dot text-accent")} aria-hidden="true">
-                {stageGlyph(stage.state)}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block font-medium">{stageDef(stage.id).label}</span>
-                {stage.message ? <span className="mt-0.5 block break-words text-[11px] leading-snug text-ink-3">{stage.message}</span> : null}
-              </span>
-              {stage.state === "running" && stage.startedAt ? (
-                <span className="shrink-0 font-mono text-[10px] text-ink-3">{relativeTime(stage.startedAt)}</span>
-              ) : null}
-            </li>
-          ))}
-        </ol>
-
-        {run.attempts > 0 ? (
-          <p className="mt-2 text-[11.5px] text-ink-2">
-            Auto-fix: {run.attempts} repair attempt{run.attempts === 1 ? "" : "s"} of {run.maxAttempts} · each one rebuilt and revalidated the project.
-          </p>
-        ) : null}
-
-        {run.error ? (
-          <p className="mt-2 rounded-lg border border-danger/40 bg-danger-soft px-2.5 py-2 text-[11.5px] leading-snug text-danger">
-            {run.error.message}
-            <span className="mt-0.5 block font-mono text-[10px] uppercase tracking-wide text-danger/80">{run.error.code}</span>
-          </p>
-        ) : null}
-
-        {run.changes.length ? <ChangeSummary changes={run.changes} className="mt-2.5" /> : null}
-        {run.validation?.length ? <BuildChecks checks={run.validation} compact /> : null}
-
-        {showLogs && run.logs.length ? (
-          <div className="mt-2.5">
-            <button
-              type="button"
-              onClick={() => setLogsOpen((value) => !value)}
-              className="inline-flex items-center gap-1.5 text-[11.5px] font-medium text-ink-2 hover:text-ink"
-              aria-expanded={logsOpen}
-            >
-              <Terminal size={12} /> Build logs ({run.logs.length})
-              <ChevronDown size={12} className={cn("transition-transform", logsOpen && "rotate-180")} />
-            </button>
-            {logsOpen ? <LogList lines={run.logs.map((line) => ({ at: String(line.at), step: line.stage ?? "info", detail: line.message }))} /> : null}
-          </div>
-        ) : null}
+      <div className="px-3 pb-2">
+        <Progress value={progress.percent} />
       </div>
+
+      {showDetails ? (
+        <div className="border-t border-border px-3 py-2.5">
+          <ol className="grid gap-1.5">
+            {run.stages.map((stage) => (
+              <li key={stage.id} className={cn("flex items-start gap-2 rounded-lg border px-2.5 py-1.5 text-[12px]", stateClass(stage.state))}>
+                <span className={cn("mt-px shrink-0 font-mono text-[13px] leading-none", stage.state === "running" && "pulse-dot text-accent")} aria-hidden="true">
+                  {stageGlyph(stage.state)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium">{stageDef(stage.id).label}</span>
+                  {stage.message ? <span className="mt-0.5 block break-words text-[11px] leading-snug text-ink-3">{stage.message}</span> : null}
+                </span>
+                {stage.state === "running" && stage.startedAt ? (
+                  <span className="shrink-0 font-mono text-[10px] text-ink-3">{relativeTime(stage.startedAt)}</span>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+
+          {run.attempts > 0 ? (
+            <p className="mt-2 text-[11.5px] text-ink-2">
+              Auto-fix: {run.attempts} repair attempt{run.attempts === 1 ? "" : "s"} of {run.maxAttempts} · each one rebuilt and revalidated the project.
+            </p>
+          ) : null}
+
+          {run.error ? (
+            <p className="mt-2 rounded-lg border border-danger/40 bg-danger-soft px-2.5 py-2 text-[11.5px] leading-snug text-danger">
+              {run.error.message}
+              <span className="mt-0.5 block font-mono text-[10px] uppercase tracking-wide text-danger/80">{run.error.code}</span>
+            </p>
+          ) : null}
+
+          {run.changes.length ? <ChangeSummary changes={run.changes} className="mt-2.5" /> : null}
+          {run.validation?.length ? <BuildChecks checks={run.validation} compact /> : null}
+
+          {showLogs && run.logs.length ? (
+            <div className="mt-2.5">
+              <button
+                type="button"
+                onClick={() => setLogsOpen((value) => !value)}
+                className="inline-flex items-center gap-1.5 text-[11.5px] font-medium text-ink-2 hover:text-ink"
+                aria-expanded={logsOpen}
+              >
+                <Terminal size={12} /> Build logs ({run.logs.length})
+                <ChevronDown size={12} className={cn("transition-transform", logsOpen && "rotate-180")} />
+              </button>
+              {logsOpen ? <LogList lines={run.logs.map((line) => ({ at: String(line.at), step: line.stage ?? "info", detail: line.message }))} /> : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }

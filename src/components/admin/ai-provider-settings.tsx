@@ -18,7 +18,7 @@ import { errorCodeOf } from "@/lib/admin-errors";
 import { Alert, Badge, Button, Card, Field, Input, Select, Spinner } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
-type Kind = "gemini" | "openai-compatible" | "anthropic";
+type Kind = "glm" | "openai-compatible" | "anthropic" | "gemini";
 
 type PublicConfig = {
   configured: boolean;
@@ -29,6 +29,7 @@ type PublicConfig = {
   model: string;
   agent_model: string;
   vision_model: string;
+  low_task_model?: string;
   api_key_set: boolean;
   api_key_last4: string;
   updated_by: string;
@@ -43,14 +44,16 @@ type CatalogModel = { id: string; label: string };
 type Message = { tone: "info" | "success" | "warning" | "danger"; text: string } | null;
 
 const KINDS: Array<{ id: Kind; label: string; hint: string }> = [
-  { id: "gemini", label: "Google Gemini API", hint: "Native generateContent REST — the shipped main model." },
-  { id: "openai-compatible", label: "OpenAI-compatible", hint: "OpenAI, Groq, OpenRouter, Together, vLLM, Ollama…" },
+  { id: "glm", label: "GLM (Zhipu AI / Z.ai)", hint: "Primary engine for coding, web dev, Agent, vision & high-load tasks." },
+  { id: "openai-compatible", label: "OpenAI-compatible", hint: "gpt-oss-120b, Groq, OpenAI, Together, vLLM, Ollama…" },
   { id: "anthropic", label: "Anthropic Claude API", hint: "Native Messages API." },
+  { id: "gemini", label: "Google Gemini (optional)", hint: "Optional secondary generateContent REST adapter." },
 ];
 
 const NATIVE_ENDPOINT: Record<Exclude<Kind, "openai-compatible">, string> = {
-  gemini: "https://generativelanguage.googleapis.com/v1beta",
+  glm: "https://open.bigmodel.cn/api/paas/v4",
   anthropic: "https://api.anthropic.com/v1",
+  gemini: "https://generativelanguage.googleapis.com/v1beta",
 };
 
 const ERROR_MAP: Record<string, string> = {
@@ -72,11 +75,12 @@ function errorText(error: unknown, fallback: string): string {
 export function AiProviderSettings() {
   const [config, setConfig] = useState<PublicConfig | null>(null);
   const [loading, setLoading] = useState(true);
-  const [kind, setKind] = useState<Kind>("gemini");
+  const [kind, setKind] = useState<Kind>("glm");
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [agentModel, setAgentModel] = useState("");
   const [visionModel, setVisionModel] = useState("");
+  const [lowTaskModel, setLowTaskModel] = useState("openai/gpt-oss-120b");
   const [apiKey, setApiKey] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [useEnvKey, setUseEnvKey] = useState(false);
@@ -94,6 +98,7 @@ export function AiProviderSettings() {
     setModel(value.model);
     setAgentModel(value.agent_model ?? "");
     setVisionModel(value.vision_model ?? "");
+    setLowTaskModel(value.low_task_model || "openai/gpt-oss-120b");
     setEnabled(value.enabled);
     setApiKey("");
     setUseEnvKey(value.environment_key);
@@ -115,7 +120,7 @@ export function AiProviderSettings() {
 
   const suggested = useMemo(() => {
     const rows = [...(config?.kind === kind ? config.suggested_models : [])];
-    if (kind === "gemini" && !rows.length) rows.push("gemini-2.5-flash", "gemini-2.5-pro");
+    if (kind === "glm" && !rows.length) rows.push("glm-4.7", "glm-4.6", "glm-4.6v", "glm-4.5", "glm-4.5-air");
     return Array.from(new Set([...rows, ...catalog.map((item) => item.id)])).slice(0, 400);
   }, [catalog, config?.kind, config?.suggested_models, kind]);
 
@@ -152,6 +157,7 @@ export function AiProviderSettings() {
         model: model.trim(),
         agent_model: agentModel.trim(),
         vision_model: visionModel.trim(),
+        low_task_model: lowTaskModel.trim(),
         api_key: apiKey,
         enabled,
         label: KINDS.find((entry) => entry.id === kind)?.label ?? "",
@@ -240,25 +246,34 @@ export function AiProviderSettings() {
           ))}
         </div>
 
-        {kind === "openai-compatible" ? (
-          <Field label="Base URL" htmlFor="main-base-url" hint="Examples: https://api.openai.com/v1 · https://openrouter.ai/api/v1 · https://api.groq.com/openai/v1. A full /chat/completions URL is accepted and normalised.">
-            <Input id="main-base-url" type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.openai.com/v1" autoComplete="off" spellCheck={false} />
+        {kind === "openai-compatible" || kind === "glm" ? (
+          <Field
+            label={kind === "glm" ? "GLM Base URL" : "Base URL"}
+            htmlFor="main-base-url"
+            hint={kind === "glm"
+              ? "Default: https://open.bigmodel.cn/api/paas/v4 (or https://api.z.ai/api/paas/v4 for Z.ai international)."
+              : "Examples: https://api.groq.com/openai/v1 · https://api.openai.com/v1 · https://openrouter.ai/api/v1."}
+          >
+            <Input id="main-base-url" type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={kind === "glm" ? "https://open.bigmodel.cn/api/paas/v4" : "https://api.openai.com/v1"} autoComplete="off" spellCheck={false} />
           </Field>
         ) : (
-          <Field label="Native endpoint" htmlFor="main-native-url" hint="Fixed by the protocol adapter on purpose: Gemini and Anthropic are called through their own APIs, never through an OpenAI shim.">
+          <Field label="Native endpoint" htmlFor="main-native-url" hint="Fixed by the protocol adapter on purpose: native adapters are called through their own APIs.">
             <Input id="main-native-url" value={NATIVE_ENDPOINT[kind]} readOnly disabled />
           </Field>
         )}
 
         <div className="grid gap-4">
-          <Field label="Chat model" htmlFor="main-model" hint="Used for everyday chat and any request that is not Agent/coding or vision.">
-            <Input id="main-model" list="main-model-options" value={model} onChange={(event) => setModel(event.target.value)} placeholder={kind === "gemini" ? "gemini-2.5-flash" : kind === "anthropic" ? "claude-sonnet-4-5" : "gpt-4.1-mini"} autoComplete="off" spellCheck={false} />
+          <Field label="High-end / Primary model" htmlFor="main-model" hint="Used by GLM for high-load tasks, complex reasoning, web development, and coding.">
+            <Input id="main-model" list="main-model-options" value={model} onChange={(event) => setModel(event.target.value)} placeholder={kind === "glm" ? "glm-4.7" : kind === "anthropic" ? "claude-sonnet-4-5" : "openai/gpt-oss-120b"} autoComplete="off" spellCheck={false} />
           </Field>
-          <Field label="Agent / coding model (optional)" htmlFor="main-agent-model" hint="Leave blank to use the chat model for Agent work. A strong coding model here keeps chat fast and Agent capable.">
-            <Input id="main-agent-model" list="main-model-options" value={agentModel} onChange={(event) => setAgentModel(event.target.value)} placeholder="Same as chat model" autoComplete="off" spellCheck={false} />
+          <Field label="Agent / coding / web-dev model (optional)" htmlFor="main-agent-model" hint="Dedicated coding & web development model (defaults to glm-4.7 when using GLM).">
+            <Input id="main-agent-model" list="main-model-options" value={agentModel} onChange={(event) => setAgentModel(event.target.value)} placeholder="glm-4.7 (or same as primary model)" autoComplete="off" spellCheck={false} />
           </Field>
-          <Field label="Vision model (optional)" htmlFor="main-vision-model" hint="Used by the screenshot scanner. Gemini flash/pro are multimodal; leave blank to reuse the chat model.">
-            <Input id="main-vision-model" list="main-model-options" value={visionModel} onChange={(event) => setVisionModel(event.target.value)} placeholder="Same as chat model" autoComplete="off" spellCheck={false} />
+          <Field label="Low-load fast task model" htmlFor="main-low-model" hint="Handles lightweight everyday tasks automatically (default: openai/gpt-oss-120b via GROQ_API_KEY / GPT_OSS_API_KEY).">
+            <Input id="main-low-model" value={lowTaskModel} onChange={(event) => setLowTaskModel(event.target.value)} placeholder="openai/gpt-oss-120b" autoComplete="off" spellCheck={false} />
+          </Field>
+          <Field label="Vision model (optional)" htmlFor="main-vision-model" hint="Used by the screenshot scanner and chat images (defaults to glm-4.6v when using GLM).">
+            <Input id="main-vision-model" list="main-model-options" value={visionModel} onChange={(event) => setVisionModel(event.target.value)} placeholder="glm-4.6v" autoComplete="off" spellCheck={false} />
           </Field>
           <datalist id="main-model-options">
             {suggested.map((id) => <option key={id} value={id} />)}

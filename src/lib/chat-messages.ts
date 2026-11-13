@@ -10,12 +10,24 @@ import type { BuildRunSnapshot } from "@/lib/deploy/stages";
 import type { ArtifactSnapshot } from "@/lib/ai/artifacts";
 import { DEFAULT_INTENT, detectIntent, type ArtifactType, type IntentId, type IntentResult } from "@/lib/ai/intent";
 
+export type WorkingStep = {
+  id: string;
+  label: string;
+  detail?: string;
+  status: "running" | "done" | "failed";
+  at: number;
+  durationMs?: number;
+};
+
 export type MessageMetadata = {
   mode?: ChatMode;
   model?: string;
   coding_detected?: boolean;
   provider?: string;
   fallback?: boolean;
+  tier?: "high" | "low";
+  /** Real server-recorded execution steps (rendered as a compact collapsible pill). */
+  steps?: WorkingStep[];
   artifacts?: AgentFile[];
   attachment_names?: string[];
   /** Owner-checked private voice recording associated with this user message. */

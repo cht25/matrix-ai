@@ -198,6 +198,46 @@ export function DevicesClient() {
   // ESP32 pairing & firmware builder modals
   const [espModalOpen, setEspModalOpen] = useState(false);
   const [espGrant, setEspGrant] = useState<Esp32PairingGrant | null>(null);
+  const [phoneRelease, setPhoneRelease] = useState<{
+    latest_version: string;
+    latest_build: number;
+    apk_url: string;
+    chat_url: string;
+    release_notes: string;
+    force_update: boolean;
+  } | null>(null);
+
+  const checkPhoneRelease = useCallback(async (showToast = false) => {
+    try {
+      const res = await fetch("/api/app/version?platform=android", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        latest_version?: string;
+        latest_build?: number;
+        apk_url?: string;
+        chat_url?: string;
+        release_notes?: string;
+        force_update?: boolean;
+      };
+      if (data.latest_version) {
+        setPhoneRelease({
+          latest_version: data.latest_version,
+          latest_build: data.latest_build ?? 1,
+          apk_url: data.apk_url ?? "https://github.com/cht25/matrix-ai/releases/latest/download/matrix-android.apk",
+          chat_url: data.chat_url ?? "https://matrix.thamjj13.top/chat",
+          release_notes: data.release_notes ?? "",
+          force_update: Boolean(data.force_update),
+        });
+        if (showToast) toast(`Latest MATRIX Phone App: v${data.latest_version} (build ${data.latest_build ?? 1})`);
+      }
+    } catch {
+      if (showToast) toast("Could not reach update server.");
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    void checkPhoneRelease(false);
+  }, [checkPhoneRelease]);
   const [espQrOpen, setEspQrOpen] = useState(false);
   const [espFirmwareOpen, setEspFirmwareOpen] = useState(false);
   const [espLabel, setEspLabel] = useState("Desk Guard ESP32");
@@ -577,6 +617,37 @@ export function DevicesClient() {
       </header>
 
       {error ? <Alert tone="danger">{error}</Alert> : null}
+
+      <Card className="flex flex-wrap items-center justify-between gap-4 border-accent/25 bg-surface-2/50">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink">
+              <Smartphone size={16} className="text-accent" /> MATRIX Phone App &amp; OTA Updates
+            </span>
+            <Badge className="!border-accent/40 !text-accent">
+              v{phoneRelease?.latest_version ?? "1.1.0"} · build {phoneRelease?.latest_build ?? 2}
+            </Badge>
+            {phoneRelease?.force_update ? <Badge className="!border-warning/40 !text-warning">Mandatory update</Badge> : null}
+          </div>
+          <p className="mt-1 text-xs text-ink-2">
+            Official Android companion app with automatic over-the-air version checks, QR pairing, Family screen supervision, and instant sync with{" "}
+            <span className="mono text-ink">{phoneRelease?.chat_url ?? "https://matrix.thamjj13.top/chat"}</span>.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={() => void checkPhoneRelease(true)}>
+            <RefreshCw size={14} /> Check update
+          </Button>
+          <a
+            href={phoneRelease?.apk_url ?? "https://github.com/cht25/matrix-ai/releases/latest/download/matrix-android.apk"}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-xl bg-accent px-3.5 text-xs font-semibold text-accent-ink hover:bg-accent-hover"
+          >
+            <Download size={14} /> Download Android APK
+          </a>
+        </div>
+      </Card>
 
       {/* Top section tabs */}
       <div className="flex flex-wrap gap-2 border-b border-border pb-3">

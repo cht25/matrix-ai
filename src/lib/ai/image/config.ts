@@ -19,6 +19,7 @@ import { Db, nowTs } from "@/lib/firebase/admin";
 import { RpcError } from "@/lib/server/errors";
 import { isRealSecret, type ImageProviderCredentials, type ImageProviderId } from "@/lib/ai/image/provider";
 import { getImageProvider } from "@/lib/ai/image/registry";
+import { GLM_IMAGE_DEFAULT_MODEL } from "@/lib/ai/image/glm-provider";
 import { TOGETHER_DEFAULT_MODEL } from "@/lib/ai/image/together-provider";
 
 const COLLECTION = "system_settings";
@@ -105,13 +106,17 @@ async function readRecord(d: Db): Promise<StoredRecord> {
 }
 
 function normalizeProvider(value: unknown): ImageProviderId {
-  return value === "together" ? "together" : "together";
+  return value === "together" ? "together" : "glm";
+}
+
+function defaultModelFor(provider: ImageProviderId): string {
+  return provider === "together" ? TOGETHER_DEFAULT_MODEL : GLM_IMAGE_DEFAULT_MODEL;
 }
 
 /**
  * Resolve the credentials the server should use right now.
- * Returns null when image generation is not configured at all — callers must
- * then report "Not configured" rather than pretending the feature works.
+ * Priority: Admin-saved encrypted Firestore record → GLM environment key
+ * (`GLM_IMAGE_API_KEY` or `GLM_API_KEY`) → `TOGETHER_API_KEY` fallback.
  */
 export async function resolveImageCredentials(
   d: Db,
@@ -120,14 +125,24 @@ export async function resolveImageCredentials(
   if (record.enabled !== false && record.api_key_encrypted) {
     const apiKey = decryptSecret(record.api_key_encrypted);
     if (isRealSecret(apiKey)) {
+      const provider = normalizeProvider(record.provider);
       return {
-        provider: normalizeProvider(record.provider),
-        credentials: { apiKey, model: record.model?.trim() || TOGETHER_DEFAULT_MODEL },
+        provider,
+        credentials: { apiKey, model: record.model?.trim() || defaultModelFor(provider) },
         source: "database",
       };
     }
   }
-  // Environment fallback keeps existing deployments running.
+  // Primary environment image provider: GLM (CogView / Z.ai).
+  const glmKey = (process.env.GLM_IMAGE_API_KEY || process.env.GLM_API_KEY || "").trim();
+  if (isRealSecret(glmKey)) {
+    return {
+      provider: "glm",
+      credentials: { apiKey: glmKey, model: process.env.GLM_IMAGE_MODEL?.trim() || GLM_IMAGE_DEFAULT_MODEL },
+      source: "environment",
+    };
+  }
+  // Secondary environment fallback: Together AI.
   const envKey = (process.env.TOGETHER_API_KEY ?? "").trim();
   if (isRealSecret(envKey)) {
     return {
@@ -156,7 +171,7 @@ export async function getImageProviderConfigPublic(d: Db): Promise<PublicImagePr
     enabled: record.enabled !== false,
     provider: providerId,
     provider_label: provider.label,
-    model: record.model?.trim() || resolved?.credentials.model || TOGETHER_DEFAULT_MODEL,
+    model: record.model?.trim() || resolved?.credentials.model || defaultModelFor(providerId),
     api_key_set: resolved !== null,
     api_key_last4:
       record.api_key_last4 ??
@@ -180,7 +195,7 @@ export async function saveImageProviderConfig(
 ): Promise<PublicImageProviderConfig> {
   const providerId = normalizeProvider(input.provider);
   const provider = getImageProvider(providerId);
-  const model = (input.model ?? "").trim() || TOGETHER_DEFAULT_MODEL;
+  const model = (input.model ?? "").trim() || defaultModelFor(providerId);
   if (model.length > 200) throw new RpcError("IMAGE_PROVIDER_MODEL_INVALID", 400);
 
   const record = await readRecord(d);

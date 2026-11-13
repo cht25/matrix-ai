@@ -1,97 +1,112 @@
-/// Home: bottom navigation — Chat, Pair device (QR), Devices, Sign out — plus
-/// transparent Family Screen Mirroring indicator & Google Family Link lock shield.
-library;
-
-import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'api.dart';
+import 'agent_screen.dart';
+import 'automations_screen.dart';
 import 'chat_screen.dart';
+import 'config.dart';
 import 'devices_screen.dart';
-import 'pairing_screen.dart';
+import 'family_screen.dart';
+import 'update_service.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.api});
-  final MatrixApi api;
+  const HomeScreen({super.key});
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _index = 0;
-  Timer? _pollTimer;
-  List<dynamic> _activeMirrorSessions = const [];
-  Map<String, dynamic>? _locked;
+  AppUpdateInfo? _forcedUpdate;
+  bool _checkingUpdate = false;
+
+  static const _tabs = <({String label, IconData icon, Widget page})>[
+    (label: 'Chat', icon: Icons.chat_bubble_outline, page: ChatScreen()),
+    (label: 'Agent', icon: Icons.terminal, page: AgentScreen()),
+    (label: 'Automations', icon: Icons.schedule, page: AutomationsScreen()),
+    (label: 'Devices', icon: Icons.devices_other, page: DevicesScreen()),
+  ];
 
   @override
   void initState() {
     super.initState();
-    _pollSupervision();
-    _pollTimer = Timer.periodic(const Duration(seconds: 8), (_) => _pollSupervision());
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _runUpdateCheck(manual: false));
   }
 
   @override
   void dispose() {
-    _pollTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
-  Future<void> _pollSupervision() async {
-    try {
-      final res = await widget.api.activeMirrorAndLock();
-      if (!mounted) return;
-      setState(() {
-        _activeMirrorSessions = (res['active_sessions'] as List?) ?? const [];
-        _locked = res['locked'] is Map ? Map<String, dynamic>.from(res['locked'] as Map) : null;
-      });
-    } catch (_) {
-      // Transient offline / unlinked state.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _runUpdateCheck(manual: false);
     }
   }
 
-  Future<void> _disableMirror(String familyId) async {
+  Future<void> _runUpdateCheck({required bool manual}) async {
+    if (_checkingUpdate) return;
+    _checkingUpdate = true;
     try {
-      await widget.api.disableFamilyMirroring(familyId);
-      await _pollSupervision();
-      if (mounted) {
+      final info = await UpdateService.checkForUpdate();
+      if (!mounted) return;
+      if (info == null) {
+        if (manual) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not reach update server.')),
+          );
+        }
+        return;
+      }
+      if (info.forceUpdate && info.updateAvailable) {
+        setState(() => _forcedUpdate = info);
+        await UpdateService.showUpdateSheet(context, info);
+        return;
+      }
+      setState(() => _forcedUpdate = null);
+      if (info.updateAvailable && (manual || await UpdateService.shouldShowPrompt(info))) {
+        await UpdateService.showUpdateSheet(context, info);
+      } else if (manual) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Screen mirroring disabled. A parent must re-grant access to turn it back on.')),
+          SnackBar(content: Text('MATRIX v${MatrixConfig.appVersion} is up to date.')),
         );
       }
-    } catch (_) {}
+    } finally {
+      _checkingUpdate = false;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_locked != null) {
-      final familyName = _locked!['family_name']?.toString() ?? 'Family';
-      final reason = _locked!['reason']?.toString() ?? 'Paused by a parent in your family';
-      final familyId = _locked!['family_id']?.toString() ?? '';
+    if (_forcedUpdate != null) {
       return Scaffold(
         body: Center(
           child: Padding(
-            padding: const EdgeInsets.all(28),
+            padding: const EdgeInsets.all(24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.lock_clock, size: 64, color: Colors.amber),
-                const SizedBox(height: 16),
-                Text('$familyName · Family Supervision', style: const TextStyle(color: Colors.amber, fontWeight: FontWeight.w600)),
+                const Icon(Icons.system_update_rounded, size: 48, color: Color(0xFF22C55E)),
+                const SizedBox(height: 14),
+                Text(
+                  'Update Required · v${_forcedUpdate!.latestVersion}',
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                ),
                 const SizedBox(height: 8),
-                const Text('Time for a break', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                Text(reason, textAlign: TextAlign.center),
+                Text(
+                  _forcedUpdate!.releaseNotes.isNotEmpty
+                      ? _forcedUpdate!.releaseNotes
+                      : 'Please install the latest MATRIX Android release to continue.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white70, height: 1.45),
+                ),
                 const SizedBox(height: 20),
-                FilledButton(
-                  onPressed: familyId.isEmpty
-                      ? null
-                      : () async {
-                          await widget.api.rpc('family_request_parent_access', {'family_id': familyId, 'kind': 'unlock_device'});
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Unlock request sent to your parent.')));
-                          }
-                        },
-                  child: const Text('Ask parent to unlock'),
+                FilledButton.icon(
+                  onPressed: () => UpdateService.openDownload(_forcedUpdate!.apkUrl),
+                  icon: const Icon(Icons.download_rounded),
+                  label: const Text('Download Latest APK'),
                 ),
               ],
             ),
@@ -100,68 +115,92 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    final pages = [
-      ChatScreen(api: widget.api),
-      PairingScreen(api: widget.api),
-      DevicesScreen(api: widget.api),
-    ];
-    final activeMirror = _activeMirrorSessions.isNotEmpty ? _activeMirrorSessions.first as Map : null;
-
+    final user = FirebaseAuth.instance.currentUser;
     return Scaffold(
-      body: Column(
-        children: [
-          if (activeMirror != null)
-            Material(
-              color: Colors.amber.shade900,
-              child: SafeArea(
-                bottom: false,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.visibility, color: Colors.white, size: 18),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Family screen mirroring active: ${activeMirror['viewer_name'] ?? 'Parent'} (${activeMirror['family_name'] ?? 'Family'}) is viewing.',
-                          style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: () => _disableMirror(activeMirror['family_id']?.toString() ?? ''),
-                        child: const Text('Disable', style: TextStyle(color: Colors.white)),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          Expanded(child: pages[_index]),
-        ],
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.chat_bubble_outline), label: 'Chat'),
-          NavigationDestination(icon: Icon(Icons.qr_code_scanner), label: 'Pair device'),
-          NavigationDestination(icon: Icon(Icons.devices), label: 'Devices'),
-        ],
+      appBar: AppBar(
+        title: Text(_tabs[_index].label),
       ),
       drawer: Drawer(
-        child: ListView(
-          children: [
-            DrawerHeader(child: Text(FirebaseAuth.instance.currentUser?.email ?? 'MATRIX')),
-            ListTile(
-              leading: const Icon(Icons.logout),
-              title: const Text('Sign out'),
-              onTap: () async {
-                await MatrixApi.clearDeviceCredential();
-                await FirebaseAuth.instance.signOut();
-              },
-            ),
-          ],
+        backgroundColor: const Color(0xFF101013),
+        child: SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Text('MATRIX AI', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF143524),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Text(
+                            'v${MatrixConfig.appVersion}',
+                            style: TextStyle(fontSize: 10.5, color: Color(0xFF4ADE80)),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(user?.email ?? '', style: const TextStyle(color: Colors.white60, fontSize: 12)),
+                  ],
+                ),
+              ),
+              const Divider(height: 1, color: Colors.white10),
+              ListTile(
+                leading: const Icon(Icons.family_restroom_outlined),
+                title: const Text('Family'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FamilyScreen()));
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.open_in_browser_rounded),
+                title: const Text('Open Web Workspace'),
+                subtitle: const Text('matrix.thamjj13.top/chat', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  UpdateService.openWebChat();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.system_update_outlined),
+                title: const Text('Check for phone updates'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _runUpdateCheck(manual: true);
+                },
+              ),
+              const Spacer(),
+              const Divider(height: 1, color: Colors.white10),
+              ListTile(
+                leading: const Icon(Icons.logout, color: Color(0xFFF87171)),
+                title: const Text('Sign out', style: TextStyle(color: Color(0xFFF87171))),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  await FirebaseAuth.instance.signOut();
+                },
+              ),
+            ],
+          ),
         ),
+      ),
+      body: IndexedStack(index: _index, children: [for (final t in _tabs) t.page]),
+      bottomNavigationBar: NavigationBar(
+        backgroundColor: const Color(0xFF101013),
+        selectedIndex: _index,
+        onDestinationSelected: (i) => setState(() => _index = i),
+        destinations: [
+          for (final t in _tabs) NavigationDestination(icon: Icon(t.icon), label: t.label),
+        ],
       ),
     );
   }

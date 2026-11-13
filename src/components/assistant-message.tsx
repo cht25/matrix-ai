@@ -17,6 +17,7 @@ import { Markdown } from "@/components/markdown";
 import { ResponseActions, type ChatAction } from "@/components/response-actions";
 import { ArtifactCard, ExportFormatRow, FormatChoice } from "@/components/artifact-panel";
 import { ActivityDisclosure } from "@/components/activity-panel";
+import { CompactStepsPill } from "@/components/response-status";
 import { FlashcardDeck } from "@/components/mode-workspace";
 import { BuildRunCard } from "@/components/build/build-run-card";
 import type { BuildRun } from "@/lib/deploy/stages";
@@ -71,6 +72,14 @@ export function AssistantMessage(props: AssistantMessageProps) {
 
   return (
     <div className="border-l border-border pl-4">
+      {message.metadata?.steps?.length ? (
+        <CompactStepsPill
+          steps={message.metadata.steps}
+          durationMs={message.metadata.duration_ms}
+          provider={message.metadata.provider}
+          model={message.metadata.model}
+        />
+      ) : null}
       <Markdown text={message.content} />
 
       {message.metadata?.image_data_url ? (

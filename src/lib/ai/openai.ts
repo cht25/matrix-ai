@@ -18,7 +18,7 @@ import type {
   AIProviderToolCall,
 } from "@/lib/ai/groq";
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
-import { assistantContentOnly, assistantDeltaContent, createReasoningStreamFilter } from "@/lib/ai/reasoning";
+import { assistantContentOnly, assistantDeltaContent, createReasoningStreamFilter, hasReasoningDelta } from "@/lib/ai/reasoning";
 import { fetchModelCatalog, verifyCatalogModel } from "@/lib/ai/model-catalog";
 import { cachedRealHealthCheck, healthCacheKey } from "@/lib/ai/provider-health";
 import { siteOrigin } from "@/lib/seo";
@@ -241,6 +241,8 @@ export class OpenAICompatibleProvider implements AIProvider {
       // by the stateful filter — without trimming a single space or newline
       // off the visible text. Per-delta trimming is what used to glue every
       // word together into unreadable output.
+      let reasoningStarted = false;
+      let reasoningFinished = false;
       const reasoningFilter = createReasoningStreamFilter();
       while (true) {
         const { done, value } = await reader.read();
@@ -254,6 +256,10 @@ export class OpenAICompatibleProvider implements AIProvider {
           const payload = trimmed.slice(5).trim();
           if (payload === "[DONE]") {
             sawDone = true;
+            if (reasoningStarted && !reasoningFinished) {
+              reasoningFinished = true;
+              req.onReasoningActivity?.("done");
+            }
             const tail = reasoningFilter.flush();
             if (tail) yield tail;
             return;
@@ -278,10 +284,25 @@ export class OpenAICompatibleProvider implements AIProvider {
                 requestId: req.requestId,
               });
             }
+            const deltaObj = event.choices?.[0]?.delta;
+            if (hasReasoningDelta(deltaObj)) {
+              if (!reasoningStarted) {
+                reasoningStarted = true;
+                req.onReasoningActivity?.("start");
+              } else {
+                req.onReasoningActivity?.("delta");
+              }
+            }
             // Drop reasoning/chain-of-thought deltas so the user only ever sees
-            // the real answer; the client shows an animated thinking indicator.
-            const visible = reasoningFilter.push(assistantDeltaContent(event.choices?.[0]?.delta));
-            if (visible) yield visible;
+            // the real answer while signaling live step activity.
+            const visible = reasoningFilter.push(assistantDeltaContent(deltaObj));
+            if (visible) {
+              if (reasoningStarted && !reasoningFinished) {
+                reasoningFinished = true;
+                req.onReasoningActivity?.("done");
+              }
+              yield visible;
+            }
           } catch (error) {
             if (error instanceof SyntaxError) continue;
             throw error;

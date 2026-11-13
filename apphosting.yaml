@@ -23,6 +23,7 @@ env:
   - variable: NEXT_PUBLIC_FIREBASE_APP_ID
     availability: [BUILD, RUNTIME]
   - variable: NEXT_PUBLIC_APP_URL
+    value: https://matrix.thamjj13.top
     availability: [BUILD, RUNTIME]
   # Server-only (secrets) — App Hosting resolves these from Secret Manager when
   # you pass --secretpath, or set them via the console.
@@ -39,14 +40,27 @@ env:
   - variable: CLOUDINARY_API_SECRET
     availability: [RUNTIME]
     secret: CLOUDINARY_API_SECRET
-  - variable: GEMINI_API_KEY
+  - variable: GLM_API_KEY
     availability: [RUNTIME]
-    secret: GEMINI_API_KEY
-  - variable: GEMINI_MODEL
+    secret: GLM_API_KEY
+  - variable: GLM_MODEL
+    value: glm-4.7
+    availability: [RUNTIME]
+  - variable: GLM_CODING_MODEL
+    value: glm-4.7
+    availability: [RUNTIME]
+  - variable: GLM_VISION_MODEL
+    value: glm-4.6v
+    availability: [RUNTIME]
+  - variable: GLM_IMAGE_MODEL
+    value: cogview-4
     availability: [RUNTIME]
   - variable: GROQ_API_KEY
     availability: [RUNTIME]
     secret: GROQ_API_KEY
+  - variable: GROQ_CHAT_MODEL
+    value: openai/gpt-oss-120b
+    availability: [RUNTIME]
   - variable: RESEND_API_KEY
     availability: [RUNTIME]
     secret: RESEND_API_KEY

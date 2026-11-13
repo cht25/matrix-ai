@@ -8,6 +8,7 @@
 // =============================================================================
 
 export const PRODUCTION_ORIGIN = "https://matrix.thamjj13.top";
+export const PRODUCTION_CHAT_URL = "https://matrix.thamjj13.top/chat";
 
 function isLocalOrPrivateHostname(input: string): boolean {
   const withoutBrackets = input.toLowerCase().replace("[", "").replace("]", "");
@@ -44,3 +45,9 @@ export function siteOrigin(): string {
     return PRODUCTION_ORIGIN;
   }
 }
+
+/** Authoritative public URL for the MATRIX AI chat workspace (`/chat`). */
+export function chatOriginUrl(): string {
+  return `${siteOrigin()}/chat`;
+}
+

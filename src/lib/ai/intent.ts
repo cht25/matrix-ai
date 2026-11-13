@@ -72,7 +72,7 @@ export type IntentResult = {
   /** The user explicitly refused export/automation — respect it. */
   suppressExport: boolean;
   /** Image generation provider, set only for real image requests. */
-  provider: "together_ai" | null;
+  provider: "glm" | "together_ai" | null;
   /** Short, human-readable reasons. Used for debugging + Activity copy. */
   signals: string[];
 };
@@ -319,7 +319,7 @@ export function detectIntent(input: string, context: IntentContext = {}): Intent
     intent = "IMAGE_GENERATION";
     artifact = "IMAGE";
     artifactRequested = true;
-    provider = "together_ai";
+    provider = "glm";
   } else if (wantsAgent) {
     intent = mode === "orchestrator" ? "CHAT" : "AGENT_TASK";
     artifact = intent === "AGENT_TASK" ? "AGENT_TASK" : "NONE";

@@ -20,10 +20,12 @@ type Notice = { tone: "info" | "success" | "warning" | "danger"; text: string } 
 type ModelFlags = Partial<Pick<ManagedModelConfig, "enabled" | "use_for_chat" | "use_for_agent" | "use_for_vision">>;
 
 const NATIVE_ENDPOINTS: Record<Exclude<ManagedProviderKind, "openai-compatible">, string> = {
+  glm: "https://open.bigmodel.cn/api/paas/v4",
   gemini: "https://generativelanguage.googleapis.com/v1beta",
   anthropic: "https://api.anthropic.com/v1",
 };
 const KIND_LABEL: Record<ManagedProviderKind, string> = {
+  glm: "GLM (Zhipu AI / Z.ai)",
   "openai-compatible": "OpenAI-compatible API",
   gemini: "Google Gemini",
   anthropic: "Anthropic Claude",
@@ -39,16 +41,16 @@ const ERROR_COPY: Record<string, string> = {
 };
 
 const PROVIDER_PRESETS: Array<{ label: string; name: string; kind: ManagedProviderKind; base_url: string; sampleModel: string }> = [
-  { label: "Google Gemini", name: "Google Gemini", kind: "gemini", base_url: NATIVE_ENDPOINTS.gemini, sampleModel: "gemini-2.5-flash" },
-  { label: "Groq", name: "Groq Cloud", kind: "openai-compatible", base_url: "https://api.groq.com/openai/v1", sampleModel: "llama-3.3-70b-versatile" },
+  { label: "GLM (Z.ai)", name: "GLM High-End", kind: "glm", base_url: NATIVE_ENDPOINTS.glm, sampleModel: "glm-4.7" },
+  { label: "Groq (gpt-oss-120b)", name: "Groq Low-Load", kind: "openai-compatible", base_url: "https://api.groq.com/openai/v1", sampleModel: "openai/gpt-oss-120b" },
   { label: "OpenAI", name: "OpenAI", kind: "openai-compatible", base_url: "https://api.openai.com/v1", sampleModel: "gpt-4.1-mini" },
   { label: "Anthropic", name: "Anthropic Claude", kind: "anthropic", base_url: NATIVE_ENDPOINTS.anthropic, sampleModel: "claude-sonnet-4-5" },
-  { label: "Together AI", name: "Together AI", kind: "openai-compatible", base_url: "https://api.together.xyz/v1", sampleModel: "meta-llama/Llama-3.3-70B-Instruct-Turbo" },
+  { label: "Together AI", name: "Together AI", kind: "openai-compatible", base_url: "https://api.together.xyz/v1", sampleModel: "openai/gpt-oss-120b" },
   { label: "OpenRouter", name: "OpenRouter (optional)", kind: "openai-compatible", base_url: "https://openrouter.ai/api/v1", sampleModel: "" },
 ];
 
 function freshDraft(): Draft {
-  return { name: "Google Gemini", kind: "gemini", base_url: NATIVE_ENDPOINTS.gemini, api_key: "", enabled: true, models: [] };
+  return { name: "GLM High-End", kind: "glm", base_url: NATIVE_ENDPOINTS.glm, api_key: "", enabled: true, models: [] };
 }
 function copyProvider(provider: ManagedProviderPublic): Draft {
   return {
@@ -392,14 +394,15 @@ export function ManagedAIProviders() {
                 setDraft({ ...draft, kind, base_url: kind === "openai-compatible" ? "" : NATIVE_ENDPOINTS[kind], api_key: "", models: [] });
                 setCatalog([]);
               }}>
-                <option value="gemini">Google Gemini API</option>
+                <option value="glm">GLM (Zhipu AI / Z.ai)</option>
                 <option value="openai-compatible">OpenAI-compatible endpoint</option>
                 <option value="anthropic">Anthropic Claude API</option>
+                <option value="gemini">Google Gemini API (optional)</option>
               </Select>
             </Field>
-            {draft.kind === "openai-compatible" ? (
-              <Field label="Base URL" htmlFor="managed-provider-url" hint="Use the provider's API base URL, such as https://api.openai.com/v1. Local HTTP requires server-side AI_ALLOW_LOCAL_HTTP=true.">
-                <Input id="managed-provider-url" type="url" value={draft.base_url} onChange={(event) => setDraft({ ...draft, base_url: event.target.value })} placeholder="https://api.example.com/v1" />
+            {draft.kind === "openai-compatible" || draft.kind === "glm" ? (
+              <Field label="Base URL" htmlFor="managed-provider-url" hint={draft.kind === "glm" ? "Default: https://open.bigmodel.cn/api/paas/v4 or https://api.z.ai/api/paas/v4." : "Use the provider's API base URL, such as https://api.openai.com/v1. Local HTTP requires server-side AI_ALLOW_LOCAL_HTTP=true."}>
+                <Input id="managed-provider-url" type="url" value={draft.base_url} onChange={(event) => setDraft({ ...draft, base_url: event.target.value })} placeholder={draft.kind === "glm" ? "https://open.bigmodel.cn/api/paas/v4" : "https://api.example.com/v1"} />
               </Field>
             ) : (
               <Field label="Native API endpoint" htmlFor="managed-provider-native-url" hint="This protocol adapter uses the vendor's official API and model catalog.">

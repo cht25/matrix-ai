@@ -28,6 +28,7 @@ import { completeWithFallback, streamWithFallback } from "@/lib/ai/executor";
 import { AIProviderError, logGatewayFailure, logProviderFailure, providerPublicCode } from "@/lib/ai/provider-error";
 import { stripReasoningContent } from "@/lib/ai/reasoning";
 import { formatAttachmentContext, isCodingRequest, safeAgentPath, type AgentFile, type ChatMode, type TextAttachment } from "@/lib/ai/agent";
+import type { WorkingStep } from "@/lib/chat-messages";
 import { detectBuildIntent, shouldRunBuildPipeline } from "@/lib/ai/build-intent";
 import { requestChatMode } from "@/lib/ai/execution-policy";
 import { computeAnalytics } from "@/lib/ai/pipeline";
@@ -264,10 +265,13 @@ async function finalizeChat(d: Db, opts: {
   requestId?: string;
   usage?: AIProviderResponse["usage"];
   usageStatus?: "ok" | "partial";
+  tier?: "high" | "low";
+  steps?: WorkingStep[];
 }) {
   const {
     provider, providerName, user, conversationId, isTemporary, message, redactedMessage, reply,
     history, redaction, started, model, mode, codingDetected, files = [], projectId = null, requestId, usage, usageStatus,
+    tier, steps,
   } = opts;
   const convRef = d.collection("conversations").doc(conversationId);
 
@@ -288,6 +292,9 @@ async function finalizeChat(d: Db, opts: {
         model,
         ...(providerName ? { provider: providerName } : {}),
         coding_detected: codingDetected,
+        duration_ms: Math.max(1, Date.now() - started),
+        ...(tier ? { tier } : {}),
+        ...(steps?.length ? { steps: steps.slice(0, 12) } : {}),
         ...(safeArtifacts.length ? { artifacts: safeArtifacts } : {}),
         ...(projectId ? { project_id: projectId } : {}),
       },
@@ -570,7 +577,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   }
   const codingDetected = route.coding || mode === "agent" || isCodingRequest(message, attachments);
   const preferFallback = body.prefer_fallback === true;
-  let targets = await createAIRoutesFromDb(d, codingDetected, preferFallback);
+  let targets = await createAIRoutesFromDb(d, codingDetected, preferFallback, route.tier);
   if (chatImageDataUrl) {
     const visionTargets = await createScanRoutesFromDb(d);
     if (visionTargets.length) {
@@ -664,28 +671,102 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
           }
         };
         let window = "";
+        const recordedSteps: WorkingStep[] = [];
+        const upsertStep = (next: WorkingStep) => {
+          const idx = recordedSteps.findIndex((s) => s.id === next.id);
+          if (idx >= 0) recordedSteps[idx] = next;
+          else recordedSteps.push(next);
+          emit({ step: next, tier: route.tier });
+        };
+        let reasoningStartAt: number | null = null;
+        let genStartAt: number | null = null;
+        let firstTokenAt: number | null = null;
         try {
-          emit({ conversation_id: convId, mode, model: activeTarget.model, provider: activeTarget.provider, coding_detected: codingDetected, stream_status: "connecting" });
+          emit({
+            conversation_id: convId,
+            mode,
+            model: activeTarget.model,
+            provider: activeTarget.provider,
+            tier: route.tier,
+            coding_detected: codingDetected,
+            stream_status: "connecting",
+          });
+          upsertStep({
+            id: "route",
+            label: `Routed to ${activeTarget.provider} · ${activeTarget.model}`,
+            detail: route.tier === "high" ? "High-load / Coding engine" : "Fast low-load engine",
+            status: "done",
+            at: Date.now(),
+            durationMs: Math.max(1, Date.now() - started),
+          });
+          if (rag || safeAttachments.length || chatImageDataUrl) {
+            upsertStep({
+              id: "context",
+              label: chatImageDataUrl
+                ? "Prepared vision attachment"
+                : safeAttachments.length
+                  ? `Processed ${safeAttachments.length} attachment${safeAttachments.length === 1 ? "" : "s"}`
+                  : "Retrieved verified knowledge",
+              status: "done",
+              at: Date.now(),
+            });
+          }
           emit({ stream_status: "streaming" });
+          genStartAt = Date.now();
+          upsertStep({
+            id: "generate",
+            label: codingDetected ? "Generating code & solution" : "Synthesizing response",
+            status: "running",
+            at: genStartAt,
+          });
           for await (const item of streamWithFallback(
             targets,
             {
               messages,
               ...(chatImageDataUrl ? { imageDataUrl: chatImageDataUrl } : {}),
               temperature: codingDetected ? 0.3 : 0.5,
-              maxTokens: codingDetected ? 3200 : 1600,
+              maxTokens: codingDetected ? 4096 : 1600,
               requestId,
               onUsage: (usage) => { streamUsage = usage; },
+              onReasoningActivity: (phase) => {
+                if (phase === "start" && reasoningStartAt === null) {
+                  reasoningStartAt = Date.now();
+                  upsertStep({
+                    id: "reasoning",
+                    label: "Deep reasoning",
+                    detail: `${activeTarget.provider} · ${activeTarget.model}`,
+                    status: "running",
+                    at: reasoningStartAt,
+                  });
+                } else if (phase === "done" && reasoningStartAt !== null) {
+                  const dur = Math.max(1, Date.now() - reasoningStartAt);
+                  upsertStep({
+                    id: "reasoning",
+                    label: "Deep reasoning",
+                    detail: `${activeTarget.provider} · ${activeTarget.model}`,
+                    status: "done",
+                    at: reasoningStartAt,
+                    durationMs: dur,
+                  });
+                }
+              },
             },
             (target, fallback) => {
               activeTarget = target;
               if (fallback) {
                 usedFallback = true;
                 emit({ model: target.model, provider: target.provider, fallback: true });
+                upsertStep({
+                  id: "fallback",
+                  label: `Switched to fallback · ${target.provider} (${target.model})`,
+                  status: "done",
+                  at: Date.now(),
+                });
               }
             },
           )) {
             const delta = item.delta;
+            if (firstTokenAt === null) firstTokenAt = Date.now();
             // Per-delta output safety + PII leak filtering.
             const probe = (window + delta).slice(-400);
             const check = validateOutput(probe);
@@ -698,16 +779,29 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
           }
           if (!full.trim()) throw new Error("EMPTY_AI_RESPONSE");
           done = true;
+          if (reasoningStartAt !== null) {
+            const rStep = recordedSteps.find((s) => s.id === "reasoning");
+            if (rStep && rStep.status === "running") {
+              upsertStep({ ...rStep, status: "done", durationMs: Math.max(1, Date.now() - reasoningStartAt) });
+            }
+          }
+          upsertStep({
+            id: "generate",
+            label: codingDetected ? "Generated code & solution" : "Synthesized response",
+            status: "done",
+            at: genStartAt ?? started,
+            durationMs: Math.max(1, Date.now() - (genStartAt ?? started)),
+          });
           emit({ stream_status: "finalizing" });
           const streamedReply = stripReasoningContent(full);
           const streamedFiles: AgentFile[] = [];
           const projectId = activeProjectId;
           const analytics = computeAnalytics({
             started,
-            firstTokenAt: started,
+            firstTokenAt: firstTokenAt ?? started,
             promptTokens: streamUsage?.promptTokens ?? 0,
             completionTokens: streamUsage?.completionTokens ?? 0,
-            agentSteps: 1,
+            agentSteps: recordedSteps.length,
             toolsExecuted: 0,
           });
           let degraded = conversationPersistDegraded;
@@ -716,6 +810,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
               provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
               redactedMessage: redaction.redacted, reply: streamedReply, history, redaction, started,
               model: activeTarget.model, mode, codingDetected, files: streamedFiles, projectId, requestId, usage: streamUsage,
+              tier: route.tier, steps: recordedSteps,
             });
           } catch (error) {
             degraded = true;
@@ -728,6 +823,9 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
             mode,
             model: activeTarget.model,
             provider: activeTarget.provider,
+            tier: route.tier,
+            steps: recordedSteps,
+            duration_ms: Math.max(1, Date.now() - started),
             fallback: usedFallback,
             coding_detected: codingDetected,
             files: streamedFiles,
@@ -786,9 +884,12 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   let toolCallsProcessed = 0;
   let toolRounds = 0;
   let activeTarget: AIRouteTarget = targets[0];
+  const nonStreamSteps: WorkingStep[] = [];
+  let sawReasoning = false;
   try {
     const safeTools = mode === "agent" && targets[0].client.supportsToolCalls ? modelCallableTools() : [];
     const agentMessages = [...messages];
+    const callStarted = Date.now();
     let result = await completeWithFallback(targets, {
       messages: agentMessages,
       ...(chatImageDataUrl ? { imageDataUrl: chatImageDataUrl } : {}),
@@ -796,8 +897,26 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
       temperature: mode === "agent" ? 0.25 : 0.5,
       maxTokens: mode === "agent" ? 16384 : codingDetected ? 4096 : 1600,
       requestId,
+      onReasoningActivity: () => { sawReasoning = true; },
     });
     activeTarget = result.target;
+    nonStreamSteps.push({
+      id: "route",
+      label: `Routed to ${activeTarget.provider} · ${activeTarget.model}`,
+      detail: route.tier === "high" ? "High-load / Coding engine" : "Fast low-load engine",
+      status: "done",
+      at: started,
+      durationMs: Math.max(1, callStarted - started),
+    });
+    if (sawReasoning) {
+      nonStreamSteps.push({
+        id: "reasoning",
+        label: "Deep reasoning",
+        detail: `${activeTarget.provider} · ${activeTarget.model}`,
+        status: "done",
+        at: callStarted,
+      });
+    }
     usage = { ...result.response.usage };
 
     // Model-directed execution is limited to explicitly reviewed read-only
@@ -810,6 +929,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
       agentMessages.push({ role: "assistant", content: result.response.content ?? "", tool_calls: calls });
       for (const call of calls) {
         const name = typeof call.function?.name === "string" ? call.function.name : "";
+        const toolStart = Date.now();
         let toolResult: { ok: boolean; data?: Record<string, unknown>; message?: string; error?: string; request_id?: string };
         await recordAgentToolSelection(d, user.uid, name.slice(0, 64), "Provider model requested an Agent tool.");
         toolCallsProcessed += 1;
@@ -825,6 +945,13 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
             toolResult = { ok: false, error: error instanceof Error ? error.message.slice(0, 160) : "INVALID_TOOL_ARGUMENTS" };
           }
         }
+        nonStreamSteps.push({
+          id: `tool:${toolRounds}:${name}`,
+          label: `Executed tool · ${name || "tool"}`,
+          status: toolResult.ok ? "done" : "failed",
+          at: toolStart,
+          durationMs: Math.max(1, Date.now() - toolStart),
+        });
         const toolCallId = typeof call.id === "string" ? call.id.slice(0, 128) : "invalid_tool_call";
         agentMessages.push({ role: "tool", tool_call_id: toolCallId, name: name.slice(0, 64), content: JSON.stringify(toolResult).slice(0, 6000) });
       }
@@ -844,6 +971,13 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     }
     rawReply = result.response.content;
     if (!rawReply.trim()) throw new Error("AGENT_TOOL_LOOP_RETURNED_NO_FINAL_ANSWER");
+    nonStreamSteps.push({
+      id: "generate",
+      label: codingDetected ? "Generated code & solution" : "Synthesized response",
+      status: "done",
+      at: Date.now(),
+      durationMs: Math.max(1, Date.now() - callStarted),
+    });
   } catch (error) {
     logProviderFailure(error, requestId);
     await logUsage(d, user.uid, activeTarget?.model ?? selectedModel, "chat", {}, Date.now() - started, "error", requestId);
@@ -875,6 +1009,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
       provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
       redactedMessage: redaction.redacted, reply, history, redaction, started,
       model: activeTarget.model, mode, codingDetected, files, projectId, requestId, usage,
+      tier: route.tier, steps: nonStreamSteps,
     });
   } catch (error) {
     // The AI answered — never convert that into a request failure. Surface the
@@ -892,6 +1027,9 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     mode,
     model: activeTarget.model,
     provider: activeTarget.provider,
+    tier: route.tier,
+    steps: nonStreamSteps,
+    duration_ms: Math.max(1, Date.now() - started),
     fallback: targets.length > 1 && (targets.indexOf(activeTarget) > 0 || (preferFallback && targets.indexOf(activeTarget) < targets.length - 1)),
     coding_detected: codingDetected,
     usage,
@@ -947,12 +1085,29 @@ async function handleImage(d: Db, user: SessionUser, body: Record<string, unknow
     const image = await generateImage(d, prompt);
     const dataUrl = `data:${image.mime};base64,${image.b64}`;
     const reply = "Image ready.";
+    const imageSteps: WorkingStep[] = [
+      {
+        id: "prompt",
+        label: "Prompt prepared",
+        status: "done",
+        detail: image.provider === "glm" ? "GLM CogView" : image.provider,
+        at: started,
+      },
+      {
+        id: "render",
+        label: "Image rendered",
+        status: "done",
+        detail: image.model,
+        durationMs: Math.max(1, Date.now() - started),
+        at: Date.now(),
+      },
+    ];
     if (convId) {
       try {
         await d.collection("conversations").doc(convId).collection("messages").add({
           role: "assistant",
           content: reply,
-          metadata: { mode: "image", image_data_url: dataUrl, model: image.model, provider: image.provider },
+          metadata: { mode: "image", image_data_url: dataUrl, model: image.model, provider: image.provider, steps: imageSteps },
           created_at: nowTs(),
         });
       } catch (error) {
@@ -965,8 +1120,10 @@ async function handleImage(d: Db, user: SessionUser, body: Record<string, unknow
       conversation_id: convId,
       mode: "image",
       image: { mime: image.mime, data_url: dataUrl },
+      image_url: dataUrl,
       model: image.model,
       provider: image.provider,
+      steps: imageSteps,
       image_status: "ready",
       analytics: computeAnalytics({ started, completionTokens: 0, toolsExecuted: 1, agentSteps: 4 }),
       request_id: requestId,
@@ -1001,7 +1158,8 @@ async function handleOrchestrate(d: Db, user: SessionUser, body: Record<string, 
       continue;
     }
     const coding = task.mode === "code" || task.mode === "agent";
-    const targets = await createAIRoutesFromDb(d, coding, false);
+    const taskTier: "high" | "low" = coding || task.mode === "study" || task.mode === "research" ? "high" : "low";
+    const targets = await createAIRoutesFromDb(d, coding, false, taskTier);
     if (!targets.length) {
       sections.push({ id: task.id, title: task.title, mode: task.mode, error: "AI_GATEWAY_NOT_CONFIGURED" });
       continue;

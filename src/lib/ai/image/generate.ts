@@ -13,7 +13,7 @@ export async function generateImage(
   options?: ImageGenerateOptions,
 ): Promise<ImageGenerateResult> {
   const resolved = await resolveImageCredentials(d);
-  if (!resolved) throw new ImageProviderError("NOT_CONFIGURED", "together");
+  if (!resolved) throw new ImageProviderError("NOT_CONFIGURED", "glm");
   const provider = getImageProvider(resolved.provider);
   return provider.generate(resolved.credentials, prompt, options);
 }

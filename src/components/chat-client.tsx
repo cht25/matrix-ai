@@ -52,7 +52,7 @@ import {
   type ArtifactState, type ExecutionState,
 } from "@/lib/ai/artifacts";
 import { buildArtifact, extractJson, type BuiltArtifact } from "@/lib/export/response-export";
-import { intentForMessage, latestArtifacts, latestProjectId, lastUserContent, messageKey, type ChatMessage, type MessageMetadata } from "@/lib/chat-messages";
+import { intentForMessage, latestArtifacts, latestProjectId, lastUserContent, messageKey, type ChatMessage, type MessageMetadata, type WorkingStep } from "@/lib/chat-messages";
 import { ChatTopBar } from "@/components/chat-topbar";
 import { AssistantMessage } from "@/components/assistant-message";
 import { AgentWorkspace } from "@/components/agent-workspace";
@@ -205,6 +205,9 @@ export function ChatClient({
   const [streamedText, setStreamedText] = useState<string | null>(null);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
   const [activeModel, setActiveModel] = useState<string | null>(null);
+  const [activeProvider, setActiveProvider] = useState<string | null>(null);
+  const [activeTier, setActiveTier] = useState<"high" | "low" | null>(null);
+  const [liveSteps, setLiveSteps] = useState<WorkingStep[]>([]);
   const [activeStartedAt, setActiveStartedAt] = useState<number | null>(null);
   const [runMode, setRunMode] = useState<ChatMode>(mode);
   const [runIntent, setRunIntent] = useState<IntentResult>(DEFAULT_INTENT);
@@ -639,7 +642,7 @@ export function ChatClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: plain }),
       });
-      if (!response.ok) throw new Error("Gemini speech is not configured or unavailable");
+      if (!response.ok) throw new Error("Server speech synthesis is not configured or unavailable");
       const url = URL.createObjectURL(await response.blob());
       const audio = new Audio(url);
       generatedAudioUrlRef.current = url;
@@ -657,7 +660,7 @@ export function ChatClient({
     } catch {
       // Keep the existing browser voice as a truthful accessibility fallback;
       // the generated-audio endpoint never fabricates a successful response.
-      setNotice("Gemini speech is unavailable right now; using your device's built-in voice instead.");
+      setNotice("AI speech synthesis is unavailable right now; using your device's built-in voice instead.");
       primeSpeech();
       const ok = speakMarkdown(text, {
         locale: localeRef.current,
@@ -709,7 +712,7 @@ export function ChatClient({
       if (!response.ok || !data.transcript?.trim()) {
         setNotice(data.audio_asset_id
           ? `The recording is safely stored and playable, but transcription did not complete (${data.error ?? "TRANSCRIPTION_FAILED"}).`
-          : `Voice recording failed (${data.error ?? response.status}). Check microphone, Gemini and private storage configuration.`);
+          : `Voice recording failed (${data.error ?? response.status}). Check microphone, AI voice transcription and private storage configuration.`);
         return;
       }
       setInput((current) => [current.trim(), data.transcript!.trim()].filter(Boolean).join(current.trim() ? "\n" : ""));
@@ -809,6 +812,9 @@ export function ChatClient({
     setRunIntent(intent);
     setRunMode(messageMode);
     setStreamStatus("connecting");
+    setLiveSteps([]);
+    setActiveProvider(null);
+    setActiveTier(null);
     setLastUserMessage(message);
     if (isImage) imagePromptRef.current = message;
     const startedAt = Date.now();
@@ -915,6 +921,9 @@ export function ChatClient({
           mode?: ChatMode;
           coding_detected?: boolean;
           provider?: string;
+          tier?: "high" | "low";
+          steps?: WorkingStep[];
+          duration_ms?: number;
           fallback?: boolean;
           theme_gallery?: boolean;
           storage_degraded?: boolean;
@@ -934,7 +943,7 @@ export function ChatClient({
           streamMetadata.mode = "image";
           streamMetadata.image_data_url = data.image.data_url;
           streamMetadata.model = data.model;
-          streamMetadata.provider = data.provider ?? "Together";
+          streamMetadata.provider = data.provider ?? "GLM";
           commit(data.reply || "Image ready.");
           if (trackExecution) setExecution((current) => finishExecution(advanceExecution(current, { event: { at: Date.now(), type: "complete", message: "Response ready" } }), "complete"));
           setStreamStatus("complete");
@@ -948,6 +957,9 @@ export function ChatClient({
           streamMetadata.mode = data.mode;
           streamMetadata.coding_detected = data.coding_detected;
           streamMetadata.provider = data.provider;
+          streamMetadata.tier = data.tier;
+          if (data.steps?.length) streamMetadata.steps = data.steps;
+          if (typeof data.duration_ms === "number") streamMetadata.duration_ms = data.duration_ms;
           streamMetadata.fallback = data.fallback;
           streamMetadata.action = data.theme_gallery ? "theme_gallery" : undefined;
           commit(data.reply);
@@ -989,6 +1001,10 @@ export function ChatClient({
         mode?: ChatMode;
         coding_detected?: boolean;
         provider?: string;
+        tier?: "high" | "low";
+        step?: WorkingStep;
+        steps?: WorkingStep[];
+        duration_ms?: number;
         fallback?: boolean;
         storage_degraded?: boolean;
         stage?: AgentStageId;
@@ -1002,6 +1018,26 @@ export function ChatClient({
 
       const handleEvent = (data: StreamEvent) => {
         if (data.stream_status) setStreamStatus(data.stream_status);
+        if (data.tier) {
+          streamMetadata.tier = data.tier;
+          setActiveTier(data.tier);
+        }
+        if (data.step) {
+          const incoming = data.step;
+          setLiveSteps((prev) => {
+            const idx = prev.findIndex((s) => s.id === incoming.id);
+            const next = idx >= 0 ? prev.map((s, i) => (i === idx ? incoming : s)) : [...prev, incoming];
+            streamMetadata.steps = next;
+            return next;
+          });
+        }
+        if (data.steps?.length) {
+          streamMetadata.steps = data.steps;
+          setLiveSteps(data.steps);
+        }
+        if (typeof data.duration_ms === "number") {
+          streamMetadata.duration_ms = data.duration_ms;
+        }
         if (trackExecution && data.stage) {
           setExecution((current) =>
             advanceExecution(current, {
@@ -1021,7 +1057,7 @@ export function ChatClient({
         if (data.model) { streamMetadata.model = data.model; setActiveModel(data.model); }
         if (data.mode) streamMetadata.mode = data.mode;
         if (typeof data.coding_detected === "boolean") streamMetadata.coding_detected = data.coding_detected;
-        if (data.provider) streamMetadata.provider = data.provider;
+        if (data.provider) { streamMetadata.provider = data.provider; setActiveProvider(data.provider); }
         if (typeof data.fallback === "boolean") streamMetadata.fallback = data.fallback;
         if (typeof data.delta === "string") {
           collected += data.delta;
@@ -1876,7 +1912,7 @@ export function ChatClient({
                       }}
                       artifactActions={{
                         canOpen: Boolean(format && OPENABLE.includes(format)),
-                        provider: kind === "image" ? "Together AI" : null,
+                        provider: kind === "image" ? (message.metadata?.provider ?? "GLM") : null,
                       }}
                     />
                   </div>
@@ -1893,10 +1929,19 @@ export function ChatClient({
                   {imageRun ? (
                     <ArtifactCard
                       state={beginArtifact(requestArtifact(emptyArtifactState(), { type: "IMAGE", title: "Matrix image" }))}
-                      provider="Together AI"
+                      provider="GLM"
                     />
                   ) : null}
-                  {buildRun ? null : <ResponseProgress mode={runMode} streamStatus={streamStatus} />}
+                  {buildRun ? null : (
+                    <ResponseProgress
+                      mode={runMode}
+                      streamStatus={streamStatus}
+                      steps={liveSteps}
+                      provider={activeProvider}
+                      model={activeModel}
+                      tier={activeTier}
+                    />
+                  )}
                   {streamedText ? (
                     <div className="ai-reply">
                       <Markdown text={streamedText} />
