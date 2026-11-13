@@ -114,6 +114,32 @@ describe("AI gateway — happy paths (real route, real HTTP provider)", () => {
     expect(res.json?.provider).toBe("OpenAI");
   });
 
+  it("persists a real provider clarification without invoking a website build, then accepts a second question and cancellation", async () => {
+    const original = "Build a polished responsive website from my description. Start by asking only for the one most important missing requirement.";
+    const question = "What is the primary purpose or main message of the website?";
+    stubHolder.current = { kind: "ok", content: question };
+    const before = [...stub._state.docs.keys()].filter((key) => key.startsWith("build_runs/")).length;
+    const first = await post({ action: "chat", mode: "agent", stream: false, message: original, task_context: { originalRequest: original, state: "CLARIFICATION_REQUIRED", clarifications: [] }, request_id: "itest-clarify-1" });
+    expect(first.status).toBe(200);
+    expect(first.json?.reply).toBe(question);
+    const conversationId = String(first.json?.conversation_id);
+    const assistant = [...stub._state.docs.entries()].filter(([key, value]) => key.startsWith(`conversations/${conversationId}/messages/`) && (value as { role?: string }).role === "assistant");
+    expect(assistant.at(-1)?.[1]).toMatchObject({ metadata: { agent_task: { originalRequest: original, state: "CLARIFICATION_REQUIRED" } } });
+    expect([...stub._state.docs.keys()].filter((key) => key.startsWith("build_runs/")).length).toBe(before);
+
+    stubHolder.current = { kind: "ok", content: "Who is the intended audience?" };
+    const second = await post({ action: "chat", mode: "agent", conversation_id: conversationId, message: "I don't know yet", task_context: { originalRequest: original, state: "CLARIFICATION_REQUIRED", clarifications: [{ question, answer: "I don't know yet" }] }, request_id: "itest-clarify-2" });
+    expect(second.status).toBe(200);
+    expect(second.json?.reply).toBe("Who is the intended audience?");
+    expect([...stub._state.docs.keys()].filter((key) => key.startsWith("build_runs/")).length).toBe(before);
+
+    const cancelled = await post({ action: "cancel_pending_task", conversation_id: conversationId, original_request: original });
+    expect(cancelled.status).toBe(200);
+    expect(cancelled.json?.reply).toContain("won't start the build");
+    const messages = [...stub._state.docs.entries()].filter(([key]) => key.startsWith(`conversations/${conversationId}/messages/`));
+    expect(messages.some(([, value]) => (value as { metadata?: { agent_task?: { state?: string } } }).metadata?.agent_task?.state === "CONVERSATION")).toBe(true);
+  });
+
   it("executes a model-requested read-only Agent tool through the audited gateway", async () => {
     stub._state.docs.set("projects/project-owned-by-probe", {
       owner_id: "probe-user-1", title: "My real project", stack: "static-web", revision: 2,

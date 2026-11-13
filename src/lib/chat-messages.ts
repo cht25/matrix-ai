@@ -1,3 +1,4 @@
+import type { AgentExecutionState, PendingAgentTask } from "@/lib/ai/agent-execution";
 // =============================================================================
 // Chat message model + intent lookup
 //
@@ -21,6 +22,8 @@ export type WorkingStep = {
 
 export type MessageMetadata = {
   mode?: ChatMode;
+  agent_task?: PendingAgentTask;
+  execution_state?: AgentExecutionState;
   model?: string;
   coding_detected?: boolean;
   provider?: string;

@@ -29,6 +29,7 @@ const SCENARIOS: Array<{ id: string; label: string; prompt: string }> = [
   { id: "t6", label: "6 · Inspect project + run tests", prompt: "Inspect this project, find the bug and run the tests." },
   { id: "t7", label: "7 · Write a Python function", prompt: "Write a Python function to sort a list." },
   { id: "t8", label: "8 · Make a report (ambiguous)", prompt: "Make a report about renewable energy." },
+  { id: "clarify", label: "Agent · clarification first", prompt: "Build a polished responsive website from my description. Start by asking only for the one most important missing requirement." },
   { id: "stress", label: "Long response · scroll stress", prompt: "Long response performance check" },
 ];
 
@@ -114,6 +115,7 @@ function previewImage(prompt: string): string {
 /** Reply text for a message, chosen with the real intent detector. */
 function mockReply(message: string): string {
   const intent = detectIntent(message);
+  if (/start by asking only for the one most important missing requirement/i.test(message)) return "What is the primary purpose or main message of the website?";
   if (/long response performance check/i.test(message)) return Array.from({ length: 65 }, (_, n) =>
     `## Section ${n + 1}\n\n${PROSE}\n\n- Step one: inspect the current state.\n- Step two: preserve source files.\n\n` +
     (n % 5 === 0 ? "```typescript\nconst result = [1, 2, 3].map((value) => value * 2);\nconsole.log(result);\n```\n\n" : "")
@@ -283,7 +285,7 @@ export function ChatPreview() {
           </div>
 
           <div className="flex min-h-0 w-full flex-1 flex-col rounded-2xl border border-border bg-bg p-3 sm:p-4">
-            <ChatClient key={resetKey} initialMessages={[]} conversationId={null} isTemporary={false} initialMode="general" />
+            <ChatClient key={resetKey} initialMessages={[]} conversationId={null} isTemporary={false} initialMode={new URLSearchParams(window.location.search).get("mode") === "agent" ? "agent" : "general"} />
           </div>
         </div>
       </div>

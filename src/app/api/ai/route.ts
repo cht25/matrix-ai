@@ -1,3 +1,5 @@
+import { cancelAgentTask } from "@/lib/server/agent-tasks";
+import { classifyAgentOutput, requestsClarificationFirst, type PendingAgentTask } from "@/lib/ai/agent-execution";
 // =============================================================================
 // MATRIX AI — AI Gateway (Next.js route handler — Firebase port)
 //
@@ -267,11 +269,12 @@ async function finalizeChat(d: Db, opts: {
   usageStatus?: "ok" | "partial";
   tier?: "high" | "low";
   steps?: WorkingStep[];
+  taskContext?: PendingAgentTask | null;
 }) {
   const {
     provider, providerName, user, conversationId, isTemporary, message, redactedMessage, reply,
     history, redaction, started, model, mode, codingDetected, files = [], projectId = null, requestId, usage, usageStatus,
-    tier, steps,
+    tier, steps, taskContext,
   } = opts;
   const convRef = d.collection("conversations").doc(conversationId);
 
@@ -297,6 +300,7 @@ async function finalizeChat(d: Db, opts: {
         ...(steps?.length ? { steps: steps.slice(0, 12) } : {}),
         ...(safeArtifacts.length ? { artifacts: safeArtifacts } : {}),
         ...(projectId ? { project_id: projectId } : {}),
+        ...(taskContext ? { agent_task: { ...taskContext, state: taskContext.state === "CONVERSATION" ? "CONVERSATION" : classifyAgentOutput(reply).state }, execution_state: taskContext.state === "CONVERSATION" ? "CONVERSATION" : classifyAgentOutput(reply).state } : {}),
       },
       created_at: nowTs(),
     });
@@ -571,8 +575,27 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   // as fallbacks. Without a saved admin configuration the previous Groq /
   // OpenRouter automatic routing is unchanged.
   const route = decideRoute({ mode, message, attachments, lane, strategy });
+  const taskRaw = body.task_context as Record<string, unknown> | undefined;
+  const taskContext: PendingAgentTask | null = mode === "agent" && taskRaw && typeof taskRaw.originalRequest === "string" && taskRaw.originalRequest.length <= 12_000
+    ? { originalRequest: taskRaw.originalRequest, state: taskRaw.state === "CONVERSATION" ? "CONVERSATION" : "CLARIFICATION_REQUIRED",
+        projectId: activeProjectId, clarifications: Array.isArray(taskRaw.clarifications)
+          ? taskRaw.clarifications.slice(0, 10).filter((item: unknown) => item && typeof item === "object" && typeof (item as { question?: unknown }).question === "string" && typeof (item as { answer?: unknown }).answer === "string")
+            .map((item: { question: string; answer: string }) => ({ question: item.question.slice(0, 1000), answer: item.answer.slice(0, 2000) })) : [] }
+    : null;
+  // Clarification is a Chat turn even if the original request contains
+  // "build". The executable-Agent guard must not reject it after the UI
+  // correctly selected Chat. Follow-ups require a persisted pending task in
+  // this owner-verified conversation; a forged task_context cannot bypass it.
+  const clarificationFirst = taskContext?.state === "CLARIFICATION_REQUIRED" &&
+    taskContext.originalRequest === message && requestsClarificationFirst(message);
+  let clarificationFollowup = false;
+  if (taskContext?.state === "CLARIFICATION_REQUIRED" && !clarificationFirst) {
+    const recent = (await convRef.collection("messages").get()).docs.sort(descDoc("created_at"));
+    const latestTask = recent.find((doc) => doc.data().role === "assistant" && doc.data().metadata?.agent_task)?.data().metadata?.agent_task as PendingAgentTask | undefined;
+    clarificationFollowup = latestTask?.state === "CLARIFICATION_REQUIRED" && latestTask.originalRequest === taskContext.originalRequest;
+  }
   const agentExecutionRequired = mode === "agent" && (shouldRunBuildPipeline(detectBuildIntent(message, { agentMode: true, hasAttachments: attachments.length > 0 })) || isCodingRequest(message, attachments));
-  if (agentExecutionRequired) {
+  if (agentExecutionRequired && !clarificationFirst && !clarificationFollowup) {
     return json({ error: "AGENT_RUNTIME_REQUIRED", detail: "Executable Agent work must use /api/build so files, task state, validation and deployment are persisted together.", conversation_id: convId, project_id: activeProjectId }, 409, requestId);
   }
   const codingDetected = route.coding || mode === "agent" || isCodingRequest(message, attachments);
@@ -645,6 +668,9 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
 
   const messages: AIMessage[] = [
     ...buildModeSystemMessages(mode, rag, preferredLanguage, { studyLevel, explainStyle }),
+    ...(taskContext?.state === "CLARIFICATION_REQUIRED" && requestsClarificationFirst(taskContext.originalRequest) && !taskContext.clarifications.length
+      ? [{ role: "system" as const, content: "The user explicitly requested a clarification before any implementation. Ask exactly one essential missing requirement as a natural question. Do not produce files, claim a build, or publish yet." }]
+      : []),
     ...history,
     ...(attachmentContext ? [{ role: "system" as const, content: attachmentContext }] : []),
     ...(codingDetected && mode === "general" ? [{
@@ -810,7 +836,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
               provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
               redactedMessage: redaction.redacted, reply: streamedReply, history, redaction, started,
               model: activeTarget.model, mode, codingDetected, files: streamedFiles, projectId, requestId, usage: streamUsage,
-              tier: route.tier, steps: recordedSteps,
+              tier: route.tier, steps: recordedSteps, taskContext,
             });
           } catch (error) {
             degraded = true;
@@ -847,7 +873,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
               await finalizeChat(d, {
                 provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
                 redactedMessage: redaction.redacted, reply: full, history, redaction, started,
-                model: activeTarget.model, mode, codingDetected, requestId, usage: streamUsage, usageStatus: "partial",
+                model: activeTarget.model, mode, codingDetected, requestId, usage: streamUsage, usageStatus: "partial", taskContext,
               });
               done = true;
             } catch {
@@ -1009,7 +1035,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
       provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
       redactedMessage: redaction.redacted, reply, history, redaction, started,
       model: activeTarget.model, mode, codingDetected, files, projectId, requestId, usage,
-      tier: route.tier, steps: nonStreamSteps,
+      tier: route.tier, steps: nonStreamSteps, taskContext,
     });
   } catch (error) {
     // The AI answered — never convert that into a request failure. Surface the
@@ -1370,6 +1396,30 @@ export async function POST(req: NextRequest) {
     if (!user) return json({ error: "UNAUTHENTICATED" }, 401);
 
     const d = adminDb();
+    if (action === "cancel_pending_task") {
+      if (user.deviceId) return json({ error: "DEVICE_SCOPE_DENIED" }, 403);
+      const id = typeof body.conversation_id === "string" ? body.conversation_id.slice(0, 128) : "";
+      if (!id) return json({ error: "CONVERSATION_NOT_FOUND" }, 404);
+      const ref = d.collection("conversations").doc(id);
+      const conversation = await ref.get();
+      if (!conversation.exists || conversation.data()?.user_id !== user.uid || conversation.data()?.deleted_at) return json({ error: "CONVERSATION_NOT_FOUND" }, 404);
+      const original = typeof body.original_request === "string" ? body.original_request.slice(0, 12_000) : "";
+      const pending = (await ref.collection("messages").get()).docs
+        .sort(descDoc("created_at"))
+        .find((doc) => doc.data().role === "assistant" && doc.data().metadata?.agent_task)?.data().metadata?.agent_task as PendingAgentTask | undefined;
+      if (!pending || pending.state !== "CLARIFICATION_REQUIRED" || pending.originalRequest !== original) return json({ error: "NO_PENDING_TASK" }, 409);
+      await ref.collection("messages").add({ role: "user", content: "Cancel the task", metadata: { mode: "agent" }, created_at: nowTs() });
+      const reply = "Okay, I won't start the build. Your existing project is unchanged.";
+      await ref.collection("messages").add({ role: "assistant", content: reply, metadata: { mode: "agent", execution_state: "CONVERSATION", agent_task: { ...pending, state: "CONVERSATION" } }, created_at: nowTs() });
+      await ref.set({ updated_at: nowTs() }, { merge: true });
+      // A provider-side clarification may have opened a durable Agent task;
+      // explicit pre-build questions have none. Cancel only the bound task.
+      if (pending.taskId) {
+        try { await cancelAgentTask(d, user, pending.taskId); }
+        catch (error) { logGatewayFailure("cancel_agent_task", { conversationId: id }, error); }
+      }
+      return json({ reply, conversation_id: id });
+    }
     if (action === "chat") {
       const denied = deviceScopeResponse(user, "chat:write");
       if (denied) return denied;

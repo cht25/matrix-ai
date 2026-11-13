@@ -112,8 +112,8 @@ export function ChatTopBar({
           aria-live="polite"
           className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium text-ink-2"
         >
-          <span aria-hidden="true" className={cn("h-1.5 w-1.5 rounded-full", streaming ? "bg-accent pulse-dot" : "bg-success")} />
-          {streaming ? "Working" : "Ready"}
+          <span aria-hidden="true" className={cn("h-1.5 w-1.5 rounded-full", streaming ? "bg-accent pulse-dot" : "bg-ink-3")} />
+          {streaming ? "Working" : "Idle"}
         </span>
 
         <Popover

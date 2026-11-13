@@ -87,6 +87,8 @@ export function BuildStatusCard({
                 : "Build finished"
               : run.status === "failed"
                 ? "Build stopped"
+                : run.status === "awaiting_input"
+                  ? "Waiting for your answer"
                 : run.status === "cancelled"
                   ? "Build cancelled"
                   : `Building · ${progress.activeLabel}`}

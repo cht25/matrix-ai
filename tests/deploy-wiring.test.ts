@@ -28,7 +28,8 @@ describe("chat routes build requests through the real pipeline", () => {
   it("classifies intent before asking the model", () => {
     expect(CHAT).toContain("detectBuildIntent(");
     expect(CHAT).toContain("shouldRunBuildPipeline(");
-    expect(CHAT.indexOf("detectBuildIntent(")).toBeLessThan(CHAT.indexOf("await streamMessage(message, { attachments: pending"));
+    expect(CHAT).toContain("requestsClarificationFirst(rawMessage)");
+    expect(CHAT.indexOf("requestsClarificationFirst(rawMessage)")).toBeLessThan(CHAT.indexOf("const buildIntent = detectBuildIntent(rawMessage"));
   });
 
   it("runs the pipeline instead of the plain chat path", () => {
@@ -37,7 +38,7 @@ describe("chat routes build requests through the real pipeline", () => {
     expect(CHAT).toContain("workspaceOnly");
     expect(BUILD_ROUTE).toContain("workspace_only === true && chatMode === \"code\"");
     expect(BUILD_ROUTE).toContain('bearer.split(".").length === 3');
-    expect(read("src/lib/server/build.ts")).toContain("allowUnlabelledFences: true, allowRawHtmlDocument: true");
+    expect(read("src/lib/server/build.ts")).toContain("classifyAgentOutput(raw, calls)");
     expect(read("src/lib/server/build.ts")).toContain("agentGenerationIncomplete(raw)");
     expect(read("src/lib/server/build.ts")).toContain("formatProjectFilesForContext(before, input.prompt)");
     expect(read("src/lib/server/build.ts")).toContain("withheldExistingPaths.has(file.path.toLowerCase())");

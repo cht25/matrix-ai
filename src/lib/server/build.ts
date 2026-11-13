@@ -26,6 +26,7 @@ import { completeWithFallback } from "@/lib/ai/executor";
 import { createAIRoutesFromDb, type AIRouteTarget } from "@/lib/ai/config";
 import { AGENT_SYSTEM_PROMPT } from "@/lib/ai/prompts";
 import { agentGenerationIncomplete, formatProjectFilesForContext, parseAgentResponse, shouldWithholdProjectFile } from "@/lib/ai/agent";
+import { classifyAgentOutput, transitionAgentExecution, type AgentExecutionState, type PendingAgentTask } from "@/lib/ai/agent-execution";
 import { planFromRequest, type BuildIntent } from "@/lib/ai/build-intent";
 import { generateImage } from "@/lib/ai/image/generate";
 import { isImageGenerationConfigured } from "@/lib/ai/image/config";
@@ -56,6 +57,7 @@ export type BuildPipelineInput = {
   conversationId?: string | null;
   requestId?: string | null;
   prompt: string;
+  taskContext?: PendingAgentTask | null;
   actions: BuildActions;
   environment?: BuildEnvironment;
   slug?: string | null;
@@ -96,6 +98,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
   const workspaceOnly = !input.actions.publish && !input.actions.preview &&
     ((input.workspaceOnly === true && input.chatMode === "code") || (nonStatic && input.actions.build));
   let reply = "";
+  let executionState: AgentExecutionState = "PLANNING";
   let resolvedProjectId: string | null = input.projectId ?? null;
   const done = (run: BuildRun): BuildPipelineResult => ({ run, reply, projectId: resolvedProjectId });
   let run = createBuildRun({
@@ -137,6 +140,9 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
 
   const begin = async (stage: BuildStageId, message: string): Promise<void> => {
     if (await cancelled()) throw new RpcError("CANCELLED", 409);
+    if (stage === "build") executionState = transitionAgentExecution(executionState, "build_started");
+    if (stage === "validate") executionState = transitionAgentExecution(executionState, "validation_started");
+    if (stage === "publish") executionState = transitionAgentExecution(executionState, "deployment_started");
     run = beginStage(run, stage, now(), message);
     note(stage, "info", message);
     await emit(stage);
@@ -150,6 +156,9 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
   };
 
   const skipped = async (stage: BuildStageId, message: string): Promise<void> => {
+    if (stage === "build") executionState = transitionAgentExecution(executionState, "build_started");
+    if (stage === "validate") executionState = transitionAgentExecution(executionState, "validation_started");
+    if (stage === "publish") executionState = transitionAgentExecution(executionState, "deployment_started");
     run = beginStage(run, stage, now(), message);
     run = skipStage(run, stage, now(), message);
     note(stage, "info", message);
@@ -159,6 +168,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
   const abort = async (code: string, message: string, stage?: BuildStageId): Promise<BuildPipelineResult> => {
     await checkpoint(stage, "failed", message);
     if (stage) run = failStage(run, stage, now(), message);
+    executionState = transitionAgentExecution(executionState, "error");
     run = failRun(run, { code, message }, now());
     note(stage ?? null, "error", message);
     await emit(stage);
@@ -309,9 +319,11 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         },
       ];
       let raw = "";
+      let calls: NonNullable<Awaited<ReturnType<typeof completeWithFallback>>["response"]["toolCalls"]> = [];
       try {
         const completion = await completeWithFallback(routes, { messages, temperature: 0.2, maxTokens: 16384, requestId: input.requestId ?? undefined });
         raw = completion.response.content ?? "";
+        calls = completion.response.toolCalls ?? [];
       } catch (error) {
         const detail = error instanceof Error ? error.message : "provider error";
         return await abort("AI_PROVIDER_FAILED", `MATRIX could not reach the coding provider (${detail.slice(0, 120)}), so no files were written.`, "generate");
@@ -331,22 +343,56 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
             requestId: input.requestId ? `${input.requestId}-continue` : undefined,
           });
           const continued = continuation.response.content ?? "";
-          const continuedFiles = parseAgentResponse(continued, { allowUnlabelledFences: true, allowRawHtmlDocument: true }).files;
+          const continuedFiles = classifyAgentOutput(continued, continuation.response.toolCalls ?? []).files;
           raw = continuedFiles.length ? continued : `${raw}\n${continued}`;
+          calls = continuation.response.toolCalls ?? calls;
         } catch (error) {
           note("generate", "warn", `Completion retry failed (${error instanceof Error ? error.message.slice(0, 80) : "provider error"}).`);
           await emit("generate");
         }
       }
-      const parsed = parseAgentResponse(raw, { allowUnlabelledFences: true, allowRawHtmlDocument: true });
+      let parsed = classifyAgentOutput(raw, calls);
+      if (parsed.state === "CLARIFICATION_REQUIRED") {
+        reply = parsed.reply;
+        executionState = transitionAgentExecution(executionState, "ask");
+        run = { ...run, status: "awaiting_input", stages: run.stages.map((stage) => stage.state === "running" || stage.state === "queued" ? { ...stage, state: "skipped", finishedAt: now() } : stage), updatedAt: now(), finishedAt: now() };
+        note("generate", "info", "The provider asked for input; no project files were generated, validated or published.");
+        await emit("generate");
+        return done(run);
+      }
+      if (!parsed.files.length && !agentGenerationIncomplete(raw)) {
+        // The provider may have ignored the generation contract. Try one
+        // explicit correction (with the available provider fallback chain)
+        // rather than treating a text explanation as generated source.
+        note("generate", "warn", "No file operations returned; requesting complete files once more.");
+        await emit("generate");
+        try {
+          const retry = await completeWithFallback(routes, {
+            messages: [...messages, { role: "assistant", content: raw }, { role: "user", content: "The task is ready for implementation. Return actual complete project files (MATRIX_FILE blocks or filename-tagged code fences), not a summary of the work. If an essential detail is missing, ask one specific question instead." }],
+            temperature: 0.1, maxTokens: 16384, requestId: input.requestId ? `${input.requestId}-files` : undefined,
+          });
+          const candidate = classifyAgentOutput(retry.response.content ?? "", retry.response.toolCalls ?? []);
+          if (candidate.files.length || candidate.state === "CLARIFICATION_REQUIRED") parsed = candidate;
+        } catch (error) {
+          note("generate", "warn", `File retry failed (${error instanceof Error ? error.message.slice(0, 80) : "provider error"}).`);
+          await emit("generate");
+        }
+        if (parsed.state === "CLARIFICATION_REQUIRED") {
+          reply = parsed.reply;
+          executionState = transitionAgentExecution(executionState, "ask");
+          run = { ...run, status: "awaiting_input", stages: run.stages.map((stage) => stage.state === "running" || stage.state === "queued" ? { ...stage, state: "skipped", finishedAt: now() } : stage), updatedAt: now(), finishedAt: now() };
+          await emit("generate");
+          return done(run);
+        }
+      }
       reply = parsed.reply;
       if (!parsed.files.length) {
         const incomplete = agentGenerationIncomplete(raw);
         return await abort(
           incomplete ? "AI_OUTPUT_INCOMPLETE" : "AI_NO_FILES",
           incomplete
-            ? "The coding provider stopped before completing a project file. No partial file was saved; retry the request or use a provider with a larger output limit."
-            : "The coding provider answered without any project files, so nothing was written or published.",
+            ? "The coding provider stopped mid-file. No partial file was saved; retry or choose a model with a larger output limit."
+            : "The coding provider returned no usable file operations after a file-generation retry. No files were written; choose a coding model or retry with a more specific description.",
           "generate",
         );
       }
@@ -365,6 +411,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         source: "agent",
         title: before.length ? undefined : plan.title.slice(0, 80),
       });
+      executionState = transitionAgentExecution(executionState, "files_saved");
       sourceRevision = applied.revision;
       files = await loadProjectFiles(d, projectId);
       if (input.conversationId && !input.isTemporary) await bindConversationProject(d, user, input.conversationId, projectId);
@@ -546,6 +593,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
   } catch (error) {
     const code = error instanceof RpcError ? error.code : run.stages.find((stage) => stage.id === "plan")?.state === "running" ? "PROJECT_STORAGE_UNAVAILABLE" : "BUILD_RUN_FAILED";
     if (code === "CANCELLED") {
+      executionState = transitionAgentExecution(executionState, "cancel");
       run = cancelRun(run, now());
       note(null, "warn", "Build cancelled by the user.");
       await emit();
@@ -555,7 +603,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     const activeStage = run.stages.find((stage) => stage.state === "running");
     return await abort(code, detail || (code === "PROJECT_STORAGE_UNAVAILABLE" ? "Project storage could not be reached. No files were changed; retry after checking Firestore connectivity." : error instanceof Error ? error.message.slice(0, 240) : "The build stopped unexpectedly."), activeStage?.id);
   } finally {
-    await persistBuildMessage(d, user, input, run, reply);
+    await persistBuildMessage(d, user, input, run, reply, run.status === "succeeded" ? transitionAgentExecution(executionState, "complete") : executionState);
   }
 }
 
@@ -570,6 +618,7 @@ async function persistBuildMessage(
   input: BuildPipelineInput,
   run: BuildRun,
   reply: string,
+  executionState: AgentExecutionState,
 ): Promise<void> {
   if (!input.conversationId || input.isTemporary) return;
   const summary = buildRunCopy(run);
@@ -589,8 +638,15 @@ async function persistBuildMessage(
       content: text,
       metadata: {
         mode: input.chatMode ?? "agent",
+        execution_state: executionState,
         project_id: run.projectId,
-        build: toRunSnapshot(run),
+        ...(run.status === "awaiting_input" ? { agent_task: {
+          originalRequest: input.taskContext?.originalRequest ?? input.prompt,
+          clarifications: input.taskContext?.clarifications ?? [],
+          state: "CLARIFICATION_REQUIRED",
+          projectId: run.projectId,
+          taskId: run.taskId,
+        } } : { build: toRunSnapshot(run) }),
         deployment: run.deployment
           ? {
               id: run.deployment.id,

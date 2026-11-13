@@ -97,7 +97,7 @@ export function BuildRunCard({
       const next = await readBuildRun(runId);
       if (!next) return;
       setStored(next);
-      if (next.status === "succeeded" || next.status === "failed") clearInterval(timer);
+      if (next.status === "succeeded" || next.status === "failed" || next.status === "awaiting_input" || next.status === "cancelled") clearInterval(timer);
     }, POLL_MS);
     return () => clearInterval(timer);
   }, [runId, run?.status, liveRun]);

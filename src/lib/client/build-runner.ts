@@ -10,6 +10,7 @@
 // so "Publishing..." can never stay on screen forever.
 // =============================================================================
 
+import type { PendingAgentTask } from "@/lib/ai/agent-execution";
 import type { BuildStageId, BuildRun } from "@/lib/deploy/stages";
 import { applyStaleness } from "@/lib/deploy/stages";
 import { rpc } from "@/lib/client/api";
@@ -37,6 +38,8 @@ export type BuildStreamHandlers = {
 
 export type BuildStartInput = {
   prompt: string;
+  taskContext?: PendingAgentTask | null;
+  visibleMessage?: string;
   projectId?: string | null;
   workspaceProjectId?: string | null;
   conversationId?: string | null;
@@ -104,6 +107,8 @@ export async function streamBuildRun(
       signal: controller.signal,
       body: JSON.stringify({
         prompt: input.prompt,
+        task_context: input.taskContext ?? null,
+        visible_message: input.visibleMessage ?? null,
         project_id: input.projectId ?? null,
         workspace_project_id: input.workspaceProjectId ?? null,
         conversation_id: input.conversationId ?? null,
@@ -196,7 +201,7 @@ export async function pollBuildRun(runId: string, handlers: BuildStreamHandlers 
     const run = await readBuildRun(runId);
     if (!run) return null;
     handlers.onRun?.(run);
-    if (run.status === "succeeded" || run.status === "failed") return run;
+    if (run.status === "succeeded" || run.status === "failed" || run.status === "awaiting_input" || run.status === "cancelled") return run;
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
   const final = await readBuildRun(runId);
