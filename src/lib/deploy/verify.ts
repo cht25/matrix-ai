@@ -24,16 +24,31 @@ export async function verifyPublishedDeployment(input: {
   timeoutMs?: number;
 }): Promise<PublishedVerification> {
   const doFetch = input.fetchImpl ?? fetch;
-  const base = `${input.origin.replace(/\/+$/, "")}/s/${input.slug}/`;
+  const root = `${input.origin.replace(/\/+$/, "")}/s/${input.slug}`;
+  const base = `${root}/`;
   const entry = input.files.find((file) => /(^|\/)index\.html?$/i.test(file.path)) ?? input.files.find((file) => /\.html?$/i.test(file.path));
   const checked: string[] = [];
   const get = async (url: string): Promise<Response> => {
     checked.push(url);
-    return doFetch(url, { redirect: "follow", signal: AbortSignal.timeout(input.timeoutMs ?? 10_000), headers: { "Cache-Control": "no-cache" } });
+    // A redirect could silently verify a localhost/private upstream (or login
+    // page) instead of the published site. Every local path must serve 200.
+    return doFetch(url, { redirect: "manual", signal: AbortSignal.timeout(input.timeoutMs ?? 10_000), headers: { "Cache-Control": "no-cache" } });
   };
   try {
-    const res = await get(base);
-    if (!res.ok) return { ok: false, checked, error: `Public URL returned HTTP ${res.status}.` };
+    // Admin links and persisted public URLs use the no-slash address. Test
+    // that exact entry point too: a proxy/framework-generated absolute 308
+    // could otherwise be missed by verification of only the slash URL.
+    const entryResponse = await get(root);
+    if (entryResponse.status === 308) {
+      const location = entryResponse.headers.get("location");
+      if (location !== `/s/${input.slug}/`) {
+        return { ok: false, checked, error: "Public URL redirected outside the site path." };
+      }
+    } else if (!entryResponse.ok) {
+      return { ok: false, checked, error: `Public URL returned HTTP ${entryResponse.status}.` };
+    }
+    const res = entryResponse.ok ? entryResponse : await get(base);
+    if (!res.ok) return { ok: false, checked, error: `Public URL returned HTTP ${res.status}${res.headers.get("location") ? " (redirected)" : ""}.` };
     const body = await res.text();
     if (!body.trim()) return { ok: false, checked, error: "Public URL returned an empty document." };
     if (entry && entry.encoding !== "base64") {

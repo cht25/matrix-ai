@@ -12,8 +12,34 @@ describe("deployment is proven over HTTP, not by a database row", () => {
     const fetchImpl = (async (url: string | URL) => { calls.push(String(url)); return new Response(String(url).endsWith(".css") ? "body{}" : files[0].content, { status: 200 }); }) as typeof fetch;
     const result = await verifyPublishedDeployment({ origin: "https://matrix.thamjj13.top", slug: "real-site", files, fetchImpl });
     expect(result.ok).toBe(true);
-    expect(calls[0]).toBe("https://matrix.thamjj13.top/s/real-site/");
+    expect(calls[0]).toBe("https://matrix.thamjj13.top/s/real-site");
     expect(calls.some((url) => url.endsWith("/styles.css"))).toBe(true);
+  });
+  it("checks the actual admin-link entry redirect and then the slash URL and assets", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string | URL) => {
+      calls.push(String(url));
+      if (String(url).endsWith("/s/real-site")) {
+        return new Response(null, { status: 308, headers: { Location: "/s/real-site/" } });
+      }
+      return new Response(String(url).endsWith(".css") ? "body{}" : files[0].content, { status: 200 });
+    }) as typeof fetch;
+    const result = await verifyPublishedDeployment({ origin: "https://matrix.thamjj13.top", slug: "real-site", files, fetchImpl });
+    expect(result.ok).toBe(true);
+    expect(calls).toEqual([
+      "https://matrix.thamjj13.top/s/real-site",
+      "https://matrix.thamjj13.top/s/real-site/",
+      "https://matrix.thamjj13.top/s/real-site/styles.css",
+    ]);
+  });
+  it("rejects upstream redirects instead of treating a localhost target as a live site", async () => {
+    const fetchImpl = (async (_url: string | URL, init?: RequestInit) => {
+      expect(init?.redirect).toBe("manual");
+      return new Response(null, { status: 308, headers: { Location: "http://localhost:10000/s/real-site/" } });
+    }) as typeof fetch;
+    const result = await verifyPublishedDeployment({ origin: "https://matrix.thamjj13.top", slug: "real-site", files, fetchImpl });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("outside the site path");
   });
   it("fails when the public URL or an asset is unavailable", async () => {
     const fetchImpl = (async (url: string | URL) => new Response(String(url).endsWith(".css") ? "missing" : files[0].content, { status: String(url).endsWith(".css") ? 404 : 200 })) as typeof fetch;

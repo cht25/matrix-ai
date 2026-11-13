@@ -2,6 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Next otherwise synthesizes an absolute 308 for /s/<slug>/ from the
+  // internal upstream origin (often localhost:10000 behind a TLS proxy).
+  // Public-site canonicalization is handled by the route using relative Location.
+  skipTrailingSlashRedirect: true,
   eslint: { ignoreDuringBuilds: true },
   // Allow the Arena / e2b preview host to load the dev server.
   allowedDevOrigins: ["*.e2b.app"],

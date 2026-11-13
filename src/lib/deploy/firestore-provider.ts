@@ -740,7 +740,9 @@ export class FirestoreDeploymentProvider {
       status,
       slug,
       // A URL is only exposed for a deployment the provider reports as live.
-      url: status === "live" ? ((data.public_url as string) ?? (slug ? publicUrl(slug) : null)) : null,
+      // Legacy deployment records may contain an upstream localhost URL. The
+      // slug is the durable hosting identity; never trust the stored origin.
+      url: status === "live" ? (slug ? publicUrl(slug) : null) : null,
       environment: (data.environment as DeploymentRecord["environment"]) ?? "production",
       files: Number(data.files ?? 0),
       bytes: Number(data.bytes ?? 0),
@@ -765,11 +767,22 @@ export function readStoredUrls(data: Record<string, unknown>, projectId: string)
   const urls: ProjectUrl[] = [];
   for (const item of raw) {
     if (!item || typeof item.url !== "string" || !item.url) continue;
+    // Older generated entries may have no explicit slug. Recover it from the
+    // public path (never the origin); do not leak an unresolvable private URL.
+    const kind: UrlKind = item.kind === "custom" || item.kind === "preview" ? item.kind : "generated";
+    let generatedSlug = item.slug;
+    if (kind === "generated" && (!generatedSlug || !isValidDeploySlug(generatedSlug))) {
+      try {
+        const match = new URL(item.url, siteOrigin()).pathname.match(/^\/s\/([^/]+)\/?$/);
+        if (match && isValidDeploySlug(match[1])) generatedSlug = match[1];
+      } catch { /* Invalid legacy URL. */ }
+    }
+    if (kind === "generated" && (!generatedSlug || !isValidDeploySlug(generatedSlug))) continue;
     urls.push({
       id: String(item.id ?? `url-${urls.length}`),
-      kind: (item.kind === "custom" || item.kind === "preview" || item.kind === "generated" ? item.kind : "generated") as UrlKind,
-      url: item.url,
-      slug: (item.slug as string) ?? null,
+      kind,
+      url: kind === "generated" ? publicUrl(generatedSlug!) : item.url,
+      slug: kind === "generated" ? generatedSlug! : (item.slug as string) ?? null,
       hostname: (item.hostname as string) ?? "",
       primary: Boolean(item.primary),
       status: (item.status as ProjectUrl["status"]) ?? "active",
