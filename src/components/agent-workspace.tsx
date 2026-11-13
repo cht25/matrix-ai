@@ -17,6 +17,7 @@ export function AgentWorkspace({
   conversationId,
   projectId,
   model,
+  onProjectId,
 }: {
   files: AgentFile[];
   open: boolean;
@@ -24,6 +25,7 @@ export function AgentWorkspace({
   conversationId?: string | null;
   projectId?: string;
   model?: string | null;
+  onProjectId?: (id: string) => void;
 }) {
   const [title, setTitle] = useState("Agent project");
 
@@ -78,7 +80,7 @@ export function AgentWorkspace({
           </button>
         </header>
 
-        <ProjectWorkspace projectId={projectId} initialFiles={files} conversationId={conversationId} onTitle={setTitle} />
+        <ProjectWorkspace projectId={projectId} initialFiles={files} conversationId={conversationId} onTitle={setTitle} onProjectId={onProjectId} />
       </aside>
     </>
   );

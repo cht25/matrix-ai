@@ -132,7 +132,8 @@ export async function POST(req: NextRequest) {
   }
   const requestId = typeof body.request_id === "string" ? body.request_id.slice(0, 100) : crypto.randomUUID();
   const prompt = typeof body.prompt === "string" ? body.prompt.slice(0, 12_000) : "";
-  const projectId = typeof body.project_id === "string" ? body.project_id : null;
+  const projectId = typeof body.project_id === "string" && body.project_id.trim() ? body.project_id.trim().slice(0, 128) : null;
+  const workspaceProjectId = typeof body.workspace_project_id === "string" && body.workspace_project_id.trim() ? body.workspace_project_id.trim().slice(0, 128) : null;
   const conversationId = typeof body.conversation_id === "string" ? body.conversation_id : null;
 
   const user = await getUser(req);
@@ -163,12 +164,14 @@ export async function POST(req: NextRequest) {
   // A build run belongs to a conversation exactly like a chat turn: reuse the
   // caller's thread (only if it is theirs) or open one, and store the request
   // so a reload shows the same history. Temporary chats stay in memory.
-  let convId = conversationId;
+  let convId = isTemporary ? null : conversationId;
   if (!isTemporary && prompt) {
     try {
       if (convId) {
         const existing = await d.collection("conversations").doc(convId).get();
-        if (!existing.exists || (existing.data() as { user_id?: string } | undefined)?.user_id !== user.uid) convId = null;
+        if (!existing.exists || (existing.data() as { user_id?: string } | undefined)?.user_id !== user.uid || existing.data()?.deleted_at) {
+          return json({ error: "PROJECT_CONTEXT_MISSING", detail: "Open a chat you own or start a new chat before building." }, 404);
+        }
       }
       if (!convId) {
         const created = await d.collection("conversations").add({
@@ -190,9 +193,10 @@ export async function POST(req: NextRequest) {
         .collection("messages")
         .add({ role: "user", content: prompt.slice(0, 12_000), metadata: { mode: "agent", intent: "BUILD" }, created_at: nowTs() });
     } catch (error) {
-      // Storage trouble must not stop a build; the run document is the source
-      // of truth and the chat still shows the turn in memory.
+      // A persistent Agent chat requires durable storage. Continuing with a
+      // missing conversation would create an unbound/duplicate project.
       logGatewayFailure("build_conversation", { requestId, userId: user.uid }, error);
+      return json({ error: "PROJECT_STORAGE_UNAVAILABLE", detail: "Chat storage is unavailable; no Agent build was started. Retry when Firestore is reachable." }, 503);
     }
   }
 
@@ -213,6 +217,7 @@ export async function POST(req: NextRequest) {
       provider: providerFor(d, user),
       runId,
       projectId,
+      workspaceProjectId,
       conversationId: convId,
       requestId,
       taskId,
@@ -252,6 +257,7 @@ export async function POST(req: NextRequest) {
           provider: providerFor(d, user),
           runId,
           projectId,
+          workspaceProjectId,
           conversationId: convId,
           requestId,
           taskId,
