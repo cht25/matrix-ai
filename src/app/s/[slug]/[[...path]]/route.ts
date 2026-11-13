@@ -31,13 +31,18 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
     // Never build Location from req.nextUrl: behind a proxy Next may see the
     // upstream http://localhost:10000 rather than the visitor's HTTPS host.
     // A relative Location is resolved by the browser on its current origin.
-    return new NextResponse(null, { status: 308, headers: { Location: `/s/${encodeURIComponent(slug)}/${req.nextUrl.search}` } });
+    return new NextResponse(null, { status: 308, headers: { Location: `/s/${encodeURIComponent(slug)}/${req.nextUrl.search}`, "Cache-Control": "no-store" } });
   }
 
   const wanted = path.join("/") || "index.html";
   try {
-    const file = await loadPublishedFile(adminDb(), slug, wanted);
-    if (!file) return new NextResponse("Page not found", { status: 404, headers: headersFor("text/plain; charset=utf-8") });
+    const releaseId = req.nextUrl.searchParams.get("__matrix_verify");
+    const token = req.headers.get("x-matrix-verification-token");
+    const verification = releaseId && token ? { releaseId, token } : undefined;
+    const file = await loadPublishedFile(adminDb(), slug, wanted, verification);
+    if (!file) return new NextResponse("Page not found", { status: 404, headers: { ...headersFor("text/plain; charset=utf-8"), ...(releaseId ? { "Cache-Control": "private, no-store" } : {}) } });
+    const responseHeaders = headersFor(file.content_type || contentTypeForPath(file.path));
+    if (releaseId) responseHeaders["Cache-Control"] = "private, no-store";
 
     let content = file.content;
     const isHtml = /^text\/html/i.test(file.content_type || contentTypeForPath(file.path));
@@ -53,13 +58,13 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
           content = `<base href="/s/${slug}/">\n${content}`;
         }
       }
-      return new NextResponse(content, { headers: headersFor(file.content_type || contentTypeForPath(file.path)) });
+      return new NextResponse(content, { headers: responseHeaders });
     }
 
     if (file.encoding === "base64") {
-      return new NextResponse(Buffer.from(file.content, "base64"), { headers: headersFor(file.content_type || contentTypeForPath(file.path)) });
+      return new NextResponse(Buffer.from(file.content, "base64"), { headers: responseHeaders });
     }
-    return new NextResponse(file.content, { headers: headersFor(file.content_type || contentTypeForPath(file.path)) });
+    return new NextResponse(file.content, { headers: responseHeaders });
   } catch {
     return new NextResponse("Unavailable", { status: 503, headers: headersFor("text/plain; charset=utf-8") });
   }
