@@ -77,7 +77,7 @@ async function runLane(
 ): Promise<LaneResult> {
   const started = Date.now();
   const route = decideRoute({ mode, message, lane });
-  const targets: AIRouteTarget[] = await createAIRoutesFromDb(d, route.coding);
+  const targets: AIRouteTarget[] = await createAIRoutesFromDb(d, route.coding, false, route.tier);
   const target = targets[0];
   if (!target) {
     return { lane, provider: "none", model: "unconfigured", ok: false, error: "AI_GATEWAY_NOT_CONFIGURED" };

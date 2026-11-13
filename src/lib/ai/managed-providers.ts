@@ -5,6 +5,7 @@ import { nowTs } from "@/lib/firebase/admin";
 import { encryptSecret, decryptSecret, canEncryptSecrets } from "@/lib/ai/image/config";
 import { fetchModelCatalog, type CatalogModel, type CatalogResult } from "@/lib/ai/model-catalog";
 import { createOpenAICompatibleProvider, isCompatibleBaseUrl, normalizeCompatibleBaseUrl } from "@/lib/ai/openai";
+import { GLMProvider, GLM_API_BASE_URL, resolveGlmBaseUrl } from "@/lib/ai/glm";
 import { GeminiProvider, GEMINI_API_BASE_URL } from "@/lib/ai/gemini";
 import { AnthropicProvider } from "@/lib/ai/anthropic";
 import type { AIProvider } from "@/lib/ai/groq";
@@ -20,7 +21,7 @@ const MAX_MODELS_PER_PROVIDER = 50;
 const MAX_ACTIVE_ROUTES_PER_TASK = 20;
 const PLACEHOLDERS = ["YOUR-", "replace-with", "...", "sk-...", "sk-or-v1-..."];
 
-export type ManagedProviderKind = "openai-compatible" | "gemini" | "anthropic";
+export type ManagedProviderKind = "glm" | "openai-compatible" | "gemini" | "anthropic";
 export type ManagedModelConfig = {
   id: string;
   label: string;
@@ -60,18 +61,28 @@ export type ManagedProviderDraft = {
 };
 
 function isKind(value: unknown): value is ManagedProviderKind {
-  return value === "openai-compatible" || value === "gemini" || value === "anthropic";
+  return value === "glm" || value === "openai-compatible" || value === "gemini" || value === "anthropic";
 }
 function keyConfigured(value: string): boolean {
   const key = value.trim();
   return Boolean(key) && !PLACEHOLDERS.some((placeholder) => key.includes(placeholder)) && !key.endsWith("...");
 }
 function nativeBaseUrl(kind: ManagedProviderKind): string {
+  if (kind === "glm") return GLM_API_BASE_URL;
   if (kind === "gemini") return GEMINI_API_BASE_URL;
   if (kind === "anthropic") return "https://api.anthropic.com/v1";
   return "";
 }
 function normalizeBaseUrl(kind: ManagedProviderKind, value: string): string {
+  if (kind === "glm") {
+    const trimmed = value.trim();
+    if (!trimmed) return resolveGlmBaseUrl();
+    const normalizedGlm = normalizeCompatibleBaseUrl(trimmed);
+    if (!normalizedGlm || !isCompatibleBaseUrl(normalizedGlm) || !isProviderEndpointAllowed(normalizedGlm)) {
+      throw new RpcError("AI_MANAGED_PROVIDER_ENDPOINT_INVALID", 400);
+    }
+    return normalizedGlm;
+  }
   if (kind !== "openai-compatible") return nativeBaseUrl(kind);
   const normalized = normalizeCompatibleBaseUrl(value);
   if (!normalized || !isCompatibleBaseUrl(normalized) || !isProviderEndpointAllowed(normalized)) {
@@ -129,6 +140,7 @@ async function readStored(d: Db): Promise<ManagedProviderStored[]> {
   return recordsFrom(snap.exists ? snap.data()?.providers : []);
 }
 function createClient(kind: ManagedProviderKind, key: string, baseUrl: string, name: string, model = ""): AIProvider {
+  if (kind === "glm") return new GLMProvider(key, baseUrl, model || undefined);
   if (kind === "gemini") return new GeminiProvider(key);
   if (kind === "anthropic") return new AnthropicProvider(key);
   return createOpenAICompatibleProvider({ apiKey: key, baseUrl, label: name, model });
@@ -390,7 +402,12 @@ export async function getManagedProviderRoutes(d: Db | null, mode: "chat" | "age
       if (routes.length >= MAX_ACTIVE_ROUTES_PER_TASK) break;
       if (!model.enabled || !model[`use_for_${mode}`]) continue;
       const client = createClient(record.kind, apiKey, baseUrl, record.name, model.id);
-      routes.push({ provider: record.kind === "gemini" ? "Gemini" : record.kind === "anthropic" ? "Anthropic" : "OpenAI", model: model.id, client, providerId: record.id });
+      routes.push({
+        provider: record.kind === "glm" ? "GLM" : record.kind === "gemini" ? "Gemini" : record.kind === "anthropic" ? "Anthropic" : "OpenAI",
+        model: model.id,
+        client,
+        providerId: record.id,
+      });
     }
   }
   return routes;

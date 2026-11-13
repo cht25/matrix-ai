@@ -10,21 +10,27 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("Gemini primary main model, unverified managed providers, and Cloudinary signed paths", () => {
-  it("defaults unsaved main model to Gemini API (not OpenRouter) while remaining admin-editable", async () => {
-    vi.stubEnv("GEMINI_API_KEY", "AIzaSy-test-gemini-key-12345");
-    vi.stubEnv("GEMINI_MODEL", "gemini-2.5-flash");
-    vi.stubEnv("OPENROUTER_API_KEY", "");
-    vi.stubEnv("GROQ_API_KEY", "");
+describe("GLM primary main model, unverified managed providers, and Cloudinary signed paths", () => {
+  it("defaults unsaved main model to GLM (never auto-promoting Gemini) and pairs with gpt-oss-120b for low-load tasks", async () => {
+    vi.stubEnv("GLM_API_KEY", "glm-test-primary-key-12345");
+    vi.stubEnv("GLM_MODEL", "glm-4.7");
+    vi.stubEnv("GEMINI_API_KEY", "AIzaSy-ignored-unless-explicit");
+    vi.stubEnv("GROQ_API_KEY", "gsk_test_fast_tier_key");
+    vi.stubEnv("GROQ_CHAT_MODEL", "openai/gpt-oss-120b");
 
     const resolved = await resolveMainModelConfig(null);
-    expect(resolved?.kind).toBe("gemini");
-    expect(resolved?.model).toBe("gemini-2.5-flash");
+    expect(resolved?.kind).toBe("glm");
+    expect(resolved?.model).toBe("glm-4.7");
+    expect(resolved?.low_task_model).toBe("openai/gpt-oss-120b");
 
-    const routes = await createAIRoutesFromDb(null, false);
-    expect(routes.length).toBeGreaterThanOrEqual(1);
-    expect(routes[0].provider).toBe("Gemini");
-    expect(routes[0].model).toBe("gemini-2.5-flash");
+    const highRoutes = await createAIRoutesFromDb(null, true, false, "high");
+    expect(highRoutes[0].provider).toBe("GLM");
+    expect(highRoutes[0].model).toBe("glm-4.7");
+
+    const lowRoutes = await createAIRoutesFromDb(null, false, false, "low");
+    expect(lowRoutes[0].provider).toBe("Groq");
+    expect(lowRoutes[0].model).toBe("openai/gpt-oss-120b");
+    expect(lowRoutes.some((r) => r.provider === "Gemini")).toBe(false);
   });
 
   it("allows admin-saved managed providers with allow_unverified=true to chat even when /models returns 404", async () => {

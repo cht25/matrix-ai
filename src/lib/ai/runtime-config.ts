@@ -1,23 +1,15 @@
 // =============================================================================
 // Mutable main-model configuration (server-only).
 //
-// The MAIN model of MATRIX is a single, admin-editable record stored in
-// Firestore (`system_settings/ai_provider`). It has three axes:
+// The MAIN model of MATRIX is an admin-editable record stored in Firestore
+// (`system_settings/ai_provider`). Shipped architecture:
 //
-//   kind      gemini | openai-compatible | anthropic      (how to talk to it)
-//   model     the exact chat / general model ID
-//   agent_model  optional separate Agent + coding model
+//   High-load / Coding / Web Dev / Agent / Vision → GLM (Zhipu AI / Z.ai)
+//   Low-load / Fast everyday tasks               → openai/gpt-oss-120b
 //
-// Gemini is the shipped default and the only provider the recording ships a
-// key for, so a fresh deployment works as soon as GEMINI_API_KEY exists.
-// OpenRouter is deliberately NOT part of the default routing chain: the main
-// model is Google Gemini, and an operator may point it at any other
-// OpenAI-compatible or Anthropic endpoint from Admin → AI configuration.
-//
-// Every write validates the model IDs against the provider's REAL catalog
-// before replacing a working configuration, and the raw key is encrypted at
-// rest and never returned to the browser — only a masked "configured" status
-// plus the last four digits.
+// Operators can customize the primary model, low-load model, or point the
+// gateway at any OpenAI-compatible, Anthropic, or optional secondary provider
+// from Admin → AI configuration while keeping all managed models active.
 // =============================================================================
 
 import "server-only";
@@ -28,6 +20,16 @@ import { verifyProviderModel, listProviderModels, type CatalogResult } from "@/l
 import { isProviderEndpointAllowed } from "@/lib/ai/endpoint-policy";
 import { RpcError } from "@/lib/server/errors";
 import type { AIProvider } from "@/lib/ai/groq";
+import { GPT_OSS_DEFAULT_MODEL } from "@/lib/ai/groq";
+import {
+  GLMProvider,
+  GLM_API_BASE_URL,
+  GLM_DEFAULT_CODING_MODEL,
+  GLM_DEFAULT_MODEL,
+  GLM_DEFAULT_VISION_MODEL,
+  GLM_KNOWN_MODELS,
+  resolveGlmBaseUrl,
+} from "@/lib/ai/glm";
 import { createOpenAICompatibleProvider, isCompatibleBaseUrl, normalizeCompatibleBaseUrl } from "@/lib/ai/openai";
 import type { AIProviderName } from "@/lib/ai/provider-error";
 import { GeminiProvider, GEMINI_API_BASE_URL, GEMINI_DEFAULT_MODEL } from "@/lib/ai/gemini";
@@ -36,31 +38,34 @@ import { AnthropicProvider, ANTHROPIC_API_BASE_URL } from "@/lib/ai/anthropic";
 const COLLECTION = "system_settings";
 const DOC_ID = "ai_provider";
 
-export const MAIN_MODEL_KINDS = ["gemini", "openai-compatible", "anthropic"] as const;
+export const MAIN_MODEL_KINDS = ["glm", "openai-compatible", "anthropic", "gemini"] as const;
 export type MainModelKind = (typeof MAIN_MODEL_KINDS)[number];
 
 export function isMainModelKind(value: unknown): value is MainModelKind {
   return typeof value === "string" && (MAIN_MODEL_KINDS as readonly string[]).includes(value);
 }
 
-/** Fixed, non-editable base URL per native protocol adapter. */
+/** Fixed or default base URL per protocol adapter. */
 export function nativeBaseUrl(kind: MainModelKind): string {
+  if (kind === "glm") return resolveGlmBaseUrl();
   if (kind === "gemini") return GEMINI_API_BASE_URL;
   if (kind === "anthropic") return ANTHROPIC_API_BASE_URL;
   return "";
 }
 
 export function providerNameFor(kind: MainModelKind): AIProviderName {
+  if (kind === "glm") return "GLM";
   if (kind === "gemini") return "Gemini";
   if (kind === "anthropic") return "Anthropic";
   return "OpenAI";
 }
 
-/** Model IDs that the deployment can suggest without guessing a provider catalog. */
+/** Model IDs suggested for quick selection in Admin → AI configuration. */
 export const SUGGESTED_MODELS: Record<MainModelKind, string[]> = {
-  gemini: [GEMINI_DEFAULT_MODEL, "gemini-2.5-flash", "gemini-2.5-pro"],
-  "openai-compatible": [],
+  glm: GLM_KNOWN_MODELS.map((m) => m.id),
+  "openai-compatible": [GPT_OSS_DEFAULT_MODEL],
   anthropic: ["claude-sonnet-4-5", "claude-opus-4-1"],
+  gemini: [GEMINI_DEFAULT_MODEL, "gemini-2.5-pro"],
 };
 
 export type RuntimeAIRoute = {
@@ -71,21 +76,19 @@ export type RuntimeAIRoute = {
 };
 
 export type StoredAIProviderConfig = {
-  /**
-   * Provider API surface. Optional for backwards compatibility: a record
-   * created before this field existed is treated as OpenAI-compatible, which
-   * is exactly the protocol it was written for.
-   */
   kind?: MainModelKind;
   enabled: boolean;
   base_url: string;
   model: string;
-  /** Optional separate model ID for Agent/coding requests. Falls back to `model` when blank. */
+  /** Optional separate model ID for Agent/coding/web-dev requests. Falls back to `model` when blank. */
   agent_model?: string;
   /** Optional dedicated multimodal model. Falls back to `model` when blank. */
   vision_model?: string;
+  /** Optional low-load fast model override (defaults to `openai/gpt-oss-120b`). */
+  low_task_model?: string;
   api_key: string;
   label?: string;
+  source?: "database" | "environment";
   updated_by?: string;
   updated_at?: unknown;
 };
@@ -99,21 +102,23 @@ export type PublicAIProviderConfig = {
   model: string;
   agent_model: string;
   vision_model: string;
+  low_task_model: string;
   api_key_set: boolean;
   api_key_last4: string;
   updated_by: string;
   updated_at: string;
   label: string;
   suggested_models: string[];
-  /** True when the environment (GEMINI_API_KEY etc.) supplies a key instead. */
+  /** True when the environment (GLM_API_KEY etc.) supplies a key instead. */
   environment_key: boolean;
   source: "database" | "environment" | "none";
 };
 
 const KIND_LABEL: Record<MainModelKind, string> = {
-  gemini: "Google Gemini API",
+  glm: "GLM (Zhipu AI / Z.ai)",
   "openai-compatible": "OpenAI-compatible endpoint",
   anthropic: "Anthropic Claude API",
+  gemini: "Google Gemini API (optional)",
 };
 
 const PLACEHOLDERS = ["YOUR-", "replace-with", "...", "sk-...", "sk-or-v1-..."];
@@ -134,22 +139,22 @@ function asIso(value: unknown): string {
 
 /** Environment fallback credentials, per provider kind. */
 export function environmentKeyFor(kind: MainModelKind): string {
-  if (kind === "gemini") return keyConfigured(process.env.GEMINI_API_KEY) ? process.env.GEMINI_API_KEY!.trim() : "";
+  if (kind === "glm") return keyConfigured(process.env.GLM_API_KEY) ? process.env.GLM_API_KEY!.trim() : "";
   if (kind === "anthropic") return keyConfigured(process.env.ANTHROPIC_API_KEY) ? process.env.ANTHROPIC_API_KEY!.trim() : "";
+  if (kind === "gemini") return keyConfigured(process.env.GEMINI_API_KEY) ? process.env.GEMINI_API_KEY!.trim() : "";
   return keyConfigured(process.env.OPENAI_API_KEY) ? process.env.OPENAI_API_KEY!.trim() : "";
 }
 
 function environmentModelFor(kind: MainModelKind): string {
-  if (kind === "gemini") return process.env.GEMINI_MODEL?.trim() || GEMINI_DEFAULT_MODEL;
+  if (kind === "glm") return process.env.GLM_MODEL?.trim() || GLM_DEFAULT_MODEL;
   if (kind === "anthropic") return process.env.ANTHROPIC_MODEL?.trim() || "";
+  if (kind === "gemini") return process.env.GEMINI_MODEL?.trim() || "";
   return process.env.OPENAI_MODEL?.trim() || "";
 }
 
 async function readRecord(d: Db): Promise<Record<string, unknown>> {
   const snap = await d.collection(COLLECTION).doc(DOC_ID).get();
   const record = snap.exists ? (snap.data() ?? {}) : {};
-  // Read legacy plaintext records without breaking existing deployments; the
-  // next approved save encrypts and removes the legacy field.
   const apiKey = typeof record.api_key_encrypted === "string"
     ? decryptSecret(record.api_key_encrypted)
     : typeof record.api_key === "string" ? record.api_key : "";
@@ -157,35 +162,41 @@ async function readRecord(d: Db): Promise<Record<string, unknown>> {
 }
 
 function storedKind(record: Record<string, unknown>): MainModelKind {
-  if (record.kind === "gemini" || record.kind === "anthropic" || record.kind === "openai-compatible") return record.kind;
+  if (record.kind === "glm" || record.kind === "gemini" || record.kind === "anthropic" || record.kind === "openai-compatible") {
+    return record.kind;
+  }
   // Legacy records created before `kind` existed had `base_url` or `api_key`
   // without `kind` and pointed at an OpenAI-compatible endpoint. An empty
-  // unsaved record defaults to Google Gemini — the primary shipped model.
+  // unsaved record defaults to GLM — the primary high-end/coding system.
   const hasLegacyFields = Boolean(
     (typeof record.base_url === "string" && record.base_url.trim()) ||
     (typeof record.api_key === "string" && record.api_key.trim()) ||
     (typeof record.api_key_encrypted === "string" && record.api_key_encrypted.trim()),
   );
-  return hasLegacyFields ? "openai-compatible" : "gemini";
+  return hasLegacyFields ? "openai-compatible" : "glm";
 }
 
 function inferInputKind(input: { kind?: string; base_url?: string }, fallbackRecord: Record<string, unknown>): MainModelKind {
   if (isMainModelKind(input.kind)) return input.kind;
   const suppliedUrl = input.base_url?.trim() ?? "";
-  if (suppliedUrl && suppliedUrl !== GEMINI_API_BASE_URL && suppliedUrl !== ANTHROPIC_API_BASE_URL) {
+  if (suppliedUrl && suppliedUrl !== GLM_API_BASE_URL && suppliedUrl !== GEMINI_API_BASE_URL && suppliedUrl !== ANTHROPIC_API_BASE_URL) {
     return "openai-compatible";
   }
   return storedKind(fallbackRecord);
 }
 
 function normalizeBase(kind: MainModelKind, value: string): string {
+  if (kind === "glm") {
+    const trimmed = value.trim();
+    return trimmed ? normalizeCompatibleBaseUrl(trimmed) : resolveGlmBaseUrl();
+  }
   if (kind !== "openai-compatible") return nativeBaseUrl(kind);
   return normalizeCompatibleBaseUrl(value);
 }
 
 /**
  * Read the saved main-model record. Returns `null` when nothing usable has been
- * saved yet; the caller should then use the environment fallback.
+ * saved yet; the caller then uses the environment GLM / provider configuration.
  */
 export async function readAIProviderConfig(d: Db): Promise<StoredAIProviderConfig | null> {
   const record = await readRecord(d);
@@ -201,8 +212,10 @@ export async function readAIProviderConfig(d: Db): Promise<StoredAIProviderConfi
     model,
     agent_model: typeof record.agent_model === "string" ? record.agent_model.trim() : "",
     vision_model: typeof record.vision_model === "string" ? record.vision_model.trim() : "",
+    low_task_model: typeof record.low_task_model === "string" ? record.low_task_model.trim() : "",
     api_key: apiKey,
     label: typeof record.label === "string" && record.label.trim() ? record.label.trim() : KIND_LABEL[kind],
+    source: "database",
     updated_by: typeof record.updated_by === "string" ? record.updated_by : "",
     updated_at: record.updated_at,
   };
@@ -211,9 +224,9 @@ export async function readAIProviderConfig(d: Db): Promise<StoredAIProviderConfi
 /**
  * The main-model configuration actually in force right now.
  *
- * Order: the admin-saved Firestore record → the environment (GEMINI_API_KEY
- * and friends). This is why a deployment with only GEMINI_API_KEY works: the
- * environment is a first-class main-model source, not a hidden fallback.
+ * Order: the admin-saved Firestore record → the environment (`GLM_API_KEY`,
+ * then `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`). Gemini is intentionally NOT
+ * part of automatic environment promotion; GLM is the primary system.
  */
 export async function resolveMainModelConfig(d: Db | null): Promise<StoredAIProviderConfig | null> {
   if (d) {
@@ -222,27 +235,31 @@ export async function resolveMainModelConfig(d: Db | null): Promise<StoredAIProv
       if (saved) return saved;
     } catch {
       // A Firestore outage must not take the assistant offline when the
-      // environment carries a working key.
+      // environment carries a working GLM / provider key.
     }
   }
-  for (const kind of ["gemini", "openai-compatible", "anthropic"] as MainModelKind[]) {
+  for (const kind of ["glm", "openai-compatible", "anthropic"] as MainModelKind[]) {
     const apiKey = environmentKeyFor(kind);
     if (!apiKey) continue;
     const model = environmentModelFor(kind);
     if (!model) continue;
-    const baseUrl = kind === "openai-compatible"
-      ? normalizeCompatibleBaseUrl(process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1")
-      : nativeBaseUrl(kind);
+    const baseUrl = kind === "glm"
+      ? resolveGlmBaseUrl(process.env.GLM_BASE_URL)
+      : kind === "openai-compatible"
+        ? normalizeCompatibleBaseUrl(process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1")
+        : nativeBaseUrl(kind);
     if (!baseUrl || !isProviderEndpointAllowed(baseUrl)) continue;
     return {
       kind,
       enabled: true,
       base_url: baseUrl,
       model,
-      agent_model: kind === "gemini" ? process.env.GEMINI_CODING_MODEL?.trim() || "" : "",
-      vision_model: kind === "gemini" ? process.env.GEMINI_VISION_MODEL?.trim() || "" : "",
+      agent_model: kind === "glm" ? (process.env.GLM_CODING_MODEL?.trim() || GLM_DEFAULT_CODING_MODEL) : "",
+      vision_model: kind === "glm" ? (process.env.GLM_VISION_MODEL?.trim() || GLM_DEFAULT_VISION_MODEL) : "",
+      low_task_model: process.env.GPT_OSS_MODEL?.trim() || process.env.GROQ_CHAT_MODEL?.trim() || GPT_OSS_DEFAULT_MODEL,
       api_key: apiKey,
       label: `${KIND_LABEL[kind]} (environment)`,
+      source: "environment",
       updated_by: "",
       updated_at: "",
     };
@@ -251,6 +268,7 @@ export async function resolveMainModelConfig(d: Db | null): Promise<StoredAIProv
 }
 
 export function createClientFor(kind: MainModelKind, apiKey: string, baseUrl: string, label: string, model = ""): AIProvider {
+  if (kind === "glm") return new GLMProvider(apiKey, baseUrl || GLM_API_BASE_URL, model || GLM_DEFAULT_MODEL);
   if (kind === "gemini") return new GeminiProvider(apiKey, baseUrl || GEMINI_API_BASE_URL);
   if (kind === "anthropic") return new AnthropicProvider(apiKey, baseUrl || ANTHROPIC_API_BASE_URL);
   return createOpenAICompatibleProvider({ apiKey, baseUrl, label, model });
@@ -272,19 +290,19 @@ export function createRuntimeAIRoute(config: StoredAIProviderConfig | null): Run
 }
 
 /**
- * Route for Agent / coding requests. Uses the dedicated Agent model when one
- * is saved, otherwise the shared chat model. The client is constructed lazily
- * so a bad Agent model ID never affects general chat.
+ * Route for Agent / coding / web-dev requests. Uses the dedicated Agent model
+ * when one is saved, otherwise the shared high-end model.
  */
 export function createRuntimeAgentRoute(config: StoredAIProviderConfig | null): RuntimeAIRoute | null {
   if (!config || !config.enabled) return null;
   return routeFor(config, config.agent_model?.trim() || config.model);
 }
 
-/** Route for screenshots / vision. Falls back to the chat model. */
+/** Route for screenshots / vision. Falls back to GLM vision or the chat model. */
 export function createRuntimeVisionRoute(config: StoredAIProviderConfig | null): RuntimeAIRoute | null {
   if (!config || !config.enabled) return null;
-  return routeFor(config, config.vision_model?.trim() || config.model);
+  const fallbackVision = config.kind === "glm" ? GLM_DEFAULT_VISION_MODEL : config.model;
+  return routeFor(config, config.vision_model?.trim() || fallbackVision);
 }
 
 export async function getAIProviderConfigPublic(d: Db): Promise<PublicAIProviderConfig> {
@@ -304,9 +322,12 @@ export async function getAIProviderConfigPublic(d: Db): Promise<PublicAIProvider
     kind,
     kind_label: KIND_LABEL[kind],
     base_url: baseUrl || nativeBaseUrl(kind),
-    model: savedModel || envFallback?.model || (envKey ? environmentModelFor(kind) : GEMINI_DEFAULT_MODEL),
-    agent_model: typeof record.agent_model === "string" && record.agent_model.trim() ? record.agent_model.trim() : envFallback?.agent_model ?? "",
-    vision_model: typeof record.vision_model === "string" && record.vision_model.trim() ? record.vision_model.trim() : envFallback?.vision_model ?? "",
+    model: savedModel || envFallback?.model || (envKey ? environmentModelFor(kind) : GLM_DEFAULT_MODEL),
+    agent_model: typeof record.agent_model === "string" && record.agent_model.trim() ? record.agent_model.trim() : envFallback?.agent_model ?? (kind === "glm" ? GLM_DEFAULT_CODING_MODEL : ""),
+    vision_model: typeof record.vision_model === "string" && record.vision_model.trim() ? record.vision_model.trim() : envFallback?.vision_model ?? (kind === "glm" ? GLM_DEFAULT_VISION_MODEL : ""),
+    low_task_model: typeof record.low_task_model === "string" && record.low_task_model.trim()
+      ? record.low_task_model.trim()
+      : (process.env.GPT_OSS_MODEL?.trim() || process.env.GROQ_CHAT_MODEL?.trim() || GPT_OSS_DEFAULT_MODEL),
     api_key_set: configured,
     api_key_last4: configured ? apiKey.slice(-4) : envKey ? envKey.slice(-4) : "",
     updated_by: typeof record.updated_by === "string" ? record.updated_by : "",
@@ -318,13 +339,6 @@ export async function getAIProviderConfigPublic(d: Db): Promise<PublicAIProvider
   };
 }
 
-/**
- * Fetch model IDs from the provider account without persisting a draft key.
- *
- * The draft key wins (the operator may be rotating it), then the saved key,
- * then the environment key. Native adapters (Gemini / Anthropic) are probed
- * with their own catalog endpoint, never through an OpenAI shim.
- */
 export async function listAIProviderModels(
   d: Db,
   input: { base_url?: string; api_key?: string; kind?: string },
@@ -333,7 +347,7 @@ export async function listAIProviderModels(
   const kind: MainModelKind = inferInputKind(input, record);
   const baseUrl = normalizeBase(kind, input.base_url?.trim() || (typeof record.base_url === "string" ? record.base_url : ""));
   if (!baseUrl) throw new RpcError("AI_PROVIDER_BASE_URL_INVALID", 400);
-  if (kind === "openai-compatible" && (!isCompatibleBaseUrl(baseUrl) || !isProviderEndpointAllowed(baseUrl))) {
+  if ((kind === "openai-compatible" || kind === "glm") && (!isCompatibleBaseUrl(baseUrl) || !isProviderEndpointAllowed(baseUrl))) {
     throw new RpcError("AI_PROVIDER_BASE_URL_INVALID", 400);
   }
 
@@ -344,8 +358,6 @@ export async function listAIProviderModels(
 
   try {
     const client = createClientFor(kind, apiKey, baseUrl, KIND_LABEL[kind]);
-    // Catalog listing already goes through the native adapter (Gemini's
-    // /models, Anthropic's /models, OpenAI's /models) with caching + timeouts.
     return await listProviderModels(client, {
       baseUrl,
       apiKey,
@@ -354,8 +366,6 @@ export async function listAIProviderModels(
     });
   } catch (error) {
     if (error instanceof RpcError) throw error;
-    // Provider errors can contain request details; return a stable code and
-    // keep the credentials/draft endpoint out of the RPC response and logs.
     throw new RpcError("AI_PROVIDER_CATALOG_FAILED", 502);
   }
 }
@@ -369,6 +379,7 @@ export async function saveAIProviderConfig(
     model: string;
     agent_model?: string;
     vision_model?: string;
+    low_task_model?: string;
     api_key?: string;
     enabled?: boolean;
     label?: string;
@@ -380,17 +391,17 @@ export async function saveAIProviderConfig(
   const kind: MainModelKind = inferInputKind(input, current);
   const normalizedBase = normalizeBase(kind, input.base_url?.trim() || (typeof current.base_url === "string" ? current.base_url : ""));
   if (!normalizedBase) throw new RpcError("AI_PROVIDER_BASE_URL_INVALID", 400);
-  if (kind === "openai-compatible" && (!isCompatibleBaseUrl(normalizedBase) || !isProviderEndpointAllowed(normalizedBase))) {
+  if ((kind === "openai-compatible" || kind === "glm") && (!isCompatibleBaseUrl(normalizedBase) || !isProviderEndpointAllowed(normalizedBase))) {
     throw new RpcError("AI_PROVIDER_BASE_URL_INVALID", 400);
   }
 
   const normalizeModelId = (raw: string) => (kind === "gemini" ? raw.trim().replace(/^models\//, "") : raw.trim());
   const model = normalizeModelId(input.model);
   if (!model || model.length > 220) throw new RpcError("AI_PROVIDER_MODEL_INVALID", 400);
-  // Blank = "use the chat model". A value must be a sane model ID.
   const agentModel = normalizeModelId(input.agent_model ?? "");
   const visionModel = normalizeModelId(input.vision_model ?? "");
-  for (const candidate of [agentModel, visionModel]) {
+  const lowTaskModel = (input.low_task_model ?? "").trim();
+  for (const candidate of [agentModel, visionModel, lowTaskModel]) {
     if (candidate.length > 220) throw new RpcError("AI_PROVIDER_MODEL_INVALID", 400);
   }
   const label = input.label?.trim().slice(0, 80) || KIND_LABEL[kind];
@@ -401,8 +412,6 @@ export async function saveAIProviderConfig(
   if (!keyConfigured(apiKey)) throw new RpcError("AI_PROVIDER_API_KEY_REQUIRED", 400);
   if (!canEncryptSecrets()) throw new RpcError("SECRET_STORAGE_UNAVAILABLE", 503);
 
-  // Validate the NEW IDs against the configured account before replacing a
-  // working configuration. A catalog never invents a replacement model.
   if (input.allow_unverified !== true) {
     for (const id of new Set([model, ...(agentModel ? [agentModel] : []), ...(visionModel ? [visionModel] : [])])) {
       try {
@@ -422,6 +431,7 @@ export async function saveAIProviderConfig(
       model,
       agent_model: agentModel,
       vision_model: visionModel,
+      ...(lowTaskModel ? { low_task_model: lowTaskModel } : {}),
       label,
       api_key_encrypted: encryptSecret(apiKey),
       api_key_last4: apiKey.slice(-4),
@@ -462,7 +472,7 @@ export async function testAIProviderConfig(
     base_url: config?.base_url ?? "",
     mode,
     detail: ok
-      ? `${KIND_LABEL[route.kind]} answered a live ${mode === "agent" ? "Agent" : mode === "vision" ? "vision" : "chat"} check with ${route.model}.`
+      ? `${KIND_LABEL[route.kind]} answered a live ${mode === "agent" ? "Agent / coding" : mode === "vision" ? "vision" : "chat"} check with ${route.model}.`
       : `${KIND_LABEL[route.kind]} did not pass the live check for model "${route.model}". Confirm the API key, that the model ID exists in this account's catalog, and that billing/quota is enabled for it.`,
   };
 }

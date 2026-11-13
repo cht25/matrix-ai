@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { db, getCurrentUser } from "@/lib/data";
 import { getSidebarData } from "@/lib/server/queries";
 import { AppShell } from "@/components/app-shell";
+import { PhoneUpdateBanner } from "@/components/phone-update-banner";
 import { ServerProblemScreen } from "@/components/server-problem";
 import { isConfigured } from "@/lib/env";
 import type { SidebarConversation } from "@/lib/chat-utils";
@@ -42,6 +43,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       conversations={conversations as SidebarConversation[]}
       isAdmin={isAdmin}
     >
+      <PhoneUpdateBanner />
       {children}
     </AppShell>
   );

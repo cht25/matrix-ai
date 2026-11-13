@@ -3,8 +3,9 @@ import { randomUUID } from "node:crypto";
 import { adminDb, nowTs } from "@/lib/firebase/admin";
 import { getSessionUser } from "@/lib/firebase/session";
 import { isCloudinaryConfigured } from "@/lib/env";
+import { resolveGlmBaseUrl } from "@/lib/ai/glm";
 import { GeminiProvider } from "@/lib/ai/gemini";
-import { AIProviderError, logProviderFailure, providerPublicCode } from "@/lib/ai/provider-error";
+import { AIProviderError, logProviderFailure, providerPublicCode, providerErrorFromResponse } from "@/lib/ai/provider-error";
 import { deletePrivateAudio, uploadPrivateAudio } from "@/lib/server/cloudinary";
 import { mutationCsrfResponse } from "@/lib/server/request-security";
 
@@ -28,15 +29,60 @@ function providerStatus(error: unknown): number {
   return 502;
 }
 
+function keyPresent(v: string | undefined): string {
+  const s = v?.trim() ?? "";
+  return s && !s.endsWith("...") && !s.startsWith("YOUR-") && !s.startsWith("replace-with") ? s : "";
+}
+
+async function transcribeViaOpenAICompatible(opts: {
+  baseUrl: string;
+  apiKey: string;
+  providerLabel: "Groq" | "GLM" | "OpenAI";
+  model: string;
+  bytes: Buffer;
+  filename: string;
+  mimeType: string;
+  language?: string;
+  signal?: AbortSignal;
+}): Promise<{ transcript: string; model: string; provider: string; usage: Record<string, unknown> }> {
+  const fd = new FormData();
+  fd.append("file", new Blob([new Uint8Array(opts.bytes)], { type: opts.mimeType }), opts.filename);
+  fd.append("model", opts.model);
+  if (opts.language && /^[a-z]{2}(?:-[A-Z]{2})?$/i.test(opts.language)) {
+    fd.append("language", opts.language.slice(0, 2).toLowerCase());
+  }
+  const res = await fetch(`${opts.baseUrl.replace(/\/+$/, "")}/audio/transcriptions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${opts.apiKey}` },
+    body: fd,
+    signal: opts.signal ?? AbortSignal.timeout(60_000),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw providerErrorFromResponse(opts.providerLabel, opts.model, res, detail);
+  }
+  const data = (await res.json()) as { text?: string };
+  const transcript = typeof data.text === "string" ? data.text.trim() : "";
+  if (!transcript) {
+    throw new AIProviderError({ provider: opts.providerLabel, model: opts.model, type: "empty_response", detail: "Empty transcription result" });
+  }
+  return { transcript, model: opts.model, provider: opts.providerLabel, usage: {} };
+}
+
 export async function POST(req: NextRequest) {
   const csrf = mutationCsrfResponse(req);
   if (csrf) return csrf;
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
 
-  const key = process.env.GEMINI_API_KEY?.trim() ?? "";
-  const model = process.env.GEMINI_AUDIO_MODEL?.trim() ?? "";
-  if (!key || !model) return NextResponse.json({ error: "VOICE_TRANSCRIPTION_NOT_CONFIGURED" }, { status: 503 });
+  const groqKey = keyPresent(process.env.GROQ_API_KEY);
+  const glmKey = keyPresent(process.env.GLM_API_KEY);
+  const openaiKey = keyPresent(process.env.OPENAI_API_KEY);
+  const geminiKey = keyPresent(process.env.GEMINI_API_KEY);
+  const geminiAudioModel = process.env.GEMINI_AUDIO_MODEL?.trim() ?? "";
+
+  const hasProvider = Boolean(groqKey || glmKey || openaiKey || (geminiKey && geminiAudioModel));
+  if (!hasProvider) return NextResponse.json({ error: "VOICE_TRANSCRIPTION_NOT_CONFIGURED" }, { status: 503 });
   if (!isCloudinaryConfigured()) return NextResponse.json({ error: "VOICE_STORAGE_NOT_CONFIGURED" }, { status: 503 });
 
   const form = await req.formData().catch(() => null);
@@ -45,15 +91,6 @@ export async function POST(req: NextRequest) {
   const mimeType = file.type.toLowerCase().split(";")[0];
   if (!ALLOWED_AUDIO_TYPES.has(mimeType)) return NextResponse.json({ error: "AUDIO_TYPE_UNSUPPORTED" }, { status: 415 });
   if (!file.size || file.size > MAX_AUDIO_BYTES) return NextResponse.json({ error: "AUDIO_SIZE_INVALID", max_bytes: MAX_AUDIO_BYTES }, { status: 413 });
-
-  const provider = new GeminiProvider(key);
-  try {
-    const models = await provider.listModels();
-    if (!models.some((entry) => entry.id === model)) return NextResponse.json({ error: "GEMINI_AUDIO_MODEL_NOT_AVAILABLE" }, { status: 503 });
-  } catch (error) {
-    logProviderFailure(error);
-    return NextResponse.json({ error: providerPublicCode(error) }, { status: providerStatus(error) });
-  }
 
   const bytes = Buffer.from(await file.arrayBuffer());
   let stored: Awaited<ReturnType<typeof uploadPrivateAudio>>;
@@ -86,44 +123,96 @@ export async function POST(req: NextRequest) {
   }
 
   const startedAt = Date.now();
+  const language = typeof form?.get("language") === "string" ? String(form.get("language")) : undefined;
+  const filename = file.name || "voice.webm";
+  let usedModel = "whisper-large-v3-turbo";
+
   try {
-    const response = await provider.transcribeAudio({
-      model,
-      mimeType,
-      base64: bytes.toString("base64"),
-      language: typeof form?.get("language") === "string" ? String(form.get("language")) : undefined,
-      signal: req.signal,
-    });
+    let out: { transcript: string; model: string; provider: string; usage: Record<string, unknown> };
+    if (groqKey) {
+      usedModel = process.env.GROQ_AUDIO_MODEL?.trim() || "whisper-large-v3-turbo";
+      out = await transcribeViaOpenAICompatible({
+        baseUrl: "https://api.groq.com/openai/v1",
+        apiKey: groqKey,
+        providerLabel: "Groq",
+        model: usedModel,
+        bytes,
+        filename,
+        mimeType,
+        language,
+        signal: req.signal,
+      });
+    } else if (glmKey) {
+      usedModel = process.env.GLM_AUDIO_MODEL?.trim() || "glm-asr";
+      out = await transcribeViaOpenAICompatible({
+        baseUrl: resolveGlmBaseUrl(),
+        apiKey: glmKey,
+        providerLabel: "GLM",
+        model: usedModel,
+        bytes,
+        filename,
+        mimeType,
+        language,
+        signal: req.signal,
+      });
+    } else if (openaiKey) {
+      usedModel = process.env.OPENAI_AUDIO_MODEL?.trim() || "whisper-1";
+      out = await transcribeViaOpenAICompatible({
+        baseUrl: process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1",
+        apiKey: openaiKey,
+        providerLabel: "OpenAI",
+        model: usedModel,
+        bytes,
+        filename,
+        mimeType,
+        language,
+        signal: req.signal,
+      });
+    } else {
+      usedModel = geminiAudioModel;
+      const provider = new GeminiProvider(geminiKey);
+      const response = await provider.transcribeAudio({
+        model: usedModel,
+        mimeType,
+        base64: bytes.toString("base64"),
+        language,
+        signal: req.signal,
+      });
+      out = { transcript: response.content, model: response.model, provider: "Gemini", usage: response.usage };
+    }
+
     await d.collection("ai_usage_logs").add({
       user_id: user.uid,
-      model: response.model,
+      model: out.model,
       request_type: "voice_transcription",
-      token_usage: response.usage,
+      token_usage: out.usage,
       latency_ms: Date.now() - startedAt,
       status: "ok",
       created_at: nowTs(),
     }).catch(() => {});
+
     return NextResponse.json({
-      transcript: response.content,
+      transcript: out.transcript,
       audio_asset_id: id,
       playback_url: `/api/voice/audio/${id}`,
-      provider: "Gemini",
-      model: response.model,
-      usage: response.usage,
+      provider: out.provider,
+      model: out.model,
+      usage: out.usage,
     }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     logProviderFailure(error);
     await d.collection("ai_usage_logs").add({
       user_id: user.uid,
-      model,
+      model: usedModel,
       request_type: "voice_transcription",
       token_usage: {},
       latency_ms: Date.now() - startedAt,
       status: "error",
       created_at: nowTs(),
     }).catch(() => {});
-    // The private upload remains available to the owner, so a transient ASR
-    // failure never silently discards a recording.
-    return NextResponse.json({ error: providerPublicCode(error), audio_asset_id: id, playback_url: `/api/voice/audio/${id}` }, { status: providerStatus(error), headers: { "Cache-Control": "private, no-store" } });
+    return NextResponse.json(
+      { error: providerPublicCode(error), audio_asset_id: id, playback_url: `/api/voice/audio/${id}` },
+      { status: providerStatus(error), headers: { "Cache-Control": "private, no-store" } },
+    );
   }
 }

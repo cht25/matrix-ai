@@ -15,6 +15,7 @@ import * as rpc from "@/lib/server/rpc";
 import * as aiRuntime from "@/lib/ai/runtime-config";
 import * as managedAI from "@/lib/ai/managed-providers";
 import * as imageConfig from "@/lib/ai/image/config";
+import * as appUpdates from "@/lib/server/app-updates";
 import { getConversationHistoryPage } from "@/lib/server/queries";
 import * as projects from "@/lib/server/projects";
 import * as deploy from "@/lib/server/deploy";
@@ -512,6 +513,7 @@ const ACTIONS: Record<string, Handler> = {
       model: z.string().min(1).max(220).parse(b.model),
       agent_model: str(b.agent_model),
       vision_model: str(b.vision_model),
+      low_task_model: str(b.low_task_model),
       api_key: typeof b.api_key === "string" ? b.api_key : "",
       enabled: bool(b.enabled, true),
       label: str(b.label, ""),
@@ -544,7 +546,7 @@ const ACTIONS: Record<string, Handler> = {
   },
   admin_ai_managed_models: async (d, u, b) => {
     if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
-    const kind = b.kind ? z.enum(["openai-compatible", "gemini", "anthropic"]).parse(b.kind) : undefined;
+    const kind = b.kind ? z.enum(["glm", "openai-compatible", "gemini", "anthropic"]).parse(b.kind) : undefined;
     const result = await managedAI.listManagedProviderModels(d, {
       provider_id: b.provider_id ? z.string().min(8).max(80).parse(b.provider_id) : undefined,
       kind,
@@ -568,7 +570,7 @@ const ACTIONS: Record<string, Handler> = {
     const saved = await managedAI.saveManagedProvider(d, u.uid, {
       id: b.id ? z.string().min(8).max(80).parse(b.id) : undefined,
       name: z.string().min(1).max(80).parse(b.name),
-      kind: z.enum(["openai-compatible", "gemini", "anthropic"]).parse(b.kind),
+      kind: z.enum(["glm", "openai-compatible", "gemini", "anthropic"]).parse(b.kind),
       base_url: z.string().max(500).parse(b.base_url ?? ""),
       api_key: z.string().max(4096).parse(b.api_key ?? ""),
       enabled: bool(b.enabled),
@@ -619,7 +621,7 @@ const ACTIONS: Record<string, Handler> = {
     if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
     const apiKey = typeof b.api_key === "string" ? b.api_key : "";
     const result = await imageConfig.saveImageProviderConfig(d, u.uid, {
-      provider: str(b.provider, "together"),
+      provider: str(b.provider, "glm"),
       model: str(b.model),
       api_key: apiKey,
       enabled: bool(b.enabled, true),
@@ -648,6 +650,29 @@ const ACTIONS: Record<string, Handler> = {
     const result = await imageConfig.clearImageProviderKey(d, u.uid);
     await rpc.logAudit(d, u.uid, "image_provider_key_cleared", "system_settings", "image_provider", "");
     return result;
+  },
+  admin_app_release_get: async (d, u) => {
+    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
+    return appUpdates.getAppReleaseConfig(d);
+  },
+  admin_app_release_save: async (d, u, b) => {
+    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
+    const saved = await appUpdates.saveAppReleaseConfig(d, u.uid, {
+      version: z.string().min(5).max(32).parse(b.version),
+      build_number: z.coerce.number().int().min(1).max(1_000_000).parse(b.build_number),
+      min_supported_version: z.string().min(5).max(32).parse(b.min_supported_version),
+      force_update: bool(b.force_update, false),
+      apk_url: str(b.apk_url),
+      sha256: str(b.sha256),
+      release_notes: str(b.release_notes),
+    });
+    await rpc.logAudit(d, u.uid, "app_release_updated", "system_settings", "app_releases", saved.version, {
+      version: saved.version,
+      build_number: saved.build_number,
+      min_supported_version: saved.min_supported_version,
+      force_update: saved.force_update,
+    });
+    return saved;
   },
 
   admin_live_sites: async (d, u) => {

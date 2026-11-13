@@ -218,6 +218,18 @@ class MatrixApi {
     }
   }
 
+  /// Sends a chat or image request to the real MATRIX `/api/ai` gateway
+  /// (GLM high-load/coding/vision + gpt-oss-120b low-load + GLM CogView image).
+  Future<Map<String, dynamic>> sendAiGateway(Map<String, dynamic> payload) async {
+    final res = await _send('POST', '/api/ai', {'stream': false, ...payload});
+    final data = _decode(res);
+    if (res.statusCode >= 400 || data['ok'] == false) {
+      final err = data['error'] ?? data['code'] ?? 'HTTP_${res.statusCode}';
+      throw ApiException(err.toString(), res.statusCode);
+    }
+    return data;
+  }
+
   /// Keep a cached copy of the last token for diagnostics (never the raw token
   /// is logged; storage is platform-encrypted).
   static Future<void> rememberSignedIn() => _storage.write(key: 'matrix_signed_in', value: '1');
