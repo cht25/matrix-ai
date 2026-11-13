@@ -19,7 +19,7 @@ export { RpcError };
 
 const TASKS = "agent_tasks";
 
-export const TASK_STATUSES = ["planning", "running", "awaiting_approval", "completed", "failed", "cancelled"] as const;
+export const TASK_STATUSES = ["planning", "running", "awaiting_approval", "awaiting_input", "completed", "failed", "cancelled"] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export const CHECKPOINT_STEPS = [
@@ -39,7 +39,7 @@ export const CHECKPOINT_STEPS = [
 export type CheckpointStep = (typeof CHECKPOINT_STEPS)[number];
 export type CheckpointState = "started" | "ok" | "failed" | "skipped" | "needs_approval";
 
-export type AgentExecutionState = "QUEUED" | "PLANNING" | "EXECUTING" | "CREATING_FILES" | "INSTALLING_DEPENDENCIES" | "BUILDING" | "TESTING" | "PREVIEW_READY" | "DEPLOYING" | "DEPLOYED" | "FAILED" | "CANCELLED";
+export type AgentExecutionState = "QUEUED" | "PLANNING" | "EXECUTING" | "CREATING_FILES" | "INSTALLING_DEPENDENCIES" | "BUILDING" | "TESTING" | "PREVIEW_READY" | "CLARIFICATION_REQUIRED" | "DEPLOYING" | "DEPLOYED" | "FAILED" | "CANCELLED";
 
 export type AgentTask = {
   id: string;
@@ -214,6 +214,7 @@ const STAGE_EXECUTION: Record<BuildStageId, AgentExecutionState> = {
 };
 
 export function executionStateForRun(run: BuildRun): AgentExecutionState {
+  if (run.status === "awaiting_input") return "CLARIFICATION_REQUIRED";
   if (run.status === "cancelled" || run.cancelRequested) return "CANCELLED";
   if (run.status === "failed") return "FAILED";
   if (run.status === "succeeded") return run.deployment?.status === "live" ? "DEPLOYED" : run.previewUrl ? "PREVIEW_READY" : "TESTING";
@@ -230,7 +231,7 @@ export async function bindBuildTask(d: Db, user: SessionUser, taskId: string, in
 export async function syncBuildTask(d: Db, user: SessionUser, taskId: string, run: BuildRun) {
   const ref = await requireOwnedTask(d, user, taskId);
   const execution = executionStateForRun(run);
-  const status: TaskStatus = execution === "DEPLOYED" || (run.status === "succeeded" && !run.actions.publish) ? "completed" : execution === "FAILED" ? "failed" : execution === "CANCELLED" ? "cancelled" : run.status === "requested" ? "planning" : "running";
+  const status: TaskStatus = execution === "DEPLOYED" || (run.status === "succeeded" && !run.actions.publish) ? "completed" : execution === "FAILED" ? "failed" : execution === "CLARIFICATION_REQUIRED" ? "awaiting_input" : execution === "CANCELLED" ? "cancelled" : run.status === "requested" ? "planning" : "running";
   const closed = status === "completed" || status === "failed" || status === "cancelled";
   await ref.set({ project_id: run.projectId ?? null, build_run_id: run.id, execution_state: execution, status, build_status: run.status, deployment_status: run.deployment?.status ?? null, error: run.error ?? null, updated_at: nowTs(), ...(closed ? { finished_at: nowTs() } : {}) }, { merge: true });
 }

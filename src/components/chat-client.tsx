@@ -61,6 +61,8 @@ import { AgentWorkspace } from "@/components/agent-workspace";
 import { ArtifactCard } from "@/components/artifact-panel";
 import { ResponseProgress } from "@/components/response-status";
 import { ModeQuickActions, LiveTaskGraph, type GraphNode } from "@/components/mode-workspace";
+import { cancelsPendingTask, classifyAgentOutput, isClarificationAnswer, isTaskInterruption, requestsClarificationFirst, resumedTaskPrompt, pendingTaskFromMessages, type PendingAgentTask } from "@/lib/ai/agent-execution";
+import { reportSuccessfulAiResponse } from "@/components/ai-status";
 import { buildActionsFor, detectBuildIntent, detectImageAssetRequest, shouldRunBuildPipeline, type BuildIntent } from "@/lib/ai/build-intent";
 import { mayExecuteAgent, shouldCreateCodeWorkspace } from "@/lib/ai/execution-policy";
 import { BuildRunError, streamBuildRun } from "@/lib/client/build-runner";
@@ -166,6 +168,9 @@ export function ChatClient({
   // --- conversation -------------------------------------------------------
   const [mode, setMode] = useState<ChatMode>(isTemporary ? "general" : initialMode);
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const agentTaskRef = useRef<PendingAgentTask | null>(pendingTaskFromMessages(initialMessages));
+  const lastBuildTaskRef = useRef<PendingAgentTask | null>(null);
+  const lastBuildVisibleRef = useRef<string | null>(null);
   // Incremental history: only the newest page is mounted; older messages are
   // prepended on demand so a long conversation never floods the DOM.
   const [hasMoreHistory, setHasMoreHistory] = useState(initialHasMore);
@@ -782,6 +787,7 @@ export function ChatClient({
       intent?: IntentResult;
       turnId?: string;
       audioAssetId?: string | null;
+      taskContext?: PendingAgentTask | null;
     } = {},
   ) {
     if (requestInFlightRef.current) return;
@@ -866,6 +872,13 @@ export function ChatClient({
     const commit = (text: string) => {
       cancelPaint();
       setStreamCommitted(true);
+      if (text.trim()) reportSuccessfulAiResponse();
+      if (opts.taskContext) {
+        const state = opts.taskContext.state === "CONVERSATION" ? "CONVERSATION" : classifyAgentOutput(text).state;
+        const task = { ...opts.taskContext, state };
+        streamMetadata.agent_task = task;
+        agentTaskRef.current = state === "CLARIFICATION_REQUIRED" ? task : null;
+      }
       const key = commitPartial(text, { replaceLastAssistant, turnId, intent }, streamMetadata);
       if (key) committedKey = key;
       committed = true;
@@ -898,6 +911,7 @@ export function ChatClient({
           study_level: studyLevel,
           explain_style: explainStyle,
           message,
+          task_context: opts.taskContext ?? undefined,
           audio_asset_id: opts.audioAssetId ?? undefined,
           image_storage_path: imageStoragePath ?? undefined,
           attachments: sentAttachments.map(({ name, content, type }) => ({ name, content, type })),
@@ -1234,6 +1248,55 @@ export function ChatClient({
     // plan → files → build → validate → publish. A plain question never gets
     // here, and an under-specified "make it" asks one question instead of
     // deploying a guess.
+    const pendingTask = agentTaskRef.current;
+    if (pendingTask && mode === "agent") {
+      if (cancelsPendingTask(rawMessage)) {
+        if (isTemporary) {
+          agentTaskRef.current = null;
+          commitPartial("Okay, I won't start the build. Your existing project is unchanged.", { turnId }, { mode: "agent", agent_task: { ...pendingTask, state: "CONVERSATION" }, execution_state: "CONVERSATION" });
+        } else {
+          try {
+            const res = await fetch("/api/ai", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "cancel_pending_task", conversation_id: convIdRef.current, original_request: pendingTask.originalRequest }) });
+            if (!res.ok) throw new Error("CANCEL_PENDING_TASK_FAILED");
+            agentTaskRef.current = null;
+            commitPartial("Okay, I won't start the build. Your existing project is unchanged.", { turnId }, { mode: "agent", agent_task: { ...pendingTask, state: "CONVERSATION" }, execution_state: "CONVERSATION" });
+          } catch {
+            setFailure({ ...failureCopy("server"), title: "Cancellation could not be saved", detail: "Retry cancellation so the task does not resume after a reload." });
+          }
+        }
+        return;
+      }
+      if (isClarificationAnswer(rawMessage)) {
+        const updated: PendingAgentTask = {
+          ...pendingTask,
+          clarifications: [...pendingTask.clarifications, {
+            question: [...messages].reverse().find((item) => item.role === "assistant")?.content ?? "Clarification",
+            answer: rawMessage,
+          }].slice(-10),
+        };
+        // Carry the original requirements into generation; never replace the
+        // user's visible answer with the synthetic build prompt in chat history.
+        await runBuildTurn(resumedTaskPrompt(updated, rawMessage), detectBuildIntent(updated.originalRequest, { mode: "agent", agentMode: true, projectFileCount: agentFiles.length || (agentProjectId ? 1 : 0) }), turnId, pending, false, updated, rawMessage);
+        return;
+      }
+      // An uncertain answer remains pending. A different conversational
+      // question interrupts the task rather than silently starting a build.
+      const context: PendingAgentTask = isTaskInterruption(rawMessage)
+        ? { ...pendingTask, state: "CONVERSATION" }
+        : { ...pendingTask, clarifications: [...pendingTask.clarifications, {
+          question: [...messages].reverse().find((item) => item.role === "assistant")?.content ?? "Clarification",
+          answer: rawMessage,
+        }].slice(-10) };
+      if (context.state === "CONVERSATION") agentTaskRef.current = null;
+      await streamMessage(message, { attachments: pending, imageStoragePath: attachedImage?.storagePath ?? null, intent, turnId, audioAssetId, taskContext: context });
+      return;
+    }
+    if (mode === "agent" && requestsClarificationFirst(rawMessage)) {
+      const task: PendingAgentTask = { originalRequest: rawMessage, clarifications: [], state: "CLARIFICATION_REQUIRED", projectId: agentProjectId };
+      await streamMessage(message, { attachments: pending, imageStoragePath: attachedImage?.storagePath ?? null, intent, turnId, audioAssetId, taskContext: task });
+      return;
+    }
     const buildIntent = detectBuildIntent(rawMessage, {
       mode,
       agentMode: mode === "agent",
@@ -1243,7 +1306,8 @@ export function ChatClient({
     });
     if (buildIntent.needsClarification) {
       setNotice(buildIntent.clarification ?? "Describe what to build and I will create, validate and (if you ask) publish it.");
-      await streamMessage(message, { attachments: pending, imageStoragePath: attachedImage?.storagePath ?? null, intent, turnId, audioAssetId });
+      await streamMessage(message, { attachments: pending, imageStoragePath: attachedImage?.storagePath ?? null, intent, turnId, audioAssetId,
+        taskContext: mode === "agent" ? { originalRequest: rawMessage, clarifications: [], state: "CLARIFICATION_REQUIRED", projectId: agentProjectId } : null });
       return;
     }
     const codeWorkspaceRequest = mode === "code" && shouldCreateCodeWorkspace(rawMessage, pending);
@@ -1279,12 +1343,16 @@ export function ChatClient({
     turnId: string,
     sentAttachments: PendingAttachment[] = [],
     workspaceOnly = false,
+    taskContext: PendingAgentTask | null = null,
+    visibleMessage?: string,
   ) {
     if (requestInFlightRef.current) return;
     requestInFlightRef.current = true;
-    const selectedForThisRequest = message === lastBuildPromptRef.current ? explicitAgentProjectIdRef.current : null;
+    const selectedForThisRequest = taskContext?.projectId ?? (message === lastBuildPromptRef.current ? explicitAgentProjectIdRef.current : null);
     if (!selectedForThisRequest) explicitAgentProjectIdRef.current = null;
     lastBuildPromptRef.current = message;
+    lastBuildTaskRef.current = taskContext;
+    lastBuildVisibleRef.current = visibleMessage ?? null;
     const startedAt = Date.now();
     setFailure(null);
     setProjectChoices([]);
@@ -1325,6 +1393,8 @@ export function ChatClient({
       settled = await streamBuildRun(
         {
           prompt: message,
+          taskContext,
+          visibleMessage,
           projectId: selectedForThisRequest,
           workspaceProjectId: agentProjectId,
           conversationId: convIdRef.current,
@@ -1366,6 +1436,17 @@ export function ChatClient({
     }
 
     const run = settled.run;
+    if (run?.status === "awaiting_input") {
+      const task: PendingAgentTask = { originalRequest: taskContext?.originalRequest ?? visibleMessage ?? message,
+        clarifications: taskContext?.clarifications ?? [], state: "CLARIFICATION_REQUIRED", projectId: run.projectId ?? taskContext?.projectId, taskId: run.taskId };
+      agentTaskRef.current = task;
+      setBuildRun(null);
+      setFailure(null);
+      reportSuccessfulAiResponse();
+    } else if (run?.status === "succeeded") {
+      agentTaskRef.current = null;
+      if (actions.build && run.changes.length > 0) reportSuccessfulAiResponse();
+    }
     const liveUrl = run?.deployment?.status === "live" ? run.deployment.url ?? null : null;
     // The run owns its conversation: adopt it (and the URL) so a refresh lands
     // on the thread that contains this build.
@@ -1411,7 +1492,8 @@ export function ChatClient({
       {
         mode: mode === "code" ? "code" : "agent",
         project_id: projectId ?? undefined,
-        build: run ? toRunSnapshot(run) : undefined,
+        build: run && run.status !== "awaiting_input" ? toRunSnapshot(run) : undefined,
+        agent_task: run?.status === "awaiting_input" ? agentTaskRef.current ?? undefined : undefined,
         deployment: run?.deployment
           ? {
               id: run.deployment.id,
@@ -1463,7 +1545,12 @@ export function ChatClient({
     // continue that ID, not create another copy in the same chat.
     if (buildRun?.projectId) explicitAgentProjectIdRef.current = buildRun.projectId;
     setFailure(null);
-    void send(undefined, prompt);
+    const task = lastBuildTaskRef.current;
+    if (task) {
+      void runBuildTurn(prompt, detectBuildIntent(task.originalRequest, { mode: "agent", agentMode: true, projectFileCount: agentFiles.length || (agentProjectId ? 1 : 0) }), crypto.randomUUID(), lastAttachmentsRef.current, false, task, lastBuildVisibleRef.current ?? undefined);
+    } else {
+      void send(undefined, prompt);
+    }
   }
 
   /**

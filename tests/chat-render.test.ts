@@ -68,7 +68,7 @@ describe("test 1 & 8 — a clean conversation renders nothing else", () => {
 
   it("keeps the top bar to mode, model, status and settings", () => {
     expect(html).toContain("Matrix mode");
-    expect(html).toContain("Ready");
+    expect(html).toContain("Idle");
     expect(html).toContain("Chat settings");
     expect(html).not.toContain("Agent Mode Active");
     expect(html).not.toContain("Sandbox Active");

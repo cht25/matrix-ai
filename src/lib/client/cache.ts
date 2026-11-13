@@ -76,3 +76,9 @@ export function subscribe<T>(key: string, fn: (value: T) => void): () => void {
     if (set.size === 0) subscribers.delete(key);
   };
 }
+
+/** Publish an observed successful operation to all mounted status consumers. */
+export function publishCache<T>(key: string, value: T, ttlMs: number): void {
+  cache.set(key, { value, expires: Date.now() + ttlMs });
+  subscribers.get(key)?.forEach((fn) => fn(value));
+}

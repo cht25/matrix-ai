@@ -66,7 +66,7 @@ export type BuildLogLine = {
   message: string;
 };
 
-export type BuildRunStatus = "requested" | "running" | "succeeded" | "failed" | "cancelled";
+export type BuildRunStatus = "requested" | "running" | "succeeded" | "failed" | "cancelled" | "awaiting_input";
 
 export type BuildEnvironment = "preview" | "production";
 
@@ -275,7 +275,7 @@ export function succeedRun(run: BuildRun, now: number): BuildRun {
 }
 
 export function cancelRun(run: BuildRun, now: number): BuildRun {
-  if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") return run;
+  if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled" || run.status === "awaiting_input") return run;
   return { ...run, status: "cancelled", cancelRequested: true, stages: run.stages.map((stage) => stage.state === "running" || stage.state === "queued" ? { ...stage, state: "skipped", finishedAt: now } : stage), updatedAt: now, finishedAt: now };
 }
 
@@ -380,6 +380,9 @@ export function buildRunCopy(run: BuildRun): BuildRunCopy {
       canOpenLive: false,
       liveUrl: null,
     };
+  }
+  if (run.status === "awaiting_input") {
+    return { title: "Waiting for your answer", detail: "No files were changed or published.", glyph: "○", tone: "neutral", canOpenLive: false, liveUrl: null };
   }
   if (run.status === "cancelled") {
     return { title: "Build cancelled", detail: "The run was stopped before completion. No success was reported.", glyph: "○", tone: "neutral", canOpenLive: false, liveUrl: null };
@@ -501,7 +504,7 @@ export function runFromSnapshot(snapshot: Partial<BuildRunSnapshot> & { run_id: 
     return { ...stage, state: stored[1], finishedAt: stage.finishedAt ?? (stored[1] === "running" ? null : now) };
   });
   const status: BuildRunStatus =
-    snapshot.status === "succeeded" || snapshot.status === "failed" || snapshot.status === "running" || snapshot.status === "requested" || snapshot.status === "cancelled"
+    snapshot.status === "succeeded" || snapshot.status === "failed" || snapshot.status === "running" || snapshot.status === "requested" || snapshot.status === "cancelled" || snapshot.status === "awaiting_input"
       ? snapshot.status
       : "failed";
   return {
@@ -540,6 +543,6 @@ export function runFromSnapshot(snapshot: Partial<BuildRunSnapshot> & { run_id: 
     logs: [],
     startedAt: now,
     updatedAt: now,
-    finishedAt: status === "succeeded" || status === "failed" ? now : null,
+    finishedAt: status === "succeeded" || status === "failed" || status === "awaiting_input" ? now : null,
   };
 }

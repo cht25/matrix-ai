@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { firebaseBrowserConfigured } from "@/lib/firebase/client";
-import { cachedRequest, peekCache, subscribe } from "@/lib/client/cache";
+import { cachedRequest, peekCache, publishCache, subscribe } from "@/lib/client/cache";
 import { cn } from "@/lib/utils";
 
 const CACHE_KEY = "ai:health";
@@ -27,18 +27,34 @@ const LABEL: Record<AiState, string> = {
   "not-configured": "AI not configured",
 };
 
+let lastSuccess = 0;
+/** A real provider reply is stronger evidence than a possibly stale health
+ * probe. Keep it short-lived; the next scheduled probe still checks liveness. */
+export function reportSuccessfulAiResponse(): void {
+  lastSuccess = Date.now();
+  publishCache<AiState>(CACHE_KEY, "online", 30_000);
+}
+
 async function probe(): Promise<AiState> {
   try {
-    const res = await fetch("/api/ai", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "health" }),
-      signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
-    });
-    const data = (await res.json().catch(() => ({}))) as { status?: string };
-    return res.ok && data.status === "online" ? "online" : "unavailable";
+    // Chat and Agent can have different configured routes. Neither a failed
+    // chat-model probe nor a successful one says anything about Agent readiness.
+    let configured = false;
+    for (const mode of ["general", "agent"] as const) {
+      const res = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "health", mode }),
+        signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
+      });
+      const data = (await res.json().catch(() => ({}))) as { status?: string };
+      if (res.ok && data.status === "online") return "online";
+      if (data.status !== "unconfigured") configured = true;
+    }
+    if (Date.now() - lastSuccess < 30_000) return "online";
+    return configured ? "unavailable" : "not-configured";
   } catch {
-    return "unavailable";
+    return Date.now() - lastSuccess < 30_000 ? "online" : "unavailable";
   }
 }
 

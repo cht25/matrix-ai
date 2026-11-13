@@ -43,7 +43,7 @@ function nullableStr(value: unknown): string | null {
 }
 
 const STAGE_STATES: StageState[] = ["queued", "running", "completed", "failed", "skipped"];
-const RUN_STATUSES: BuildRunStatus[] = ["requested", "running", "succeeded", "failed", "cancelled"];
+const RUN_STATUSES: BuildRunStatus[] = ["requested", "running", "succeeded", "failed", "cancelled", "awaiting_input"];
 
 /** Firestore-safe copy of a run (bounded, no undefined, no functions). */
 export function toFirestoreRun(run: BuildRun): Json {

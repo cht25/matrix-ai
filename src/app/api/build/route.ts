@@ -15,10 +15,11 @@ import { adminAuth, adminDb, nowTs } from "@/lib/firebase/admin";
 import { verifySession, type SessionUser } from "@/lib/firebase/session";
 import { FirestoreDeploymentProvider } from "@/lib/deploy/firestore-provider";
 import { runBuildPipeline, latestBuildRunForProject, readBuildRun, type ImageAssetRequest } from "@/lib/server/build";
-import { cancelAgentTask, createAgentTask } from "@/lib/server/agent-tasks";
+import { cancelAgentTask, createAgentTask, getAgentTask } from "@/lib/server/agent-tasks";
 import { toFirestoreRun } from "@/lib/deploy/run-store";
 import { getDeploymentOverview } from "@/lib/server/deploy";
 import { detectBuildIntent } from "@/lib/ai/build-intent";
+import { requestsClarificationFirst, type PendingAgentTask } from "@/lib/ai/agent-execution";
 import { RpcError } from "@/lib/server/errors";
 import type { BuildActions } from "@/lib/deploy/stages";
 import { logGatewayFailure } from "@/lib/ai/provider-error";
@@ -136,8 +137,16 @@ export async function POST(req: NextRequest) {
   const workspaceProjectId = typeof body.workspace_project_id === "string" && body.workspace_project_id.trim() ? body.workspace_project_id.trim().slice(0, 128) : null;
   const conversationId = typeof body.conversation_id === "string" ? body.conversation_id : null;
 
+  const taskRaw = body.task_context as Record<string, unknown> | undefined;
+  const taskContext: PendingAgentTask | null = taskRaw && typeof taskRaw.originalRequest === "string" && taskRaw.originalRequest.length <= 12_000
+    ? { originalRequest: taskRaw.originalRequest, clarifications: Array.isArray(taskRaw.clarifications)
+        ? taskRaw.clarifications.slice(0, 10).filter((entry: unknown) => entry && typeof entry === "object" && typeof (entry as { question?: unknown }).question === "string" && typeof (entry as { answer?: unknown }).answer === "string")
+          .map((entry: { question: string; answer: string }) => ({ question: entry.question.slice(0, 1000), answer: entry.answer.slice(0, 2000) })) : [], state: "CLARIFICATION_REQUIRED", projectId: projectId ?? workspaceProjectId,
+        taskId: typeof taskRaw.taskId === "string" ? taskRaw.taskId.slice(0, 128) : null }
+    : null;
   const user = await getUser(req);
   if (!user) return json({ error: "UNAUTHENTICATED" }, 401);
+  if (!taskContext && requestsClarificationFirst(prompt)) return json({ error: "CLARIFICATION_REQUIRED", detail: "Ask the missing requirement in chat before starting a build." }, 409);
 
   try {
     await assertCapacity(user.uid);
@@ -191,7 +200,7 @@ export async function POST(req: NextRequest) {
         .collection("conversations")
         .doc(convId)
         .collection("messages")
-        .add({ role: "user", content: prompt.slice(0, 12_000), metadata: { mode: "agent", intent: "BUILD" }, created_at: nowTs() });
+        .add({ role: "user", content: taskContext && typeof body.visible_message === "string" ? body.visible_message.slice(0, 12_000) : prompt.slice(0, 12_000), metadata: { mode: "agent", intent: "BUILD" }, created_at: nowTs() });
     } catch (error) {
       // A persistent Agent chat requires durable storage. Continuing with a
       // missing conversation would create an unbound/duplicate project.
@@ -202,8 +211,16 @@ export async function POST(req: NextRequest) {
 
   let taskId: string;
   try {
-    const task = await createAgentTask(d, user, { title: (prompt || "MATRIX build").replace(/\s+/g, " ").slice(0, 120), goal: prompt || `Build project ${projectId ?? "new"}`, conversation_id: convId, project_id: projectId });
-    taskId = task.id;
+    if (taskContext?.taskId) {
+      const existing = (await getAgentTask(d, user, taskContext.taskId)).task;
+      if (existing.conversation_id !== convId || existing.status !== "awaiting_input") {
+        return json({ error: "TASK_CONTEXT_CHANGED", detail: "The waiting task changed. Reload this Chat before continuing." }, 409);
+      }
+      taskId = existing.id;
+    } else {
+      const task = await createAgentTask(d, user, { title: (prompt || "MATRIX build").replace(/\s+/g, " ").slice(0, 120), goal: prompt || `Build project ${projectId ?? "new"}`, conversation_id: convId, project_id: projectId });
+      taskId = task.id;
+    }
   } catch (error) {
     logGatewayFailure("build_task", { requestId, runId }, error);
     return json({ error: "TASK_STORAGE_UNAVAILABLE", detail: "The durable Agent task record could not be created, so no build was started." }, 503);
@@ -222,6 +239,7 @@ export async function POST(req: NextRequest) {
       requestId,
       taskId,
       prompt,
+      taskContext,
       actions,
       workspaceOnly,
       chatMode,
@@ -262,6 +280,7 @@ export async function POST(req: NextRequest) {
           requestId,
           taskId,
           prompt,
+          taskContext,
           actions,
           workspaceOnly,
           chatMode,
@@ -345,7 +364,7 @@ export async function DELETE(req: NextRequest) {
   const d = adminDb();
   const run = await readBuildRun(d, user, runId);
   if (!run) return json({ error: "NOT_FOUND" }, 404);
-  if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") return json({ run });
+  if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled" || run.status === "awaiting_input") return json({ run });
   const ref = d.collection("build_runs").doc(runId);
   await ref.set({ cancel_requested: true, run: { ...toFirestoreRun(run), cancelRequested: true }, updated_at: nowTs() }, { merge: true });
   if (run.taskId) await cancelAgentTask(d, user, run.taskId).catch(() => null);
