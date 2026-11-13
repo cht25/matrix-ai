@@ -60,11 +60,13 @@ export function ProjectWorkspace({
   initialFiles = [],
   conversationId,
   onTitle,
+  onProjectId,
 }: {
   projectId?: string;
   initialFiles?: AgentFile[];
   conversationId?: string | null;
   onTitle?: (title: string) => void;
+  onProjectId?: (id: string) => void;
 }) {
   const toast = useToast();
   const [tab, setTab] = useState<Tab>("preview");
@@ -123,6 +125,9 @@ export function ProjectWorkspace({
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      // Opening an empty panel is not a request to create a project. Wait for
+      // an explicit Create action or an actual Agent file set.
+      if (!projectId && initialFiles.length === 0) return;
       try {
         let id = projectId ?? "";
         let applyInitial = !projectId && initialFiles.length > 0;
@@ -137,6 +142,7 @@ export function ProjectWorkspace({
           initialFiles.forEach((file) => recordOp(`Created ${file.path}`));
         }
         await load(id);
+        if (!cancelled) onProjectId?.(id);
       } catch (err) {
         if (!cancelled) setMsg(friendly(err, "Could not open project."));
       }
@@ -147,6 +153,21 @@ export function ProjectWorkspace({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, conversationId]);
+
+  async function createWorkspaceProject() {
+    if (project || busy) return;
+    setBusy(true);
+    try {
+      const created = await rpc<{ id: string }>("project_ensure", { conversation_id: conversationId ?? null, title: "Agent project" });
+      await load(created.id);
+      onProjectId?.(created.id);
+      setTab("files");
+    } catch (err) {
+      setMsg(friendly(err, "Could not create project."));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   // ------------------------------------------------------------------ files --
   function queueSave(nextFiles: ProjectFile[], path: string, content: string) {
@@ -415,6 +436,7 @@ export function ProjectWorkspace({
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+          {!project ? <button type="button" className="ws-tab" disabled={busy} onClick={() => void createWorkspaceProject()}>Create project</button> : null}
           <button type="button" onClick={() => setTab("preview")} className="ws-tab" aria-pressed={tab === "preview"}>
             <MonitorPlay size={13} /> Preview
           </button>

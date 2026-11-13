@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { applyProjectFiles, deleteProjectFile, ensureProject, getProject, listProjectVersions, renameProjectFile, restoreProjectVersion, saveProjectVersion, upsertProjectFile } from "@/lib/server/projects";
+import { applyProjectFiles, deleteProjectFile, ensureProject, ensureAgentProject, getProject, listProjectVersions, renameProjectFile, restoreProjectVersion, saveProjectVersion, upsertProjectFile } from "@/lib/server/projects";
 import type { Db } from "@/lib/firebase/admin";
+import { bindConversationProject } from "@/lib/server/project-resolution";
 
 const owner = { uid: "owner", email: "owner@example.com", emailVerified: true };
 function fixture() {
   const docs = new Map<string, Record<string, unknown>>();
   docs.set("projects/p1", { owner_id: owner.uid, title: "Project", revision: 0, file_count: 0, created_at: new Date(), updated_at: new Date() });
+  for (const id of ["chat-a", "chat-b", "original"]) docs.set(`conversations/${id}`, { user_id: owner.uid });
   const matches = (name: string) => [...docs.entries()].filter(([key]) => key.startsWith(`${name}/`) && !key.slice(name.length + 1).includes("/"));
   const ref = (path: string) => {
     const self = {
@@ -49,6 +51,45 @@ describe("transactional project workspace", () => {
     expect((await getProject(db, owner, a.id)).files[0].content).toBe("Portfolio");
     expect((await getProject(db, owner, b.id)).files[0].content).toBe("Store");
   });
+  it("never chooses the first of two legacy Chat-linked projects", async () => {
+    const { db, docs } = fixture();
+    docs.set("projects/old1", { owner_id: owner.uid, conversation_id: "original", title: "Old portfolio" });
+    docs.set("projects/old2", { owner_id: owner.uid, conversation_id: "original", title: "Old store" });
+    await expect(ensureProject(db, owner, { conversation_id: "original", title: "Unknown" }))
+      .rejects.toMatchObject({ code: "PROJECT_AMBIGUOUS" });
+    expect(docs.get("conversations/original")?.active_project_id).toBeUndefined();
+    expect(docs.has("projects/old1")).toBe(true);
+    expect(docs.has("projects/old2")).toBe(true);
+  });
+
+  it("atomically creates separate Agent projects, binds chats, preserves source and deployments", async () => {
+    const { db, docs } = fixture();
+    const [first, same] = await Promise.all([
+      ensureAgentProject(db, owner, { conversation_id: "chat-a", title: "Portfolio", forceNew: false }),
+      ensureAgentProject(db, owner, { conversation_id: "chat-a", title: "Portfolio", forceNew: false }),
+    ]);
+    expect(first.id).toBe(same.id);
+    const second = await ensureAgentProject(db, owner, { conversation_id: "chat-b", title: "Store", forceNew: false });
+    expect(second.id).not.toBe(first.id);
+    const another = await ensureAgentProject(db, owner, { conversation_id: "chat-a", title: "Another site", forceNew: true });
+    expect(another.id).not.toBe(first.id);
+    expect(docs.get("conversations/chat-a")?.active_project_id).toBe(another.id);
+    await bindConversationProject(db, owner, "original", first.id);
+    expect(docs.get("conversations/original")?.active_project_id).toBe(first.id);
+    await applyProjectFiles(db, owner, { project_id: first.id, files: [{ path: "index.html", content: "original", language: "html" }] });
+    docs.set(`projects/${first.id}`, { ...docs.get(`projects/${first.id}`), live_deployment_id: "deployment-original" });
+    await bindConversationProject(db, owner, "chat-a", first.id);
+    expect(docs.get("conversations/chat-a")).toMatchObject({ active_project_id: first.id, project_owner_id: owner.uid, active_source_revision: 1, current_deployment_id: "deployment-original" });
+    await applyProjectFiles(db, owner, { project_id: first.id, expected_revision: 1, files: [{ path: "styles.css", content: "body{}", language: "css" }] });
+    await bindConversationProject(db, owner, "chat-a", first.id);
+    expect(docs.get("conversations/chat-a")?.active_source_revision).toBe(2);
+    expect((await getProject(db, owner, first.id)).files).toHaveLength(2);
+    expect((await getProject(db, owner, second.id)).files).toHaveLength(0);
+    expect((await listProjectVersions(db, owner, first.id))).toHaveLength(2);
+    expect(docs.get(`projects/${first.id}`)?.live_deployment_id).toBe("deployment-original");
+    await expect(bindConversationProject(db, { ...owner, uid: "attacker" }, "chat-a", first.id)).rejects.toMatchObject({ code: "PROJECT_CONTEXT_MISSING" });
+  });
+
   it("persists files across reload and never duplicates concurrent writes to one path", async () => {
     const { db, docs } = fixture();
     await Promise.all([upsertProjectFile(db, owner, { project_id: "p1", path: "index.html", content: "<h1>One</h1>" }), upsertProjectFile(db, owner, { project_id: "p1", path: "index.html", content: "<h1>Two</h1>" })]);

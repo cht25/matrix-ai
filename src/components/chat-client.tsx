@@ -61,7 +61,7 @@ import { ResponseProgress } from "@/components/response-status";
 import { ModeQuickActions, LiveTaskGraph, type GraphNode } from "@/components/mode-workspace";
 import { buildActionsFor, detectBuildIntent, detectImageAssetRequest, shouldRunBuildPipeline, type BuildIntent } from "@/lib/ai/build-intent";
 import { mayExecuteAgent, shouldCreateCodeWorkspace } from "@/lib/ai/execution-policy";
-import { streamBuildRun } from "@/lib/client/build-runner";
+import { BuildRunError, streamBuildRun } from "@/lib/client/build-runner";
 import { BuildStatusCard } from "@/components/build/build-progress";
 import { DeploySuccessPopup } from "@/components/build/deploy-card";
 import { toRunSnapshot, type BuildRun } from "@/lib/deploy/stages";
@@ -222,7 +222,9 @@ export function ChatClient({
 
   // --- agent workspace ----------------------------------------------------
   const [agentFiles, setAgentFiles] = useState<AgentFile[]>(latestArtifacts(initialMessages));
-  const [agentProjectId, setAgentProjectId] = useState<string | null>(initialProjectId ?? latestProjectId(initialMessages));
+  const [agentProjectId, setAgentProjectId] = useState<string | null>(initialProjectId ?? (initialConvId ? null : latestProjectId(initialMessages)));
+  const explicitAgentProjectIdRef = useRef<string | null>(null);
+  const [projectChoices, setProjectChoices] = useState<Array<{ id: string; title: string }>>([]);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
 
   // --- build pipeline (real execution state, mirrored from the server) -----
@@ -1270,9 +1272,12 @@ export function ChatClient({
   ) {
     if (requestInFlightRef.current) return;
     requestInFlightRef.current = true;
+    const selectedForThisRequest = message === lastBuildPromptRef.current ? explicitAgentProjectIdRef.current : null;
+    if (!selectedForThisRequest) explicitAgentProjectIdRef.current = null;
     lastBuildPromptRef.current = message;
     const startedAt = Date.now();
     setFailure(null);
+    setProjectChoices([]);
     setNotice(null);
     setStreaming(true);
     setStreamStatus("processing");
@@ -1309,7 +1314,8 @@ export function ChatClient({
       settled = await streamBuildRun(
         {
           prompt: message,
-          projectId: agentProjectId,
+          projectId: selectedForThisRequest,
+          workspaceProjectId: agentProjectId,
           conversationId: convIdRef.current,
           isTemporary,
           mode: mode === "code" ? "code" : "agent",
@@ -1333,8 +1339,10 @@ export function ChatClient({
         },
       );
     } catch (err) {
-      buildError = { code: "BUILD_UNREACHABLE", message: "MATRIX could not reach the build service. Your message is safe — try again." };
-      if (!(err instanceof Error && err.name === "AbortError")) console.error("[MATRIX] build stream failed", err);
+      buildError = err instanceof BuildRunError
+        ? { code: err.code, message: err.code === "PROJECT_CONTEXT_MISSING" ? "This Chat is unavailable. Open a Chat you own and retry." : err.code === "PROJECT_STORAGE_UNAVAILABLE" ? "Project storage is unavailable. No build started; retry after Firestore is restored." : `Build service rejected the request (${err.code}).` }
+        : { code: "BUILD_UNREACHABLE", message: "MATRIX could not reach the build service. Your message is safe — try again." };
+      if (!(err instanceof Error && (err.name === "AbortError" || err instanceof BuildRunError))) console.error("[MATRIX] build stream failed", err);
     } finally {
       clearIdleTimer();
       setStreaming(false);
@@ -1409,8 +1417,15 @@ export function ChatClient({
 
     if (run?.status === "failed" || buildError) {
       const detail = run?.error?.message ?? buildError?.message ?? "The build stopped before publishing.";
+      if (run?.error?.code === "PROJECT_AMBIGUOUS" || run?.error?.code === "PROJECT_CONTEXT_MISSING") {
+        // The owner-scoped list includes every selectable project, including
+        // candidates beyond the short diagnostic stored in a build run.
+        void rpc<Array<{ id: string; title: string }>>("project_list")
+          .then(setProjectChoices).catch(() => setProjectChoices([]));
+      }
       setFailure({ ...failureCopy("server"), title: run?.deployment?.status === "failed" ? "Publishing failed" : "Build failed", detail, retryable: true });
     }
+    if (run?.status === "succeeded") explicitAgentProjectIdRef.current = null;
     if (liveUrl && run) {
       setPublishPopup({ run, url: liveUrl, files: run.fileCount || artifacts.length });
       // Keep the live card visible for this turn only as long as the popup is
@@ -1433,6 +1448,9 @@ export function ChatClient({
   function retryBuild() {
     const prompt = lastBuildPromptRef.current;
     if (!prompt || streaming) return;
+    // A failed CREATE may already have persisted its project. Retrying must
+    // continue that ID, not create another copy in the same chat.
+    if (buildRun?.projectId) explicitAgentProjectIdRef.current = buildRun.projectId;
     setFailure(null);
     void send(undefined, prompt);
   }
@@ -1965,7 +1983,20 @@ export function ChatClient({
             ) : null}
 
             {failure ? (
-              <ServerProblem failure={failure} onRetry={retry} onTryAnotherModel={tryAnotherModel} onDismiss={() => setFailure(null)} />
+              <ServerProblem failure={failure} onRetry={buildRun?.status === "failed" ? retryBuild : retry} onTryAnotherModel={tryAnotherModel} onDismiss={() => setFailure(null)} />
+            ) : null}
+            {projectChoices.length ? (
+              <div className="rounded-xl border border-border bg-surface p-4" role="group" aria-label="Choose project to edit">
+                <p className="mb-2 text-sm font-medium text-ink">Which project should MATRIX edit?</p>
+                <div className="flex flex-wrap gap-2">
+                  {projectChoices.map((choice) => (
+                    <button key={choice.id} type="button" className="rounded-lg border border-border px-3 py-2 text-sm text-ink hover:bg-surface-2"
+                      onClick={() => { explicitAgentProjectIdRef.current = choice.id; setAgentProjectId(choice.id); setProjectChoices([]); setNotice(`Selected ${choice.title}. Press Retry to run your previous request on this project, or write a new instruction.`); }}>
+                      {choice.title} · {choice.id.slice(0, 8)}
+                    </button>
+                  ))}
+                </div>
+              </div>
             ) : null}
           </>
         )}
@@ -2192,6 +2223,7 @@ export function ChatClient({
           onClose={() => setWorkspaceOpen(false)}
           conversationId={convId}
           projectId={agentProjectId ?? undefined}
+          onProjectId={setAgentProjectId}
           model={activeModel ?? lastModel}
         />
       ) : null}

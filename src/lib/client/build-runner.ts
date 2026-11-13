@@ -38,6 +38,7 @@ export type BuildStreamHandlers = {
 export type BuildStartInput = {
   prompt: string;
   projectId?: string | null;
+  workspaceProjectId?: string | null;
   conversationId?: string | null;
   /** Temporary chats never touch conversation storage — no thread is written. */
   isTemporary?: boolean;
@@ -104,6 +105,7 @@ export async function streamBuildRun(
       body: JSON.stringify({
         prompt: input.prompt,
         project_id: input.projectId ?? null,
+        workspace_project_id: input.workspaceProjectId ?? null,
         conversation_id: input.conversationId ?? null,
         is_temporary: input.isTemporary === true,
         mode: input.mode === "code" ? "code" : "agent",

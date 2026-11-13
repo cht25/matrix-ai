@@ -5,6 +5,7 @@ import { Db, nowTs } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
 import { RpcError } from "@/lib/server/errors";
 import { descDoc } from "@/lib/server/sort";
+import { bindConversationProject } from "@/lib/server/project-resolution";
 import {
   PROJECT_LIMITS,
   assertSafeProjectPath,
@@ -69,11 +70,25 @@ export async function ensureProject(
   d: Db,
   user: SessionUser,
   p: { conversation_id?: string | null; title?: string; forceNew?: boolean },
-) {
+): Promise<{ id: string; title: string; file_count: number }> {
   if (p.conversation_id && !p.forceNew) {
-    const existing = await d.collection("projects").where("conversation_id", "==", p.conversation_id).limit(5).get();
-    const mine = existing.docs.find((doc) => doc.data().owner_id === user.uid && !doc.data().archived_at);
-    if (mine) return { id: mine.id, title: mine.data().title ?? "Untitled project", file_count: mine.data().file_count ?? 0 };
+    const chat = await d.collection("conversations").doc(p.conversation_id).get();
+    if (!chat.exists || chat.data()?.user_id !== user.uid) throw new RpcError("PROJECT_CONTEXT_MISSING", 409);
+    const activeId = chat.data()?.active_project_id;
+    if (typeof activeId === "string" && activeId) {
+      const active = await d.collection("projects").doc(activeId).get();
+      if (!active.exists || active.data()?.owner_id !== user.uid || active.data()?.archived_at) throw new RpcError("PROJECT_NOT_FOUND", 404);
+      await bindConversationProject(d, user, p.conversation_id, active.id);
+      return { id: active.id, title: active.data()?.title ?? "Untitled project", file_count: active.data()?.file_count ?? 0 };
+    }
+    const existing = await d.collection("projects").where("conversation_id", "==", p.conversation_id).get();
+    const mine = existing.docs.filter((doc) => doc.data().owner_id === user.uid && !doc.data().archived_at);
+    if (mine.length > 1) throw new RpcError("PROJECT_AMBIGUOUS", 409, "Select a project before editing this chat.");
+    if (mine.length === 1) {
+      await bindConversationProject(d, user, p.conversation_id, mine[0].id);
+      return { id: mine[0].id, title: mine[0].data().title ?? "Untitled project", file_count: mine[0].data().file_count ?? 0 };
+    }
+    return ensureAgentProject(d, user, { conversation_id: p.conversation_id, title: p.title ?? "Agent project", forceNew: false });
   }
   const current = await d.collection("projects").where("owner_id", "==", user.uid).get();
   const active = current.docs.filter((doc) => !doc.data().archived_at).length;
@@ -105,6 +120,46 @@ export async function ensureProject(
     updated_at: nowTs(),
   });
   return { id: created.id, title, file_count: 0 };
+}
+
+
+/** Atomically reserve the first project for a chat. Two simultaneous Agent
+ * requests for an unbound chat cannot create two different initial projects.
+ * Explicit NEW requests intentionally create a separate ID. */
+export async function ensureAgentProject(d: Db, user: SessionUser, p: { conversation_id?: string | null; title: string; forceNew: boolean }): Promise<{ id: string; title: string; file_count: number }> {
+  if (!p.conversation_id) return ensureProject(d, user, { title: p.title, forceNew: true });
+  const chatRef = d.collection("conversations").doc(p.conversation_id);
+  const title = (p.title.trim() || "Untitled project").slice(0, 80);
+  return d.runTransaction(async (tx) => {
+    const chat = await tx.get(chatRef);
+    if (!chat.exists || chat.data()?.user_id !== user.uid || chat.data()?.deleted_at) throw new RpcError("PROJECT_CONTEXT_MISSING", 409);
+    const bound = chat.data()?.active_project_id;
+    if (!p.forceNew && typeof bound === "string" && bound) {
+      const project = await tx.get(d.collection("projects").doc(bound));
+      if (!project.exists || project.data()?.owner_id !== user.uid || project.data()?.archived_at) throw new RpcError("PROJECT_NOT_FOUND", 404);
+      return { id: project.id, title: project.data()?.title ?? "Untitled project", file_count: project.data()?.file_count ?? 0 };
+    }
+    const owned = await tx.get(d.collection("projects").where("owner_id", "==", user.uid));
+    if (owned.docs.filter((doc) => !doc.data().archived_at).length >= PROJECT_LIMITS.maxProjectsPerUser) {
+      throw new RpcError("PROJECT_LIMIT", 400);
+    }
+    const ref = d.collection("projects").doc();
+    const stamp = nowTs();
+    tx.set(ref, {
+      owner_id: user.uid, title, description: "", stack: "static-web",
+      conversation_id: p.conversation_id, file_count: 0, revision: 0,
+      framework: "html", runtime: "static", runtime_version: "browser",
+      entry_point: "index.html", build_command: "MATRIX static bundler",
+      output_directory: "/s/<slug>/", dependency_manifest: {},
+      live_slug: null, live_url: null, env_public: {}, custom_domain: "",
+      custom_domain_status: "", custom_domain_token: "", archived_at: null,
+      created_at: stamp, updated_at: stamp,
+    });
+    tx.set(chatRef, { active_project_id: ref.id, project_owner_id: user.uid,
+      active_source_revision: 0, current_deployment_id: null,
+      project_last_activity_at: stamp, updated_at: stamp }, { merge: true });
+    return { id: ref.id, title, file_count: 0 };
+  });
 }
 
 export async function getProject(d: Db, user: SessionUser, projectId: string) {

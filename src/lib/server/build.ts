@@ -29,8 +29,8 @@ import { agentGenerationIncomplete, formatProjectFilesForContext, parseAgentResp
 import { planFromRequest, type BuildIntent } from "@/lib/ai/build-intent";
 import { generateImage } from "@/lib/ai/image/generate";
 import { isImageGenerationConfigured } from "@/lib/ai/image/config";
-import { applyProjectFiles, ensureProject, loadProjectFiles } from "@/lib/server/projects";
-import { resolveAgentProject, wantsNewProject } from "@/lib/server/project-resolution";
+import { applyProjectFiles, ensureAgentProject, loadProjectFiles } from "@/lib/server/projects";
+import { bindConversationProject, resolveProjectContext } from "@/lib/server/project-resolution";
 import { appendCheckpoint, bindBuildTask, syncBuildTask, type CheckpointStep } from "@/lib/server/agent-tasks";
 import { PROJECT_LIMITS, type ProjectFile } from "@/lib/projects/paths";
 import {
@@ -52,6 +52,7 @@ export type BuildPipelineInput = {
   provider: DeploymentProvider;
   runId: string;
   projectId?: string | null;
+  workspaceProjectId?: string | null;
   conversationId?: string | null;
   requestId?: string | null;
   prompt: string;
@@ -110,7 +111,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     now: now(),
   });
 
-  if (input.taskId) await bindBuildTask(d, user, input.taskId, { project_id: input.projectId ?? null, build_run_id: runId });
+  if (input.taskId) await bindBuildTask(d, user, input.taskId, { project_id: null, build_run_id: runId });
   const emit = async (stage?: BuildStageId): Promise<void> => {
     await persist(d, runId, run);
     if (run.taskId) {
@@ -172,25 +173,31 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       return await abort("RUNTIME_NOT_SUPPORTED", "MATRIX hosting supports static HTML/CSS/JavaScript only. This request needs an isolated runtime/build provider; no preview or deployment was attempted. Ask to save the source without preview/publishing, or connect a compatible host.", "plan");
     }
     const plan = planFromRequest(input.prompt || "MATRIX project");
-    let projectId = await resolveAgentProject(d, user, { projectId: input.projectId, conversationId: input.conversationId, prompt: input.prompt });
-    resolvedProjectId = projectId;
-    if (!projectId && (input.actions.build || input.actions.publish)) {
-      const ensured = await ensureProject(d, user, {
-        conversation_id: input.conversationId ?? null,
+    const resolution = await resolveProjectContext(d, user, {
+      projectId: input.projectId, workspaceProjectId: input.workspaceProjectId,
+      conversationId: input.conversationId, prompt: input.prompt, hasAttachments: Boolean(input.attachments?.length),
+    });
+    let projectId = resolution.projectId;
+    if (resolution.mode === "create" && (input.actions.build || input.actions.publish)) {
+      const ensured = await ensureAgentProject(d, user, {
+        conversation_id: input.isTemporary ? null : input.conversationId,
         title: plan.title.slice(0, 80),
-        forceNew: wantsNewProject(input.prompt),
+        forceNew: resolution.forceNew === true,
       });
       projectId = ensured.id;
-      resolvedProjectId = projectId;
-      run = { ...run, projectId };
-      note("plan", "info", `Created project "${plan.title}".`);
+      note("plan", "info", `Created project "${ensured.title}".`);
     }
+    resolvedProjectId = projectId;
+    let initialRevision = 0;
     if (projectId) {
       const projectMeta = await d.collection("projects").doc(projectId).get();
-      run = { ...run, projectId, projectTitle: String(projectMeta.data()?.title ?? plan.title).slice(0, 80) };
-      if (input.conversationId && !input.isTemporary) {
-        await d.collection("conversations").doc(input.conversationId).set({ active_project_id: projectId, updated_at: nowTs() }, { merge: true });
+      if (!projectMeta.exists || projectMeta.data()?.owner_id !== user.uid || projectMeta.data()?.archived_at) {
+        throw new RpcError("PROJECT_NOT_FOUND", 404, "The selected project is no longer accessible. Choose a project you own.");
       }
+      initialRevision = Number(projectMeta.data()?.revision ?? 0);
+      run = { ...run, projectId, projectTitle: String(projectMeta.data()?.title ?? plan.title).slice(0, 80) };
+      note("plan", "info", `${resolution.mode.toUpperCase()} MODE · ${resolution.source} · project ${projectId} · revision ${Number(projectMeta.data()?.revision ?? 0)}.`);
+      if (input.conversationId && !input.isTemporary) await bindConversationProject(d, user, input.conversationId, projectId);
       if (input.taskId) await bindBuildTask(d, user, input.taskId, { project_id: projectId, build_run_id: runId });
     }
     if (!projectId) return await abort("PROJECT_REQUIRED", "There is no project to build yet. Describe what to create and I will make it.", "plan");
@@ -208,20 +215,35 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         }));
       if (files.length) {
         try {
-          const applied = await applyProjectFiles(d, user, { project_id: projectId, files, source: "agent" });
+          const applied = await applyProjectFiles(d, user, { project_id: projectId, files, source: "agent", expected_revision: initialRevision });
           note("plan", "info", `Stored ${applied.count} attached file${applied.count === 1 ? "" : "s"} in the project.`);
           await emit("plan");
         } catch (error) {
           const code = error instanceof RpcError ? error.code : "FILE_WRITE_FAILED";
-          return await abort(code, "One of the attached files could not be stored in the project, so nothing was built from it.", "plan");
+          return await abort(code, code === "PROJECT_REVISION_CONFLICT" ? "The project changed while attachments were being saved. Refresh the Workspace and retry; no newer source was overwritten." : "One of the attached files could not be stored in the project, so nothing was built from it.", "plan");
         }
       }
     }
     const before = await loadProjectFiles(d, projectId);
     const projectFilesContext = formatProjectFilesForContext(before, input.prompt);
     const projectRecord = (await d.collection("projects").doc(projectId).get()).data() ?? {};
+    if (projectRecord.owner_id !== user.uid) {
+      return await abort("PROJECT_ACCESS_DENIED", "This project no longer belongs to the current user. No files were changed.", "plan");
+    }
+    let sourceRevision = Number(projectRecord.revision ?? 0);
+    if (!Number.isSafeInteger(sourceRevision) || sourceRevision < 0) {
+      return await abort("PROJECT_CONTEXT_MISSING", "The project's source revision is invalid. No files were generated; reopen the project.", "plan");
+    }
+    const executionContext = {
+      ownerId: user.uid, chatId: input.conversationId ?? null, projectId,
+      mode: resolution.mode, projectRoot: `projects/${projectId}/files`,
+      sourceRevision, manifest: Array.isArray(projectRecord.file_manifest)
+        ? projectRecord.file_manifest : before.map((file) => ({ path: file.path })),
+      build: { framework: String(projectRecord.framework ?? "html"), command: String(projectRecord.build_command ?? "MATRIX static bundler"), entry: String(projectRecord.entry_point ?? "none") },
+      deployment: { id: projectRecord.live_deployment_id ?? null, slug: projectRecord.live_slug ?? null, environment: input.environment ?? "production" },
+    };
     const existingProjectContext = [
-      `Persistent project ${projectId}; revision ${Number(projectRecord.revision ?? 0)}; name ${String(projectRecord.title ?? plan.title).slice(0, 80)}; framework ${String(projectRecord.framework ?? "html")}; live slug ${String(projectRecord.live_slug ?? "none")}. These metadata and saved files, not chat memory, are authoritative.`,
+      `Execution context: ${executionContext.mode.toUpperCase()} MODE; project root ${executionContext.projectRoot}; source revision ${executionContext.sourceRevision}; name ${String(projectRecord.title ?? plan.title).slice(0, 80)}; framework ${executionContext.build.framework}; build command ${executionContext.build.command}; entry ${executionContext.build.entry}; deployment ${String(executionContext.deployment.id ?? "none")}; live slug ${String(executionContext.deployment.slug ?? "none")}. Persisted manifest: ${JSON.stringify(executionContext.manifest).slice(0, 4000)}. These metadata and saved files, not chat memory, are authoritative.`,
       `Saved file index: ${before.map((file) => file.path).join(", ") || "empty"}.`,
       projectFilesContext.text,
     ].filter(Boolean).join("\n\n");
@@ -339,10 +361,13 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       const applied = await applyProjectFiles(d, user, {
         project_id: projectId,
         files: parsed.files as ProjectFile[],
+        expected_revision: sourceRevision,
         source: "agent",
         title: before.length ? undefined : plan.title.slice(0, 80),
       });
+      sourceRevision = applied.revision;
       files = await loadProjectFiles(d, projectId);
+      if (input.conversationId && !input.isTemporary) await bindConversationProject(d, user, input.conversationId, projectId);
       const changes = summarizeChanges(before, files);
       run = setChanges(run, changes, files.length, now());
       await finish("generate", `Wrote ${applied.count} file${applied.count === 1 ? "" : "s"} · ${files.length} in the project.`);
@@ -421,8 +446,10 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         const fix = await completeWithFallback(routes, { messages: fixMessages, temperature: 0.1, maxTokens: 16384, requestId: input.requestId ?? undefined });
         const fixed = parseAgentResponse(fix.response.content ?? "", { allowUnlabelledFences: true, allowRawHtmlDocument: true });
         if (fixed.files.length) {
-          await applyProjectFiles(d, user, { project_id: projectId, files: fixed.files as ProjectFile[], source: "agent" });
+          const fixedResult = await applyProjectFiles(d, user, { project_id: projectId, files: fixed.files as ProjectFile[], source: "agent", expected_revision: sourceRevision });
+          sourceRevision = fixedResult.revision;
           files = await loadProjectFiles(d, projectId);
+          if (input.conversationId && !input.isTemporary) await bindConversationProject(d, user, input.conversationId, projectId);
           const changes = summarizeChanges(before, files);
           run = setChanges(run, changes, files.length, now());
           run = { ...run, stages: run.stages.map((stage) => (stage.id === "validate" ? { ...stage, state: "running", message: `Rebuilding after fix ${attempt}.` } : stage)) };
@@ -499,6 +526,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         return await abort("DEPLOY_INCOMPLETE", "The hosting provider did not report a live deployment, so no link is shown.", "publish");
       }
       await finish("publish", `Published at ${deployment.url}`);
+      if (input.conversationId && !input.isTemporary) await bindConversationProject(d, user, input.conversationId, projectId);
       run = { ...run, fileCount: deployment.files || files.length };
       for (const stage of ["generate", "install", "build", "validate"] as BuildStageId[]) {
         run = completeStageSafe(run, stage);
@@ -516,14 +544,16 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       return await abort(code, message, "publish");
     }
   } catch (error) {
-    const code = error instanceof RpcError ? error.code : "BUILD_RUN_FAILED";
+    const code = error instanceof RpcError ? error.code : run.stages.find((stage) => stage.id === "plan")?.state === "running" ? "PROJECT_STORAGE_UNAVAILABLE" : "BUILD_RUN_FAILED";
     if (code === "CANCELLED") {
       run = cancelRun(run, now());
       note(null, "warn", "Build cancelled by the user.");
       await emit();
       return done(run);
     }
-    return await abort(code, error instanceof Error ? error.message.slice(0, 240) : "The build stopped unexpectedly.", undefined);
+    const detail = error instanceof RpcError ? error.detail : undefined;
+    const activeStage = run.stages.find((stage) => stage.state === "running");
+    return await abort(code, detail || (code === "PROJECT_STORAGE_UNAVAILABLE" ? "Project storage could not be reached. No files were changed; retry after checking Firestore connectivity." : error instanceof Error ? error.message.slice(0, 240) : "The build stopped unexpectedly."), activeStage?.id);
   } finally {
     await persistBuildMessage(d, user, input, run, reply);
   }
@@ -677,7 +707,7 @@ async function persist(d: Db, runId: string, run: BuildRun): Promise<void> {
     .collection("build_runs")
     .doc(runId)
     .set({ run: toFirestoreRun(run), updated_at: nowTs() }, { merge: true })
-    .catch(() => {});
+    .catch(() => { throw new RpcError("PROJECT_STORAGE_UNAVAILABLE", 503, "Build state could not be saved. No further file operations were started."); });
 }
 
 export async function startBuildRun(
