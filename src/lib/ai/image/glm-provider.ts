@@ -62,35 +62,23 @@ export const glmImageProvider: ImageProvider = {
     const started = Date.now();
     if (!isRealSecret(apiKey)) return { ok: false, code: "NOT_CONFIGURED", latencyMs: 0 };
     if (!model.trim() || model.length > 200) return { ok: false, code: "MODEL_INVALID", latencyMs: 0 };
-    const base = resolveImageBaseUrl();
+    // A successful GET /models or chat ping does NOT prove that this account
+    // can generate images with this model. This explicit Admin test performs
+    // one real (billable) image request instead of reporting a false success.
     try {
-      const res = await fetch(`${base}/models`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-        signal: signal ?? AbortSignal.timeout(15_000),
+      const res = await fetch(`${resolveImageBaseUrl()}/images/generations`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model, prompt: "A blue square on a white background", size: "1024x1024" }),
+        signal: signal ?? AbortSignal.timeout(60_000),
       });
       const latencyMs = Date.now() - started;
-      if (res.status === 401 || res.status === 403) {
-        return { ok: false, code: "AUTH_FAILED", latencyMs };
-      }
-      if (res.status === 429) {
-        return { ok: false, code: "RATE_LIMITED", latencyMs };
-      }
-      // Some regional GLM PaaS gateways return 404 on GET /models while serving
-      // POST /images/generations; probe auth via minimal chat ping if /models is 404.
-      if (res.status === 404) {
-        const probe = await fetch(`${base}/chat/completions`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "glm-4.5-air", messages: [{ role: "user", content: "ping" }], max_tokens: 1 }),
-          signal: signal ?? AbortSignal.timeout(12_000),
-        });
-        const probeLatency = Date.now() - started;
-        if (probe.status === 401 || probe.status === 403) return { ok: false, code: "AUTH_FAILED", latencyMs: probeLatency };
-        if (probe.status === 429) return { ok: false, code: "RATE_LIMITED", latencyMs: probeLatency };
-        return { ok: probe.ok || probe.status === 400, code: probe.ok || probe.status === 400 ? "OK" : "UNREACHABLE", latencyMs: probeLatency };
-      }
+      if (res.status === 401 || res.status === 403) return { ok: false, code: "AUTH_FAILED", latencyMs };
+      if (res.status === 429) return { ok: false, code: "RATE_LIMITED", latencyMs };
+      if (res.status === 400 || res.status === 404 || res.status === 422) return { ok: false, code: "MODEL_INVALID", latencyMs };
       if (!res.ok) return { ok: false, code: "UNREACHABLE", latencyMs };
-      return { ok: true, code: "OK", latencyMs };
+      const body = await res.json().catch(() => null) as { data?: Array<{ url?: string; b64_json?: string }> } | null;
+      return { ok: Boolean(body?.data?.[0]?.url || body?.data?.[0]?.b64_json), code: body?.data?.[0]?.url || body?.data?.[0]?.b64_json ? "OK" : "UNREACHABLE", latencyMs };
     } catch {
       return { ok: false, code: "UNREACHABLE", latencyMs: Date.now() - started };
     }

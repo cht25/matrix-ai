@@ -23,7 +23,6 @@ import type { AIProvider } from "@/lib/ai/groq";
 import { GPT_OSS_DEFAULT_MODEL } from "@/lib/ai/groq";
 import {
   GLMProvider,
-  GLM_API_BASE_URL,
   GLM_DEFAULT_CODING_MODEL,
   GLM_DEFAULT_MODEL,
   GLM_DEFAULT_VISION_MODEL,
@@ -139,7 +138,7 @@ function asIso(value: unknown): string {
 
 /** Environment fallback credentials, per provider kind. */
 export function environmentKeyFor(kind: MainModelKind): string {
-  if (kind === "glm") return keyConfigured(process.env.GLM_API_KEY) ? process.env.GLM_API_KEY!.trim() : "";
+  if (kind === "glm") return keyConfigured(process.env.ZAI_API_KEY) ? process.env.ZAI_API_KEY!.trim() : keyConfigured(process.env.GLM_API_KEY) ? process.env.GLM_API_KEY!.trim() : "";
   if (kind === "anthropic") return keyConfigured(process.env.ANTHROPIC_API_KEY) ? process.env.ANTHROPIC_API_KEY!.trim() : "";
   if (kind === "gemini") return keyConfigured(process.env.GEMINI_API_KEY) ? process.env.GEMINI_API_KEY!.trim() : "";
   return keyConfigured(process.env.OPENAI_API_KEY) ? process.env.OPENAI_API_KEY!.trim() : "";
@@ -173,13 +172,15 @@ function storedKind(record: Record<string, unknown>): MainModelKind {
     (typeof record.api_key === "string" && record.api_key.trim()) ||
     (typeof record.api_key_encrypted === "string" && record.api_key_encrypted.trim()),
   );
+  if (/^https:\/\/(?:api\.z\.ai|open\.bigmodel\.cn)\//i.test(String(record.base_url ?? ""))) return "glm";
   return hasLegacyFields ? "openai-compatible" : "glm";
 }
 
 function inferInputKind(input: { kind?: string; base_url?: string }, fallbackRecord: Record<string, unknown>): MainModelKind {
   if (isMainModelKind(input.kind)) return input.kind;
   const suppliedUrl = input.base_url?.trim() ?? "";
-  if (suppliedUrl && suppliedUrl !== GLM_API_BASE_URL && suppliedUrl !== GEMINI_API_BASE_URL && suppliedUrl !== ANTHROPIC_API_BASE_URL) {
+  if (/^https:\/\/(?:api\.z\.ai|open\.bigmodel\.cn)\//i.test(suppliedUrl)) return "glm";
+  if (suppliedUrl && suppliedUrl !== GEMINI_API_BASE_URL && suppliedUrl !== ANTHROPIC_API_BASE_URL) {
     return "openai-compatible";
   }
   return storedKind(fallbackRecord);
@@ -268,7 +269,7 @@ export async function resolveMainModelConfig(d: Db | null): Promise<StoredAIProv
 }
 
 export function createClientFor(kind: MainModelKind, apiKey: string, baseUrl: string, label: string, model = ""): AIProvider {
-  if (kind === "glm") return new GLMProvider(apiKey, baseUrl || GLM_API_BASE_URL, model || GLM_DEFAULT_MODEL);
+  if (kind === "glm") return new GLMProvider(apiKey, baseUrl || resolveGlmBaseUrl(), model || GLM_DEFAULT_MODEL);
   if (kind === "gemini") return new GeminiProvider(apiKey, baseUrl || GEMINI_API_BASE_URL);
   if (kind === "anthropic") return new AnthropicProvider(apiKey, baseUrl || ANTHROPIC_API_BASE_URL);
   return createOpenAICompatibleProvider({ apiKey, baseUrl, label, model });

@@ -60,7 +60,7 @@ the browser or an AI prompt.
 | i18n | English + Bangla dictionaries (architecture ready for more) |
 | Tests | Vitest (AI pipeline, PII, classification, file validation, age rules, env config) |
 
-The Firebase service account, AI provider keys, GitHub OAuth secret and encrypted GitHub access tokens exist **only server-side** and are never exposed to the browser.
+The Firebase service account, AI provider keys, GitHub OAuth secret and encrypted GitHub access tokens exist **only server-side** and are never exposed to the browser. For Z.ai international GLM chat, Agent coding, and image generation, see [Z.ai GLM setup and verification](docs/zai-glm-setup.md).
 
 ---
 

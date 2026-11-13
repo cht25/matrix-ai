@@ -108,7 +108,7 @@ export function logAIConfiguration(): void {
   globalState[CONFIG_LOGGED] = true;
   console.info("[MATRIX] AI configuration", {
     architecture: "GLM (high-load / coding / web-dev / vision) + openai/gpt-oss-120b (low-load fast)",
-    glm: keyConfigured(process.env.GLM_API_KEY) ? "configured" : "missing",
+    glm: keyConfigured(process.env.ZAI_API_KEY) || keyConfigured(process.env.GLM_API_KEY) ? "configured" : "missing",
     glmModel: process.env.GLM_MODEL?.trim() || AI_CONFIG.coding.model,
     lowTaskEngine: keyConfigured(process.env.GROQ_API_KEY) || keyConfigured(process.env.GPT_OSS_API_KEY) ? "configured" : "missing",
     lowTaskModel: MODELS.chat || GPT_OSS_DEFAULT_MODEL,
