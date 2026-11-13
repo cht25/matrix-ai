@@ -28,9 +28,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
 
   // Canonicalize trailing slash for root site URL: /s/my-slug -> /s/my-slug/
   if (path.length === 0 && !req.nextUrl.pathname.endsWith("/")) {
-    const url = req.nextUrl.clone();
-    url.pathname = `${req.nextUrl.pathname}/`;
-    return NextResponse.redirect(url, 308);
+    // Never build Location from req.nextUrl: behind a proxy Next may see the
+    // upstream http://localhost:10000 rather than the visitor's HTTPS host.
+    // A relative Location is resolved by the browser on its current origin.
+    return new NextResponse(null, { status: 308, headers: { Location: `/s/${encodeURIComponent(slug)}/${req.nextUrl.search}` } });
   }
 
   const wanted = path.join("/") || "index.html";

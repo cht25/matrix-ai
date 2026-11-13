@@ -136,7 +136,7 @@ export async function getDeploymentOverview(d: Db, user: SessionUser, projectId:
   const liveDeployment = deployments.find((record) => record.status === "live") ?? null;
   const status = liveDeployment ? liveDeployment.status : normalizeStatus(data.live_status ?? (data.live_slug ? "live" : "none"));
   const fileDocs = await d.collection("projects").doc(projectId).collection("files").get().catch(() => null);
-  const liveUrl = liveDeployment?.url ?? (data.live_slug ? publicUrl(String(data.live_slug)) : null);
+  const liveUrl = data.live_slug ? publicUrl(String(data.live_slug)) : liveDeployment?.url ?? null;
   return {
     status,
     status_label: deploymentCopy(status).label,
@@ -372,7 +372,12 @@ export async function loadPublishedFile(d: Db, slug: string, path: string) {
       return p === `${normalizedWanted}.html` || p === `${normalizedWanted}/index.html`;
     }) ??
     files.docs.find((doc) => (doc.data().path || "").split("/").pop()?.toLowerCase() === baseName) ??
-    (!raw || raw === "index.html" ? files.docs.find((doc) => /(^|\/)index\.html?$/i.test(doc.data().path)) : null);
+    (!raw || raw === "index.html" ? files.docs.find((doc) => /(^|\/)index\.html?$/i.test(doc.data().path)) : null) ??
+    // Client-side SPA routes fall back to the published root document, never
+    // for missing assets (which must remain 404, not return HTML as JS/CSS).
+    (raw && !/\.[^/]+$/.test(raw)
+      ? files.docs.find((doc) => /^index\.html?$/i.test(doc.data().path))
+      : null);
 
   if (!match) return null;
   return {
