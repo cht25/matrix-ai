@@ -75,4 +75,5 @@ env:
     availability: [RUNTIME]
     secret: GITHUB_TOKEN_ENCRYPTION_KEY
   - variable: GITHUB_OAUTH_CALLBACK_URL
+    value: https://matrix.thamjj13.top/api/github/callback
     availability: [RUNTIME]
