@@ -8,6 +8,7 @@ import { Button, Input, Select } from "@/components/ui";
 export type GithubStatus = {
   configured: boolean;
   connected: boolean;
+  configuration_error?: string;
   connection?: { login: string; name: string; avatarUrl: string; connectedAt: string } | null;
 };
 
@@ -21,6 +22,13 @@ type Repo = {
 
 export function GithubConnection({ files = [], showPush = false }: { files?: AgentFile[]; showPush?: boolean }) {
   const [status, setStatus] = useState<GithubStatus | null>(null);
+  const [connectHref, setConnectHref] = useState("/api/github/connect");
+  useEffect(() => {
+    const path = window.location.pathname;
+    if (/^\/chat(?:\/[a-zA-Z0-9_-]{1,128})?$/.test(path)) {
+      setConnectHref(`/api/github/connect?next=${encodeURIComponent(path)}`);
+    }
+  }, []);
   const [repos, setRepos] = useState<Repo[]>([]);
   const [repository, setRepository] = useState("");
   const [branch, setBranch] = useState("");
@@ -125,7 +133,7 @@ export function GithubConnection({ files = [], showPush = false }: { files?: Age
     return (
       <div className="rounded-xl border border-warning/30 bg-warning-soft p-4">
         <p className="text-sm font-semibold text-warning">GitHub connection is not configured</p>
-        <p className="mt-1 text-xs leading-relaxed text-ink-2">The site administrator must add the GitHub OAuth and token-encryption environment variables before direct push can be enabled.</p>
+        <p className="mt-1 text-xs leading-relaxed text-ink-2">The administrator must configure the GitHub OAuth credentials, NEXT_PUBLIC_APP_URL and the matching callback URL before direct push can be enabled.{status.configuration_error ? ` (${status.configuration_error})` : ""}</p>
       </div>
     );
   }
@@ -140,7 +148,7 @@ export function GithubConnection({ files = [], showPush = false }: { files?: Age
             <p className="mt-1 text-xs leading-relaxed text-ink-2">Authorise repository access to push files you have reviewed in Agent mode. MATRIX encrypts the OAuth token server-side and never sends it to the AI model.</p>
           </div>
         </div>
-        <a href="/api/github/connect" className="mt-4 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 text-sm font-medium text-bg hover:bg-ink-2">
+        <a href={connectHref} className="mt-4 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 text-sm font-medium text-bg hover:bg-ink-2">
           <Github size={15} /> Continue with GitHub
         </a>
       </div>

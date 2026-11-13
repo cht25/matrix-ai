@@ -66,5 +66,7 @@ services:
         sync: false
       - key: GITHUB_TOKEN_ENCRYPTION_KEY
         sync: false
+      # Public, non-secret URL; must exactly match the callback registered on
+      # the GitHub OAuth App and NEXT_PUBLIC_APP_URL + /api/github/callback.
       - key: GITHUB_OAUTH_CALLBACK_URL
-        sync: false
+        value: https://matrix.thamjj13.top/api/github/callback
