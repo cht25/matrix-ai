@@ -38,6 +38,8 @@ import { ServerProblem } from "@/components/server-problem";
 import { classifyGatewayResponse, classifyRequestException, failureCopy, withRequestReference, type ApiFailure } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n/client";
 import { useIsCompact } from "@/lib/client/use-media-query";
+import { useChatScroll } from "@/lib/use-chat-scroll";
+import { restoredPrependTop } from "@/lib/chat-scroll";
 import { cn } from "@/lib/utils";
 import type { AgentFile, TextAttachment } from "@/lib/ai/agent";
 import { modeMeta, suggestMode, type ChatMode, type ExplainStyle, type ModelLane, type ResponseStrategy, type StudyLevel } from "@/lib/ai/modes";
@@ -168,7 +170,6 @@ export function ChatClient({
   // prepended on demand so a long conversation never floods the DOM.
   const [hasMoreHistory, setHasMoreHistory] = useState(initialHasMore);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const preserveScrollRef = useRef(false);
   const [input, setInput] = useState("");
   const [convId, setConvId] = useState<string | null>(initialConvId);
   const [lastUserMessage, setLastUserMessage] = useState<string | null>(lastUserContent(initialMessages));
@@ -203,6 +204,7 @@ export function ChatClient({
   // --- run state ----------------------------------------------------------
   const [streaming, setStreaming] = useState(false);
   const [streamedText, setStreamedText] = useState<string | null>(null);
+  const [streamCommitted, setStreamCommitted] = useState(false);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
   const [activeModel, setActiveModel] = useState<string | null>(null);
   const [activeProvider, setActiveProvider] = useState<string | null>(null);
@@ -264,8 +266,8 @@ export function ChatClient({
   // form-submit/click sequence from creating two provider requests.
   const requestInFlightRef = useRef(false);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const scrollContentRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -308,18 +310,7 @@ export function ChatClient({
   }, []);
   useEffect(() => { localeRef.current = locale; }, [locale]);
 
-  const scrollToBottom = useCallback(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, []);
-
-  useEffect(() => {
-    // Prepending older history must NOT yank the view to the bottom.
-    if (preserveScrollRef.current) {
-      preserveScrollRef.current = false;
-      return;
-    }
-    scrollToBottom();
-  }, [messages, streamedText, streaming, scrollToBottom]);
+  const chatScroll = useChatScroll(scrollAreaRef, scrollContentRef, `${messages.length}:${streamedText?.length ?? 0}:${buildRun?.updatedAt ?? 0}:${liveSteps.length}:${streamCommitted}`);
 
   /** Fetch the previous page of messages and prepend it, keeping the reading
       position stable. */
@@ -332,25 +323,28 @@ export function ChatClient({
     setLoadingHistory(true);
     const viewport = scrollAreaRef.current;
     const previousHeight = viewport?.scrollHeight ?? 0;
+    const previousTop = viewport?.scrollTop ?? 0;
+    chatScroll.beginPrepend();
     try {
       const page = await rpc<{ hasMore: boolean; messages: ChatMessage[] }>("conversation_messages_page", {
         id,
         before: oldest,
         limit: 30,
       });
-      preserveScrollRef.current = true;
       setMessages((current) => [...page.messages, ...current]);
       setHasMoreHistory(page.hasMore);
       // Restore the scroll offset after the taller list paints.
       requestAnimationFrame(() => {
-        if (viewport) viewport.scrollTop += viewport.scrollHeight - previousHeight;
+        if (viewport) viewport.scrollTop = restoredPrependTop(previousTop, previousHeight, viewport.scrollHeight);
+        chatScroll.endPrepend();
       });
     } catch {
+      chatScroll.endPrepend();
       setNotice("Older messages could not be loaded. Please try again.");
     } finally {
       setLoadingHistory(false);
     }
-  }, [hasMoreHistory, loadingHistory]);
+  }, [hasMoreHistory, loadingHistory, chatScroll.beginPrepend, chatScroll.endPrepend]);
 
   useEffect(() => () => {
     abortRef.current?.abort();
@@ -823,6 +817,7 @@ export function ChatClient({
     setActiveStartedAt(startedAt);
     setActiveModel(lastModel);
     setStreamedText("");
+    setStreamCommitted(false);
     setExportPickerKey(null);
     if (replaceLastAssistant) {
       builtRef.current.clear();
@@ -852,11 +847,25 @@ export function ChatClient({
     abortRef.current = controller;
     const requestId = crypto.randomUUID();
     let collected = "";
+    let paintFrame: number | null = null;
+    const queuePaint = () => {
+      if (paintFrame !== null) return;
+      paintFrame = requestAnimationFrame(() => {
+        paintFrame = null;
+        setStreamedText(collected);
+      });
+    };
+    const cancelPaint = () => {
+      if (paintFrame !== null) cancelAnimationFrame(paintFrame);
+      paintFrame = null;
+    };
     let committed = false;
     let committedKey: string | null = null;
     const streamMetadata: MessageMetadata = {};
 
     const commit = (text: string) => {
+      cancelPaint();
+      setStreamCommitted(true);
       const key = commitPartial(text, { replaceLastAssistant, turnId, intent }, streamMetadata);
       if (key) committedKey = key;
       committed = true;
@@ -1019,10 +1028,10 @@ export function ChatClient({
       };
 
       const handleEvent = (data: StreamEvent) => {
-        if (data.stream_status) setStreamStatus(data.stream_status);
+        if (data.stream_status) setStreamStatus((old) => old === data.stream_status ? old : data.stream_status!);
         if (data.tier) {
           streamMetadata.tier = data.tier;
-          setActiveTier(data.tier);
+          setActiveTier((old) => old === data.tier ? old : data.tier!);
         }
         if (data.step) {
           const incoming = data.step;
@@ -1056,14 +1065,14 @@ export function ChatClient({
         if (trackExecution && data.analytics) setExecution((current) => advanceExecution(current, { analytics: data.analytics! }));
         if (data.files?.length) streamMetadata.artifacts = data.files;
         if (data.project_id) streamMetadata.project_id = data.project_id;
-        if (data.model) { streamMetadata.model = data.model; setActiveModel(data.model); }
+        if (data.model) { streamMetadata.model = data.model; setActiveModel((old) => old === data.model ? old : data.model!); }
         if (data.mode) streamMetadata.mode = data.mode;
         if (typeof data.coding_detected === "boolean") streamMetadata.coding_detected = data.coding_detected;
-        if (data.provider) { streamMetadata.provider = data.provider; setActiveProvider(data.provider); }
+        if (data.provider) { streamMetadata.provider = data.provider; setActiveProvider((old) => old === data.provider ? old : data.provider!); }
         if (typeof data.fallback === "boolean") streamMetadata.fallback = data.fallback;
         if (typeof data.delta === "string") {
           collected += data.delta;
-          if (messageMode !== "agent") setStreamedText(collected);
+          if (messageMode !== "agent") queuePaint();
         }
         if (data.conversation_id) {
           gotConversationId = data.conversation_id;
@@ -1155,6 +1164,7 @@ export function ChatClient({
         updateArtifact(committedKey, (current) => (current.status === "generating" || current.status === "requested" ? failArtifact(current, "The response did not finish.") : current));
       }
     } finally {
+      cancelPaint();
       clearIdleTimer();
       setStreaming(false);
       setStreamedText(null);
@@ -1285,6 +1295,7 @@ export function ChatClient({
     setBuildPending(true);
     setActiveStartedAt(startedAt);
     setStreamedText("");
+    setStreamCommitted(false);
     stopSpeech();
     stopGeneratedSpeech();
 
@@ -1746,99 +1757,10 @@ export function ChatClient({
   const latestSignals = latestAssistantIndex >= 0 ? signalsByIndex[latestAssistantIndex] : null;
   const imageRun = streaming && runIntent.intent === "IMAGE_GENERATION";
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col" style={keyboardInset ? { paddingBottom: keyboardInset } : undefined}>
-      {!isTemporary ? (
-        <ChatTopBar
-          mode={mode}
-          onModeChange={switchMode}
-          lane={lane}
-          onLaneChange={setLane}
-          strategy={strategy}
-          onStrategyChange={setStrategy}
-          streaming={streaming}
-          autoSpeak={autoSpeak}
-          onToggleAutoSpeak={toggleAutoSpeak}
-          demoMode={demoMode}
-          onToggleDemo={() => setDemoMode((value) => !value)}
-          routingLabel={modelPreference.model_id ? `${modelPreference.provider_id} · ${modelPreference.model_id}` : routingLabel}
-          workspaceCount={mode === "agent" ? agentFiles.length : 0}
-          onOpenWorkspace={() => setWorkspaceOpen(true)}
-          autoSpeakLabels={{ on: t("chat.autoSpeakOn"), off: t("chat.autoSpeakOff") }}
-        />
-      ) : (
-        <div className="mb-3 flex shrink-0 items-center justify-between gap-3 border-b border-border pb-3 text-[13px] text-ink-2">
-          <p><span className="eyebrow">Temporary</span> — {t("chat.tempNotice").replace(/^Temporary Chat — /, "")}</p>
-          <AutoSpeakToggle on={autoSpeak} onToggle={toggleAutoSpeak} onLabel={t("chat.autoSpeakOn")} offLabel={t("chat.autoSpeakOff")} />
-        </div>
-      )}
-
-      <div ref={scrollAreaRef} className="no-scrollbar min-h-0 flex-1 space-y-7 overflow-y-auto overscroll-contain px-0.5 py-2 sm:px-2">
-        {hasMoreHistory && messages.length > 0 ? (
-          <div className="flex justify-center pb-1">
-            <button
-              type="button"
-              onClick={() => void loadOlderMessages()}
-              disabled={loadingHistory}
-              className="chip"
-              aria-busy={loadingHistory}
-            >
-              {loadingHistory ? "Loading earlier messages…" : "Load earlier messages"}
-            </button>
-          </div>
-        ) : null}
-        {messages.length === 0 && !streaming ? (
-          <div className="flex flex-col items-center px-1 py-6 text-center sm:py-8">
-            <div className="mb-5">
-              <span className="mb-3 inline-block" aria-hidden="true">
-                <MatrixWordmark className="h-10 w-40 sm:h-12 sm:w-48" />
-              </span>
-              <h1 className="text-[22px] font-semibold tracking-tight text-ink sm:text-[28px]">
-                {mode === "agent" ? "What should we build?" : locale === "bn" ? "আজ কীভাবে সাহায্য করতে পারি?" : "How can I help today?"}
-              </h1>
-              <p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-ink-2 sm:text-sm">
-                {mode === "agent"
-                  ? "Describe the product or fix, then attach any existing project files. Review before preview or push."
-                  : locale === "bn"
-                    ? "লেখা, শেখা, পরিকল্পনা, গবেষণা, কোডিং ও নিরাপদ ডিজিটাল সহায়তা।"
-                    : "Ask about writing, learning, planning, research, coding, or safe digital help."}
-              </p>
-            </div>
-            {mode !== "agent" ? (
-              <div className="mb-5 hidden w-full max-w-2xl grid-cols-2 gap-2 sm:grid lg:grid-cols-4">
-                {FEATURES.map((feature) => (
-                  <div key={feature.title} className="rounded-[16px] border border-border bg-surface px-3 py-3 text-left">
-                    <span className="text-accent">{feature.icon}</span>
-                    <p className="mt-2 text-[13px] font-medium text-ink">{feature.title}</p>
-                    <p className="mt-0.5 text-[11px] text-ink-3">{feature.desc}</p>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            <div className="no-scrollbar grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
-              {suggestions.map((suggestion) => (
-                <button
-                  key={suggestion.label}
-                  type="button"
-                  onClick={() => {
-                    if ("href" in suggestion && suggestion.href) router.push(suggestion.href);
-                    else if ("action" in suggestion && suggestion.action === "attach") fileRef.current?.click();
-                    else if (suggestion.prompt) void send(undefined, suggestion.prompt);
-                  }}
-                  className="suggest-card"
-                >
-                  <span className="mt-0.5 text-accent" aria-hidden="true">{suggestion.icon}</span>
-                  <span className="min-w-0">
-                    <span className="block text-[13px] font-medium text-ink">{suggestion.label}</span>
-                    {"desc" in suggestion && suggestion.desc ? <span className="mt-0.5 block text-[11px] text-ink-3">{suggestion.desc}</span> : null}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <>
-            {messages.map((message, index) => {
+  // Token frames update only the active reply. Completed conversation rows are
+  // reused until their own content, actions or metadata actually change.
+  const renderedHistory = useMemo(
+    () => messages.map((message, index) => {
               const key = messageKey(message, index);
               if (message.role === "user") {
                 return (
@@ -1936,9 +1858,111 @@ export function ChatClient({
                   </div>
                 </div>
               );
-            })}
+            }),
+    [messages, signalsByIndex, artifacts, latestAssistantIndex, streaming, buildRun, execution,
+      exportPickerKey, mode, compact, speakingId, agentFiles, agentProjectId, lastUserMessage, t, router],
+  );
 
-            {streaming ? (
+  return (
+    <div className="flex min-h-0 flex-1 flex-col" style={keyboardInset ? { paddingBottom: keyboardInset } : undefined}>
+      {!isTemporary ? (
+        <ChatTopBar
+          mode={mode}
+          onModeChange={switchMode}
+          lane={lane}
+          onLaneChange={setLane}
+          strategy={strategy}
+          onStrategyChange={setStrategy}
+          streaming={streaming}
+          autoSpeak={autoSpeak}
+          onToggleAutoSpeak={toggleAutoSpeak}
+          demoMode={demoMode}
+          onToggleDemo={() => setDemoMode((value) => !value)}
+          routingLabel={modelPreference.model_id ? `${modelPreference.provider_id} · ${modelPreference.model_id}` : routingLabel}
+          workspaceCount={mode === "agent" ? agentFiles.length : 0}
+          onOpenWorkspace={() => setWorkspaceOpen(true)}
+          autoSpeakLabels={{ on: t("chat.autoSpeakOn"), off: t("chat.autoSpeakOff") }}
+        />
+      ) : (
+        <div className="mb-3 flex shrink-0 items-center justify-between gap-3 border-b border-border pb-3 text-[13px] text-ink-2">
+          <p><span className="eyebrow">Temporary</span> — {t("chat.tempNotice").replace(/^Temporary Chat — /, "")}</p>
+          <AutoSpeakToggle on={autoSpeak} onToggle={toggleAutoSpeak} onLabel={t("chat.autoSpeakOn")} offLabel={t("chat.autoSpeakOff")} />
+        </div>
+      )}
+
+      <div className="relative min-h-0 flex-1">
+      <div ref={scrollAreaRef} onScroll={chatScroll.onScroll} onWheel={chatScroll.onWheel}
+        onTouchStart={chatScroll.onTouchStart} onTouchMove={chatScroll.onTouchMove}
+        onKeyDown={chatScroll.onKeyDown} onPointerDown={chatScroll.onPointerDown} onPointerUp={chatScroll.onPointerUp}
+        className="chat-viewport h-full overflow-y-auto overscroll-contain px-0.5 py-2 sm:px-2" tabIndex={0}>
+        <div ref={scrollContentRef} className="space-y-7">
+        {hasMoreHistory && messages.length > 0 ? (
+          <div className="flex justify-center pb-1">
+            <button
+              type="button"
+              onClick={() => void loadOlderMessages()}
+              disabled={loadingHistory}
+              className="chip"
+              aria-busy={loadingHistory}
+            >
+              {loadingHistory ? "Loading earlier messages…" : "Load earlier messages"}
+            </button>
+          </div>
+        ) : null}
+        {messages.length === 0 && !streaming ? (
+          <div className="flex flex-col items-center px-1 py-6 text-center sm:py-8">
+            <div className="mb-5">
+              <span className="mb-3 inline-block" aria-hidden="true">
+                <MatrixWordmark className="h-10 w-40 sm:h-12 sm:w-48" />
+              </span>
+              <h1 className="text-[22px] font-semibold tracking-tight text-ink sm:text-[28px]">
+                {mode === "agent" ? "What should we build?" : locale === "bn" ? "আজ কীভাবে সাহায্য করতে পারি?" : "How can I help today?"}
+              </h1>
+              <p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-ink-2 sm:text-sm">
+                {mode === "agent"
+                  ? "Describe the product or fix, then attach any existing project files. Review before preview or push."
+                  : locale === "bn"
+                    ? "লেখা, শেখা, পরিকল্পনা, গবেষণা, কোডিং ও নিরাপদ ডিজিটাল সহায়তা।"
+                    : "Ask about writing, learning, planning, research, coding, or safe digital help."}
+              </p>
+            </div>
+            {mode !== "agent" ? (
+              <div className="mb-5 hidden w-full max-w-2xl grid-cols-2 gap-2 sm:grid lg:grid-cols-4">
+                {FEATURES.map((feature) => (
+                  <div key={feature.title} className="rounded-[16px] border border-border bg-surface px-3 py-3 text-left">
+                    <span className="text-accent">{feature.icon}</span>
+                    <p className="mt-2 text-[13px] font-medium text-ink">{feature.title}</p>
+                    <p className="mt-0.5 text-[11px] text-ink-3">{feature.desc}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <div className="no-scrollbar grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
+              {suggestions.map((suggestion) => (
+                <button
+                  key={suggestion.label}
+                  type="button"
+                  onClick={() => {
+                    if ("href" in suggestion && suggestion.href) router.push(suggestion.href);
+                    else if ("action" in suggestion && suggestion.action === "attach") fileRef.current?.click();
+                    else if (suggestion.prompt) void send(undefined, suggestion.prompt);
+                  }}
+                  className="suggest-card"
+                >
+                  <span className="mt-0.5 text-accent" aria-hidden="true">{suggestion.icon}</span>
+                  <span className="min-w-0">
+                    <span className="block text-[13px] font-medium text-ink">{suggestion.label}</span>
+                    {"desc" in suggestion && suggestion.desc ? <span className="mt-0.5 block text-[11px] text-ink-3">{suggestion.desc}</span> : null}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <>
+            {renderedHistory}
+
+            {streaming && !streamCommitted ? (
               <div className="msg-in flex gap-3.5">
                 <span className="mt-0.5 hidden shrink-0 sm:block" aria-hidden="true">
                   <MatrixMark className="h-5 w-5 text-ink-3" />
@@ -1962,7 +1986,7 @@ export function ChatClient({
                   )}
                   {streamedText ? (
                     <div className="ai-reply">
-                      <Markdown text={streamedText} />
+                      <Markdown text={streamedText} streaming />
                       <span className="ml-0.5 inline-block h-3.5 w-px animate-pulse bg-ink align-middle" aria-hidden="true" />
                     </div>
                   ) : null}
@@ -2000,7 +2024,13 @@ export function ChatClient({
             ) : null}
           </>
         )}
-        <div ref={bottomRef} />
+        </div>
+      </div>
+      {chatScroll.newBelow ? (
+        <button type="button" onClick={chatScroll.follow}
+          className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-ink shadow-md"
+          aria-label="Scroll to new content">New content below ↓</button>
+      ) : null}
       </div>
 
       {recording ? <p className="mt-2 shrink-0 text-[13px] text-danger">Recording… tap the microphone to stop.</p> : transcribing ? <p className="mt-2 shrink-0 text-[13px] text-ink-2">Uploading your private recording and transcribing it…</p> : null}

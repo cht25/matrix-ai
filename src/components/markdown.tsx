@@ -3,13 +3,16 @@
 // Safe coding-assistance renderer. AI markup is text inside a highlighted code
 // block, never trusted application HTML. Publishing belongs to the explicit
 // Agent/project workflow, not to an ordinary code answer.
-import { useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { Check, Copy, Download } from "lucide-react";
 import { filenameForCode, highlightCode, looksLikeRawMarkup, parseFenceInfo } from "@/lib/code-blocks";
 
 type Block =
   | { type: "p" | "h"; text: string }
   | { type: "ul" | "ol"; items: string[] }
+  | { type: "quote" | "math"; text: string }
+  | { type: "table"; rows: string[][] }
+  | { type: "image"; alt: string; src: string }
   | { type: "code"; lang: string; filename: string; code: string };
 
 export function parseBlocks(raw: string): Block[] {
@@ -18,6 +21,8 @@ export function parseBlocks(raw: string): Block[] {
   let list: { ordered: boolean; items: string[] } | null = null;
   let fence: { lang: string; filename: string; code: string[] } | null = null;
   let codeIndex = 0;
+  let quote: string[] = [];
+  const flushQuote = () => { if (quote.length) { blocks.push({ type: "quote", text: quote.join("\n") }); quote = []; } };
   const flushList = () => { if (list) { blocks.push({ type: list.ordered ? "ol" : "ul", items: list.items }); list = null; } };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -28,11 +33,28 @@ export function parseBlocks(raw: string): Block[] {
     }
     const opening = line.match(/^\s*```+\s*([^`\n]*)$/);
     if (opening) {
-      flushList(); const info = parseFenceInfo(opening[1] ?? "", lines[i - 1] ?? "", codeIndex++);
+      flushList(); flushQuote(); const info = parseFenceInfo(opening[1] ?? "", lines[i - 1] ?? "", codeIndex++);
       fence = { lang: info.language, filename: info.filename, code: [] }; continue;
     }
     const t = line.trim();
-    if (!t) { flushList(); continue; }
+    if (!t) { flushList(); flushQuote(); continue; }
+    if (/^>\s?/.test(t)) { flushList(); quote.push(t.replace(/^>\s?/, "")); continue; }
+    flushQuote();
+    if (t === "$$") {
+      flushList();
+      const math: string[] = [];
+      while (++i < lines.length && lines[i].trim() !== "$$") math.push(lines[i]);
+      blocks.push({ type: "math", text: math.join("\n") }); continue;
+    }
+    const image = t.match(/^!\[([^\]]*)\]\((https:\/\/[^\s)]+)\)$/);
+    if (image) { flushList(); blocks.push({ type: "image", alt: image[1], src: image[2] }); continue; }
+    if (t.includes("|") && /^\s*\|?\s*:?-{3,}/.test(lines[i + 1] ?? "")) {
+      flushList();
+      const cells = (row: string) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+      const rows = [cells(line)]; i += 1;
+      while (i + 1 < lines.length && lines[i + 1].includes("|") && lines[i + 1].trim()) rows.push(cells(lines[++i]));
+      blocks.push({ type: "table", rows }); continue;
+    }
     // A filename label immediately before a fence is shown in the code header,
     // not duplicated as a prose paragraph.
     if (/^(?:\*\*[\w./-]+\.[a-z0-9]+\*\*|#{1,4}\s+[\w./-]+\.[a-z0-9]+|`[\w./-]+\.[a-z0-9]+`)$/i.test(t) && /^\s*```/.test(lines[i + 1] ?? "")) continue;
@@ -43,10 +65,10 @@ export function parseBlocks(raw: string): Block[] {
     else blocks.push({ type: "p", text: line });
   }
   if (fence) blocks.push({ type: "code", lang: fence.lang, filename: fence.filename, code: fence.code.join("\n") });
-  flushList(); return blocks;
+  flushList(); flushQuote(); return blocks;
 }
 
-function Inline({ text }: { text: string }) {
+const Inline = memo(function Inline({ text }: { text: string }) {
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g);
   return <>{parts.map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**")) return <strong key={i}>{part.slice(2, -2)}</strong>;
@@ -55,11 +77,14 @@ function Inline({ text }: { text: string }) {
     if (link) return <a key={i} href={link[2]} target="_blank" rel="noopener noreferrer" className="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent">{link[1]}</a>;
     return <span key={i}>{part}</span>;
   })}</>;
-}
+});
 
-function CodeBlock({ lang, filename, code }: { lang: string; filename: string; code: string }) {
+const CodeBlock = memo(function CodeBlock({ lang, filename, code, streaming }: { lang: string; filename: string; code: string; streaming?: boolean }) {
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
+  // Highlight only after the fence is complete; the active code block keeps
+  // the same <pre> and never runs the tokenizer for every incoming fragment.
+  const tokens = useMemo(() => streaming ? null : highlightCode(code, lang), [code, lang, streaming]);
   async function copy() {
     try { await navigator.clipboard.writeText(code); setCopied(true); setCopyFailed(false); setTimeout(() => setCopied(false), 1800); }
     catch { setCopyFailed(true); }
@@ -77,19 +102,36 @@ function CodeBlock({ lang, filename, code }: { lang: string; filename: string; c
         <button type="button" onClick={download} aria-label={`Download ${filename}`} className="inline-flex min-h-8 items-center gap-1 rounded-md px-2 text-[11px] font-semibold text-ink-3 hover:bg-surface/10 hover:text-white"><Download size={12} />Download</button>
       </div>
     </div>
-    <pre className="max-w-full overflow-x-auto"><code>{highlightCode(code, lang).map((token, i) => <span key={i} className={`code-token-${token.kind}`}>{token.text}</span>)}</code></pre>
+    <pre className="max-w-full overflow-x-auto"><code>{tokens ? tokens.map((token, i) => <span key={i} className={`code-token-${token.kind}`}>{token.text}</span>) : code}</code></pre>
     {copyFailed ? <p className="border-t border-white/10 px-3 py-1.5 text-[11px] text-warning">Clipboard access was blocked. Select the code and copy it manually.</p> : null}
   </div>;
-}
+});
 
-export function Markdown({ text }: { text: string }) {
-  return <div className="ai-reply min-w-0">{parseBlocks(text).map((block, i) => {
+// Provider-generated Markdown can contain arbitrary URLs. Do not auto-request
+// third-party images (which would disclose a reader's IP); load on consent.
+const RemoteImage = memo(function RemoteImage({ src, alt }: { src: string; alt: string }) {
+  const [load, setLoad] = useState(false);
+  if (!load) return <button type="button" onClick={() => setLoad(true)}
+    className="my-2 flex min-h-16 w-full max-w-xl items-center justify-center rounded-lg border border-border bg-surface-2 px-3 text-sm text-ink-2"
+    aria-label={`Load image: ${alt || "image"}`}>Load image: {alt || "Image"}</button>;
+  return <img src={src} alt={alt} loading="lazy" decoding="async"
+    className="my-2 max-h-[65svh] max-w-full rounded-lg object-contain"
+    style={{ aspectRatio: "16 / 9" }} />;
+});
+
+export const Markdown = memo(function Markdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
+  const blocks = useMemo(() => parseBlocks(text), [text]);
+  return <div className="ai-reply min-w-0">{blocks.map((block, i) => {
     switch (block.type) {
       case "h": return <p key={i} className="!mt-3 font-bold text-ink"><Inline text={block.text} /></p>;
       case "ul": return <ul key={i}>{block.items.map((item, j) => <li key={j}><Inline text={item} /></li>)}</ul>;
       case "ol": return <ol key={i}>{block.items.map((item, j) => <li key={j}><Inline text={item} /></li>)}</ol>;
-      case "code": return <CodeBlock key={i} lang={block.lang} filename={block.filename} code={block.code} />;
+      case "quote": return <blockquote key={i} className="border-l-2 border-accent/50 pl-3 text-ink-2"><Inline text={block.text} /></blockquote>;
+      case "math": return <pre key={i} className="max-w-full overflow-x-auto rounded-lg bg-surface-2 p-3 font-mono text-xs" aria-label="LaTeX expression">{block.text}</pre>;
+      case "image": return <RemoteImage key={i} src={block.src} alt={block.alt} />;
+      case "table": return <div key={i} className="max-w-full overflow-x-auto"><table className="w-full border-collapse text-left text-sm"><thead><tr>{block.rows[0].map((cell, j) => <th key={j} className="border-b border-border px-2 py-1"><Inline text={cell} /></th>)}</tr></thead><tbody>{block.rows.slice(1).map((row, j) => <tr key={j}>{row.map((cell, k) => <td key={k} className="border-b border-border px-2 py-1"><Inline text={cell} /></td>)}</tr>)}</tbody></table></div>;
+      case "code": return <CodeBlock key={i} lang={block.lang} filename={block.filename} code={block.code} streaming={streaming} />;
       default: return <p key={i} className="whitespace-pre-wrap"><Inline text={block.text} /></p>;
     }
   })}</div>;
-}
+});

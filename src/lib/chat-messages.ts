@@ -68,10 +68,11 @@ export type ChatMessage = {
   metadata?: MessageMetadata;
 };
 
-/** Stable-ish key for per-message UI state (artifacts, export picker). */
+/** Stable key for message UI state. The user and assistant share a turn ID
+ * but must NEVER share a React sibling key (or reconciliation remounts them). */
 export function messageKey(message: ChatMessage, index: number): string {
   const turn = message.metadata?.turn_id;
-  if (turn) return `t:${turn}`;
+  if (turn) return message.role === "user" ? `u:t:${turn}` : `t:${turn}`;
   if (message.id) return `id:${message.id}`;
   return `i:${index}`;
 }

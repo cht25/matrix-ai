@@ -29,6 +29,7 @@ const SCENARIOS: Array<{ id: string; label: string; prompt: string }> = [
   { id: "t6", label: "6 · Inspect project + run tests", prompt: "Inspect this project, find the bug and run the tests." },
   { id: "t7", label: "7 · Write a Python function", prompt: "Write a Python function to sort a list." },
   { id: "t8", label: "8 · Make a report (ambiguous)", prompt: "Make a report about renewable energy." },
+  { id: "stress", label: "Long response · scroll stress", prompt: "Long response performance check" },
 ];
 
 const PROSE = "Photosynthesis is how green plants turn light into chemical energy. Chlorophyll in the leaves absorbs sunlight, water is drawn up from the roots and carbon dioxide enters through tiny pores called stomata. The plant uses that light energy to build glucose and releases oxygen as a by-product — which is why forests and oceans are so important to the atmosphere.";
@@ -113,6 +114,10 @@ function previewImage(prompt: string): string {
 /** Reply text for a message, chosen with the real intent detector. */
 function mockReply(message: string): string {
   const intent = detectIntent(message);
+  if (/long response performance check/i.test(message)) return Array.from({ length: 65 }, (_, n) =>
+    `## Section ${n + 1}\n\n${PROSE}\n\n- Step one: inspect the current state.\n- Step two: preserve source files.\n\n` +
+    (n % 5 === 0 ? "```typescript\nconst result = [1, 2, 3].map((value) => value * 2);\nconsole.log(result);\n```\n\n" : "")
+  ).join("");
   if (intent.formats.includes("csv") || intent.formats.includes("xlsx") || /table|users/i.test(message)) return TABLE_REPLY;
   if (intent.formats.includes("json")) return JSON_REPLY;
   if (intent.intent === "AGENT_TASK") return AGENT_REPLY;
@@ -218,7 +223,7 @@ function useMockGateway() {
             }
           : {}),
       });
-      return sse(events, isAgent ? 220 : 45);
+      return sse(events, /long response performance check/i.test(message) ? 3 : isAgent ? 220 : 45);
     }) as typeof window.fetch;
 
     setReady(true);
@@ -249,14 +254,14 @@ export function ChatPreview() {
 
   return (
     <ToastProvider>
-      <div className="flex min-h-screen flex-col bg-bg px-3 py-4 sm:px-6">
-        <div className="mx-auto w-full max-w-4xl space-y-3">
+      <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-bg px-3 py-3 sm:px-6 sm:py-4">
+        <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-3">
           <div className="rounded-xl border border-warning/40 bg-warning-soft px-4 py-2 text-[12px] text-warning">
             Development preview — the real chat components against a mock gateway. Replies are canned; every panel you
             see is produced by the real intent/artifact logic. Not available in production.
           </div>
 
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto pb-1">
             <span className="eyebrow mr-1">Spec test cases</span>
             {SCENARIOS.map((scenario) => (
               <button
@@ -277,7 +282,7 @@ export function ChatPreview() {
             </button>
           </div>
 
-          <div className="flex h-[calc(100dvh-190px)] min-h-[420px] w-full flex-col rounded-2xl border border-border bg-bg p-3 sm:p-4">
+          <div className="flex min-h-0 w-full flex-1 flex-col rounded-2xl border border-border bg-bg p-3 sm:p-4">
             <ChatClient key={resetKey} initialMessages={[]} conversationId={null} isTemporary={false} initialMode="general" />
           </div>
         </div>

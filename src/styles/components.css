@@ -335,3 +335,17 @@
   transition: top var(--ease);
 }
 .skip-link:focus { top: 12px; }
+
+/* Chat has one stable scrollport. Browser smooth scrolling on every SSE delta
+   queues animations and fights scroll anchoring; the hook follows per frame. */
+.chat-viewport {
+  scrollbar-gutter: stable;
+  overflow-anchor: none;
+  scroll-behavior: auto;
+  min-width: 0;
+  overscroll-behavior-y: contain;
+}
+.chat-viewport .msg-in,
+.chat-viewport .ai-reply { min-width: 0; overflow-wrap: anywhere; }
+.chat-viewport .code-block { max-width: 100%; }
+.chat-viewport img { height: auto; }
