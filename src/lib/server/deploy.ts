@@ -347,17 +347,27 @@ export async function listLiveSites(d: Db) {
  * set, so multiple project URLs (§8) cost zero duplication and can never
  * drift out of sync with the deployment.
  */
-export async function loadPublishedFile(d: Db, slug: string, path: string) {
+export async function loadPublishedFile(d: Db, slug: string, path: string, verification?: { releaseId: string; token: string }) {
   const site = await d.collection("published_sites").doc(slug).get();
   if (!site.exists || !["live", "verifying"].includes(String(site.data()?.status))) return null;
   const targetSlug = (site.data()?.alias_of as string) || slug;
   const filesRoot = targetSlug === slug ? site.ref : d.collection("published_sites").doc(targetSlug);
-  const targetStatus = targetSlug === slug ? null : await d.collection("published_sites").doc(targetSlug).get();
+  const targetStatus = targetSlug === slug ? site : await d.collection("published_sites").doc(targetSlug).get();
   if (targetSlug !== slug && !["live", "verifying"].includes(String(targetStatus?.data()?.status))) return null;
+  const targetData = targetStatus?.data();
+  // A release is never public until its pointer is activated. The one-time
+  // verification token allows only the server-side verifier to read staging.
+  const staged = targetSlug === slug && verification &&
+    targetData?.verifying_release_id === verification.releaseId &&
+    targetData?.verification_token === verification.token;
+  const releaseId = staged ? verification.releaseId : targetData?.live_release_id;
+  if (!releaseId && targetData?.status !== "live") return null;
 
   const raw = (path || "").replace(/^\.?\/+/, "");
   const wanted = !raw ? "index.html" : raw.endsWith("/") ? `${raw}index.html` : raw;
-  const files = await filesRoot.collection("files").get();
+  const files = await (releaseId
+    ? filesRoot.collection("releases").doc(String(releaseId)).collection("files")
+    : filesRoot.collection("files")).get();
   if (files.empty) return null;
 
   const normalizedWanted = wanted.toLowerCase();

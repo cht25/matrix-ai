@@ -68,9 +68,9 @@ export async function listProjects(d: Db, user: SessionUser): Promise<ProjectSum
 export async function ensureProject(
   d: Db,
   user: SessionUser,
-  p: { conversation_id?: string | null; title?: string },
+  p: { conversation_id?: string | null; title?: string; forceNew?: boolean },
 ) {
-  if (p.conversation_id) {
+  if (p.conversation_id && !p.forceNew) {
     const existing = await d.collection("projects").where("conversation_id", "==", p.conversation_id).limit(5).get();
     const mine = existing.docs.find((doc) => doc.data().owner_id === user.uid && !doc.data().archived_at);
     if (mine) return { id: mine.id, title: mine.data().title ?? "Untitled project", file_count: mine.data().file_count ?? 0 };
@@ -89,6 +89,11 @@ export async function ensureProject(
     revision: 0,
     framework: "html",
     runtime: "static",
+    runtime_version: "browser",
+    entry_point: "index.html",
+    build_command: "MATRIX static bundler",
+    output_directory: "/s/<slug>/",
+    dependency_manifest: {},
     live_slug: null,
     live_url: null,
     env_public: {},
@@ -113,6 +118,14 @@ export async function getProject(d: Db, user: SessionUser, projectId: string) {
       stack: data.stack ?? "static-web",
       framework: data.framework ?? (data.stack === "static-web" ? "html" : String(data.stack)),
       runtime: data.runtime ?? "static",
+      runtime_version: data.runtime_version ?? "browser",
+      entry_point: data.entry_point ?? "index.html",
+      build_command: data.build_command ?? "MATRIX static bundler",
+      output_directory: data.output_directory ?? "/s/<slug>/",
+      dependency_manifest: data.dependency_manifest ?? {},
+      live_deployment_id: data.live_deployment_id ?? null,
+      last_successful_build_at: iso(data.last_successful_build_at),
+      last_successful_deployment_at: iso(data.last_successful_deployment_at),
       revision: Number(data.revision ?? 0),
       file_manifest: Array.isArray(data.file_manifest) ? data.file_manifest : [],
       conversation_id: data.conversation_id ?? null,
@@ -203,7 +216,16 @@ async function mutateFiles(
       tx.set(filesRef.doc(id), { path: file.path, content: file.content, encoding: file.encoding, language: withLanguage({ path: file.path, content: file.content, encoding: file.encoding }).language, updated_by: opts.source === "agent" ? "agent" : "user", created_at: old?.created_at ?? stamp, updated_at: stamp }, { merge: true });
     }
     const nextRevision = revision + 1;
-    tx.set(ref, { file_count: files.length, file_manifest: manifestFor(files.map((file) => ({ ...file }))), revision: nextRevision, updated_at: stamp }, { merge: true });
+    const packageFile = files.find((file) => file.path === "package.json" && file.encoding !== "base64");
+    let dependencies: Record<string, string> = {};
+    if (packageFile) {
+      try {
+        const parsed = JSON.parse(packageFile.content) as { dependencies?: Record<string, unknown>; devDependencies?: Record<string, unknown> };
+        dependencies = Object.fromEntries(Object.entries({ ...parsed.dependencies, ...parsed.devDependencies })
+          .filter(([key, value]) => key.length <= 100 && typeof value === "string" && value.length <= 100).slice(0, 80)) as Record<string, string>;
+      } catch { /* Validation reports malformed manifests; source still saves. */ }
+    }
+    tx.set(ref, { file_count: files.length, file_manifest: manifestFor(files.map((file) => ({ ...file }))), dependency_manifest: dependencies, entry_point: files.some((file) => file.path === "index.html") ? "index.html" : null, revision: nextRevision, updated_at: stamp }, { merge: true });
     if (opts.snapshot) {
       const version = ref.collection("versions").doc();
       tx.set(version, { source: opts.snapshot.source, summary: opts.snapshot.summary.slice(0, 200), file_count: files.length, revision: nextRevision, created_at: stamp });

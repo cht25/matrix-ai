@@ -30,6 +30,7 @@ import { planFromRequest, type BuildIntent } from "@/lib/ai/build-intent";
 import { generateImage } from "@/lib/ai/image/generate";
 import { isImageGenerationConfigured } from "@/lib/ai/image/config";
 import { applyProjectFiles, ensureProject, loadProjectFiles } from "@/lib/server/projects";
+import { resolveAgentProject, wantsNewProject } from "@/lib/server/project-resolution";
 import { appendCheckpoint, bindBuildTask, syncBuildTask, type CheckpointStep } from "@/lib/server/agent-tasks";
 import { PROJECT_LIMITS, type ProjectFile } from "@/lib/projects/paths";
 import {
@@ -160,12 +161,13 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     // ---------------------------------------------------------------- plan --
     await begin("plan", "Resolving project, entry page and public address.");
     const plan = planFromRequest(input.prompt || "MATRIX project");
-    let projectId = input.projectId ?? null;
+    let projectId = await resolveAgentProject(d, user, { projectId: input.projectId, conversationId: input.conversationId, prompt: input.prompt });
     resolvedProjectId = projectId;
     if (!projectId && (input.actions.build || input.actions.publish)) {
       const ensured = await ensureProject(d, user, {
         conversation_id: input.conversationId ?? null,
         title: plan.title.slice(0, 80),
+        forceNew: wantsNewProject(input.prompt),
       });
       projectId = ensured.id;
       resolvedProjectId = projectId;
@@ -174,7 +176,11 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     }
     if (projectId) {
       const projectMeta = await d.collection("projects").doc(projectId).get();
-      run = { ...run, projectTitle: String(projectMeta.data()?.title ?? plan.title).slice(0, 80) };
+      run = { ...run, projectId, projectTitle: String(projectMeta.data()?.title ?? plan.title).slice(0, 80) };
+      if (input.conversationId && !input.isTemporary) {
+        await d.collection("conversations").doc(input.conversationId).set({ active_project_id: projectId, updated_at: nowTs() }, { merge: true });
+      }
+      if (input.taskId) await bindBuildTask(d, user, input.taskId, { project_id: projectId, build_run_id: runId });
     }
     if (!projectId) return await abort("PROJECT_REQUIRED", "There is no project to build yet. Describe what to create and I will make it.", "plan");
     // Attached source files are stored as project records before anything else
@@ -202,7 +208,12 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     }
     const before = await loadProjectFiles(d, projectId);
     const projectFilesContext = formatProjectFilesForContext(before, input.prompt);
-    const existingProjectContext = projectFilesContext.text;
+    const projectRecord = (await d.collection("projects").doc(projectId).get()).data() ?? {};
+    const existingProjectContext = [
+      `Persistent project ${projectId}; revision ${Number(projectRecord.revision ?? 0)}; name ${String(projectRecord.title ?? plan.title).slice(0, 80)}; framework ${String(projectRecord.framework ?? "html")}; live slug ${String(projectRecord.live_slug ?? "none")}. These metadata and saved files, not chat memory, are authoritative.`,
+      `Saved file index: ${before.map((file) => file.path).join(", ") || "empty"}.`,
+      projectFilesContext.text,
+    ].filter(Boolean).join("\n\n");
     const withheldExistingPaths = new Set(projectFilesContext.omittedPaths.map((path) => path.toLowerCase()));
     const slug = (input.slug ?? "").trim() || plan.slug;
     await finish("plan", `Project ready · ${before.length} existing file${before.length === 1 ? "" : "s"} · address /s/${slug}.`);
@@ -235,7 +246,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
           content: workspaceOnly
             ? [
                 "MATRIX Code workspace: return complete, requested source files using the appropriate language and safe relative paths. Do not force index.html unless the user asked for a website or web page.",
-                `Project title: ${plan.title}.`,
+                `Project title: ${String(projectRecord.title ?? plan.title)}.`,
                 before.length ? `Existing project files: ${before.map((file) => file.path).join(", ")}. Preserve the existing stack and conventions; return every changed file in full and avoid unrelated rewrites.` : "This is a new project. Choose sensible filenames and a minimal, conventional structure for the requested language or framework.",
                 input.attachments?.length
                   ? `The user attached these files as the source of truth: ${input.attachments.map((item) => item.path).join(", ")}. Keep their behaviour; do not invent contents for them.`
@@ -244,8 +255,8 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
               ].filter(Boolean).join("\n")
             : [
                 "MATRIX build pipeline: emit complete, publishable files only.",
-                `Project title: ${plan.title}. Entry page must be index.html at the project root.`,
-                before.length ? `Existing project files: ${before.map((file) => file.path).join(", ")}. Return every file you change, complete.` : "This is a new project.",
+                `Project title: ${String(projectRecord.title ?? plan.title)}. ${before.length ? "Preserve the existing root index.html unless the requested change requires editing it." : "Entry page must be index.html at the project root."}`,
+                before.length ? `EDIT MODE. Existing project files: ${before.map((file) => file.path).join(", ")}. Return ONLY changed files, complete. Do not recreate unrelated files, redesign the site, or claim an unchanged file was modified.` : "CREATE MODE. This is a new project.",
                 input.attachments?.length
                   ? `The user attached these files as the source of truth: ${input.attachments.map((item) => item.path).join(", ")}. Keep their behaviour; do not invent contents for them.`
                   : "",
@@ -430,6 +441,10 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       await finish("validate", built.report.summary);
     }
 
+    if (!built.report.blocking) {
+      await d.collection("projects").doc(projectId).set({ last_successful_build_at: nowTs(), updated_at: nowTs() }, { merge: true });
+    }
+
     // ------------------------------------------------------------- preview ---
     const previewUrl = `/api/projects/${projectId}/preview`;
     if (input.actions.preview && !input.actions.publish) {
@@ -580,6 +595,8 @@ function publishFailureCopy(code: string, error: unknown): string {
       return "The project has no files to publish.";
     case "PUBLISH_RATE_LIMITED":
       return "Too many publishes in the last hour. Wait a moment and retry.";
+    case "DEPLOY_VERIFY_FAILED":
+      return `The new release could not be verified over HTTP; the previous live version remains active. ${error instanceof RpcError ? error.detail ?? "Check deployment logs for the failed URL and response." : "Check deployment logs."}`;
     case "HOSTING_NOT_CONFIGURED":
       return "This deployment of MATRIX has no hosting backend configured, so nothing was published. Ask the operator to connect a DeploymentProvider.";
     default:

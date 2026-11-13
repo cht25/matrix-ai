@@ -33,7 +33,7 @@ export type BuildStageDef = {
 export const BUILD_STAGES: BuildStageDef[] = [
   { id: "plan", label: "Planning", detail: "Project, entry page and public address", timeoutMs: 45_000 },
   { id: "generate", label: "Generating files", detail: "Agent writes the project files", timeoutMs: 240_000 },
-  { id: "install", label: "Installing dependencies", detail: "Resolve libraries the project needs", timeoutMs: 60_000 },
+  { id: "install", label: "Checking dependencies", detail: "Static hosting does not run npm install", timeoutMs: 60_000 },
   { id: "build", label: "Building", detail: "Bundle and inline project assets", timeoutMs: 120_000 },
   { id: "validate", label: "Validating", detail: "Syntax, routes, assets and build checks", timeoutMs: 60_000 },
   { id: "publish", label: "Publishing", detail: "Upload to MATRIX hosting", timeoutMs: 120_000 },

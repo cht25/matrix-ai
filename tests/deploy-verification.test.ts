@@ -32,6 +32,19 @@ describe("deployment is proven over HTTP, not by a database row", () => {
       "https://matrix.thamjj13.top/s/real-site/styles.css",
     ]);
   });
+  it("accepts the correct document when hosting injects its site base", async () => {
+    const served = files[0].content.replace("<head>", '<head><base href="/s/real-site/">');
+    const fetchImpl = (async (url: string | URL) => new Response(String(url).endsWith(".css") ? "body{}" : served, { status: 200 })) as typeof fetch;
+    const result = await verifyPublishedDeployment({ origin: "https://matrix.thamjj13.top", slug: "real-site", files, fetchImpl });
+    expect(result.ok).toBe(true);
+  });
+  it("rejects a cached previous version even when the response has an injected base tag", async () => {
+    const stale = '<html><head><base href="/s/real-site/"></head><body><h1>Old site</h1></body></html>';
+    const fetchImpl = (async () => new Response(stale, { status: 200 })) as typeof fetch;
+    const result = await verifyPublishedDeployment({ origin: "https://matrix.thamjj13.top", slug: "real-site", files, fetchImpl });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("different content");
+  });
   it("rejects upstream redirects instead of treating a localhost target as a live site", async () => {
     const fetchImpl = (async (_url: string | URL, init?: RequestInit) => {
       expect(init?.redirect).toBe("manual");
@@ -54,11 +67,30 @@ describe("deployment is proven over HTTP, not by a database row", () => {
     expect(absoluteUrl("https://matrix.thamjj13.top/s/demo")).toBe("https://matrix.thamjj13.top/s/demo");
     expect(siteOrigin()).not.toContain("localhost");
   });
+  it("reports a timed-out public request without publishing", async () => {
+    const fetchImpl = (async () => { throw new DOMException("This operation was aborted", "TimeoutError"); }) as typeof fetch;
+    const result = await verifyPublishedDeployment({ origin: "https://matrix.thamjj13.top", slug: "real-site", files, fetchImpl, timeoutMs: 1 });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("aborted");
+  });
+  it("checks an isolated staged release and rejects a wrong redirect target", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      calls.push(String(url));
+      expect((init?.headers as Record<string, string>)["x-matrix-verification-token"]).toBe("private-token");
+      return new Response(null, { status: 308, headers: { Location: "http://localhost:10000/s/real-site/" } });
+    }) as typeof fetch;
+    const result = await verifyPublishedDeployment({ origin: "https://matrix.thamjj13.top", slug: "real-site", files, staging: { releaseId: "v2", token: "private-token" }, fetchImpl });
+    expect(result.ok).toBe(false);
+    expect(calls[0]).toContain("?__matrix_verify=v2");
+    expect(result.error).toContain("outside the site path");
+  });
   it("stages and verifies before activation, with restore on failure", () => {
     const provider = readFileSync("src/lib/deploy/firestore-provider.ts", "utf8");
     expect(provider).toContain("verifyPublishedDeployment");
     expect(provider).toContain("stage.restore()");
-    expect(provider).toContain('status: "verifying"');
+    expect(provider).toContain('verifying_release_id: deploymentRef.id');
+    expect(provider).toContain('live_release_id: deploymentRef.id');
     expect(provider.indexOf("verifyPublishedDeployment")).toBeLessThan(provider.indexOf('push("activate", `Site live'));
     expect(provider).not.toContain("await Promise.all(oldFiles.map((file) => file.delete()));");
   });

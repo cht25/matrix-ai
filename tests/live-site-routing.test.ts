@@ -36,6 +36,17 @@ describe("public hosting behind an internal upstream", () => {
     expect(await image.text()).toBe("image");
   });
 
+  it("serves a gated candidate release with no-store without disclosing it to visitors", async () => {
+    file.mockResolvedValueOnce({ path: "index.html", encoding: "utf8", content_type: "text/html", content: "<html><body>New version</body></html>" });
+    const req = new NextRequest("https://matrix.thamjj13.top/s/index-html/?__matrix_verify=v2", { headers: { "x-matrix-verification-token": "secret" } });
+    const result = await GET(req, context("index-html"));
+    expect(result.status).toBe(200);
+    expect(result.headers.get("cache-control")).toBe("private, no-store");
+    expect(file).toHaveBeenLastCalledWith(expect.anything(), "index-html", "index.html", { releaseId: "v2", token: "secret" });
+    file.mockResolvedValueOnce(null);
+    await GET(new NextRequest("https://matrix.thamjj13.top/s/index-html/?__matrix_verify=v2"), context("index-html"));
+    expect(file).toHaveBeenLastCalledWith(expect.anything(), "index-html", "index.html", undefined);
+  });
   it("resolves existing site files and nested SPA routes without creating or rewriting site records", async () => {
     const docs = [
       { data: () => ({ path: "index.html", content: "<html>SPA</html>", content_type: "text/html" }) },

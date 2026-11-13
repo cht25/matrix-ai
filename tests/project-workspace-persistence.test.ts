@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyProjectFiles, deleteProjectFile, getProject, listProjectVersions, renameProjectFile, restoreProjectVersion, saveProjectVersion, upsertProjectFile } from "@/lib/server/projects";
+import { applyProjectFiles, deleteProjectFile, ensureProject, getProject, listProjectVersions, renameProjectFile, restoreProjectVersion, saveProjectVersion, upsertProjectFile } from "@/lib/server/projects";
 import type { Db } from "@/lib/firebase/admin";
 
 const owner = { uid: "owner", email: "owner@example.com", emailVerified: true };
@@ -38,6 +38,17 @@ function fixture() {
 }
 
 describe("transactional project workspace", () => {
+  it("creates separate durable projects and reuses each conversation's project", async () => {
+    const { db } = fixture();
+    const a = await ensureProject(db, owner, { conversation_id: "chat-a", title: "Portfolio" });
+    const b = await ensureProject(db, owner, { conversation_id: "chat-b", title: "Store" });
+    expect(a.id).not.toBe(b.id);
+    expect((await ensureProject(db, owner, { conversation_id: "chat-a", title: "Unrelated" })).id).toBe(a.id);
+    await applyProjectFiles(db, owner, { project_id: a.id, files: [{ path: "index.html", content: "Portfolio", language: "html" }] });
+    await applyProjectFiles(db, owner, { project_id: b.id, files: [{ path: "index.html", content: "Store", language: "html" }] });
+    expect((await getProject(db, owner, a.id)).files[0].content).toBe("Portfolio");
+    expect((await getProject(db, owner, b.id)).files[0].content).toBe("Store");
+  });
   it("persists files across reload and never duplicates concurrent writes to one path", async () => {
     const { db, docs } = fixture();
     await Promise.all([upsertProjectFile(db, owner, { project_id: "p1", path: "index.html", content: "<h1>One</h1>" }), upsertProjectFile(db, owner, { project_id: "p1", path: "index.html", content: "<h1>Two</h1>" })]);
@@ -62,6 +73,25 @@ describe("transactional project workspace", () => {
     expect(project.files).toHaveLength(3);
     expect(project.project.file_manifest).toHaveLength(3);
     expect((await listProjectVersions(db, owner, "p1")).length).toBeGreaterThan(0);
+  });
+  it("persists the source manifest and dependency references without wiping unrelated files", async () => {
+    const { db } = fixture();
+    await applyProjectFiles(db, owner, { project_id: "p1", files: [
+      { path: "index.html", content: "<h1>Portfolio</h1>", language: "html" },
+      { path: "styles.css", content: "body { color: red }", language: "css" },
+      { path: "package.json", content: '{"dependencies":{"lit":"^3.0.0"}}', language: "json" },
+    ] });
+    const before = await getProject(db, owner, "p1");
+    expect(before.project).toMatchObject({ revision: 1, entry_point: "index.html", dependency_manifest: { lit: "^3.0.0" } });
+    await applyProjectFiles(db, owner, { project_id: "p1", expected_revision: 1, files: [
+      { path: "styles.css", content: "body { color: blue }", language: "css" },
+    ] });
+    const after = await getProject(db, owner, "p1");
+    expect(after.project.revision).toBe(2);
+    expect(after.files.map((f) => f.path)).toEqual(["index.html", "package.json", "styles.css"]);
+    expect(after.files.find((f) => f.path === "index.html")?.content).toBe("<h1>Portfolio</h1>");
+    expect(after.files.find((f) => f.path === "styles.css")?.content).toContain("blue");
+    expect((await listProjectVersions(db, owner, "p1"))).toHaveLength(2);
   });
   it("renames/deletes and restores actual previous contents", async () => {
     const { db } = fixture();

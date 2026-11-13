@@ -103,6 +103,12 @@ export function BuildStatusCard({
         ) : null}
       </header>
 
+      {run.projectId ? (
+        <p className="px-3 pb-1.5 text-[11px] text-ink-2">
+          <span className="font-semibold text-accent">{run.logs.some((line) => line.message.startsWith("Created project")) ? "CREATE MODE" : "EDIT MODE"}</span>
+          {" · "}{run.projectTitle || "Project"} <span className="font-mono text-ink-3">({run.projectId.slice(0, 8)})</span>
+        </p>
+      ) : null}
       <div className="px-3 pb-2">
         <Progress value={progress.percent} />
       </div>

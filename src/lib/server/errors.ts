@@ -1,5 +1,5 @@
 export class RpcError extends Error {
-  constructor(readonly code: string, readonly status: number = 400) {
+  constructor(readonly code: string, readonly status: number = 400, readonly detail?: string) {
     super(code);
     this.name = "RpcError";
   }
