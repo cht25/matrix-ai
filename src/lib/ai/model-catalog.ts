@@ -1,6 +1,6 @@
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse, type AIProviderName } from "@/lib/ai/provider-error";
 
-export type CatalogModel = { id: string; label: string; ownedBy?: string };
+export type CatalogModel = { id: string; label: string; ownedBy?: string; contextTokens?: number };
 export type CatalogResult = { models: CatalogModel[]; verifiedAt: string };
 const cache = new Map<string, { expires: number; result: CatalogResult }>();
 const pending = new Map<string, Promise<CatalogResult>>();
@@ -20,7 +20,11 @@ export function parseModelCatalog(payload: unknown): CatalogModel[] {
     const id = raw.replace(/^models\//, "").trim();
     if (!id || id.length > 220 || /[\x00-\x1f\s]/.test(id) || seen.has(id)) continue;
     seen.add(id);
-    models.push({ id, label: typeof item.display_name === "string" ? item.display_name.slice(0, 160) : id, ...(typeof item.owned_by === "string" ? { ownedBy: item.owned_by.slice(0, 100) } : {}) });
+    const context = Number(item.context_window ?? item.context_length ?? item.input_token_limit);
+    models.push({ id, label: typeof item.display_name === "string" ? item.display_name.slice(0, 160) : id,
+      ...(typeof item.owned_by === "string" ? { ownedBy: item.owned_by.slice(0, 100) } : {}),
+      ...(Number.isInteger(context) && context >= 1024 && context <= 10_000_000 ? { contextTokens: context } : {}),
+    });
     if (models.length >= 2000) break;
   }
   return models.sort((a, b) => a.id.localeCompare(b.id));

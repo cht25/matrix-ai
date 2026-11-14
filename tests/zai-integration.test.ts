@@ -29,19 +29,18 @@ describe("Z.ai international environment integration", () => {
       calls.push({ url, headers: options.headers!, body: String(options.body) });
       return new Response(JSON.stringify({ choices: [{ message: { content: "source files" } }] }), { status: 200 });
     }));
-    for (const coding of [false, true]) {
+    for (const coding of [true]) {
       const route = (await createAIRoutesFromDb(null, coding))[0];
       expect(route.provider).toBe("GLM");
-      expect(route.model).toBe(coding ? "glm-4.7-code" : "glm-4.7");
+      expect(route.model).toBe("glm-5-turbo");
       await route.client.chat({ model: route.model, messages: [{ role: "user", content: "write source" }] });
     }
-    expect(calls.map((call) => call.url)).toEqual([
-      "https://api.z.ai/api/paas/v4/chat/completions",
-      "https://api.z.ai/api/paas/v4/chat/completions",
-    ]);
-    expect(calls.every((call) => (call.headers as Record<string, string>).Authorization === "Bearer zai-private-key-12345")).toBe(true);
-    expect(calls.map((call) => JSON.parse(call.body).model)).toEqual(["glm-4.7", "glm-4.7-code"]);
-    expect(calls.every((call) => !call.url.includes("zai-private-key"))).toBe(true);
+    const completions = calls.filter((call) => String(call.url).endsWith("/chat/completions"));
+    expect(completions.map((call) => call.url)).toEqual(["https://api.z.ai/api/paas/v4/chat/completions"]);
+    expect(completions.every((call) => (call.headers as Record<string, string>).Authorization === "Bearer zai-private-key-12345")).toBe(true);
+    expect(completions.map((call) => JSON.parse(call.body).model)).toEqual(["glm-5-turbo"]);
+    expect(await createAIRoutesFromDb(null, false)).toHaveLength(0);
+    expect(calls.every((call) => !String(call.url).includes("zai-private-key"))).toBe(true);
   });
 
   it("normalizes explicit endpoint URLs and uses the matching image credentials", async () => {

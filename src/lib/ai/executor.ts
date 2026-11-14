@@ -5,6 +5,7 @@
 import type { AIMessage, AIProviderRequest, AIProviderResponse } from "@/lib/ai/groq";
 import { AIConfigurationError, type AIRouteTarget } from "@/lib/ai/config";
 import { AIProviderError, logProviderFailure, providerErrorFromException } from "@/lib/ai/provider-error";
+import { reportModelResult } from "@/lib/ai/model-routing";
 
 export type CompletedAIResponse = {
   target: AIRouteTarget;
@@ -44,6 +45,7 @@ export async function completeWithFallback(
     const target = targets[routeIndex];
     const attempts = routeIndex === 0 ? 2 : 1;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const started = Date.now();
       try {
         const response = await target.client.chat({
           ...request,
@@ -61,10 +63,12 @@ export async function completeWithFallback(
             fallbackEligible: true,
           });
         }
+        reportModelResult(target, Date.now() - started);
         return { target, response };
       } catch (error) {
         const typed = asProviderError(target, error, request.requestId);
         lastError = typed;
+        reportModelResult(target, Date.now() - started, typed);
         logProviderFailure(typed, request.requestId);
         if (attempt + 1 < attempts && canTryAgain(typed)) {
           await waitBriefly();
@@ -100,6 +104,7 @@ export async function* streamWithFallback(
     const attempts = routeIndex === 0 ? 2 : 1;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       let yielded = false;
+      const started = Date.now();
       try {
         onRoute(target, routeIndex > 0);
         if (!target.client.streamChat) throw new Error("provider does not support streaming");
@@ -122,10 +127,12 @@ export async function* streamWithFallback(
             fallbackEligible: true,
           });
         }
+        reportModelResult(target, Date.now() - started);
         return;
       } catch (error) {
         const typed = asProviderError(target, error, request.requestId);
         lastError = typed;
+        reportModelResult(target, Date.now() - started, typed);
         logProviderFailure(typed, request.requestId);
         // Do not splice two unrelated answers together after content reached
         // the browser. The route persists the partial answer and reports it.

@@ -7,7 +7,8 @@ import { Alert, Badge, Button, Card, EmptyState, Input } from "@/components/ui";
 import { rpc } from "@/lib/client/api";
 
 type Provider = { id: string; name: string; defaultModel: string; codingModel: string; models: { id: string; label: string }[]; verification: string; error?: string };
-type Catalog = { providers: Provider[]; preference: { provider_id: string; model_id: string } };
+type Preference = { provider_id: string; model_id: string };
+type Catalog = { providers: Provider[]; preference: Preference; preferences: { chat: Preference; agent: Preference } };
 
 export function ModelsClient() {
   const [data, setData] = useState<Catalog | null>(null);
@@ -15,6 +16,8 @@ export function ModelsClient() {
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [saving, setSaving] = useState("");
+  const [mode, setMode] = useState<"chat" | "agent">("chat");
+  const preference = data?.preferences?.[mode] ?? data?.preference ?? { provider_id: "", model_id: "" };
   const load = useCallback(async () => {
     setLoading(true); setError("");
     try {
@@ -30,14 +33,14 @@ export function ModelsClient() {
   async function select(provider: string, model: string) {
     setSaving(`${provider}/${model}`); setError("");
     try {
-      await rpc("model_preference_set", { provider_id: provider, model_id: model });
-      setData((current) => current ? { ...current, preference: { provider_id: provider, model_id: model } } : current);
+      await rpc("model_preference_set", { mode, provider_id: provider, model_id: model });
+      setData((current) => current ? { ...current, preferences: { ...current.preferences, [mode]: { provider_id: provider, model_id: model } } } : current);
     } catch { setError("Model preference could not be saved. Your previous selection is unchanged."); }
     finally { setSaving(""); }
   }
   async function automatic() {
     setSaving("auto");
-    try { await rpc("model_preference_set", { provider_id: "", model_id: "" }); setData((current) => current ? { ...current, preference: { provider_id: "", model_id: "" } } : current); }
+    try { await rpc("model_preference_set", { mode, provider_id: "", model_id: "" }); setData((current) => current ? { ...current, preferences: { ...current.preferences, [mode]: { provider_id: "", model_id: "" } } } : current); }
     catch { setError("Could not reset model routing."); }
     finally { setSaving(""); }
   }
@@ -50,8 +53,8 @@ export function ModelsClient() {
     <Alert>Catalog verification is not a guarantee of billing entitlement or vision capability. The provider validates access again when you send a request. API keys never leave the server.</Alert>
     {error ? <Alert tone="danger">{error}</Alert> : null}
     <Card className="flex flex-wrap items-center justify-between gap-3">
-      <div><p className="text-sm font-medium">Current preference</p><p className="mt-1 break-all font-mono text-xs text-ink-2">{data?.preference.model_id ? `${data.preference.provider_id} / ${data.preference.model_id}` : "Automatic · GLM-5-Turbo"}</p></div>
-      <div className="flex gap-2"><Button variant="secondary" disabled={Boolean(saving)} onClick={() => void automatic()}>Return to GLM-5-Turbo</Button><Link href="/chat" className="btn-primary">Open chat</Link></div>
+      <div><div className="mb-3 flex gap-1" role="group" aria-label="Model policy"><button type="button" aria-pressed={mode === "chat"} className={`rounded-lg px-3 py-2 text-sm ${mode === "chat" ? "bg-accent-soft text-accent" : "text-ink-2"}`} onClick={() => setMode("chat")}>Normal Chat</button><button type="button" aria-pressed={mode === "agent"} className={`rounded-lg px-3 py-2 text-sm ${mode === "agent" ? "bg-accent-soft text-accent" : "text-ink-2"}`} onClick={() => setMode("agent")}>Agent</button></div><p className="text-sm font-medium">Current preference</p><p className="mt-1 break-all font-mono text-xs text-ink-2">{preference.model_id ? `${preference.provider_id} / ${preference.model_id}` : mode === "chat" ? "Automatic · OSS 120B" : "Automatic · best available coding model"}</p></div>
+      <div className="flex gap-2"><Button variant="secondary" disabled={Boolean(saving)} onClick={() => void automatic()}>Return to {mode === "chat" ? "OSS 120B" : "Agent auto"}</Button><Link href="/chat" className="btn-primary">Open chat</Link></div>
     </Card>
     <div className="relative"><Search size={16} className="absolute left-3 top-3.5 text-ink-3" /><Input className="pl-10" aria-label="Search models" placeholder="Search provider or model ID…" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
     {loading && !data ? <Card><p className="text-sm text-ink-2">Verifying provider catalogs…</p></Card> : data?.providers.length === 0 ? <EmptyState icon={<Cpu />} title="No providers configured" body="Configure an existing provider in Admin → AI configuration, or add server credentials using the environment inventory." /> : null}
@@ -62,7 +65,7 @@ export function ModelsClient() {
         {provider.error ? <Alert tone="warning">The provider catalog could not be verified ({provider.error}). Check the server configuration; no substitute models have been invented.</Alert> : null}
         <div className="grid gap-2 sm:grid-cols-2">
           {models.slice(0, 100).map((model) => {
-            const selected = data.preference.provider_id === provider.id && data.preference.model_id === model.id;
+            const selected = preference.provider_id === provider.id && preference.model_id === model.id;
             const key = `${provider.id}/${model.id}`;
             return <button type="button" key={model.id} disabled={Boolean(saving)} onClick={() => void select(provider.id, model.id)} aria-pressed={selected} className={`flex min-h-16 items-center justify-between gap-3 rounded-xl border p-3 text-left transition-colors ${selected ? "border-accent bg-accent-soft" : "border-border hover:bg-surface-2"}`}>
               <span className="min-w-0"><span className="block break-all font-mono text-xs">{model.id}</span><span className="mt-1 block text-[11px] text-ink-3">{model.id === provider.codingModel ? "Configured for Agent / coding" : model.id === provider.defaultModel ? "Configured default" : "Provider-listed model"}</span></span>

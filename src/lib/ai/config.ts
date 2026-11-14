@@ -17,6 +17,7 @@ import {
 import { environmentProviders, CatalogValidatedProvider, type RegisteredProvider } from "@/lib/ai/provider-registry";
 import { AIProviderError, type AIProviderName } from "@/lib/ai/provider-error";
 import { getManagedProviderCatalogEntries, getManagedProviderRoutes } from "@/lib/ai/managed-providers";
+import { discoverAgentModels, rankModelRoutes } from "@/lib/ai/model-routing";
 
 export type AIRouteTarget = {
   provider: AIProviderName;
@@ -24,27 +25,16 @@ export type AIRouteTarget = {
   client: AIProvider;
   providerId?: string;
   tier?: WorkloadTier;
+  contextTokens?: number;
 };
 
 /**
  * Shipped defaults displayed when no credentials have been set yet.
  */
 export const AI_CONFIG = {
-  general: {
-    provider: "GLM" as const,
-    model: GLM_DEFAULT_MODEL,
-    fallback: "",
-  },
-  coding: {
-    provider: "GLM" as const,
-    model: GLM_DEFAULT_CODING_MODEL,
-    fallbackProvider: "Groq" as const,
-    fallbackModel: GPT_OSS_DEFAULT_MODEL,
-  },
-  vision: {
-    provider: "GLM" as const,
-    model: GLM_DEFAULT_VISION_MODEL,
-  },
+  general: { provider: "Groq" as const, model: GPT_OSS_DEFAULT_MODEL, fallback: "" },
+  coding: { provider: "GLM" as const, model: GLM_DEFAULT_CODING_MODEL, fallbackProvider: "OpenAI" as const, fallbackModel: "" },
+  vision: { provider: "GLM" as const, model: GLM_DEFAULT_VISION_MODEL },
 } as const;
 
 class FallbackSafeProvider implements AIProvider {
@@ -92,12 +82,12 @@ export function logAIConfiguration(): void {
   if (globalState[CONFIG_LOGGED]) return;
   globalState[CONFIG_LOGGED] = true;
   console.info("[MATRIX] AI configuration", {
-    architecture: "GLM-5-Turbo primary for Chat and Agent; alternative models only by explicit selection",
+    architecture: "OSS 120B Normal Chat; capability-ranked GLM-first Agent with automatic fallback",
     glm: keyConfigured(process.env.ZAI_API_KEY) || keyConfigured(process.env.GLM_API_KEY) ? "configured" : "missing",
     glmModel: process.env.GLM_MODEL?.trim() || AI_CONFIG.coding.model,
     lowTaskEngine: keyConfigured(process.env.GROQ_API_KEY) || keyConfigured(process.env.GPT_OSS_API_KEY) ? "configured" : "missing",
     lowTaskModel: MODELS.chat || GPT_OSS_DEFAULT_MODEL,
-    fallback: "off by default; explicit alternative model selection or Try another model only",
+    fallback: "eligible configured models on model outage/rate-limit; no fallback for invalid credentials or billing",
   });
 }
 
@@ -105,88 +95,56 @@ function isLowTierTarget(target: AIRouteTarget): boolean {
   return target.providerId === "groq" || target.providerId === "gpt-oss" || /gpt-oss-120b/i.test(target.model);
 }
 
-/**
- * Environment-only routes, ordered by workload tier (`"high"` → GLM first;
- * `"low"` → `openai/gpt-oss-120b` first, with GLM as resilient fallback).
- */
-export function createAIRoutes(
-  coding: boolean,
-  preferFallback = false,
-  _tier: WorkloadTier = "high",
-): AIRouteTarget[] {
+/** Environment-only routes. Chat never silently routes to GLM. */
+export function createAIRoutes(coding: boolean, preferFallback = false, _tier: WorkloadTier = "high"): AIRouteTarget[] {
   const providers = environmentProviders();
-  const glm = providers.find((entry) => entry.id === "glm");
-  const primary = glm ? [{ provider: "GLM" as const, providerId: glm.id,
-    model: coding ? glm.codingModel : glm.defaultModel, client: glm.client, tier: "high" as const }] : [];
-  // Other configured providers remain selectable. They are never implicit
-  // substitutes for an absent or failing GLM; only an explicit retry requests
-  // an alternative, and the gateway surfaces the actual provider in its reply.
-  if (!preferFallback) return primary;
-  const alternatives: AIRouteTarget[] = providers.filter((entry) => entry.id !== "glm" && (coding ? entry.codingModel : entry.defaultModel))
-    .map((entry) => ({ provider: entry.name as AIProviderName, providerId: entry.id,
-      model: coding ? entry.codingModel : entry.defaultModel, client: entry.client, tier: "low" as const }));
-  return [...alternatives, ...primary];
+  const candidates: AIRouteTarget[] = providers.map((entry) => ({
+    provider: entry.name as AIProviderName, providerId: entry.id,
+    model: coding ? entry.codingModel : entry.defaultModel, client: entry.client,
+    tier: coding ? "high" : "low",
+  }));
+  const routes = rankModelRoutes(candidates, coding ? "agent" : "chat");
+  return preferFallback && routes.length > 1 ? [...routes.slice(1), routes[0]] : routes;
 }
 
 export function aiProviderConfigured(coding: boolean): boolean {
   return createAIRoutes(coding).length > 0;
 }
 
-/** Resolve one authoritative automatic primary. Other providers require an explicit choice. */
+/** Build independent Chat and Agent routes from configured, eligible models. */
 export async function createAIRoutesFromDb(
   d: Db | null,
   coding: boolean,
   preferFallback = false,
   tier: WorkloadTier = coding ? "high" : "low",
 ): Promise<AIRouteTarget[]> {
-  const effectiveTier: WorkloadTier = coding ? "high" : tier;
-  const envTargets = createAIRoutes(coding, false, effectiveTier);
-  let managedTargets: Awaited<ReturnType<typeof getManagedProviderRoutes>> = [];
-  let runtimeRoute: RuntimeAIRoute | null = null;
-  let runtimeConfig: Awaited<ReturnType<typeof resolveMainModelConfig>> = null;
-
-  if (d) {
-    try {
-      managedTargets = await getManagedProviderRoutes(d, coding ? "agent" : "chat");
-    } catch (error) {
-      console.error("[MATRIX] Managed AI provider registry could not be read; using remaining providers.", error instanceof Error ? error.message.slice(0, 160) : "unknown");
-    }
-    try {
-      runtimeConfig = await resolveMainModelConfig(d);
-      runtimeRoute = createRuntimeAIRoute(runtimeConfig);
-    } catch (error) {
-      console.error(
-        "[MATRIX] Main model settings could not be read; using environment providers.",
-        error instanceof Error ? error.message.slice(0, 160) : "unknown",
-      );
-    }
-  } else {
-    try {
-      runtimeConfig = await resolveMainModelConfig(null);
-      runtimeRoute = createRuntimeAIRoute(runtimeConfig);
-    } catch { /* fall through to env targets */ }
+  const providers = environmentProviders();
+  const managed = d ? await getManagedProviderRoutes(d, coding ? "agent" : "chat").catch(() => []) : [];
+  const config = await resolveMainModelConfig(d).catch(() => null);
+  const runtime = coding ? createRuntimeAgentRoute(config) : createRuntimeAIRoute(config);
+  const candidates: AIRouteTarget[] = [
+    ...managed.map((entry) => ({ ...entry, tier: coding ? "high" as const : "low" as const })),
+    ...providers.map((entry) => ({
+      provider: entry.name as AIProviderName, providerId: entry.id,
+      model: coding ? entry.codingModel : entry.defaultModel, client: entry.client,
+      tier: coding ? "high" as const : "low" as const,
+    })),
+  ];
+  // The main admin record may be a different account, but a GLM model must
+  // never leak into Chat's automatic candidate pool.
+  if (runtime && config && (config.source === "database" || !candidates.some((entry) => entry.provider === runtime.provider && entry.model === runtime.model))) {
+    candidates.push({ ...runtime, providerId: `main-${config.kind}`, tier: coding ? "high" : tier });
   }
-
-  const managedRouteTargets: AIRouteTarget[] = managedTargets.map((target) => ({
-    ...target,
-    client: new FallbackSafeProvider(target.client),
-  }));
-
-  const main = runtimeRoute
-    ? (coding && runtimeConfig?.agent_model ? createRuntimeAgentRoute(runtimeConfig) ?? runtimeRoute : runtimeRoute)
-    : null;
-  const primary: AIRouteTarget | null = main
-    ? { ...main, providerId: `main-${main.kind}`, tier: "high" }
-    : envTargets.find((target) => target.providerId === "glm") ?? null;
-  const explicitAdminOverride = runtimeConfig?.source === "database";
-  if (!preferFallback) {
-    // A persisted Admin primary is intentional; absent that, no Groq/OSS or
-    // managed account may silently replace a missing GLM configuration.
-    return primary && (primary.provider === "GLM" || explicitAdminOverride) ? [primary] : [];
+  if (coding) {
+    // Discover suitable live catalogue IDs where available; official GLM
+    // defaults remain candidates when a region does not expose /models.
+    const glm = candidates.filter((candidate) => candidate.provider === "GLM" && candidate.client.supportsToolCalls === true);
+    const discovered = await Promise.all(glm.slice(0, 3).map((candidate) =>
+      discoverAgentModels(candidate.client, candidate.model, candidate.provider, candidate.providerId ?? "glm")));
+    candidates.push(...discovered.flat());
   }
-  const alternatives = [...managedRouteTargets, ...createAIRoutes(coding, true, effectiveTier), ...envTargets]
-    .filter((target) => !primary || `${target.provider}:${target.model}` !== `${primary.provider}:${primary.model}`);
-  return [...alternatives, ...(primary ? [primary] : [])];
+  const routes = rankModelRoutes(candidates, coding ? "agent" : "chat");
+  return preferFallback && routes.length > 1 ? [...routes.slice(1), routes[0]] : routes;
 }
 
 /**

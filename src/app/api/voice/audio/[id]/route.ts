@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionUser } from "@/lib/firebase/session";
 import { isOwnedChatAudioPath } from "@/lib/ai/audio";
@@ -56,6 +57,10 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
   if (!isOwnedChatAudioPath(user.uid, publicId)) return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
   const deleted = await deletePrivateAudio(publicId);
   if (!deleted) return NextResponse.json({ error: "AUDIO_DELETE_FAILED" }, { status: 502 });
+  if (typeof data.conversation_id === "string" && typeof data.message_id === "string") {
+    await db.collection("conversations").doc(data.conversation_id).collection("messages").doc(data.message_id)
+      .update({ "metadata.audio_asset_id": FieldValue.delete() }).catch(() => {});
+  }
   await ref.delete();
   return NextResponse.json({ deleted: true }, { headers: { "Cache-Control": "private, no-store" } });
 }

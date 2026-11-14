@@ -129,8 +129,11 @@ const ACTIONS: Record<string, Handler> = {
   model_preference_set: async (d, u, b) => {
     const providerId = z.string().max(80).parse(b.provider_id ?? "");
     const modelId = z.string().max(220).parse(b.model_id ?? "");
+    const mode = z.enum(["chat", "agent"]).parse(b.mode ?? "chat");
     if (providerId || modelId) await import("@/lib/ai/config").then((m) => m.resolveSelectedAIRoute(d, providerId, modelId));
-    await d.collection("user_security_settings").doc(u.uid).set({ ai_provider_id: providerId, ai_model_id: modelId, updated_at: nowTs() }, { merge: true });
+    const fields = mode === "agent" ? { agent_ai_provider_id: providerId, agent_ai_model_id: modelId }
+      : { chat_ai_provider_id: providerId, chat_ai_model_id: modelId, ai_provider_id: providerId, ai_model_id: modelId };
+    await d.collection("user_security_settings").doc(u.uid).set({ ...fields, updated_at: nowTs() }, { merge: true });
     return { provider_id: providerId, model_id: modelId };
   },
   // --- onboarding / identity --------------------------------------------------

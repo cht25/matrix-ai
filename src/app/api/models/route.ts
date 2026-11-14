@@ -3,6 +3,7 @@ import { adminDb } from "@/lib/firebase/admin";
 import { getSessionUser } from "@/lib/firebase/session";
 import { providerCatalogEntries } from "@/lib/ai/config";
 import { providerPublicCode } from "@/lib/ai/provider-error";
+import { preferenceForMode } from "@/lib/ai/model-preferences";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,5 +24,5 @@ export async function GET() {
     }
   }));
   const settings = await adminDb().collection("user_security_settings").doc(user.uid).get();
-  return NextResponse.json({ providers, preference: { provider_id: settings.data()?.ai_provider_id ?? "", model_id: settings.data()?.ai_model_id ?? "" }, reveal_mode: settings.data()?.stream_reveal_mode ?? "adaptive" }, { headers: { "Cache-Control": "private, no-store" } });
+  return NextResponse.json({ providers, preference: preferenceForMode(settings.data(), "chat"), preferences: { chat: preferenceForMode(settings.data(), "chat"), agent: preferenceForMode(settings.data(), "agent") }, reveal_mode: settings.data()?.stream_reveal_mode ?? "adaptive" }, { headers: { "Cache-Control": "private, no-store" } });
 }
