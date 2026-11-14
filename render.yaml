@@ -66,6 +66,10 @@ services:
         sync: false
       - key: GROQ_CHAT_MODEL
         value: openai/gpt-oss-120b
+      # Optional Agent fallback after GLM. Model IDs are discovered from the
+      # catalogue of this key; no GEMINI_MODEL is needed.
+      - key: GEMINI_API_KEY
+        sync: false
       - key: RESEND_API_KEY
         sync: false
       - key: RESEND_FROM_EMAIL

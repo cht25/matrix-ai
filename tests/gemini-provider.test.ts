@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import { once } from "node:events";
-import { GeminiProvider, parseGeminiModelCatalog } from "@/lib/ai/gemini";
+import { resetGeminiCatalogCache, GeminiProvider, parseGeminiModelCatalog } from "@/lib/ai/gemini";
 
 let server: Server | undefined;
 let baseUrl = "";
@@ -23,6 +23,7 @@ async function listen(handler: (req: import("node:http").IncomingMessage, res: i
 }
 
 afterEach(async () => {
+  resetGeminiCatalogCache();
   if (server) {
     server.close();
     await once(server, "close");
@@ -65,7 +66,7 @@ describe("Gemini native REST provider", () => {
     const tools = [{ type: "function" as const, function: { name: "projects.list", description: "List projects", parameters: { type: "object", properties: { limit: { type: "integer", minimum: 1 } } } } }];
     const selected = await provider.chat({ model: "model-now", messages: [{ role: "user", content: "List projects" }], tools });
     expect(provider.supportsToolCalls).toBe(true);
-    expect(selected.toolCalls).toEqual([{ id: "gemini-0", type: "function", function: { name: "projects.list", arguments: "{}" } }]);
+    expect(selected.toolCalls).toEqual([{ id: expect.stringMatching(/^gemini-/), type: "function", function: { name: "projects.list", arguments: "{}" } }]);
     expect(JSON.parse(calls[0].body).tools).toEqual([{ functionDeclarations: [{ name: "projects_list", description: "List projects", parameters: { type: "OBJECT", properties: { limit: { type: "INTEGER" } } } }] }]);
     const final = await provider.chat({
       model: "model-now",
@@ -86,7 +87,7 @@ describe("Gemini native REST provider", () => {
 
   it("discovers models and streams actual text deltas from the native SSE endpoint", async () => {
     await listen((req, res) => {
-      if (req.url === "/v1beta/models") {
+      if (req.url?.split("?")[0] === "/v1beta/models") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ models: [{ name: "models/model-now", supportedGenerationMethods: ["generateContent"] }] }));
         return;
@@ -106,7 +107,7 @@ describe("Gemini native REST provider", () => {
 
   it("probes only the selected model and invokes real generation instead of trusting key presence", async () => {
     await listen((req, res) => {
-      if (req.url === "/v1beta/models") {
+      if (req.url?.split("?")[0] === "/v1beta/models") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ models: [{ name: "models/chosen-model", supportedGenerationMethods: ["generateContent"] }] }));
       } else {
@@ -117,7 +118,7 @@ describe("Gemini native REST provider", () => {
     const provider = new GeminiProvider("test-key", baseUrl);
     expect(await provider.healthCheck("chosen-model")).toBe(true);
     expect(await provider.healthCheck("chosen-model")).toBe(true);
-    expect(calls.map((call) => call.url)).toEqual(["/v1beta/models", "/v1beta/models/chosen-model:generateContent"]);
+    expect(calls.map((call) => call.url)).toEqual(["/v1beta/models?pageSize=1000", "/v1beta/models/chosen-model:generateContent"]);
   });
 
   it("sends recorded audio through Gemini generateContent and returns the provider transcript", async () => {

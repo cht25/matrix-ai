@@ -70,13 +70,17 @@ describe("independent mode policy and intelligent fallback", () => {
     expect(calls).toBe(3);
   });
 
-  it("stops on credentials, billing and malformed requests; never hides their errors", async () => {
-    const next = vi.fn(ok);
+  it("continues past credential, billing and rejected-request failures, recording each one", async () => {
     for (const [type, status] of [["authentication", 401], ["billing", 402], ["invalid_request", 400]] as const) {
+      const next = vi.fn(ok);
       const first = target("GLM", "glm-5-turbo", async () => { throw new AIProviderError({ provider: "GLM", model: "glm-5-turbo", status, type, detail: "rejected" }); });
-      await expect(completeWithFallback([first, target("OpenAI", "gpt-4.1", next)], { messages: [] })).rejects.toMatchObject({ type });
+      const result = await completeWithFallback([first, target("OpenAI", "gpt-4.1", next)], { messages: [] });
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(result.fallback).toBe(true);
+      expect(result.attempts).toEqual([expect.objectContaining({ provider: "GLM", model: "glm-5-turbo", type, status })]);
+      // With nothing else to try the original error is surfaced unchanged.
+      await expect(completeWithFallback([first], { messages: [] })).rejects.toMatchObject({ type });
     }
-    expect(next).not.toHaveBeenCalled();
     expect(providerErrorFromResponse("GLM", "glm-5-turbo", new Response("model not available", { status: 400 }), "model not available").fallbackEligible).toBe(true);
   });
 

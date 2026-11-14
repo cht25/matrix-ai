@@ -63,6 +63,16 @@ env:
   - variable: GLM_IMAGE_MODEL
     value: cogview-4
     availability: [RUNTIME]
+  # Gemini is the Agent's second choice after GLM. It is OPTIONAL and can be
+  # supplied either in Admin → AI providers (stored encrypted in Firestore) or
+  # as a secret here. It is left commented so a deploy does not fail when the
+  # secret has not been created:
+  #   firebase apphosting:secrets:set GEMINI_API_KEY
+  # - variable: GEMINI_API_KEY
+  #   availability: [RUNTIME]
+  #   secret: GEMINI_API_KEY
+  # GEMINI_MODEL / GEMINI_CODING_MODEL may stay unset: MATRIX reads the key's
+  # live model catalogue and uses the strongest listed Gemini model.
   - variable: GROQ_API_KEY
     availability: [RUNTIME]
     secret: GROQ_API_KEY

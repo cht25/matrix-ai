@@ -31,6 +31,31 @@
   to { opacity: 1; transform: none; }
 }
 
+/* Streaming caret: drawn at the end of the last text block instead of as a
+   separate element, so it never pushes content onto a new line and nothing
+   moves when the stream completes and the caret disappears. */
+.ai-reply[data-streaming="true"] > p:last-child::after,
+.ai-reply[data-streaming="true"] > ul:last-child > li:last-child::after,
+.ai-reply[data-streaming="true"] > ol:last-child > li:last-child::after,
+.ai-reply[data-streaming="true"] > blockquote:last-child::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: currentColor;
+  opacity: 0.7;
+  animation: stream-caret 1s steps(2, start) infinite;
+}
+@keyframes stream-caret { to { visibility: hidden; } }
+@media (prefers-reduced-motion: reduce) {
+  .ai-reply[data-streaming="true"] > :last-child::after { animation: none; }
+}
+/* A code block that is still streaming must not resize the column as lines
+   arrive: it scrolls inside its own box. */
+.ai-reply .code-block pre { overflow-anchor: none; }
+
 .menu-pop { animation: menu-pop 120ms ease-out both; }
 @keyframes menu-pop {
   from { opacity: 0; transform: translateY(-3px); }

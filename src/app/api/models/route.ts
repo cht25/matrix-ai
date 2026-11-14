@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionUser } from "@/lib/firebase/session";
-import { providerCatalogEntries } from "@/lib/ai/config";
+import { describeExecutionRoutes, providerCatalogEntries } from "@/lib/ai/config";
 import { providerPublicCode } from "@/lib/ai/provider-error";
 import { preferenceForMode } from "@/lib/ai/model-preferences";
 
@@ -24,5 +24,11 @@ export async function GET() {
     }
   }));
   const settings = await adminDb().collection("user_security_settings").doc(user.uid).get();
-  return NextResponse.json({ providers, preference: preferenceForMode(settings.data(), "chat"), preferences: { chat: preferenceForMode(settings.data(), "chat"), agent: preferenceForMode(settings.data(), "agent") }, reveal_mode: settings.data()?.stream_reveal_mode ?? "adaptive" }, { headers: { "Cache-Control": "private, no-store" } });
+  // The order the server will actually try, per mode — computed by the same
+  // code that routes requests, so the page cannot drift from the backend.
+  const [agentRoutes, chatRoutes] = await Promise.all([
+    describeExecutionRoutes(adminDb(), "agent").catch(() => []),
+    describeExecutionRoutes(adminDb(), "chat").catch(() => []),
+  ]);
+  return NextResponse.json({ providers, routing: { agent: agentRoutes, chat: chatRoutes }, preference: preferenceForMode(settings.data(), "chat"), preferences: { chat: preferenceForMode(settings.data(), "chat"), agent: preferenceForMode(settings.data(), "agent") }, reveal_mode: settings.data()?.stream_reveal_mode ?? "adaptive" }, { headers: { "Cache-Control": "private, no-store" } });
 }

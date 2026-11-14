@@ -25,6 +25,14 @@ import { normalizeCompatibleBaseUrl } from "@/lib/ai/openai";
 export const GLM_API_BASE_URL = "https://open.bigmodel.cn/api/paas/v4";
 export const GLM_INTL_API_BASE_URL = "https://api.z.ai/api/paas/v4";
 
+export const GLM_CODING_PLAN_INTL_BASE_URL = "https://api.z.ai/api/coding/paas/v4";
+export const GLM_CODING_PLAN_API_BASE_URL = "https://open.bigmodel.cn/api/coding/paas/v4";
+
+/**
+ * Suggested ID only. It is never assumed to exist: Agent routing checks the
+ * account catalogue (`discoverAgentModels`) and a real completion, and moves
+ * to the next strongest listed GLM model when this one is not offered.
+ */
 export const GLM_DEFAULT_MODEL = "glm-5-turbo";
 export const GLM_DEFAULT_CODING_MODEL = GLM_DEFAULT_MODEL;
 export const GLM_DEFAULT_VISION_MODEL = "glm-4.6v";
@@ -47,6 +55,29 @@ export function resolveGlmBaseUrl(explicit?: string): string {
   return normalizeCompatibleBaseUrl(candidate || defaultBase) || defaultBase;
 }
 
+/** True when the operator pinned a gateway; MATRIX then never tries another one. */
+export function glmBaseUrlIsExplicit(explicit?: string): boolean {
+  return Boolean((explicit || process.env.GLM_BASE_URL || "").trim());
+}
+
+/**
+ * Gateways worth trying for a key whose gateway was NOT pinned.
+ *
+ * Zhipu issues region-bound keys (mainland `open.bigmodel.cn`, international
+ * `api.z.ai`) and plan-bound keys (Coding Plan keys only work on
+ * `/api/coding/paas/v4`). A key sent to the wrong one answers 401, or 429 with
+ * business code 1113 — which previously looked like "GLM is down" forever.
+ * The first gateway that accepts the key is remembered for the process.
+ */
+export function glmGatewayCandidates(primary: string): string[] {
+  const all = [primary, GLM_INTL_API_BASE_URL, GLM_CODING_PLAN_INTL_BASE_URL, GLM_API_BASE_URL, GLM_CODING_PLAN_API_BASE_URL];
+  return [...new Set(all)];
+}
+
+const resolvedGateways = new Map<string, string>();
+/** Test hook. */
+export function resetGlmGatewayCache(): void { resolvedGateways.clear(); }
+
 function parseToolCalls(value: unknown): AIProviderToolCall[] {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 10).flatMap((entry) => {
@@ -65,7 +96,12 @@ function parseToolCalls(value: unknown): AIProviderToolCall[] {
 export class GLMProvider implements AIProvider {
   readonly providerName = "GLM";
   readonly supportsToolCalls = true;
-  private readonly baseUrl: string;
+  private readonly configuredBaseUrl: string;
+  private readonly pinned: boolean;
+  /** "live" when the last catalogue came from the account, "static" when it is the documented list. */
+  lastCatalogSource: "live" | "static" = "static";
+  /** Per-model output ceilings learned from a provider rejection. */
+  private readonly maxTokenCeiling = new Map<string, number>();
 
   constructor(
     private readonly apiKey: string,
@@ -73,7 +109,73 @@ export class GLMProvider implements AIProvider {
     private readonly healthCheckModel = GLM_DEFAULT_MODEL,
   ) {
     if (!apiKey.trim()) throw new Error("GLM_API_KEY_REQUIRED");
-    this.baseUrl = resolveGlmBaseUrl(baseUrl);
+    this.configuredBaseUrl = resolveGlmBaseUrl(baseUrl);
+    this.pinned = glmBaseUrlIsExplicit(baseUrl);
+  }
+
+  private get cacheKey(): string { return `${this.configuredBaseUrl}|${this.apiKey.slice(-8)}`; }
+
+  /** The gateway currently believed to accept this key. */
+  get baseUrl(): string {
+    return resolvedGateways.get(this.cacheKey) ?? this.configuredBaseUrl;
+  }
+
+  /**
+   * POST to chat/completions. When the gateway was not pinned and the key is
+   * rejected for a gateway-level reason (401/403, or business code 1113 "no
+   * balance/resource package" which is what a Coding Plan key gets on the
+   * general endpoint), the sibling gateways are tried once and the working
+   * one is remembered. A pinned GLM_BASE_URL is always respected as-is.
+   */
+  private async post(body: Record<string, unknown>, requestId: string | undefined, signal: AbortSignal): Promise<Response> {
+    const send = (base: string) => fetch(`${base}/chat/completions`, {
+      method: "POST", redirect: "error", headers: this.headers(requestId), body: JSON.stringify(body), signal,
+    });
+    const first = await send(this.baseUrl);
+    if (first.ok || this.pinned || resolvedGateways.has(this.cacheKey)) return first;
+    if (first.status !== 401 && first.status !== 403 && first.status !== 429) return first;
+    const firstBody = await first.clone().text().catch(() => "");
+    const gatewayLevel = first.status !== 429 || /"code"\s*:\s*"?1113"?/.test(firstBody);
+    if (!gatewayLevel) return first;
+    for (const candidate of glmGatewayCandidates(this.configuredBaseUrl)) {
+      if (candidate === this.configuredBaseUrl) continue;
+      let response: Response;
+      try { response = await send(candidate); } catch { continue; }
+      if (response.ok) {
+        resolvedGateways.set(this.cacheKey, candidate);
+        console.warn("[MATRIX] GLM key was rejected by the default gateway but accepted by another Zhipu gateway; using it for this process. Set GLM_BASE_URL to pin it.", { rejected: this.configuredBaseUrl, accepted: candidate });
+        return response;
+      }
+      // A different answer than "wrong gateway" (e.g. unknown model) means the
+      // key IS valid here: keep this gateway and surface that real error.
+      if (response.status !== 401 && response.status !== 403) {
+        const text = await response.clone().text().catch(() => "");
+        if (!/"code"\s*:\s*"?1113"?/.test(text)) {
+          resolvedGateways.set(this.cacheKey, candidate);
+          return response;
+        }
+      }
+    }
+    // Every gateway rejected the key: remember that so each request does not
+    // repeat the probe. A rotated key has a different cache entry.
+    resolvedGateways.set(this.cacheKey, this.configuredBaseUrl);
+    return first;
+  }
+
+  /** Some GLM tiers cap max_tokens well below the requested value and reject
+   * the call (code 1210) rather than clamping. Learn the ceiling and retry once. */
+  private async postAdaptive(req: AIProviderRequest, stream: boolean, signal: AbortSignal): Promise<Response> {
+    const body = this.buildBody(req, stream);
+    const response = await this.post(body, req.requestId, signal);
+    if (response.status !== 400) return response;
+    const text = await response.clone().text().catch(() => "");
+    if (!/max_tokens|max_completion_tokens|maximum.{0,20}tokens|最大.{0,12}(?:token|长度)/i.test(text)) return response;
+    const requested = Number(body.max_tokens ?? 4096);
+    const stated = Number(/(?:\[\s*1\s*,\s*|<=?\s*|不超过|at most |maximum (?:of |is )?)(\d{3,6})/i.exec(text)?.[1] ?? 0);
+    const ceiling = stated >= 256 && stated < requested ? stated : Math.max(1024, Math.floor(requested / 2));
+    if (ceiling >= requested) return response;
+    this.maxTokenCeiling.set(String(body.model), ceiling);
+    return this.post({ ...body, max_tokens: ceiling }, req.requestId, signal);
   }
 
   private headers(requestId?: string): Record<string, string> {
@@ -101,9 +203,10 @@ export class GLMProvider implements AIProvider {
   }
 
   private buildBody(req: AIProviderRequest, stream: boolean): Record<string, unknown> {
-    const maxTokens = req.maxTokens ?? 4096;
+    const model = req.model || GLM_DEFAULT_MODEL;
+    const maxTokens = Math.min(req.maxTokens ?? 4096, this.maxTokenCeiling.get(model) ?? Number.MAX_SAFE_INTEGER);
     const body: Record<string, unknown> = {
-      model: req.model || GLM_DEFAULT_MODEL,
+      model,
       messages: this.buildMessages(req),
       temperature: req.temperature ?? 0.4,
       max_tokens: maxTokens,
@@ -120,6 +223,7 @@ export class GLMProvider implements AIProvider {
     try {
       const live = await fetchModelCatalog({ baseUrl: this.baseUrl, apiKey: this.apiKey });
       if (live.models.length > 0) {
+        this.lastCatalogSource = "live";
         return live.models; // Live catalogue: do not invent absent model IDs.
       }
     } catch (error) {
@@ -129,6 +233,7 @@ export class GLMProvider implements AIProvider {
       // Regional GLM PaaS endpoints may omit GET /models while serving
       // POST /chat/completions; return the verified official GLM catalog.
     }
+    this.lastCatalogSource = "static";
     return [...GLM_KNOWN_MODELS];
   }
 
@@ -136,18 +241,12 @@ export class GLMProvider implements AIProvider {
     const model = explicitModel || this.healthCheckModel || GLM_DEFAULT_MODEL;
     const probe = async () => {
       try {
-        const response = await fetch(`${this.baseUrl}/chat/completions`, {
-          method: "POST",
-          redirect: "error",
-          headers: this.headers(),
-          body: JSON.stringify({
-            model,
-            messages: [{ role: "user", content: "ping" }],
-            max_tokens: 1,
-            stream: false,
-          }),
-          signal: AbortSignal.timeout(10_000),
-        });
+        const response = await this.post({
+          model,
+          messages: [{ role: "user", content: "ping" }],
+          max_tokens: 1,
+          stream: false,
+        }, undefined, AbortSignal.timeout(15_000));
         if (response.ok) return { ok: true, status: response.status, detail: "ok" };
         const detail = await response.text().catch(() => "");
         return { ok: false, status: response.status, detail };
@@ -165,13 +264,7 @@ export class GLMProvider implements AIProvider {
   async chat(req: AIProviderRequest): Promise<AIProviderResponse> {
     let response: Response;
     try {
-      response = await fetch(`${this.baseUrl}/chat/completions`, {
-        method: "POST",
-        redirect: "error",
-        headers: this.headers(req.requestId),
-        body: JSON.stringify(this.buildBody(req, false)),
-        signal: req.signal ?? AbortSignal.timeout(90_000),
-      });
+      response = await this.postAdaptive(req, false, req.signal ?? AbortSignal.timeout(req.maxTokens && req.maxTokens > 4096 ? 240_000 : 120_000));
     } catch (error) {
       throw providerErrorFromException("GLM", req.model, error, req.requestId);
     }
@@ -211,13 +304,7 @@ export class GLMProvider implements AIProvider {
   async *streamChat(req: AIProviderRequest): AsyncGenerator<string> {
     let response: Response;
     try {
-      response = await fetch(`${this.baseUrl}/chat/completions`, {
-        method: "POST",
-        redirect: "error",
-        headers: this.headers(req.requestId),
-        body: JSON.stringify(this.buildBody(req, true)),
-        signal: req.signal ?? AbortSignal.timeout(90_000),
-      });
+      response = await this.postAdaptive(req, true, req.signal ?? AbortSignal.timeout(300_000));
 
       if (!response.ok || !response.body) {
         const detail = await response.text().catch(() => "");
@@ -255,7 +342,7 @@ export class GLMProvider implements AIProvider {
           }
           try {
             const event = JSON.parse(payload) as {
-              error?: { message?: string };
+              error?: { message?: string; code?: string | number };
               choices?: { delta?: { content?: unknown; reasoning_content?: unknown; reasoning?: unknown } }[];
               usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
             };
@@ -307,7 +394,13 @@ export class GLMProvider implements AIProvider {
 }
 
 export function createGlmProvider(): AIProvider | null {
-  const key = process.env.GLM_API_KEY?.trim() ?? "";
-  if (!key || key.endsWith("...") || key.startsWith("YOUR-") || key.startsWith("replace-with")) return null;
+  // ZAI_API_KEY is the documented name for Z.ai keys; it used to be accepted
+  // by the registry but ignored here, so those deployments had no GLM route.
+  const usable = (value: string | undefined) => {
+    const key = value?.trim() ?? "";
+    return key && !key.endsWith("...") && !key.startsWith("YOUR-") && !key.startsWith("replace-with") ? key : "";
+  };
+  const key = usable(process.env.ZAI_API_KEY) || usable(process.env.GLM_API_KEY);
+  if (!key) return null;
   return new GLMProvider(key);
 }

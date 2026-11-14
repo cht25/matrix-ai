@@ -13,7 +13,7 @@ type Block =
   | { type: "quote" | "math"; text: string }
   | { type: "table"; rows: string[][] }
   | { type: "image"; alt: string; src: string }
-  | { type: "code"; lang: string; filename: string; code: string };
+  | { type: "code"; lang: string; filename: string; code: string; open?: boolean };
 
 export function parseBlocks(raw: string): Block[] {
   if (looksLikeRawMarkup(raw)) return [{ type: "code", lang: "html", filename: "index.html", code: raw.trim() }];
@@ -64,8 +64,30 @@ export function parseBlocks(raw: string): Block[] {
     if (/^#{1,6}\s/.test(t)) blocks.push({ type: "h", text: t.replace(/^#{1,6}\s/, "") });
     else blocks.push({ type: "p", text: line });
   }
-  if (fence) blocks.push({ type: "code", lang: fence.lang, filename: fence.filename, code: fence.code.join("\n") });
+  // `open` marks a fence the stream has not closed yet.
+  if (fence) blocks.push({ type: "code", lang: fence.lang, filename: fence.filename, code: fence.code.join("\n"), open: true });
   flushList(); flushQuote(); return blocks;
+}
+
+/**
+ * While a reply is streaming, the last line often ends inside an inline
+ * construct ("**bol", "`cod", "[label](https://exa"). Rendered literally the
+ * markers flash on screen and the line reflows when the closing marker
+ * arrives. This closes them provisionally so the text looks the same before
+ * and after — it only ever affects the final, still-growing block.
+ */
+export function closeOpenInline(text: string): string {
+  let out = text;
+  // A link whose URL is still arriving: show the label only.
+  out = out.replace(/\[([^\]\n]*)\]\((?:[^)\s]*)$/, "$1");
+  out = out.replace(/\[([^\]\n]*)$/, "$1");
+  const ticks = (out.match(/`/g) ?? []).length;
+  if (ticks % 2 === 1) out += "`";
+  const outsideCode = out.replace(/`[^`]*`/g, "");
+  const bold = (outsideCode.match(/\*\*/g) ?? []).length;
+  if (bold % 2 === 1) out = /\*\*\s*$/.test(out) ? out.replace(/\*\*\s*$/, "") : `${out}**`;
+  else if (/(?:^|[^*])\*$/.test(out)) out = out.slice(0, -1);
+  return out;
 }
 
 const Inline = memo(function Inline({ text }: { text: string }) {
@@ -119,19 +141,45 @@ const RemoteImage = memo(function RemoteImage({ src, alt }: { src: string; alt: 
     style={{ aspectRatio: "16 / 9" }} />;
 });
 
+function sameBlock(a: Block, b: Block): boolean {
+  if (a === b) return true;
+  if (a.type !== b.type) return false;
+  switch (a.type) {
+    case "ul": case "ol": { const other = b as typeof a; return a.items.length === other.items.length && a.items.every((item, i) => item === other.items[i]); }
+    case "table": { const other = b as typeof a; return a.rows.length === other.rows.length && a.rows.every((row, i) => row.length === other.rows[i].length && row.every((cell, j) => cell === other.rows[i][j])); }
+    case "image": { const other = b as typeof a; return a.src === other.src && a.alt === other.alt; }
+    case "code": { const other = b as typeof a; return a.code === other.code && a.lang === other.lang && a.filename === other.filename && a.open === other.open; }
+    default: return a.text === (b as typeof a).text;
+  }
+}
+
+/**
+ * One rendered block. Memoised on the block's CONTENT, so during streaming
+ * only the block that is still growing re-renders; finished paragraphs, lists
+ * and (already highlighted) code blocks above it are left untouched.
+ */
+const MarkdownBlock = memo(function MarkdownBlock({ block, live }: { block: Block; live: boolean }) {
+  const inline = (text: string) => live ? closeOpenInline(text) : text;
+  switch (block.type) {
+    case "h": return <p className="!mt-3 font-bold text-ink"><Inline text={inline(block.text)} /></p>;
+    case "ul": return <ul>{block.items.map((item, j) => <li key={j}><Inline text={live && j === block.items.length - 1 ? closeOpenInline(item) : item} /></li>)}</ul>;
+    case "ol": return <ol>{block.items.map((item, j) => <li key={j}><Inline text={live && j === block.items.length - 1 ? closeOpenInline(item) : item} /></li>)}</ol>;
+    case "quote": return <blockquote className="border-l-2 border-accent/50 pl-3 text-ink-2"><Inline text={inline(block.text)} /></blockquote>;
+    case "math": return <pre className="max-w-full overflow-x-auto rounded-lg bg-surface-2 p-3 font-mono text-xs" aria-label="LaTeX expression">{block.text}</pre>;
+    case "image": return <RemoteImage src={block.src} alt={block.alt} />;
+    case "table": return <div className="max-w-full overflow-x-auto"><table className="w-full border-collapse text-left text-sm"><thead><tr>{block.rows[0].map((cell, j) => <th key={j} className="border-b border-border px-2 py-1"><Inline text={cell} /></th>)}</tr></thead><tbody>{block.rows.slice(1).map((row, r) => <tr key={r}>{row.map((cell, j) => <td key={j} className="border-b border-border px-2 py-1"><Inline text={cell} /></td>)}</tr>)}</tbody></table></div>;
+    // Only a fence the stream has not closed yet skips highlighting; every
+    // completed code block is highlighted once and then never re-tokenised.
+    case "code": return <CodeBlock lang={block.lang} filename={block.filename} code={block.code} streaming={live && block.open === true} />;
+    default: return <p className="whitespace-pre-wrap"><Inline text={inline(block.text)} /></p>;
+  }
+}, (prev, next) => prev.live === next.live && sameBlock(prev.block, next.block));
+
 export const Markdown = memo(function Markdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const blocks = useMemo(() => parseBlocks(text), [text]);
-  return <div className="ai-reply min-w-0">{blocks.map((block, i) => {
-    switch (block.type) {
-      case "h": return <p key={i} className="!mt-3 font-bold text-ink"><Inline text={block.text} /></p>;
-      case "ul": return <ul key={i}>{block.items.map((item, j) => <li key={j}><Inline text={item} /></li>)}</ul>;
-      case "ol": return <ol key={i}>{block.items.map((item, j) => <li key={j}><Inline text={item} /></li>)}</ol>;
-      case "quote": return <blockquote key={i} className="border-l-2 border-accent/50 pl-3 text-ink-2"><Inline text={block.text} /></blockquote>;
-      case "math": return <pre key={i} className="max-w-full overflow-x-auto rounded-lg bg-surface-2 p-3 font-mono text-xs" aria-label="LaTeX expression">{block.text}</pre>;
-      case "image": return <RemoteImage key={i} src={block.src} alt={block.alt} />;
-      case "table": return <div key={i} className="max-w-full overflow-x-auto"><table className="w-full border-collapse text-left text-sm"><thead><tr>{block.rows[0].map((cell, j) => <th key={j} className="border-b border-border px-2 py-1"><Inline text={cell} /></th>)}</tr></thead><tbody>{block.rows.slice(1).map((row, j) => <tr key={j}>{row.map((cell, k) => <td key={k} className="border-b border-border px-2 py-1"><Inline text={cell} /></td>)}</tr>)}</tbody></table></div>;
-      case "code": return <CodeBlock key={i} lang={block.lang} filename={block.filename} code={block.code} streaming={streaming} />;
-      default: return <p key={i} className="whitespace-pre-wrap"><Inline text={block.text} /></p>;
-    }
-  })}</div>;
+  // Keys are positional: blocks only ever grow at the end while streaming, so
+  // block N keeps its identity (and DOM) for the whole reply.
+  return <div className="ai-reply min-w-0" data-streaming={streaming ? "true" : undefined}>
+    {blocks.map((block, i) => <MarkdownBlock key={i} block={block} live={streaming && i === blocks.length - 1} />)}
+  </div>;
 });
