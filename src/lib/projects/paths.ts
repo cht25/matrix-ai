@@ -1,12 +1,10 @@
 import { languageForPath, safeAgentPath } from "@/lib/ai/agent";
 
 export const PROJECT_LIMITS = {
-  maxProjectsPerUser: 20,
   maxFilesPerProject: 80,
   maxTextBytes: 200 * 1024,
   maxImageBytes: 1.5 * 1024 * 1024,
   maxImageBytesPerProject: 5 * 1024 * 1024,
-  maxVersions: 25,
 };
 
 export const TEXT_EXTENSIONS = new Set([

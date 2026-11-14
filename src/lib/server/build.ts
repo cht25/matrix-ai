@@ -815,7 +815,7 @@ export async function startBuildRun(
       created_at: nowTs(),
       updated_at: nowTs(),
     })
-    .catch(() => {});
+    .catch(() => { throw new RpcError("PROJECT_STORAGE_UNAVAILABLE", 503, "Build state could not be saved. No build was started."); });
   return { runId };
 }
 

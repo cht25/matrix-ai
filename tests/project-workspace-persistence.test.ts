@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyProjectFiles, deleteProjectFile, ensureProject, ensureAgentProject, getProject, listProjectVersions, renameProjectFile, restoreProjectVersion, saveProjectVersion, upsertProjectFile } from "@/lib/server/projects";
+import { applyProjectFiles, deleteProjectFile, ensureProject, ensureAgentProject, getProject, listProjects, listProjectVersions, renameProjectFile, restoreProjectVersion, saveProjectVersion, upsertProjectFile } from "@/lib/server/projects";
 import type { Db } from "@/lib/firebase/admin";
 import { bindConversationProject } from "@/lib/server/project-resolution";
 
@@ -40,6 +40,23 @@ function fixture() {
 }
 
 describe("transactional project workspace", () => {
+  it("creates and lists more than 40 projects without counting existing ones", async () => {
+    const { db } = fixture();
+    for (let i = 0; i < 45; i++) await ensureProject(db, owner, { title: `Project ${i}` });
+    const agent = await ensureAgentProject(db, owner, { conversation_id: "chat-a", title: "Agent project", forceNew: false });
+    expect((await ensureProject(db, owner, { conversation_id: "chat-a" })).id).toBe(agent.id);
+    expect(await listProjects(db, owner)).toHaveLength(47);
+    await expect(getProject(db, { ...owner, uid: "other" }, agent.id)).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("preserves and exposes more than 25 saved versions", async () => {
+    const { db, docs } = fixture();
+    await upsertProjectFile(db, owner, { project_id: "p1", path: "index.html", content: "original" });
+    for (let i = 0; i < 30; i++) await saveProjectVersion(db, owner, { project_id: "p1", source: "user", summary: `${i}` });
+    expect(await listProjectVersions(db, owner, "p1")).toHaveLength(30);
+    expect([...docs.keys()].filter(key => /^projects\/p1\/versions\/[^/]+\/files\//.test(key))).toHaveLength(30);
+  });
+
   it("creates separate durable projects and reuses each conversation's project", async () => {
     const { db } = fixture();
     const a = await ensureProject(db, owner, { conversation_id: "chat-a", title: "Portfolio" });

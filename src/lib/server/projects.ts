@@ -50,7 +50,6 @@ export async function listProjects(d: Db, user: SessionUser): Promise<ProjectSum
   return snap.docs
     .filter((doc) => !doc.data().archived_at)
     .sort(descDoc("updated_at"))
-    .slice(0, 40)
     .map((doc) => ({
       id: doc.id,
       title: doc.data().title ?? "Untitled project",
@@ -90,9 +89,6 @@ export async function ensureProject(
     }
     return ensureAgentProject(d, user, { conversation_id: p.conversation_id, title: p.title ?? "Agent project", forceNew: false });
   }
-  const current = await d.collection("projects").where("owner_id", "==", user.uid).get();
-  const active = current.docs.filter((doc) => !doc.data().archived_at).length;
-  if (active >= PROJECT_LIMITS.maxProjectsPerUser) throw new RpcError("PROJECT_LIMIT", 400);
   const title = (p.title?.trim() || "Untitled project").slice(0, 80);
   const created = await d.collection("projects").add({
     owner_id: user.uid,
@@ -138,10 +134,6 @@ export async function ensureAgentProject(d: Db, user: SessionUser, p: { conversa
       const project = await tx.get(d.collection("projects").doc(bound));
       if (!project.exists || project.data()?.owner_id !== user.uid || project.data()?.archived_at) throw new RpcError("PROJECT_NOT_FOUND", 404);
       return { id: project.id, title: project.data()?.title ?? "Untitled project", file_count: project.data()?.file_count ?? 0 };
-    }
-    const owned = await tx.get(d.collection("projects").where("owner_id", "==", user.uid));
-    if (owned.docs.filter((doc) => !doc.data().archived_at).length >= PROJECT_LIMITS.maxProjectsPerUser) {
-      throw new RpcError("PROJECT_LIMIT", 400);
     }
     const ref = d.collection("projects").doc();
     const stamp = nowTs();
@@ -345,21 +337,13 @@ export async function saveProjectVersion(
     for (const doc of files.docs) tx.set(version.collection("files").doc(projectFileId(String(doc.data().path))), { path: doc.data().path, content: doc.data().content ?? "", encoding: doc.data().encoding ?? "utf8" });
     return version.id;
   });
-  // Retention is maintenance, not part of the user's atomic save.
-  const versions = await d.collection("projects").doc(p.project_id).collection("versions").get();
-  const ordered = versions.docs.sort(descDoc("created_at"));
-  for (const old of ordered.slice(PROJECT_LIMITS.maxVersions)) {
-    const kids = await old.ref.collection("files").listDocuments();
-    await Promise.all(kids.map((kid) => kid.delete()));
-    await old.ref.delete();
-  }
   return { id };
 }
 
 export async function listProjectVersions(d: Db, user: SessionUser, projectId: string) {
   await ownedProject(d, user, projectId);
   const snap = await d.collection("projects").doc(projectId).collection("versions").get();
-  return snap.docs.sort(descDoc("created_at")).slice(0, 25).map((doc) => ({
+  return snap.docs.sort(descDoc("created_at")).map((doc) => ({
     id: doc.id,
     source: doc.data().source ?? "autosave",
     summary: doc.data().summary ?? "",
