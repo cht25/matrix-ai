@@ -57,6 +57,7 @@ import { deployVerdict, type ClassifiedIssue } from "@/lib/deploy/classify";
 import { repairStopCopy, runRepairLoop, type RepairModel } from "@/lib/deploy/repair";
 import { AIProviderError } from "@/lib/ai/provider-error";
 import { nextAvailability } from "@/lib/ai/accounts";
+import { closeExecutionSession, filesDigest, heartbeatExecutionSession, openExecutionSession, type ExecutionSession } from "@/lib/server/execution-env";
 import { clearResumeState, saveResumeState, type ResumePhase, type ResumeState } from "@/lib/server/continuation";
 
 export type ImageAssetRequest = { name: string; prompt: string };
@@ -106,6 +107,8 @@ export function requiresNonStaticRuntime(prompt: string): boolean {
 }
 
 const MAX_FIX_ATTEMPTS = 4;
+/** Failures that leave saved work worth continuing from. */
+const RESUMABLE_FAILURES = new Set(["BUILD_FAILED", "DEPLOY_FAILED", "DEPLOY_INCOMPLETE", "DEPLOY_VERIFY_FAILED", "BUILD_RUN_FAILED", "BUILD_INCOMPLETE", "PUBLISH_RATE_LIMITED", "PROJECT_REVISION_CONFLICT"]);
 /** The build route may run for 300 s; leave room to validate, publish and persist. */
 const AI_BUDGET_MS = 235_000;
 
@@ -226,6 +229,11 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     if (stage) run = failStage(run, stage, now(), message);
     executionState = transitionAgentExecution(executionState, "error");
     run = failRun(run, { code, message }, now());
+    // A failure after progress was saved can be picked up again from where it
+    // stopped ("Continue"), instead of starting the whole request over.
+    if (progressSaved && RESUMABLE_FAILURES.has(code) && (run.segment ?? 1) < MAX_RUN_SEGMENTS) {
+      run = { ...run, continuation: { available: true, reason: "interrupted", phase, retryAt: null, message: phase === "publish" ? "The build is saved. Retry publishes it again without rebuilding." : "The files are saved. Continue resumes the repair from the current state." } };
+    }
     note(stage ?? null, "error", message);
     await emit(stage);
     return done(run);
@@ -291,8 +299,17 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     return { outage, retryAt: typed?.retryAt ?? (outage && model ? nextAvailability(model) : null) };
   };
 
+  // The isolated environment this execution session works in. Its workspace
+  // (`sessionFiles`) is compared with project storage before it is released.
+  let session: ExecutionSession | null = null;
+  let sessionFiles: ProjectFile[] | null = null;
   try {
     await emit();
+    try {
+      session = await openExecutionSession(d, { runId, segment: run.segment ?? 1, ownerId: user.uid, projectId: input.projectId ?? null, conversationId: input.conversationId ?? null });
+    } catch (error) {
+      note(null, "warn", `Execution session record could not be opened (${error instanceof Error ? error.message.slice(0, 80) : "storage error"}); continuing without it.`);
+    }
     if (resumed) note(null, "info", `Continuing in a new execution session (${run.segment} of up to ${MAX_RUN_SEGMENTS}) — same chat, same project. Resuming at: ${phase}.`);
     // ---------------------------------------------------------------- plan --
     await begin("plan", "Resolving project, entry page and public address.");
@@ -376,6 +393,9 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     ].filter(Boolean).join("\n\n");
     const withheldExistingPaths = new Set(projectFilesContext.omittedPaths.map((path) => path.toLowerCase()));
     const slug = (input.slug ?? "").trim() || plan.slug;
+    // Recorded before any model work so a restart mid-generation can be
+    // continued in this same project instead of creating another one.
+    await saveProgress();
     await finish("plan", `Project ready · ${before.length} existing file${before.length === 1 ? "" : "s"} · address /s/${slug}.`);
 
     // ------------------------------------------------------ model team --
@@ -419,6 +439,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       return completed;
     };
 
+    if (session) await heartbeatExecutionSession(d, session, projectId);
     // ------------------------------------------------------------ generate --
     let files = before;
     const wantsGeneration = input.actions.build === true || input.actions.fix === true;
@@ -702,6 +723,8 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       executionState = transitionAgentExecution(executionState, "files_saved");
       sourceRevision = applied.revision;
       files = await loadProjectFiles(d, projectId);
+      sessionFiles = files;
+      if (session) await heartbeatExecutionSession(d, session);
       // From here on a later session must never regenerate: the files exist.
       phase = "repair";
       await saveProgress();
@@ -854,6 +877,8 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
           const saved = await applyProjectFiles(d, user, { project_id: projectId, files: changed, source: "agent", expected_revision: sourceRevision });
           sourceRevision = saved.revision;
           files = state.files;
+          sessionFiles = files;
+          if (session) await heartbeatExecutionSession(d, session);
           run = setChanges(run, allChanges(), files.length, now());
           run = setValidation(run, withDesignQuality(state.report, files, specForChecks).checks, now());
         },
@@ -865,8 +890,14 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
           await emit("validate");
         },
       });
-      // Storage is authoritative: rebuild from what was actually saved.
-      files = await loadProjectFiles(d, projectId);
+      // Storage is authoritative: rebuild from what was actually saved. A
+      // difference from the session's workspace means a save did not land.
+      const storedNow = await loadProjectFiles(d, projectId);
+      if (sessionFiles && filesDigest(storedNow) !== filesDigest(sessionFiles)) {
+        note("validate", "warn", "Project storage does not match the repaired files byte for byte. Using what storage holds; nothing is reported as fixed unless it validates.");
+      }
+      files = storedNow;
+      sessionFiles = files;
       built = await buildProject(files);
       run = setChanges(run, allChanges(), files.length, now());
       run = setValidation(run, built.report.checks, now());
@@ -918,6 +949,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
             const polishResult = await applyProjectFiles(d, user, { project_id: projectId, files: safe as ProjectFile[], source: "agent", expected_revision: sourceRevision });
             sourceRevision = polishResult.revision;
             files = await loadProjectFiles(d, projectId);
+            sessionFiles = files;
             built = await buildProject(files);
             run = setChanges(run, summarizeChanges(before, files), files.length, now());
             run = setValidation(run, built.report.checks, now());
@@ -1054,6 +1086,18 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     const activeStage = run.stages.find((stage) => stage.state === "running");
     return await abort(code, detail || (code === "PROJECT_STORAGE_UNAVAILABLE" ? "Project storage could not be reached. No files were changed; retry after checking Firestore connectivity." : error instanceof Error ? error.message.slice(0, 240) : "The build stopped unexpectedly."), activeStage?.id);
   } finally {
+    if (session) {
+      // Persist → verify → terminate → delete temporary data, in that order.
+      try {
+        const stored = sessionFiles && resolvedProjectId ? await loadProjectFiles(d, resolvedProjectId) : null;
+        const closed = await closeExecutionSession(d, session, { working: sessionFiles, stored, outcome: run.status });
+        if (!closed.verified && run.status === "succeeded" && !run.deployment) {
+          // Never report a success whose files are not in storage.
+          run = failRun(run, { code: "PERSISTENCE_UNVERIFIED", message: `The work finished but could not be verified in project storage. ${closed.detail}` }, now());
+          await persist(d, runId, run).catch(() => undefined);
+        }
+      } catch { /* the cleanup job releases the environment */ }
+    }
     const messageId = await persistBuildMessage(d, user, input, run, reply, run.status === "succeeded" ? transitionAgentExecution(executionState, "complete") : executionState, resumed?.state.messageId ?? null);
     try {
       if (run.status === "succeeded" || run.status === "cancelled" || run.status === "awaiting_input") {
@@ -1235,7 +1279,7 @@ async function persist(d: Db, runId: string, run: BuildRun): Promise<void> {
   await d
     .collection("build_runs")
     .doc(runId)
-    .set({ run: toFirestoreRun(run), resumable: run.status === "paused" && run.continuation?.available === true, updated_at: nowTs() }, { merge: true })
+    .set({ run: toFirestoreRun(run), resumable: (run.status === "paused" && run.continuation?.available === true) || run.status === "running" || run.status === "requested", updated_at: nowTs() }, { merge: true })
     .catch(() => { throw new RpcError("PROJECT_STORAGE_UNAVAILABLE", 503, "Build state could not be saved. No further file operations were started."); });
 }
 
