@@ -31,6 +31,7 @@ import { firebaseBrowserConfigured, waitForAuthUser } from "@/lib/firebase/clien
 import { rpc, uploadOwnedFile } from "@/lib/client/api";
 import { notifyWorkDone } from "@/lib/client/work-notifications";
 import { Button, Textarea } from "@/components/ui";
+import { ModelPicker } from "@/components/model-picker";
 import { Markdown } from "@/components/markdown";
 import { MatrixMark, MatrixWordmark } from "@/components/logo";
 import { useToast } from "@/components/toast";
@@ -2549,6 +2550,7 @@ export function ChatClient({
               >
                 <Code2 size={16} strokeWidth={1.7} />
               </button>
+              <ModelPicker />
             </div>
             {streaming ? (
               <Button type="button" variant="ghost" onClick={stop} className="h-11 shrink-0 !px-3" aria-label="Stop generating">

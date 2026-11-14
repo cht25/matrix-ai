@@ -1,4 +1,7 @@
-// GPT OSS 120B is the only language model in MATRIX.
+// GPT OSS 120B is the DEFAULT model, and the only one used unless the
+// provider's live catalog confirms another registered model is offered and the
+// user has it enabled (multi-model behaviour: tests/multi-model.test.ts).
+// This suite covers a deployment where only the default model is available.
 //
 // These tests drive the REAL gateway route, the REAL build pipeline and the
 // REAL provider client against a local HTTP server, and intercept every
@@ -151,13 +154,17 @@ describe("one authoritative model configuration", () => {
     }
   });
 
-  it("the Models API reports one model and offers nothing to select", async () => {
+  it("the Models API reports only the default model as available on this deployment", async () => {
     const res = await getModels();
     expect(res.status).toBe(200);
     const body = await res.json() as Record<string, unknown>;
     expect(body.model).toMatchObject({ id: MATRIX_MODEL_ID, label: "GPT OSS 120B", configured: true, tool_calling: true, streaming: true, vision: false });
-    expect(body.models).toBeUndefined();
-    expect(body.preferences).toBeUndefined();
+    const models = body.models as { model_id: string; availability: string; is_default: boolean }[];
+    expect(models.filter((model) => model.availability === "available").map((model) => model.model_id)).toEqual([MATRIX_MODEL_ID]);
+    // No hosted credential here, so every additional model is reported as not configured — never as working.
+    expect(models.filter((model) => !model.is_default).every((model) => model.availability === "not_configured")).toBe(true);
+    expect(body.pool).toEqual({ auto: true, enabled: [] });
+    expect(JSON.stringify(body)).not.toContain("sk-stub-key");
     expect(JSON.stringify(body)).not.toMatch(/glm|gemini|openrouter|anthropic|claude|nemotron/i);
   });
 });
@@ -343,7 +350,6 @@ describe("3–4. website generation and project editing", () => {
 
 describe("11–12. no other model, no hidden fallback", () => {
   it("a failing model returns the real provider error — one retry on the same model, then stop", async () => {
-    vi.stubEnv("GROQ_API_KEY", "gsk_also_present_but_not_a_fallback");
     holder.current = { kind: "status", status: 503, body: JSON.stringify({ error: { message: "overloaded" } }) };
     const res = await post({ action: "chat", message: "hello", is_temporary: true, request_id: "one-fail-1" });
     expect(res.status).toBe(503);
@@ -355,9 +361,31 @@ describe("11–12. no other model, no hidden fallback", () => {
     expectOnlyTheOneModel();
     const copy = classifyGatewayResponse(res.status, String(res.json?.error));
     expect(copy.retryable).toBe(true);
-    expect(copy.detail).toContain("GPT OSS 120B");
-    expect(copy.detail).toMatch(/does not switch to a different model/i);
-    expect(JSON.stringify(copy)).not.toMatch(/another model|try-model/i);
+    expect(copy.detail).toMatch(/temporarily unavailable/i);
+    expect(copy.detail).toMatch(/kept/i);
+  });
+
+  it("a hosted key whose model list cannot be read enables no additional model", async () => {
+    // The hosted catalog is unreachable: nothing beyond the default model may be assumed available.
+    vi.stubEnv("GROQ_API_KEY", "gsk_present_but_catalog_unreachable_000000");
+    const hosted: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.startsWith("https://api.groq.com/")) { hosted.push(url); throw new TypeError("fetch failed"); }
+      outbound.push(url);
+      return realFetch(input, init);
+    }) as typeof fetch;
+    const { listModelStatus, resolvePool } = await import("../src/lib/ai/models/pool");
+    const statuses = await listModelStatus({ refresh: true });
+    expect(statuses.filter((model) => model.availability === "available").map((model) => model.model_id)).toEqual([MATRIX_MODEL_ID]);
+    expect(statuses.filter((model) => !model.is_default).every((model) => model.availability === "unverified")).toBe(true);
+    const pool = await resolvePool(null, null);
+    expect(pool.targets.map((target) => target.model)).toEqual([MATRIX_MODEL_ID]);
+    holder.current = { kind: "ok", content: "fine" };
+    const res = await post({ action: "chat", message: "Explain in detail how binary search works and why it is logarithmic, step by step please.", is_temporary: true, request_id: "one-unverified-1" });
+    expect(res.status).toBe(200);
+    expect(hosted.every((url) => url.endsWith("/models"))).toBe(true); // only the catalog was ever asked
+    expectOnlyTheOneModel();
   });
 
   it("authentication, rate-limit and timeout-class failures never reach a second provider", async () => {
@@ -382,15 +410,15 @@ describe("11–12. no other model, no hidden fallback", () => {
     expectOnlyTheOneModel();
   });
 
-  it("the executor refuses to run with more than the one route", async () => {
+  it("the executor sends one request to one registered model only", async () => {
     const route = matrixModelRoute()!;
     holder.current = { kind: "ok", content: "fine" };
     const ok = await completeWithModel([route], { messages: [{ role: "user", content: "hi" }] });
     expect(ok.target.model).toBe(MATRIX_MODEL_ID);
     const impostor = { ...route, model: "glm-5-turbo" };
-    await expect(completeWithModel([impostor], { messages: [{ role: "user", content: "hi" }] })).rejects.toThrow(/only runs GPT OSS 120B/);
-    await expect(completeWithModel([route, route], { messages: [{ role: "user", content: "hi" }] })).rejects.toThrow(/only runs GPT OSS 120B/);
-    await expect((async () => { for await (const _ of streamWithModel([impostor], { messages: [{ role: "user", content: "hi" }] })) void _; })()).rejects.toThrow(/only runs GPT OSS 120B/);
+    await expect(completeWithModel([impostor], { messages: [{ role: "user", content: "hi" }] })).rejects.toThrow(/Refusing to send a request/);
+    await expect(completeWithModel([route, route], { messages: [{ role: "user", content: "hi" }] })).rejects.toThrow(/Refusing to send a request/);
+    await expect((async () => { for await (const _ of streamWithModel([impostor], { messages: [{ role: "user", content: "hi" }] })) void _; })()).rejects.toThrow(/Refusing to send a request/);
     expect(completions()).toHaveLength(1);
     expectOnlyTheOneModel();
   });
@@ -425,7 +453,7 @@ describe("the removed integrations are gone from the codebase", () => {
   });
 
   it("names no other model family, provider endpoint or credential anywhere in src", () => {
-    const banned = /\bglm[-_ ]?\d|GLM_|ZAI_|z\.ai|bigmodel\.cn|cogview|gemini|GEMINI_|generativelanguage\.googleapis|openrouter|OPENROUTER_|anthropic|ANTHROPIC_|\bclaude\b|nemotron|OLLAMA_|llama-\d|qwen|deepseek-|\bgpt-4|\bgpt-5|GROQ_VISION_MODEL/i;
+    const banned = /\bglm[-_ ]?\d|GLM_|ZAI_|z\.ai|bigmodel\.cn|cogview|gemini|GEMINI_|generativelanguage\.googleapis|openrouter|OPENROUTER_|anthropic|ANTHROPIC_|\bclaude\b|nemotron|OLLAMA_|deepseek-|\bgpt-4|\bgpt-5|GROQ_VISION_MODEL/i;
     const offenders = sources
       // reasoning.ts documents which model families emit <think> blocks; image/config.ts
       // explains that a legacy saved image record is ignored.
@@ -435,14 +463,24 @@ describe("the removed integrations are gone from the codebase", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("spells the model ID in exactly one source file", () => {
-    const withLiteral = sources.filter((file) => /["'`](?:openai\/)?gpt-oss-120b["'`]/.test(file.text)).map((file) => file.path.replace(/\\/g, "/"));
-    expect(withLiteral).toEqual(["src/lib/ai/model.ts"]);
+  it("writes the additional models' provider IDs only in the registry", () => {
+    const families = /llama-\d|qwen\/|gpt-oss-20b/i;
+    const offenders = sources
+      .filter((file) => !/src\/lib\/ai\/(reasoning|models\/registry)\.ts$/.test(file.path.replace(/\\/g, "/")))
+      .filter((file) => families.test(file.text))
+      .map((file) => file.path);
+    expect(offenders).toEqual([]);
   });
 
-  it("has no model-selection or fallback API left", () => {
+  it("spells the default model ID only in model.ts (and its key in the registry)", () => {
+    const withLiteral = sources.filter((file) => /["'`](?:openai\/)?gpt-oss-120b["'`]/.test(file.text)).map((file) => file.path.replace(/\\/g, "/"));
+    expect(withLiteral.sort()).toEqual(["src/lib/ai/model.ts", "src/lib/ai/models/registry.ts"]);
+    expect(readFileSync("src/lib/ai/models/registry.ts", "utf8")).not.toMatch(/["'`]openai\/gpt-oss-120b["'`]/);
+  });
+
+  it("has none of the removed legacy selection APIs", () => {
     const all = sources.map((file) => file.text).join("\n");
-    for (const removed of ["model_preference_set", "prefer_fallback", "preferFallback", "completeWithFallback", "streamWithFallback", "fallbackEligible", "admin_ai_provider_save", "admin_ai_managed_provider", "resolveSelectedAIRoute", "onTryAnotherModel", "Try another model"]) {
+    for (const removed of ["model_preference_set", "prefer_fallback", "preferFallback", "fallbackEligible", "admin_ai_provider_save", "admin_ai_managed_provider", "resolveSelectedAIRoute", "onTryAnotherModel", "Try another model"]) {
       expect(all.includes(removed), removed).toBe(false);
     }
   });

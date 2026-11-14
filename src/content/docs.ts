@@ -128,7 +128,7 @@ export const DOC_SECTIONS: DocSection[] = [
         "Markdown, lists and code blocks rendered safely.",
         "Attach plain-text documents and common source-code files (the model is text-only, so images cannot be read). If you refer to missing material, MATRIX asks you to provide it instead of guessing.",
         "Switch between General Chat and Agent; existing conversations keep their original mode.",
-        "Every reply — chat, Agent, websites and code — comes from one model, GPT OSS 120B.",
+        "Replies come from GPT OSS 120B by default. You can switch on additional models from the composer; when several are on, each takes a different part of the request and you get one combined answer.",
         "Rename, archive, export (JSON) and delete conversations.",
         "Search your conversations from the sidebar.",
       ]},
@@ -188,7 +188,7 @@ export const DOC_SECTIONS: DocSection[] = [
     title: "Screenshot Scanner",
     icon: "🔍",
     blocks: [
-      { t: "p", text: "Screenshot analysis is currently unavailable: MATRIX runs entirely on GPT OSS 120B, a text model that cannot read images, and it never switches to another model. To check a suspicious SMS, email or payment request, copy its text and paste it into Chat." },
+      { t: "p", text: "Screenshot analysis is currently unavailable: MATRIX's models are text models that cannot read images. To check a suspicious SMS, email or payment request, copy its text and paste it into Chat." },
       { t: "p", text: "The steps below describe the scanner as it works when image analysis is available." },
       { t: "h2", text: "How to use it" },
       { t: "ol", items: [
