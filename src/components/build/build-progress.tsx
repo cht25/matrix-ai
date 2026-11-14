@@ -44,6 +44,55 @@ function stateClass(state: StageState): string {
   return "border-border bg-surface-2 text-ink-3";
 }
 
+/**
+ * Continuation, repair and known-issue status for a run. Plain facts from the
+ * stored run — sessions used, repairs that were actually accepted, problems
+ * that are still open.
+ */
+export function RunContinuityNote({ run }: { run: BuildRun }) {
+  const [open, setOpen] = useState(false);
+  const repairs = run.repairs ?? [];
+  const accepted = repairs.filter((item) => item.outcome === "accepted" || item.outcome === "partly_accepted");
+  const segment = run.segment ?? 1;
+  const paused = run.status === "paused";
+  if (!paused && segment < 2 && !repairs.length && !run.knownIssues) return null;
+  const fixed = accepted.reduce((sum, item) => sum + Math.max(0, item.errorsBefore - item.errorsAfter), 0);
+  return (
+    <div className="border-t border-border px-3 py-2 text-[11.5px] leading-snug text-ink-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        {segment > 1 || paused ? (
+          <span className="inline-flex items-center gap-1.5">
+            <span className={cn("h-1.5 w-1.5 rounded-full", paused ? "bg-warning" : "bg-accent")} aria-hidden="true" />
+            Session {segment} · same chat and project
+          </span>
+        ) : null}
+        {repairs.length ? (
+          <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} className="inline-flex items-center gap-1 font-medium text-ink hover:text-accent">
+            {accepted.length ? `Repair completed · ${fixed} problem${fixed === 1 ? "" : "s"} fixed` : `${repairs.length} repair attempt${repairs.length === 1 ? "" : "s"}`}
+            <ChevronDown size={11} className={cn("transition-transform", open && "rotate-180")} aria-hidden="true" />
+          </button>
+        ) : null}
+        {run.knownIssues ? <span className="text-warning">{run.knownIssues} known issue{run.knownIssues === 1 ? "" : "s"} published with the site</span> : null}
+      </div>
+      {paused && run.continuation ? <p className="mt-1 text-ink-3">{run.continuation.message}</p> : null}
+      {open ? (
+        <ol className="mt-2 grid gap-1">
+          {repairs.map((item, index) => (
+            <li key={index} className="rounded-md border border-border bg-surface-2 px-2 py-1.5">
+              <span className={cn("font-medium", item.outcome === "accepted" || item.outcome === "partly_accepted" ? "text-success" : item.outcome === "provider_error" ? "text-warning" : "text-ink-2")}>
+                {item.kind === "deterministic" ? "Automatic repair" : `Attempt ${item.attempt}`} · {item.outcome.replace(/_/g, " ")}
+              </span>
+              <span className="ml-1.5 font-mono text-[10.5px] text-ink-3">{item.errorsBefore} → {item.errorsAfter}</span>
+              {item.files.length ? <span className="mt-0.5 block break-all font-mono text-[10.5px] text-ink-3">{item.files.join(", ")}</span> : null}
+              {item.detail ? <span className="mt-0.5 block break-words text-[11px] text-ink-3">{item.detail}</span> : null}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </div>
+  );
+}
+
 export function BuildStatusCard({
   run,
   className,
@@ -91,7 +140,11 @@ export function BuildStatusCard({
                   ? "Waiting for your answer"
                 : run.status === "cancelled"
                   ? "Build cancelled"
-                  : `Building · ${progress.activeLabel}`}
+                : run.status === "paused"
+                  ? run.continuation?.reason === "provider_unavailable" ? "Waiting for the AI provider — continues automatically" : "Continuing in a new session…"
+                  : run.stages.some((stage) => stage.id === "validate" && stage.state === "running") && run.attempts > 0
+                    ? `Fixing issue… attempt ${run.attempts}`
+                    : `Building · ${progress.activeLabel}`}
           </span>
           <span className="inline-flex shrink-0 items-center gap-1.5 font-mono text-[10.5px] text-ink-3">
             {progress.completed}/{progress.total} steps
@@ -114,6 +167,7 @@ export function BuildStatusCard({
       <div className="px-3 pb-2">
         <Progress value={progress.percent} />
       </div>
+      <RunContinuityNote run={run} />
 
       {showDetails ? (
         <div className="border-t border-border px-3 py-2.5">

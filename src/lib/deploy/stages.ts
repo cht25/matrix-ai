@@ -66,7 +66,28 @@ export type BuildLogLine = {
   message: string;
 };
 
-export type BuildRunStatus = "requested" | "running" | "succeeded" | "failed" | "cancelled" | "awaiting_input";
+export type BuildRunStatus = "requested" | "running" | "succeeded" | "failed" | "cancelled" | "awaiting_input" | "paused";
+
+/** Why a run stopped with its progress saved, and where it picks up again. */
+export type RunContinuation = {
+  available: boolean;
+  reason: "time_limit" | "provider_unavailable" | "interrupted";
+  phase: "generate" | "repair" | "publish";
+  /** Epoch ms before which resuming is pointless (provider cool-down), or null. */
+  retryAt: number | null;
+  message: string;
+};
+
+/** One repair step, as measured by re-validating the project. */
+export type RunRepair = {
+  attempt: number;
+  kind: "deterministic" | "model";
+  outcome: "accepted" | "partly_accepted" | "rejected" | "no_change" | "provider_error";
+  errorsBefore: number;
+  errorsAfter: number;
+  files: string[];
+  detail: string;
+};
 
 export type BuildEnvironment = "preview" | "production";
 
@@ -139,11 +160,21 @@ export type BuildRun = {
   /** Summary of the design specification the files were generated from. */
   design?: RunDesignInfo | null;
   error: { code: string; message: string } | null;
+  /** Set when the run stopped with saved progress and can continue. */
+  continuation?: RunContinuation | null;
+  /** Execution sessions used so far for this one run (1 = never continued). */
+  segment?: number;
+  /** What the repair loop did, step by step. */
+  repairs?: RunRepair[];
+  /** Problems published with the site and reported to the user. */
+  knownIssues?: number;
   logs: BuildLogLine[];
   startedAt: number;
   updatedAt: number;
   finishedAt: number | null;
 };
+
+export const MAX_RUN_SEGMENTS = 6;
 
 export const MAX_LOG_LINES = 240;
 
@@ -186,7 +217,7 @@ export function createBuildRun(input: {
     changes: [],
     validation: null,
     attempts: 0,
-    maxAttempts: Math.max(0, Math.min(5, input.maxAttempts ?? 2)),
+    maxAttempts: Math.max(0, Math.min(8, input.maxAttempts ?? 4)),
     fileCount: 0,
     deployment: null,
     previewUrl: null,
@@ -317,6 +348,35 @@ export function failRun(run: BuildRun, error: { code: string; message: string },
   };
 }
 
+/** Stop a run with its progress saved. Nothing is reported as failed or done. */
+export function pauseRun(run: BuildRun, continuation: RunContinuation, now: number): BuildRun {
+  return {
+    ...run,
+    status: "paused",
+    continuation,
+    error: null,
+    stages: run.stages.map((stage) => (stage.state === "running" ? { ...stage, state: "queued" as StageState, message: continuation.message } : stage)),
+    updatedAt: now,
+    finishedAt: null,
+  };
+}
+
+/** Re-open a paused or interrupted run for its next execution session. */
+export function reopenRun(run: BuildRun, now: number): BuildRun {
+  return {
+    ...run,
+    status: "running",
+    cancelRequested: false,
+    continuation: null,
+    error: null,
+    segment: (run.segment ?? 1) + 1,
+    stages: run.stages.map((stage) => (stage.state === "failed" || stage.state === "running" ? { ...stage, state: "queued" as StageState, finishedAt: null } : stage)),
+    deployment: run.deployment && run.deployment.status === "failed" ? null : run.deployment,
+    updatedAt: now,
+    finishedAt: null,
+  };
+}
+
 function isActiveDeployment(status: DeploymentStatus): boolean {
   return status === "queued" || status === "building" || status === "deploying";
 }
@@ -332,7 +392,8 @@ export function applyStaleness(run: BuildRun, now: number): BuildRun {
   const from = active?.startedAt ?? run.updatedAt;
   const limit = def?.timeoutMs ?? 180_000;
   if (now - from < limit) return run;
-  return failRun(
+  const phase: RunContinuation["phase"] = active?.id === "publish" ? "publish" : active?.id === "validate" || active?.id === "build" || active?.id === "install" ? "repair" : "generate";
+  const stale = failRun(
     run,
     {
       code: "BUILD_RUN_STALE",
@@ -341,7 +402,9 @@ export function applyStaleness(run: BuildRun, now: number): BuildRun {
         : "MATRIX stopped receiving updates for this build. Nothing was published by this card.",
     },
     now,
-  );
+  );;
+  // The work saved so far is still in the project: the run can be resumed.
+  return { ...stale, continuation: { available: true, reason: "interrupted", phase, retryAt: null, message: "This build was interrupted. Its saved progress can be continued." } };
 }
 
 // ---------------------------------------------------------------------------
@@ -404,6 +467,14 @@ export function buildRunCopy(run: BuildRun): BuildRunCopy {
   }
   if (run.status === "awaiting_input") {
     return { title: "Waiting for your answer", detail: "No files were changed or published.", glyph: "○", tone: "neutral", canOpenLive: false, liveUrl: null };
+  }
+  if (run.status === "paused") {
+    const waiting = run.continuation?.reason === "provider_unavailable";
+    return {
+      title: waiting ? "Waiting for the AI provider" : "Continuing…",
+      detail: run.continuation?.message ?? "Progress is saved. MATRIX continues from where it stopped.",
+      glyph: "●", tone: "active", canOpenLive: false, liveUrl: null,
+    };
   }
   if (run.status === "cancelled") {
     return { title: "Build cancelled", detail: "The run was stopped before completion. No success was reported.", glyph: "○", tone: "neutral", canOpenLive: false, liveUrl: null };
@@ -531,7 +602,7 @@ export function runFromSnapshot(snapshot: Partial<BuildRunSnapshot> & { run_id: 
     return { ...stage, state: stored[1], finishedAt: stage.finishedAt ?? (stored[1] === "running" ? null : now) };
   });
   const status: BuildRunStatus =
-    snapshot.status === "succeeded" || snapshot.status === "failed" || snapshot.status === "running" || snapshot.status === "requested" || snapshot.status === "cancelled" || snapshot.status === "awaiting_input"
+    snapshot.status === "succeeded" || snapshot.status === "failed" || snapshot.status === "running" || snapshot.status === "requested" || snapshot.status === "cancelled" || snapshot.status === "awaiting_input" || snapshot.status === "paused"
       ? snapshot.status
       : "failed";
   return {
@@ -550,7 +621,7 @@ export function runFromSnapshot(snapshot: Partial<BuildRunSnapshot> & { run_id: 
     changes: [],
     validation: null,
     attempts: snapshot.attempts ?? 0,
-    maxAttempts: 2,
+    maxAttempts: 4,
     fileCount: snapshot.file_count ?? 0,
     previewUrl: snapshot.preview_url ?? null,
     model: snapshot.model && snapshot.provider ? { provider: snapshot.provider, model: snapshot.model } : null,

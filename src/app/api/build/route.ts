@@ -2,6 +2,8 @@
 // MATRIX build endpoint (§1, §3, §4, §14–§16, §24)
 //
 //   POST /api/build           start a real build run, stream its progress (SSE)
+//   POST /api/build {resume_run_id}  continue a paused/interrupted run in a new
+//                             execution session — same run, chat, project and task
 //   GET  /api/build?run_id=   poll the persisted run state (never synthesised)
 //   GET  /api/build?project_id=  the latest run for a project
 //
@@ -24,6 +26,9 @@ import { RpcError } from "@/lib/server/errors";
 import type { BuildActions } from "@/lib/deploy/stages";
 import { logGatewayFailure } from "@/lib/ai/provider-error";
 import { mutationCsrfResponse } from "@/lib/server/request-security";
+import { prepareResume } from "@/lib/server/build-resume";
+import { clearResumeState } from "@/lib/server/continuation";
+import { cancelRun } from "@/lib/deploy/stages";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -146,6 +151,9 @@ export async function POST(req: NextRequest) {
     : null;
   const user = await getUser(req);
   if (!user) return json({ error: "UNAUTHENTICATED" }, 401);
+  if (typeof body.resume_run_id === "string" && body.resume_run_id.trim()) {
+    return resumeResponse(req, user, body.resume_run_id.trim().slice(0, 64));
+  }
   if (!taskContext && requestsClarificationFirst(prompt)) return json({ error: "CLARIFICATION_REQUIRED", detail: "Ask the missing requirement in chat before starting a build." }, 409);
 
   try {
@@ -251,7 +259,7 @@ export async function POST(req: NextRequest) {
       imageRequests: parseImageRequests(body),
       attachments: parseAttachments(body),
       isTemporary,
-      maxFixAttempts: typeof body.max_fix_attempts === "number" ? Math.max(0, Math.min(5, body.max_fix_attempts)) : undefined,
+      maxFixAttempts: typeof body.max_fix_attempts === "number" ? Math.max(0, Math.min(8, body.max_fix_attempts)) : undefined,
     }).catch((error) => logGatewayFailure("build_run", { requestId, runId }, error));
     return json({ run_id: runId, task_id: taskId, conversation_id: convId, status: "queued" }, 202);
   }
@@ -292,7 +300,7 @@ export async function POST(req: NextRequest) {
           imageRequests: parseImageRequests(body),
           attachments: parseAttachments(body),
           isTemporary,
-          maxFixAttempts: typeof body.max_fix_attempts === "number" ? Math.max(0, Math.min(5, body.max_fix_attempts)) : undefined,
+          maxFixAttempts: typeof body.max_fix_attempts === "number" ? Math.max(0, Math.min(8, body.max_fix_attempts)) : undefined,
           onEvent: ({ run, stage, copy }) => send({ type: "run", stage, run, copy }),
         });
         // The final frame carries the summary sentence and the real
@@ -329,6 +337,54 @@ export async function POST(req: NextRequest) {
       "X-MATRIX-Request-ID": requestId,
     },
   });
+}
+
+/**
+ * Continue an existing run. Nothing new is created: no conversation, no user
+ * message, no task, no project — the stored request carries on where the
+ * previous execution session stopped.
+ */
+async function resumeResponse(req: NextRequest, user: SessionUser, runId: string): Promise<Response> {
+  const d = adminDb();
+  const wantsStream = (req.headers.get("accept") ?? "").includes("text/event-stream");
+  let send: (payload: Record<string, unknown>) => void = () => undefined;
+  let prepared: Awaited<ReturnType<typeof prepareResume>>;
+  try {
+    prepared = await prepareResume(d, user, runId, { onEvent: ({ run, stage, copy }) => send({ type: "run", stage, run, copy }) });
+  } catch (error) {
+    const code = error instanceof RpcError ? error.code : "INTERNAL";
+    const status = code === "NOT_FOUND" ? 404 : code === "INTERNAL" ? 500 : 409;
+    return json({ error: code, detail: error instanceof RpcError ? error.detail ?? null : null }, status);
+  }
+  const { state } = prepared;
+  const run = runBuildPipeline;
+  if (!wantsStream) {
+    void run(prepared.input).catch((error) => logGatewayFailure("build_resume", { runId }, error));
+    return json({ run_id: runId, task_id: state.taskId, conversation_id: state.conversationId, project_id: state.projectId, status: "resumed", segment: state.segment + 1 }, 202);
+  }
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let closed = false;
+      send = (payload) => {
+        if (closed) return;
+        try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`)); } catch { closed = true; }
+      };
+      send({ type: "accepted", run_id: runId, task_id: state.taskId, request_id: state.requestId, conversation_id: state.conversationId, resumed: true });
+      try {
+        const result = await run(prepared.input);
+        send({
+          type: "done", run: result.run, reply: result.reply, project_id: result.projectId, conversation_id: state.conversationId,
+          deployment: result.run.deployment ? { id: result.run.deployment.id, status: result.run.deployment.status, url: result.run.deployment.url } : null,
+        });
+      } catch (error) {
+        const code = error instanceof RpcError ? error.code : "BUILD_RUN_FAILED";
+        send({ type: "error", code, message: error instanceof Error ? error.message.slice(0, 240) : "The build stopped." });
+      } finally {
+        try { controller.enqueue(encoder.encode("data: [DONE]\n\n")); controller.close(); } catch { /* already closed */ }
+      }
+    },
+  });
+  return new Response(stream, { headers: { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive" } });
 }
 
 export async function GET(req: NextRequest) {
@@ -368,6 +424,14 @@ export async function DELETE(req: NextRequest) {
   if (!run) return json({ error: "NOT_FOUND" }, 404);
   if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled" || run.status === "awaiting_input") return json({ run });
   const ref = d.collection("build_runs").doc(runId);
+  if (run.status === "paused") {
+    // No session is running, so there is nothing to signal: close it now.
+    const cancelled = cancelRun(run, Date.now());
+    await ref.set({ cancel_requested: true, resumable: false, run: toFirestoreRun(cancelled), updated_at: nowTs() }, { merge: true });
+    await clearResumeState(d, runId).catch(() => null);
+    if (run.taskId) await cancelAgentTask(d, user, run.taskId).catch(() => null);
+    return json({ run: cancelled, status: "cancelled" });
+  }
   await ref.set({ cancel_requested: true, run: { ...toFirestoreRun(run), cancelRequested: true }, updated_at: nowTs() }, { merge: true });
   if (run.taskId) await cancelAgentTask(d, user, run.taskId).catch(() => null);
   return json({ run: { ...run, cancelRequested: true }, status: "cancel_requested" });

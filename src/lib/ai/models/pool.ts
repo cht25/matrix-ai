@@ -11,6 +11,7 @@ import "server-only";
 import { nowTs, type Db } from "@/lib/firebase/admin";
 import { fetchModelCatalog } from "@/lib/ai/model-catalog";
 import { MATRIX_MODEL_BASE_URL } from "@/lib/ai/model";
+import { ensureAccounts } from "@/lib/ai/accounts";
 import { hostedProviderKey, matrixModelRoute, routeForModel, type AIRouteTarget } from "@/lib/ai/config";
 import { DEFAULT_MODEL_KEY, MODEL_REGISTRY, modelById, sanitizeModelKeys, type ModelSpec } from "@/lib/ai/models/registry";
 import { cooldownRemainingMs } from "@/lib/ai/orchestrator/scheduler";
@@ -128,6 +129,7 @@ function rank(target: AIRouteTarget): number {
  * are available — a client can never force an unavailable model).
  */
 export async function resolvePool(d: Db | null, uid: string | null, override?: { auto?: boolean; enabled?: unknown } | null): Promise<ResolvedPool> {
+  await ensureAccounts(d);
   const statuses = await listModelStatus();
   const preference: PoolPreference = override && (override.auto !== undefined || override.enabled !== undefined)
     ? { auto: override.auto === true || sanitizeModelKeys(override.enabled).length === 0, enabled: sanitizeModelKeys(override.enabled) }

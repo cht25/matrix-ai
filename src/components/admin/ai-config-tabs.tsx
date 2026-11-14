@@ -4,6 +4,7 @@
 //
 //   Overview  · live provider status dashboard
 //   Model     · the single MATRIX model (GPT OSS 120B) — read-only status
+//   Accounts  · connected Groq accounts, live limits and rotation state
 //   Image     · image generation service (Together AI)
 //   Usage     · real gateway call log
 //
@@ -21,6 +22,9 @@ const ModelsClient = lazy(() =>
 const ImageProviderSettings = lazy(() =>
   import("@/components/admin/image-provider-settings").then((m) => ({ default: m.ImageProviderSettings })),
 );
+const ProviderAccounts = lazy(() =>
+  import("@/components/admin/provider-accounts").then((m) => ({ default: m.ProviderAccounts })),
+);
 const AiUsagePanel = lazy(() =>
   import("@/components/admin/ai-usage-panel").then((m) => ({ default: m.AiUsagePanel })),
 );
@@ -31,6 +35,7 @@ const AppReleaseSettings = lazy(() =>
 const TABS = [
   { id: "overview", label: "Overview" },
   { id: "text", label: "AI model" },
+  { id: "accounts", label: "Provider accounts" },
   { id: "image", label: "Image generation" },
   { id: "updates", label: "Phone & Updates" },
   { id: "usage", label: "Usage" },
@@ -66,6 +71,7 @@ export function AiConfigTabs({ initialTab = "overview" }: { initialTab?: TabId }
       <Suspense fallback={<Loading />}>
         {tab === "overview" ? <ProviderStatus /> : null}
         {tab === "text" ? <ModelsClient showChatLink={false} /> : null}
+        {tab === "accounts" ? <ProviderAccounts /> : null}
         {tab === "image" ? <ImageProviderSettings /> : null}
         {tab === "updates" ? <AppReleaseSettings /> : null}
         {tab === "usage" ? <AiUsagePanel /> : null}

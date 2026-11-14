@@ -12,7 +12,7 @@
 
 import type { PendingAgentTask } from "@/lib/ai/agent-execution";
 import type { BuildStageId, BuildRun } from "@/lib/deploy/stages";
-import { applyStaleness } from "@/lib/deploy/stages";
+import { applyStaleness, MAX_RUN_SEGMENTS } from "@/lib/deploy/stages";
 import { rpc } from "@/lib/client/api";
 
 export type BuildStreamEvent = {
@@ -73,6 +73,84 @@ export async function streamBuildRun(
   input: BuildStartInput,
   handlers: BuildStreamHandlers = {},
 ): Promise<{ run: BuildRun | null; reply: string; projectId: string | null; conversationId: string | null }> {
+  const first = await streamSegment({
+    prompt: input.prompt,
+    task_context: input.taskContext ?? null,
+    visible_message: input.visibleMessage ?? null,
+    project_id: input.projectId ?? null,
+    workspace_project_id: input.workspaceProjectId ?? null,
+    conversation_id: input.conversationId ?? null,
+    is_temporary: input.isTemporary === true,
+    mode: input.mode === "code" ? "code" : "agent",
+    workspace_only: input.workspaceOnly === true,
+    attachments: (input.attachments ?? []).map((file) => ({ name: file.name, content: file.content })),
+    actions: input.actions ?? null,
+    slug: input.slug ?? null,
+    environment: input.environment ?? "production",
+    allow_override: input.allowOverride === true,
+    image_requests: input.imageRequests ?? [],
+    max_fix_attempts: input.maxFixAttempts ?? undefined,
+    request_id: input.requestId ?? crypto.randomUUID(),
+  }, handlers);
+  return continueWhilePaused(first, handlers);
+}
+
+/** Longest the open chat waits for a provider cool-down before leaving the run to background recovery. */
+const MAX_INLINE_WAIT_MS = 120_000;
+
+type SegmentResult = { run: BuildRun | null; reply: string; projectId: string | null; conversationId: string | null; done: BuildDonePayload | null };
+
+/**
+ * A paused run is not finished: it continues in a new execution session. The
+ * same run, chat and project are used — the server creates nothing new — so to
+ * the user this is one uninterrupted task.
+ */
+async function continueWhilePaused(segment: SegmentResult, handlers: BuildStreamHandlers): Promise<{ run: BuildRun | null; reply: string; projectId: string | null; conversationId: string | null }> {
+  let current = segment;
+  let reply = segment.reply;
+  for (let turn = 0; turn < MAX_RUN_SEGMENTS; turn += 1) {
+    const run = current.run;
+    if (!run || run.status !== "paused" || !run.continuation?.available || handlers.signal?.aborted) break;
+    const wait = Math.max(run.continuation.reason === "provider_unavailable" ? 8_000 * (turn + 1) : 600, (run.continuation.retryAt ?? 0) - Date.now());
+    if (wait > MAX_INLINE_WAIT_MS) break; // background recovery continues it when the provider allows
+    await sleep(wait, handlers.signal);
+    if (handlers.signal?.aborted) break;
+    let next: SegmentResult;
+    try {
+      next = await streamSegment({ resume_run_id: run.id }, handlers);
+    } catch (error) {
+      if (error instanceof BuildRunError && error.code === "ALREADY_RESUMING") {
+        // Another tab or the recovery job took it: follow the stored run.
+        const polled = await pollBuildRun(run.id, handlers);
+        next = { run: polled, reply: "", projectId: polled?.projectId ?? null, conversationId: current.conversationId, done: null };
+      } else {
+        break;
+      }
+    }
+    if (!next.run) break;
+    reply = next.reply || reply;
+    current = { ...next, conversationId: next.conversationId ?? current.conversationId };
+  }
+  const final = { run: current.run, reply, projectId: current.run?.projectId ?? current.projectId, conversationId: current.conversationId };
+  handlers.onDone?.(final);
+  return final;
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+  });
+}
+
+/** Continue a paused or failed-but-resumable run from a button ("Continue" / "Retry"). */
+export async function resumeBuildRun(runId: string, handlers: BuildStreamHandlers = {}): Promise<{ run: BuildRun | null; reply: string; projectId: string | null; conversationId: string | null }> {
+  const first = await streamSegment({ resume_run_id: runId }, handlers);
+  return continueWhilePaused(first, handlers);
+}
+
+async function streamSegment(body: Record<string, unknown>, handlers: BuildStreamHandlers): Promise<SegmentResult> {
+  let donePayload: BuildDonePayload | null = null;
   let reply = "";
   let conversationId: string | null = null;
   const controller = new AbortController();
@@ -105,25 +183,7 @@ export async function streamBuildRun(
       headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
       credentials: "same-origin",
       signal: controller.signal,
-      body: JSON.stringify({
-        prompt: input.prompt,
-        task_context: input.taskContext ?? null,
-        visible_message: input.visibleMessage ?? null,
-        project_id: input.projectId ?? null,
-        workspace_project_id: input.workspaceProjectId ?? null,
-        conversation_id: input.conversationId ?? null,
-        is_temporary: input.isTemporary === true,
-        mode: input.mode === "code" ? "code" : "agent",
-        workspace_only: input.workspaceOnly === true,
-        attachments: (input.attachments ?? []).map((file) => ({ name: file.name, content: file.content })),
-        actions: input.actions ?? null,
-        slug: input.slug ?? null,
-        environment: input.environment ?? "production",
-        allow_override: input.allowOverride === true,
-        image_requests: input.imageRequests ?? [],
-        max_fix_attempts: input.maxFixAttempts ?? undefined,
-        request_id: input.requestId ?? crypto.randomUUID(),
-      }),
+      body: JSON.stringify(body),
     });
     if (!res.ok || !res.body) {
       const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -158,7 +218,7 @@ export async function streamBuildRun(
           reply = event.reply ?? reply;
           conversationId = event.conversation_id ?? conversationId;
           if (event.run) last = event.run;
-          handlers.onDone?.({ run: event.run ?? null, reply, projectId: event.project_id ?? null, conversationId });
+          donePayload = { run: event.run ?? null, reply, projectId: event.project_id ?? null, conversationId };
           continue;
         }
         if (event.conversation_id) conversationId = event.conversation_id;
@@ -190,7 +250,7 @@ export async function streamBuildRun(
   }
   // Anything still "running" after the feed ended is judged by its timestamps.
   const run = last ? applyStaleness(last, Date.now()) : null;
-  return { run, reply, projectId: run?.projectId ?? null, conversationId };
+  return { run, reply, projectId: run?.projectId ?? null, conversationId, done: donePayload };
 }
 
 /** Poll the persisted run (used after a reload or when the stream dropped). */
@@ -201,7 +261,7 @@ export async function pollBuildRun(runId: string, handlers: BuildStreamHandlers 
     const run = await readBuildRun(runId);
     if (!run) return null;
     handlers.onRun?.(run);
-    if (run.status === "succeeded" || run.status === "failed" || run.status === "awaiting_input" || run.status === "cancelled") return run;
+    if (run.status === "succeeded" || run.status === "failed" || run.status === "awaiting_input" || run.status === "cancelled" || run.status === "paused") return run;
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
   const final = await readBuildRun(runId);

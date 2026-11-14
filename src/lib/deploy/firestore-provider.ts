@@ -15,6 +15,7 @@
 // really activated. Nothing here can report success without doing the work.
 // =============================================================================
 
+import { deployVerdict } from "@/lib/deploy/classify";
 import "server-only";
 import crypto from "node:crypto";
 import type { Db } from "@/lib/firebase/admin";
@@ -166,7 +167,14 @@ export class FirestoreDeploymentProvider {
     // report from an earlier chat/build run cannot approve different files.
     if (Number((await ref.get()).data()?.revision ?? 0) !== Number(data.revision ?? 0)) throw new RpcError("PROJECT_REVISION_CONFLICT", 409);
     const report = built.report;
-    if (report.blocking && !input.overridden) throw new RpcError("BUILD_FAILED", 400);
+    // Only problems that would break the published site stop a deployment.
+    // Repairable problems that leave the site working (a dead link, a missing
+    // optional image) and warnings are published and recorded on the release.
+    const verdict = deployVerdict(report);
+    if (!verdict.deployable && !input.overridden) {
+      const first = verdict.blockers[0];
+      throw new RpcError("BUILD_FAILED", 400, first ? `${first.path}${first.line ? `:${first.line}` : ""} — ${first.message}` : report.summary);
+    }
     if (!built.artifacts.length) throw new RpcError("BUILD_EMPTY", 500);
 
     const slug = await this.resolveSlug(
@@ -184,8 +192,10 @@ export class FirestoreDeploymentProvider {
     };
 
     push("plan", `Preparing deployment (${report.checks.filter((check) => check.status === "passed").length}/${report.checks.length} checks passed).`);
-    if (input.overridden && report.blocking) {
+    if (input.overridden && !verdict.deployable) {
       push("warn", "Published with failing checks at the user's explicit request.");
+    } else if (verdict.knownIssues.length) {
+      push("warn", `Publishing with ${verdict.knownIssues.length} known non-critical issue${verdict.knownIssues.length === 1 ? "" : "s"}: ${verdict.knownIssues.slice(0, 3).map((issue) => `${issue.path} — ${issue.message}`).join("; ")}`.slice(0, 400));
     }
 
     const version = await this.nextVersion(input.projectId);
@@ -196,7 +206,8 @@ export class FirestoreDeploymentProvider {
       status: "building",
       source_revision: Number(data.revision ?? 0),
       build_status: "passed",
-      validation_status: report.blocking ? "overridden" : "passed",
+      validation_status: !verdict.deployable ? "overridden" : verdict.knownIssues.length ? "passed_with_issues" : "passed",
+      known_issues: verdict.knownIssues.slice(0, 12).map((issue) => ({ path: issue.path, line: issue.line ?? null, message: issue.message.slice(0, 240), code: issue.code ?? null })),
       publishing_status: "pending",
       verification_status: "pending",
       environment: input.environment,
@@ -240,9 +251,21 @@ export class FirestoreDeploymentProvider {
         throw new RpcError("DEPLOY_VERIFY_FAILED", 502, verification.error ?? undefined);
       }
       await stage.commit();
-      push("verify", `HTTP verified ${verification.checked.length} public URL/asset request(s).`);
+      push("verify", `Staging verified: ${verification.pages ?? 1} page${(verification.pages ?? 1) === 1 ? "" : "s"}, ${verification.assets ?? 0} asset${(verification.assets ?? 0) === 1 ? "" : "s"} (${verification.checked.length} HTTP requests).`);
       await siteRef.set({ status: "live", live_release_id: deploymentRef.id, deployment_id: deploymentRef.id, verifying_release_id: null, verification_token: null, updated_at: nowTs() }, { merge: true });
       push("activate", `Site live at /s/${slug}`);
+
+      // Production check: the same requests a visitor makes, with no staging
+      // credentials. If the live address does not serve the new release, the
+      // catch below puts the previous release back (automatic rollback) and
+      // the deployment is reported as failed — never as live.
+      const production = await verifyPublishedDeployment({ origin: siteOrigin(), slug, files: built.artifacts });
+      if (!production.ok) {
+        push("verify", `Production check failed after activation: ${production.error}`);
+        push("rollback", previousSite?.live_release_id ? "Restoring the previous live release automatically." : "No earlier release exists; the address was taken offline rather than left broken.");
+        throw new RpcError("DEPLOY_VERIFY_FAILED", 502, `${production.error ?? "The live address did not serve the new release."} ${previousSite?.live_release_id ? "The previous version was restored automatically and is still live." : "Nothing is live at this address."}`);
+      }
+      push("verify", `Production verified: ${production.pages ?? 1} page${(production.pages ?? 1) === 1 ? "" : "s"} and ${production.assets ?? 0} asset${(production.assets ?? 0) === 1 ? "" : "s"} return HTTP 200 at the public address.`);
 
       await this.d.collection("projects").doc(input.projectId).set(
         {
