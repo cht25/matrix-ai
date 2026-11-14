@@ -44,7 +44,6 @@ import { verifyPublishedDeployment } from "@/lib/deploy/verify";
 const MAX_LOG_ENTRIES = 60;
 const MAX_SNAPSHOT_FILES = 60;
 const MAX_SNAPSHOT_BYTES = 3_000_000;
-const PUBLISH_LIMIT_PER_HOUR = 10;
 
 const iso = (value: unknown): string => {
   const ts = value as { toDate?: () => Date } | null | undefined;
@@ -98,7 +97,7 @@ export class FirestoreDeploymentProvider {
       logs: true,
       runsBundler: false,
       serverRuntime: false,
-      publishRatePerHour: PUBLISH_LIMIT_PER_HOUR,
+      publishRatePerHour: null,
     };
   }
 
@@ -157,7 +156,6 @@ export class FirestoreDeploymentProvider {
   // -- deploy ----------------------------------------------------------------
 
   async deploy(input: DeployInput): Promise<DeploymentRecord> {
-    await this.assertRateLimit();
     const { ref, data } = await this.ownedProject(input.projectId);
 
     const sourceFiles = await loadProjectFiles(this.d, input.projectId);
@@ -651,13 +649,6 @@ export class FirestoreDeploymentProvider {
     const doc = await ref.get();
     if (!doc.exists || doc.data()?.owner_id !== this.user.uid || doc.data()?.archived_at) throw new RpcError("NOT_FOUND", 404);
     return { ref, data: doc.data() ?? {} };
-  }
-
-  private async assertRateLimit(): Promise<void> {
-    const snap = await this.d.collection("deployments").where("owner_id", "==", this.user.uid).get();
-    const hourAgo = Date.now() - 3_600_000;
-    const recent = snap.docs.filter((doc) => (doc.data().created_at?.toDate?.()?.getTime?.() ?? 0) >= hourAgo).length;
-    if (recent >= PUBLISH_LIMIT_PER_HOUR) throw new RpcError("PUBLISH_RATE_LIMITED", 429);
   }
 
   /**
