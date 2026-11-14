@@ -41,44 +41,17 @@ stored diff.
 responsive breakpoints, navigation, hierarchy, missing pages, empty page). It
 is static analysis only — it does not render the page in a browser.
 
-## 3. Model routing
+## 3. Model: GPT OSS 120B only
 
-Agent order: **GLM → Gemini → GPT OSS 120B**, then anything else configured.
-Normal chat keeps GPT OSS 120B first. A model the user selected always leads
-the chain and still falls back.
+> Supersedes the multi-provider routing and fallback that first shipped with
+> this overhaul. See `docs/SINGLE_MODEL.md` for the full description.
 
-- Authentication, billing and "model not found" errors now advance to the next
-  provider (previously they stopped the run).
-- After an account-level failure, other models on the same account are skipped.
-- Failing models are cooled down (10 min auth/billing/missing model, 60 s
-  timeout, 30 s rate limit) and promoted again afterwards.
-- A reply that has already started streaming is never spliced with another
-  model's output.
-- The UI shows which model answered and when a fallback happened
-  (`run.model`, message metadata, **Models → routing order**).
-
-### GLM
-
-Failure causes found: a hard-coded, unverified default ID (`glm-5-turbo`);
-Z.ai keys placed in `GLM_API_KEY` were sent to the mainland endpoint (401);
-numeric business codes (1113 no balance, 1211 model missing, …) were not
-understood; catalogue discovery fell back to a static list.
-
-Now: `ZAI_API_KEY` or `GLM_API_KEY` both work; the gateway (Z.ai, Z.ai Coding
-Plan, BigModel) is discovered automatically unless `GLM_BASE_URL` is set; the
-model list comes from the account's own catalogue; numeric codes are mapped to
-their real meaning in diagnostics.
-
-### Gemini
-
-Failure causes found: `GEMINI_MODEL` defaulted to empty so the route was
-dropped; no catalogue discovery; consecutive same-role turns, empty parts and
-missing thought signatures caused 400s; thinking tokens used up the output
-budget and produced empty replies.
-
-Now: only `GEMINI_API_KEY` is required; models are picked from the live
-catalogue; history is normalised; thought signatures are replayed; the output
-budget accounts for thinking.
+MATRIX runs on one language model, GPT OSS 120B (`openai/gpt-oss-120b` on
+Groq). The ID is defined once in `src/lib/ai/model.ts`; `src/lib/ai/config.ts`
+builds the single server-side route. There is no model selector, no ranking and
+no fallback. A transient failure is retried once on the same model; after that
+the real provider error is shown with Retry, the user's message is kept, and a
+build writes no files.
 
 ## 4. Voice input
 
@@ -90,7 +63,8 @@ budget accounts for thinking.
 - Live transcript while speaking when the browser supports it and a language
   is chosen; the recording is always kept so the server can transcribe if the
   browser cannot.
-- Server transcription: Groq Whisper → OpenAI → Gemini, first that works.
+- Server transcription: Groq Whisper → OpenAI, first that works. The
+  transcript is then sent to GPT OSS 120B as text.
   Audio storage (Cloudinary) is no longer required for dictation.
 - Re-transcribe in another language, record more (appends), or discard.
 
@@ -109,19 +83,19 @@ budget accounts for thinking.
 
 | Variable | Purpose |
 | --- | --- |
-| `ZAI_API_KEY` or `GLM_API_KEY` | GLM (Agent primary) |
-| `GLM_BASE_URL` | Optional; skips gateway auto-discovery |
-| `GEMINI_API_KEY` | Gemini (Agent fallback, speech fallback) |
-| `GROQ_API_KEY` | GPT OSS 120B (chat default, Agent fallback) and Whisper |
-| `GEMINI_MODEL`, `GEMINI_CODING_MODEL`, `GLM_MODEL`, … | Optional pins; leave blank to use the catalogue |
+| `GROQ_API_KEY` | GPT OSS 120B (the only language model) and Whisper speech-to-text |
+| `GPT_OSS_API_KEY` + `GPT_OSS_BASE_URL` | Optional dedicated endpoint for the same model, used instead of Groq |
+| `GROQ_AUDIO_MODEL`, `OPENAI_API_KEY`, `OPENAI_AUDIO_MODEL` | Speech-to-text only |
+| `TOGETHER_API_KEY` | Image generation service |
 
 ## 7. What was and was not verified
 
 Verified here: type-check, the full unit/integration suite, and a production
-build. Fallback, error classification, design variety, revision behaviour and
-the transcription route are covered by tests using local stubs.
+build. Design variety, revision behaviour, error classification, the
+transcription route and the single-model guarantees (`tests/single-model.test.ts`)
+are covered by tests using local stubs.
 
-Not verified here: calls to the real GLM, Gemini, Groq or OpenAI APIs (no keys
-in the development sandbox), and in-browser behaviour (microphone, live
-recognition, streaming, responsive layouts). These need a check on a deployed
-environment with real keys.
+Not verified here: calls to the real Groq API (no keys in the development
+sandbox), and in-browser behaviour (microphone, live recognition, streaming,
+responsive layouts). These need a check on a deployed environment with real
+keys.

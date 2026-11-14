@@ -5,6 +5,7 @@
 // without Firebase credentials. Not reachable in production.
 
 import { useEffect, useState } from "react";
+import { MATRIX_MODEL_ID } from "@/lib/ai/model";
 import { AdminNav } from "@/components/admin/admin-nav";
 import { UsersTab } from "@/components/admin/users-tab";
 import { AuditLog } from "@/components/admin/audit-log";
@@ -52,7 +53,7 @@ function useMockTransport() {
         new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
       if (url.includes("/api/health")) {
-        return json({ ok: true, firebase: "reachable", webConfig: "valid", cloudinary: "reachable", ai: "online", codingAi: "online", codingProvider: "openrouter", codingModel: "preview", checkedAt: new Date().toISOString() });
+        return json({ ok: true, firebase: "reachable", webConfig: "valid", cloudinary: "reachable", ai: "online", codingAi: "online", codingProvider: "Groq", codingModel: MATRIX_MODEL_ID, checkedAt: new Date().toISOString() });
       }
 
       if (url.includes("/api/rpc")) {

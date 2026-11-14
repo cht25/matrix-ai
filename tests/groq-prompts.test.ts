@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GroqProvider, MODELS } from "../src/lib/ai/groq";
+import { GroqProvider } from "../src/lib/ai/groq";
 import { buildSystemMessages, validateOutput, buildSummaryPrompt } from "../src/lib/ai/prompts";
 
 const originalFetch = globalThis.fetch;

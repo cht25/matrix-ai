@@ -17,9 +17,9 @@ const WEB_DEV_OR_HIGH_LOAD_RE =
   /\b(website|web\s*app|webapp|landing\s*page|frontend|front-end|backend|back-end|fullstack|full-stack|next\.?js|react|vue|svelte|angular|tailwind|html5?|css3?|sass|javascript|typescript|node\.?js|express|fastapi|django|flask|rest\s*api|graphql|database|postgres|mysql|sqlite|mongodb|firestore|supabase|prisma|docker|kubernetes|microservice|architecture|system\s*design|security\s*audit|threat\s*model|vulnerability|refactor|debug|stack\s*trace|benchmark|algorithm|data\s*structure|compile|bundle|deploy|ui\/ux|dashboard|responsive\s*layout|state\s*machine|concurrency|distributed\s*system)\b/i;
 
 /**
- * Classifies whether a request belongs on the high-end GLM tier (coding, web
+ * Classifies whether a request belongs on the heavier workload class (coding, web
  * development, architecture, deep reasoning, attachments, or heavy multi-part
- * workloads) vs. a lightweight response strategy; both use the same GLM default.
+ * workloads) vs. a lightweight response strategy; both run on the single MATRIX model; the class only tunes limits and prompts.
  */
 export function isHighLoadRequest(message: string, attachments: TextAttachment[] = []): boolean {
   if (attachments.length > 0) return true;
@@ -43,20 +43,20 @@ export function decideRoute(opts: {
 }): RouteDecision {
   const { mode, message, attachments = [], lane = "auto", strategy = "balanced" } = opts;
   if (mode === "image" || lane === "image") {
-    return { mode: "image", lane: "image", tier: "high", coding: false, vision: false, image: true, reason: "GLM image generation lane" };
+    return { mode: "image", lane: "image", tier: "high", coding: false, vision: false, image: true, reason: "Image generation service" };
   }
   if (lane === "vision") {
-    return { mode, lane: "vision", tier: "high", coding: false, vision: true, image: false, reason: "GLM vision lane" };
+    return { mode, lane: "vision", tier: "high", coding: false, vision: true, image: false, reason: "Image attached" };
   }
   if (lane === "coding" || mode === "code" || mode === "agent") {
-    return { mode, lane: "coding", tier: "high", coding: true, vision: false, image: false, reason: "GLM coding & web-dev engine" };
+    return { mode, lane: "coding", tier: "high", coding: true, vision: false, image: false, reason: "GPT OSS 120B coding & web-dev engine" };
   }
   if (lane === "fast" || strategy === "fast" || strategy === "efficient") {
     const coding = isCodingRequest(message, attachments);
     if (coding) {
-      return { mode, lane: "coding", tier: "high", coding: true, vision: false, image: false, reason: "GLM coding override" };
+      return { mode, lane: "coding", tier: "high", coding: true, vision: false, image: false, reason: "GPT OSS 120B coding override" };
     }
-    return { mode, lane: "fast", tier: "low", coding: false, vision: false, image: false, reason: "GLM-5-Turbo fast response strategy" };
+    return { mode, lane: "fast", tier: "low", coding: false, vision: false, image: false, reason: "GPT OSS 120B fast response strategy" };
   }
   if (lane === "reasoning" || strategy === "quality" || mode === "study" || mode === "research" || mode === "orchestrator") {
     return {
@@ -66,7 +66,7 @@ export function decideRoute(opts: {
       coding: mode === "orchestrator" ? isCodingRequest(message, attachments) : false,
       vision: false,
       image: false,
-      reason: "GLM high-end reasoning & orchestration",
+      reason: "GPT OSS 120B high-end reasoning & orchestration",
     };
   }
   if (lane === "balanced") {
@@ -79,7 +79,7 @@ export function decideRoute(opts: {
       coding,
       vision: false,
       image: false,
-      reason: highLoad ? "GLM high-load / web-dev tier" : "GLM-5-Turbo balanced response strategy",
+      reason: highLoad ? "GPT OSS 120B high-load / web-dev tier" : "GPT OSS 120B balanced response strategy",
     };
   }
   // auto
@@ -94,12 +94,12 @@ export function decideRoute(opts: {
     vision,
     image: false,
     reason: coding
-      ? "Auto: GLM coding & web-dev tier"
+      ? "Auto: GPT OSS 120B coding & web-dev tier"
       : vision
-        ? "Auto: GLM multimodal vision"
+        ? "Auto: image attached"
         : highLoad
-          ? "Auto: GLM high-load system"
-          : "Auto: GLM-5-Turbo",
+          ? "Auto: GPT OSS 120B high-load system"
+          : "Auto: GPT OSS 120B",
   };
 }
 

@@ -30,7 +30,7 @@ const CODING_PATTERNS = [
   /(?:^|\s)[\w./-]+\.(?:tsx?|jsx?|py|html?|css|json|ya?ml|sql|go|rs|java|vue|svelte)(?:\s|$|:)/i,
 ];
 
-/** Conservative auto-routing: obvious code work uses Nemotron; ordinary chat does not. */
+/** Conservative auto-routing: obvious code work gets the coding prompt and tools; ordinary chat does not. */
 export function isCodingRequest(input: string, attachments: TextAttachment[] = []): boolean {
   if (attachments.some((file) => {
     const base = file.name.toLowerCase().split("/").pop() ?? "";

@@ -9,8 +9,7 @@
 //     client JS, localStorage, a NEXT_PUBLIC_ variable or the HTML source.
 //   · Audit entries record that the configuration changed — never the key.
 //
-// If nothing is saved, GLM/Z.ai environment credentials are used first;
-// TOGETHER_API_KEY is a secondary fallback.
+// If nothing is saved, TOGETHER_API_KEY from the environment is used.
 // =============================================================================
 
 import "server-only";
@@ -19,7 +18,6 @@ import { Db, nowTs } from "@/lib/firebase/admin";
 import { RpcError } from "@/lib/server/errors";
 import { isRealSecret, type ImageProviderCredentials, type ImageProviderId } from "@/lib/ai/image/provider";
 import { getImageProvider } from "@/lib/ai/image/registry";
-import { GLM_IMAGE_DEFAULT_MODEL } from "@/lib/ai/image/glm-provider";
 import { TOGETHER_DEFAULT_MODEL } from "@/lib/ai/image/together-provider";
 
 const COLLECTION = "system_settings";
@@ -105,24 +103,27 @@ async function readRecord(d: Db): Promise<StoredRecord> {
   return snap.exists ? ((snap.data() ?? {}) as StoredRecord) : {};
 }
 
-function normalizeProvider(value: unknown): ImageProviderId {
-  return value === "together" ? "together" : "glm";
+function normalizeProvider(_value: unknown): ImageProviderId {
+  void _value;
+  return "together";
 }
 
-function defaultModelFor(provider: ImageProviderId): string {
-  return provider === "together" ? TOGETHER_DEFAULT_MODEL : GLM_IMAGE_DEFAULT_MODEL;
+function defaultModelFor(_provider: ImageProviderId): string {
+  void _provider;
+  return TOGETHER_DEFAULT_MODEL;
 }
 
 /**
  * Resolve the credentials the server should use right now.
- * Priority: Admin-saved encrypted Firestore record → GLM environment key
- * (`GLM_IMAGE_API_KEY`, `ZAI_API_KEY`, or `GLM_API_KEY`) → `TOGETHER_API_KEY` fallback.
+ * Priority: Admin-saved encrypted Firestore record → `TOGETHER_API_KEY`.
+ * A record saved for a provider that no longer exists (GLM) is left in the
+ * database untouched but is never used: its key belongs to another service.
  */
 export async function resolveImageCredentials(
   d: Db,
 ): Promise<{ provider: ImageProviderId; credentials: ImageProviderCredentials; source: "database" | "environment" } | null> {
   const record = await readRecord(d).catch(() => ({}) as StoredRecord);
-  if (record.enabled !== false && record.api_key_encrypted) {
+  if (record.enabled !== false && record.api_key_encrypted && record.provider === "together") {
     const apiKey = decryptSecret(record.api_key_encrypted);
     if (isRealSecret(apiKey)) {
       const provider = normalizeProvider(record.provider);
@@ -133,16 +134,7 @@ export async function resolveImageCredentials(
       };
     }
   }
-  // Primary environment image provider: GLM (CogView / Z.ai).
-  const glmKey = (process.env.GLM_IMAGE_API_KEY || process.env.ZAI_API_KEY || process.env.GLM_API_KEY || "").trim();
-  if (isRealSecret(glmKey)) {
-    return {
-      provider: "glm",
-      credentials: { apiKey: glmKey, model: process.env.GLM_IMAGE_MODEL?.trim() || GLM_IMAGE_DEFAULT_MODEL },
-      source: "environment",
-    };
-  }
-  // Secondary environment fallback: Together AI.
+  // Environment credential.
   const envKey = (process.env.TOGETHER_API_KEY ?? "").trim();
   if (isRealSecret(envKey)) {
     return {

@@ -49,22 +49,17 @@ All secret values must be configured in the host's encrypted secret manager, nev
 
 Keep service-account permissions least-privileged. Do not expose the private key as a `NEXT_PUBLIC_*` variable. On Render-style hosts, preserve escaped newlines in the private key value.
 
-### AI provider secrets (choose providers and configure exact model IDs)
+### AI model secret (GPT OSS 120B only)
 
-- `GROQ_API_KEY`; optional `GROQ_CHAT_MODEL`, `GROQ_FAST_MODEL`, `GROQ_CODING_MODEL`, `GROQ_VISION_MODEL`.
-- `OPENROUTER_API_KEY`; optional `OPENROUTER_CHAT_MODEL`, `OPENROUTER_CODING_MODEL`.
-- `OPENAI_API_KEY`; optional `OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_CODING_MODEL`, `OPENAI_VISION_MODEL`.
-- `GEMINI_API_KEY`; optional but required for use: `GEMINI_MODEL`, `GEMINI_VISION_MODEL`. The code uses Google's OpenAI-compatible API endpoint. Select a model returned for the configured account; no model is assumed available by default.
-- `ANTHROPIC_API_KEY`; `ANTHROPIC_MODEL`.
-- `OLLAMA_BASE_URL`; `OLLAMA_MODEL` and optional `OLLAMA_API_KEY`, `OLLAMA_VISION_MODEL`. A local Ollama instance is not reachable from a hosted server unless private networking/tunneling is deliberately configured; do not expose an unauthenticated Ollama endpoint publicly.
-- `TOGETHER_API_KEY`, `TOGETHER_IMAGE_MODEL` for the optional image generation integration.
-- `PROVIDER_SECRET_KEY` — preferably a dedicated randomly generated key (e.g. `openssl rand -base64 32`) for encrypting administrator-configured provider secrets. Configure before saving credentials in the Admin UI. Follow existing encryption fallback policy only as a temporary backwards-compatibility measure.
+MATRIX uses exactly one language model: **GPT OSS 120B**, Groq model ID `openai/gpt-oss-120b`. The ID is defined in `src/lib/ai/model.ts` and cannot be changed by environment variable. There is no alternative provider and no fallback.
 
-Provider health/model list operations call real upstream services. Configure a valid catalog model and test a small request before enabling users. Provider limits and prices are not interchangeable; configure cost alerts/quotas at the provider and MATRIX layers.
+- `GROQ_API_KEY` — required. Also used for Whisper speech-to-text (`GROQ_AUDIO_MODEL`, default `whisper-large-v3-turbo`).
+- Optional dedicated endpoint for the same model: `GPT_OSS_API_KEY` + `GPT_OSS_BASE_URL` (both required together; replaces the Groq route rather than backing it up).
+- `OPENAI_API_KEY` — optional, speech only: second speech-to-text service (`OPENAI_AUDIO_MODEL`) and read-aloud (`OPENAI_TTS_MODEL`). Never used for text generation.
+- `TOGETHER_API_KEY`, `TOGETHER_IMAGE_MODEL` for the optional image generation service.
+- `PROVIDER_SECRET_KEY` — a dedicated randomly generated key (e.g. `openssl rand -base64 32`) for encrypting the administrator-saved image-generation key.
 
-### Gemini model and quota note (official docs checked 2026-11-07)
-
-At the 2026-11-07 official-doc lookup, Google's [Gemini model catalog](https://ai.google.dev/gemini-api/docs/models) listed Gemini 3-family endpoints including `gemini-3.8-flash`, `gemini-3-flash-preview`, and `gemini-3.1-pro-preview` (catalog/model lifecycle can change). Google's [Gemini API rate-limits guide](https://ai.google.dev/gemini-api/docs/rate-limits) says quotas are applied per project, vary by model and usage tier, and are visible in AI Studio; actual capacity is not guaranteed. A million-token **context window** is not a one-million-token-per-day quota. No universal one-million-token daily entitlement applies to every selected Gemini model/account. Check the exact account's live AI Studio limits and model catalog before promising free availability. The MATRIX implementation leaves `GEMINI_MODEL` unselected until configured/discovered, and catalog-validates the chosen ID before use.
+Variables from earlier releases (`GLM_*`, `ZAI_API_KEY`, `GEMINI_*`, `OPENROUTER_*`, `ANTHROPIC_*`, `OLLAMA_*`, `GROQ_CHAT_MODEL`, `GROQ_CODING_MODEL`, `GROQ_VISION_MODEL`) are no longer read and can be deleted from the host. GPT OSS 120B is text-only, so image analysis (chat image attachments, the screenshot scanner) is unavailable.
 
 ### Optional application integrations
 

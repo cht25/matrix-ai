@@ -1,12 +1,9 @@
 // =============================================================================
 // Generic OpenAI-compatible provider.
 //
-// This is the provider the admin configures from the Admin panel: an
-// OpenAI-compatible base URL (".../v1" or a full ".../chat/completions"), a
-// model ID and an API key. It is used as the primary AI route whenever those
-// settings are saved; the old environment-keyed providers (Groq / OpenRouter)
-// remain as fallbacks so a missing or invalid admin configuration does not
-// take the whole assistant offline.
+// Used only for the optional dedicated GPT OSS 120B endpoint
+// (GPT_OSS_BASE_URL + GPT_OSS_API_KEY, see config.ts): an OpenAI-compatible
+// base URL (".../v1" or a full ".../chat/completions") serving the same model.
 //
 // The API key is server-only and is never returned to the browser.
 // =============================================================================
@@ -21,7 +18,6 @@ import { AIProviderError, providerErrorFromException, providerErrorFromResponse 
 import { assistantContentOnly, assistantDeltaContent, createReasoningStreamFilter, hasReasoningDelta } from "@/lib/ai/reasoning";
 import { fetchModelCatalog, verifyCatalogModel } from "@/lib/ai/model-catalog";
 import { cachedRealHealthCheck, healthCacheKey } from "@/lib/ai/provider-health";
-import { siteOrigin } from "@/lib/seo";
 
 /** Strip a full chat-completions URL down to the API base URL. */
 export function normalizeCompatibleBaseUrl(input: string): string {
@@ -48,7 +44,7 @@ export function isCompatibleBaseUrl(value: string): boolean {
 }
 
 function isReasoningModel(model: string): boolean {
-  return /o[1-9]|gpt-5|gpt-oss|qwen|deepseek|reasoning/i.test(model);
+  return /gpt-oss/i.test(model);
 }
 
 function parseToolCalls(value: unknown): AIProviderToolCall[] {
@@ -71,7 +67,6 @@ export class OpenAICompatibleProvider implements AIProvider {
     private readonly apiKey: string,
     baseUrl: string,
     private readonly label = "OpenAI-compatible",
-    private readonly appUrl = siteOrigin(),
     /** Model used for the honest one-token health probe (the admin chat model). */
     private readonly healthCheckModel?: string,
   ) {
@@ -80,11 +75,9 @@ export class OpenAICompatibleProvider implements AIProvider {
   }
 
   private headers(requestId?: string): Record<string, string> {
-    const isOpenRouter = /(^|\.)openrouter\.ai$/i.test(new URL(this.baseUrl).hostname);
     return {
       "Content-Type": "application/json",
       Authorization: `Bearer ${this.apiKey}`,
-      ...(isOpenRouter ? { "HTTP-Referer": this.appUrl, "X-OpenRouter-Title": "MATRIX AI" } : {}),
       ...(requestId ? { "X-Request-ID": requestId } : {}),
     };
   }
@@ -130,7 +123,7 @@ export class OpenAICompatibleProvider implements AIProvider {
 
   async healthCheck(): Promise<boolean> {
     // A real one-token completion against the configured model. GET /models is
-    // answered 200 by OpenRouter and most proxies WITHOUT a valid key, which
+    // answered 200 by many proxies WITHOUT a valid key, which
     // used to report "AI Online" while every actual chat request failed.
     // The body mirrors buildBody() (max_completion_tokens only for reasoning
     // models) so the probe can never pass while the real chat shape fails.
@@ -237,7 +230,7 @@ export class OpenAICompatibleProvider implements AIProvider {
       let buffer = "";
       let sawDone = false;
       // Reasoning deltas are dropped via assistantDeltaContent, and inline
-      // <think> blocks (Qwen3 & friends) that span several deltas are removed
+      // <think> blocks that span several deltas are removed
       // by the stateful filter — without trimming a single space or newline
       // off the visible text. Per-delta trimming is what used to glue every
       // word together into unreadable output.
@@ -334,5 +327,5 @@ export function createOpenAICompatibleProvider(settings: {
   label?: string;
   model?: string;
 }): OpenAICompatibleProvider {
-  return new OpenAICompatibleProvider(settings.apiKey, settings.baseUrl, settings.label ?? "OpenAI-compatible", undefined, settings.model);
+  return new OpenAICompatibleProvider(settings.apiKey, settings.baseUrl, settings.label ?? "OpenAI-compatible", settings.model);
 }

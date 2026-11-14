@@ -12,8 +12,6 @@ import { type SessionUser } from "@/lib/firebase/session";
 import { getApiSessionUser, hasDeviceScope, rpcDeviceScope } from "@/lib/firebase/device-session";
 import { RpcError } from "@/lib/server/rpc";
 import * as rpc from "@/lib/server/rpc";
-import * as aiRuntime from "@/lib/ai/runtime-config";
-import * as managedAI from "@/lib/ai/managed-providers";
 import * as imageConfig from "@/lib/ai/image/config";
 import * as appUpdates from "@/lib/server/app-updates";
 import { getConversationHistoryPage } from "@/lib/server/queries";
@@ -126,16 +124,6 @@ const ACTIONS: Record<string, Handler> = {
   canvas_versions: (d, u, b) => canvas.listCanvasVersions(d, u, z.string().min(1).max(128).parse(b.id)),
   canvas_version_restore: (d, u, b) => canvas.restoreCanvasVersion(d, u, z.string().min(1).max(128).parse(b.id), z.string().min(1).max(128).parse(b.version_id)),
 
-  model_preference_set: async (d, u, b) => {
-    const providerId = z.string().max(80).parse(b.provider_id ?? "");
-    const modelId = z.string().max(220).parse(b.model_id ?? "");
-    const mode = z.enum(["chat", "agent"]).parse(b.mode ?? "chat");
-    if (providerId || modelId) await import("@/lib/ai/config").then((m) => m.resolveSelectedAIRoute(d, providerId, modelId));
-    const fields = mode === "agent" ? { agent_ai_provider_id: providerId, agent_ai_model_id: modelId }
-      : { chat_ai_provider_id: providerId, chat_ai_model_id: modelId, ai_provider_id: providerId, ai_model_id: modelId };
-    await d.collection("user_security_settings").doc(u.uid).set({ ...fields, updated_at: nowTs() }, { merge: true });
-    return { provider_id: providerId, model_id: modelId };
-  },
   // --- onboarding / identity --------------------------------------------------
   complete_profile: (d, u, b) =>
     rpc.completeProfile(d, u, {
@@ -502,117 +490,6 @@ const ACTIONS: Record<string, Handler> = {
         created_at: e.data().created_at?.toDate?.().toISOString() ?? "",
       }));
   },
-  admin_ai_provider_get: async (d, u) => {
-    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
-    const config = await aiRuntime.getAIProviderConfigPublic(d);
-    await rpc.logAudit(d, u.uid, "ai_provider_settings_viewed", "system_settings", "ai_provider", "");
-    return config;
-  },
-  admin_ai_provider_save: async (d, u, b) => {
-    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
-    const result = await aiRuntime.saveAIProviderConfig(d, u.uid, {
-      kind: b.kind === undefined ? undefined : z.enum(aiRuntime.MAIN_MODEL_KINDS).parse(b.kind),
-      base_url: str(b.base_url),
-      model: z.string().min(1).max(220).parse(b.model),
-      agent_model: str(b.agent_model),
-      vision_model: str(b.vision_model),
-      low_task_model: str(b.low_task_model),
-      api_key: typeof b.api_key === "string" ? b.api_key : "",
-      enabled: bool(b.enabled, true),
-      label: str(b.label, ""),
-      allow_unverified: bool(b.allow_unverified, false),
-    });
-    await rpc.logAudit(d, u.uid, "ai_provider_settings_updated", "system_settings", "ai_provider", result.kind);
-    return result;
-  },
-  admin_ai_provider_models: async (d, u, b) => {
-    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
-    const result = await aiRuntime.listAIProviderModels(d, {
-      base_url: b.base_url === undefined ? "" : z.string().max(500).parse(b.base_url),
-      api_key: z.string().max(4096).parse(b.api_key ?? ""),
-      kind: b.kind === undefined ? undefined : z.enum(aiRuntime.MAIN_MODEL_KINDS).parse(b.kind),
-    });
-    await rpc.logAudit(d, u.uid, "ai_provider_model_catalog_loaded", "system_settings", "ai_provider", "");
-    return result;
-  },
-  admin_ai_provider_test: async (d, u, b) => {
-    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
-    const mode = b?.mode === "agent" ? "agent" : b?.mode === "vision" ? "vision" : "general";
-    const result = await aiRuntime.testAIProviderConfig(d, mode);
-    await rpc.logAudit(d, u.uid, "ai_provider_settings_tested", "system_settings", "ai_provider", mode);
-    return result;
-  },
-  admin_ai_managed_providers_get: async (d, u) => {
-    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
-    await rpc.logAudit(d, u.uid, "ai_managed_provider_registry_viewed", "system_settings", "ai_managed_providers", "");
-    return managedAI.getManagedProvidersPublic(d);
-  },
-  admin_ai_managed_models: async (d, u, b) => {
-    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
-    const kind = b.kind ? z.enum(["glm", "openai-compatible", "gemini", "anthropic"]).parse(b.kind) : undefined;
-    const result = await managedAI.listManagedProviderModels(d, {
-      provider_id: b.provider_id ? z.string().min(8).max(80).parse(b.provider_id) : undefined,
-      kind,
-      name: b.name ? z.string().max(80).parse(b.name) : undefined,
-      base_url: b.base_url ? z.string().max(500).parse(b.base_url) : undefined,
-      api_key: b.api_key ? z.string().max(4096).parse(b.api_key) : undefined,
-    });
-    await rpc.logAudit(d, u.uid, "ai_managed_provider_models_loaded", "system_settings", "ai_managed_providers", "");
-    return result;
-  },
-  admin_ai_managed_provider_save: async (d, u, b) => {
-    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
-    const models = z.array(z.object({
-      id: z.string().min(1).max(220),
-      label: z.string().max(160),
-      enabled: z.boolean(),
-      use_for_chat: z.boolean(),
-      use_for_agent: z.boolean(),
-      use_for_vision: z.boolean(),
-    })).min(1).max(50).parse(b.models);
-    const saved = await managedAI.saveManagedProvider(d, u.uid, {
-      id: b.id ? z.string().min(8).max(80).parse(b.id) : undefined,
-      name: z.string().min(1).max(80).parse(b.name),
-      kind: z.enum(["glm", "openai-compatible", "gemini", "anthropic"]).parse(b.kind),
-      base_url: z.string().max(500).parse(b.base_url ?? ""),
-      api_key: z.string().max(4096).parse(b.api_key ?? ""),
-      enabled: bool(b.enabled),
-      models,
-      allow_unverified: bool(b.allow_unverified, false),
-    });
-    await rpc.logAudit(d, u.uid, "ai_managed_provider_saved", "system_settings", saved.id, "");
-    return saved;
-  },
-  admin_ai_managed_provider_toggle: async (d, u, b) => {
-    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
-    const providerId = z.string().min(8).max(80).parse(b.id);
-    const enabled = z.boolean().parse(b.enabled);
-    const providers = await managedAI.setManagedProviderEnabled(d, providerId, enabled);
-    await rpc.logAudit(d, u.uid, "ai_managed_provider_toggled", "system_settings", providerId, enabled ? "enabled" : "disabled");
-    return providers;
-  },
-  admin_ai_managed_model_update: async (d, u, b) => {
-    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
-    const provider_id = z.string().min(8).max(80).parse(b.provider_id);
-    const model_id = z.string().min(1).max(220).parse(b.model_id);
-    const patch = {
-      ...(typeof b.enabled === "boolean" ? { enabled: b.enabled } : {}),
-      ...(typeof b.use_for_chat === "boolean" ? { use_for_chat: b.use_for_chat } : {}),
-      ...(typeof b.use_for_agent === "boolean" ? { use_for_agent: b.use_for_agent } : {}),
-      ...(typeof b.use_for_vision === "boolean" ? { use_for_vision: b.use_for_vision } : {}),
-    };
-    if (!Object.keys(patch).length) throw new RpcError("BAD_REQUEST", 400);
-    const providers = await managedAI.setManagedModelFlags(d, { provider_id, model_id, ...patch });
-    await rpc.logAudit(d, u.uid, "ai_managed_model_updated", "system_settings", `${provider_id}:${model_id}`, "");
-    return providers;
-  },
-  admin_ai_managed_provider_delete: async (d, u, b) => {
-    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
-    const providerId = z.string().min(8).max(80).parse(b.id);
-    const providers = await managedAI.deleteManagedProvider(d, providerId);
-    await rpc.logAudit(d, u.uid, "ai_managed_provider_deleted", "system_settings", providerId, "");
-    return providers;
-  },
   // --- image generation provider (Together AI + future providers) -------------
   // The API key is written encrypted and is NEVER returned to the browser:
   // these actions only ever expose {configured, provider, model, last4}.
@@ -624,7 +501,7 @@ const ACTIONS: Record<string, Handler> = {
     if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
     const apiKey = typeof b.api_key === "string" ? b.api_key : "";
     const result = await imageConfig.saveImageProviderConfig(d, u.uid, {
-      provider: str(b.provider, "glm"),
+      provider: str(b.provider, "together"),
       model: str(b.model),
       api_key: apiKey,
       enabled: bool(b.enabled, true),

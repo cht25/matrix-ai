@@ -1,34 +1,47 @@
 import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionUser } from "@/lib/firebase/session";
-import { describeExecutionRoutes, providerCatalogEntries } from "@/lib/ai/config";
+import { matrixModelRoute, matrixModelStatus } from "@/lib/ai/config";
+import { MATRIX_MODEL } from "@/lib/ai/model";
 import { providerPublicCode } from "@/lib/ai/provider-error";
-import { preferenceForMode } from "@/lib/ai/model-preferences";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Public descriptors only. Credentials and internal endpoint URLs stay server-side. */
+/**
+ * The one MATRIX model and its live status. There is no catalogue and no
+ * selection: this endpoint is read-only. Credentials stay server-side.
+ */
 export async function GET() {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
-  const entries = await providerCatalogEntries(adminDb());
-  const providers = await Promise.all(entries.map(async (entry) => {
-    const base = { id: entry.id, name: entry.name, defaultModel: entry.defaultModel, codingModel: entry.codingModel, visionModel: entry.visionModel };
+  const status = matrixModelStatus();
+  const route = matrixModelRoute();
+  let health: "online" | "unavailable" | "not-configured" = "not-configured";
+  let error: string | null = null;
+  if (route) {
     try {
-      if (!entry.client.listModels) throw new Error("Catalog unavailable");
-      const models = await entry.client.listModels();
-      return { ...base, models, verification: "account-catalog", verifiedAt: new Date().toISOString() };
-    } catch (error) {
-      return { ...base, models: [], error: providerPublicCode(error), verification: "unavailable" };
+      health = (await route.client.healthCheck(route.model)) ? "online" : "unavailable";
+    } catch (cause) {
+      health = "unavailable";
+      error = providerPublicCode(cause);
     }
-  }));
-  const settings = await adminDb().collection("user_security_settings").doc(user.uid).get();
-  // The order the server will actually try, per mode — computed by the same
-  // code that routes requests, so the page cannot drift from the backend.
-  const [agentRoutes, chatRoutes] = await Promise.all([
-    describeExecutionRoutes(adminDb(), "agent").catch(() => []),
-    describeExecutionRoutes(adminDb(), "chat").catch(() => []),
-  ]);
-  return NextResponse.json({ providers, routing: { agent: agentRoutes, chat: chatRoutes }, preference: preferenceForMode(settings.data(), "chat"), preferences: { chat: preferenceForMode(settings.data(), "chat"), agent: preferenceForMode(settings.data(), "agent") }, reveal_mode: settings.data()?.stream_reveal_mode ?? "adaptive" }, { headers: { "Cache-Control": "private, no-store" } });
+  }
+  const settings = await adminDb().collection("user_security_settings").doc(user.uid).get().catch(() => null);
+  return NextResponse.json({
+    model: {
+      id: status.model,
+      label: MATRIX_MODEL.label,
+      provider: status.provider,
+      configured: status.configured,
+      streaming: MATRIX_MODEL.streaming,
+      tool_calling: MATRIX_MODEL.toolCalling,
+      vision: MATRIX_MODEL.vision,
+      health,
+      error,
+      checked_at: new Date().toISOString(),
+    },
+    used_for: ["Chat", "Agent", "Website generation", "Project editing", "Code", "Debugging", "Research", "Deployment assistance", "Voice transcripts"],
+    reveal_mode: settings?.data()?.stream_reveal_mode ?? "adaptive",
+  }, { headers: { "Cache-Control": "private, no-store" } });
 }

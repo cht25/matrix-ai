@@ -243,7 +243,7 @@ function SidebarBody({
     { href: "/courses", label: t("nav.courses"), icon: <GraduationCap size={16} />, detail: "Guided learning" },
     { href: "/report", label: t("nav.report"), icon: <Shield size={16} />, detail: "Reporting assistant" },
     { href: "/design", label: "Design studio", icon: <Sliders size={16} />, detail: "Custom validated themes" },
-    { href: "/compare", label: "Compare models", icon: <Columns3 size={16} />, detail: "Side-by-side answers" },
+    { href: "/compare", label: "Compare styles", icon: <Columns3 size={16} />, detail: "Side-by-side answers" },
   ];
 
   return (

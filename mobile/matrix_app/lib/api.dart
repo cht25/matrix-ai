@@ -219,7 +219,7 @@ class MatrixApi {
   }
 
   /// Sends a chat or image request to the real MATRIX `/api/ai` gateway
-  /// (GLM high-load/coding/vision + gpt-oss-120b low-load + GLM CogView image).
+  /// (GPT OSS 120B for all text; image generation is a separate media service).
   Future<Map<String, dynamic>> sendAiGateway(Map<String, dynamic> payload) async {
     final res = await _send('POST', '/api/ai', {'stream': false, ...payload});
     final data = _decode(res);

@@ -73,7 +73,7 @@ export function toFirestoreRun(run: BuildRun): Json {
     fileCount: run.fileCount,
     previewUrl: run.previewUrl ?? null,
     model: run.model
-      ? { provider: run.model.provider.slice(0, 60), model: run.model.model.slice(0, 120), fallback: run.model.fallback === true, failed: run.model.failed.slice(0, 8).map((line) => line.slice(0, 200)), requested: run.model.requested ?? null }
+      ? { provider: run.model.provider.slice(0, 60), model: run.model.model.slice(0, 120) }
       : null,
     design: run.design
       ? { direction: run.design.direction.slice(0, 80), mode: run.design.mode, primary: run.design.primary, background: run.design.background, heading: run.design.heading.slice(0, 80), source: run.design.source, changed: (run.design.changed ?? []).slice(0, 12) }
@@ -233,11 +233,7 @@ function readModel(value: unknown): BuildRun["model"] {
   if (!value || typeof value !== "object") return null;
   const raw = value as Json;
   if (!str(raw.model) || !str(raw.provider)) return null;
-  return {
-    provider: str(raw.provider), model: str(raw.model), fallback: raw.fallback === true,
-    failed: Array.isArray(raw.failed) ? raw.failed.filter((line): line is string => typeof line === "string").slice(0, 8) : [],
-    requested: nullableStr(raw.requested),
-  };
+  return { provider: str(raw.provider), model: str(raw.model) };
 }
 
 function readDesign(value: unknown): BuildRun["design"] {

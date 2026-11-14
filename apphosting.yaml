@@ -40,44 +40,14 @@ env:
   - variable: CLOUDINARY_API_SECRET
     availability: [RUNTIME]
     secret: CLOUDINARY_API_SECRET
-  - variable: GLM_API_KEY
-    availability: [RUNTIME]
-    secret: GLM_API_KEY
-  # GLM_BASE_URL overrides the default mainland endpoint. If using Z.ai,
-  # set GLM_BASE_URL=https://api.z.ai/api/paas/v4 here or in the console,
-  # and supply the matching GLM_API_KEY secret (ZAI_API_KEY is also accepted
-  # when configured separately; do not require two secrets).
-  - variable: GLM_BASE_URL
-    availability: [RUNTIME]
-  - variable: GLM_IMAGE_BASE_URL
-    availability: [RUNTIME]
-  - variable: GLM_MODEL
-    value: glm-4.7
-    availability: [RUNTIME]
-  - variable: GLM_CODING_MODEL
-    value: glm-4.7
-    availability: [RUNTIME]
-  - variable: GLM_VISION_MODEL
-    value: glm-4.6v
-    availability: [RUNTIME]
-  - variable: GLM_IMAGE_MODEL
-    value: cogview-4
-    availability: [RUNTIME]
-  # Gemini is the Agent's second choice after GLM. It is OPTIONAL and can be
-  # supplied either in Admin → AI providers (stored encrypted in Firestore) or
-  # as a secret here. It is left commented so a deploy does not fail when the
-  # secret has not been created:
-  #   firebase apphosting:secrets:set GEMINI_API_KEY
-  # - variable: GEMINI_API_KEY
-  #   availability: [RUNTIME]
-  #   secret: GEMINI_API_KEY
-  # GEMINI_MODEL / GEMINI_CODING_MODEL may stay unset: MATRIX reads the key's
-  # live model catalogue and uses the strongest listed Gemini model.
+  # The only language model is GPT OSS 120B on Groq (openai/gpt-oss-120b).
+  # The model ID lives in src/lib/ai/model.ts and is not configurable here.
   - variable: GROQ_API_KEY
     availability: [RUNTIME]
     secret: GROQ_API_KEY
-  - variable: GROQ_CHAT_MODEL
-    value: openai/gpt-oss-120b
+  # Whisper speech-to-text (same Groq key); not a language model.
+  - variable: GROQ_AUDIO_MODEL
+    value: whisper-large-v3-turbo
     availability: [RUNTIME]
   - variable: RESEND_API_KEY
     availability: [RUNTIME]

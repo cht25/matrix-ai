@@ -1,7 +1,7 @@
 "use client";
 
-// Multi-model comparison workspace: one prompt → several routing lanes, each
-// answer attributed to its real provider/model. Results are ephemeral
+// Response-style comparison: one prompt → several response styles of the one
+// MATRIX model (GPT OSS 120B), each answer attributed to it. Results are ephemeral
 // (not saved to a conversation); failures show honest error codes.
 
 import { useState } from "react";
@@ -79,10 +79,10 @@ export function CompareClient() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Compare Models</h1>
+        <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Compare response styles</h1>
         <p className="mt-1 text-ink-2">
-          Send one prompt to multiple MATRIX routing lanes and compare the answers side by side. Every response is attributed
-          to the provider and model that actually produced it.
+          Send one prompt through several response styles and compare the answers side by side. Every answer comes from the
+          same model, GPT OSS 120B — only the instructions and limits differ.
         </p>
       </div>
 

@@ -6,7 +6,7 @@ const cache = new Map<string, { expires: number; result: CatalogResult }>();
 const pending = new Map<string, Promise<CatalogResult>>();
 export const CATALOG_TTL_MS = 5 * 60_000;
 
-/** Accept the actual OpenAI/Ollama and Anthropic catalog shapes, never invented IDs. */
+/** Accept the actual OpenAI-compatible catalog shape, never invented IDs. */
 export function parseModelCatalog(payload: unknown): CatalogModel[] {
   const root = payload as { data?: unknown; models?: unknown } | null;
   const rows = Array.isArray(payload) ? payload : Array.isArray(root?.data) ? root.data : Array.isArray(root?.models) ? root.models : [];
@@ -77,8 +77,7 @@ export function resetModelCatalogCache(): void { cache.clear(); pending.clear();
 /**
  * List a provider's real catalog through its own adapter when it has one.
  *
- * `AIProvider.listModels` is the single source of truth: Gemini parses
- * Google's `/v1beta/models` shape, Anthropic sends `x-api-key`, and an
+ * `AIProvider.listModels` is the single source of truth; an
  * OpenAI-compatible endpoint uses the bearer catalog. Falling back to the raw
  * OpenAI shape is only for adapters without native catalog support.
  */

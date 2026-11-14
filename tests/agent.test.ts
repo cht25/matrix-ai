@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentGenerationIncomplete, filesFromSnippet, formatProjectFilesForContext, isCodingRequest, parseAgentResponse, safeAgentPath, shouldWithholdProjectFile } from "../src/lib/ai/agent";
-import { OPENROUTER_MODELS, OpenRouterProvider } from "../src/lib/ai/openrouter";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
@@ -116,23 +115,5 @@ describe("Agent artifact protocol", () => {
     expect(html[0].path).toBe("index.html");
     const css = filesFromSnippet("css", "body{margin:0}");
     expect(css.some((f) => f.path === "index.html")).toBe(true);
-  });
-});
-
-describe("OpenRouterProvider", () => {
-  it("uses the explicitly supplied OpenRouter model with server-side auth", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ choices: [{ message: { content: "done" } }], model: "test-provider/test-coder", usage: { total_tokens: 9 } }),
-    }) as unknown as typeof fetch;
-    const provider = new OpenRouterProvider("sk-or-test", "https://matrix.example");
-    const result = await provider.chat({ model: "test-provider/test-coder", messages: [{ role: "user", content: "build" }] });
-    expect(result.content).toBe("done");
-    const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(String(url)).toBe("https://openrouter.ai/api/v1/chat/completions");
-    expect(init.headers.Authorization).toBe("Bearer sk-or-test");
-    const body = JSON.parse(String(init.body));
-    expect(body.model).toBe("test-provider/test-coder");
-    expect(body.max_completion_tokens).toBeDefined();
   });
 });

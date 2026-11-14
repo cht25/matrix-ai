@@ -1,9 +1,10 @@
 // Provider failures are deliberately typed at the server boundary. The route
-// uses these errors to decide whether a retry/fallback is safe, while the
+// uses these errors to decide whether one retry on the same model is safe, while the
 // client only receives a small public error code. Provider response bodies are
 // never sent to the browser and are sanitized before they reach logs.
 
-export type AIProviderName = "GLM" | "OpenRouter" | "Groq" | "OpenAI" | "Gemini" | "Anthropic" | "Ollama";
+/** Hosts that can serve the one MATRIX model (and the Whisper speech service). */
+export type AIProviderName = "Groq" | "OpenAI";
 
 export type AIProviderErrorType =
   | "authentication"
@@ -77,10 +78,9 @@ export class AIProviderError extends Error {
   readonly detail: string;
   readonly requestId?: string;
   readonly retryable: boolean;
-  readonly fallbackEligible: boolean;
-  /** Provider's own error code (e.g. GLM "1211"), when it sent one. */
+  /** Provider's own error code, when it sent one. */
   readonly code?: string;
-  /** The model ID itself is unknown/unavailable — other models may still work. */
+  /** The provider reports that the model ID itself is unknown/unavailable. */
   readonly modelUnavailable: boolean;
 
   constructor(opts: {
@@ -93,7 +93,6 @@ export class AIProviderError extends Error {
     detail: string;
     requestId?: string;
     retryable?: boolean;
-    fallbackEligible?: boolean;
   }) {
     const type = opts.type ?? "unknown";
     super(`${opts.provider} ${type}${opts.status ? ` (${opts.status})` : ""}: ${opts.detail}`);
@@ -107,37 +106,6 @@ export class AIProviderError extends Error {
     this.code = opts.code;
     this.modelUnavailable = opts.modelUnavailable === true;
     this.retryable = opts.retryable ?? ["rate_limit", "provider_unavailable", "timeout", "network", "empty_response"].includes(type);
-    // 400 malformed requests, authorization, and billing are not model outages.
-    // 404 means an unavailable model/endpoint; try another eligible model.
-    this.fallbackEligible = opts.fallbackEligible ?? (type !== "authentication" && type !== "billing" && (type !== "invalid_request" || opts.status === 404));
-  }
-}
-
-/**
- * Zhipu / Z.ai answer business failures with their own numeric codes, often
- * on HTTP 400/429 and (on the mainland gateway) with Chinese messages. The
- * English-only message regex used for OpenAI-style errors never matched them,
- * so "model does not exist" was classified as a malformed request and stopped
- * the Agent instead of advancing to the next model.
- */
-export function glmBusinessErrorType(code: string | undefined): { type: AIProviderErrorType; modelUnavailable?: boolean; label: string } | null {
-  switch (code) {
-    case "1000": case "1001": case "1002": case "1003": case "1004":
-      return { type: "authentication", label: "GLM rejected the API key (wrong key, expired token, or key issued for a different gateway/region)" };
-    case "1110": case "1111": case "1112": case "1121":
-      return { type: "authentication", label: "GLM account is inactive, locked or not permitted to use this API" };
-    case "1113":
-      return { type: "billing", label: "GLM account has no balance or resource package on this endpoint (Coding Plan keys must use the /api/coding/paas/v4 endpoint)" };
-    case "1211": case "1220": case "1221": case "1222":
-      return { type: "invalid_request", modelUnavailable: true, label: "GLM model ID does not exist or is not enabled for this account" };
-    case "1302": case "1303": case "1305":
-      return { type: "rate_limit", label: "GLM rate or concurrency limit reached" };
-    case "1304": case "1308": case "1309": case "1310":
-      return { type: "billing", label: "GLM usage quota or plan limit reached" };
-    case "1301":
-      return { type: "invalid_request", label: "GLM content filter rejected the request" };
-    default:
-      return null;
   }
 }
 
@@ -151,24 +119,19 @@ export function providerErrorFromResponse(
   requestId?: string,
 ): AIProviderError {
   const parsed = parseUpstreamBody(body);
-  const business = provider === "GLM" ? glmBusinessErrorType(parsed.code) : null;
-  const type = business?.type ?? typeForStatus(response.status);
-  const requestHeader = response.headers?.get("x-request-id") ?? response.headers?.get("x-openrouter-request-id") ?? requestId;
-  const modelUnavailable = business?.modelUnavailable === true
-    || response.status === 404
+  const type = typeForStatus(response.status);
+  const requestHeader = response.headers?.get("x-request-id") ?? requestId;
+  const modelUnavailable = response.status === 404
     || ((response.status === 400 || response.status === 403) && MODEL_UNAVAILABLE_RE.test(parsed.detail));
   return new AIProviderError({
     provider,
     model,
     status: response.status,
     type: modelUnavailable && type === "authentication" ? "invalid_request" : type,
-    detail: business ? `${business.label}. Upstream: ${parsed.detail}` : parsed.detail,
+    detail: parsed.detail,
     requestId: requestHeader ?? undefined,
     code: parsed.code,
     modelUnavailable,
-    fallbackEligible: type === "invalid_request" || modelUnavailable
-      ? modelUnavailable
-      : type !== "authentication" && type !== "billing",
   });
 }
 
@@ -231,7 +194,6 @@ export function logProviderFailure(error: unknown, requestId?: string): void {
       errorType: error.type,
       requestId: error.requestId ?? requestId ?? "none",
       retryable: error.retryable,
-      fallbackEligible: error.fallbackEligible,
       detail: error.detail,
     });
     return;

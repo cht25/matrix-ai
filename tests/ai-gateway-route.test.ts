@@ -58,23 +58,17 @@ beforeAll(async () => {
   const started = await startProviderStub(stubHolder);
   providerCalls = started.calls;
   baseUrl = `http://127.0.0.1:${started.port}/v1`;
-  // Register the local OpenAI-compatible provider as the admin runtime route —
-  // the same code path production uses for system_settings/ai_provider.
-  stub.collection("system_settings").doc("ai_provider").set({
-    enabled: true,
-    base_url: baseUrl,
-    model: "stub-model-1",
-    agent_model: "",
-    label: "Stub",
-    api_key: "sk-stub-key-1234567890",
-  });
+  // Point the single GPT OSS 120B route at the local stub through the
+  // dedicated-endpoint variables — the same code path production uses.
+  process.env.GPT_OSS_API_KEY = "sk-stub-key-1234567890";
+  process.env.GPT_OSS_BASE_URL = baseUrl;
   return () => started.server.close();
 });
 
 beforeEach(() => {
   stub.clearFaults();
   stubHolder.current = { kind: "ok", content: "PROBE-OK" };
-  for (const key of ["GROQ_API_KEY", "OPENROUTER_API_KEY", "OPENROUTER_CODING_MODEL"]) delete process.env[key];
+  delete process.env.GROQ_API_KEY;
 });
 
 afterEach(() => {
@@ -87,7 +81,7 @@ describe("AI gateway — happy paths (real route, real HTTP provider)", () => {
     expect(res.status).toBe(200);
     expect(res.json?.reply).toBe("PROBE-OK");
     expect(res.json?.provider).toBe("OpenAI");
-    expect(res.json?.model).toBe("stub-model-1");
+    expect(res.json?.model).toBe("openai/gpt-oss-120b");
     expect(typeof res.json?.conversation_id).toBe("string");
   });
 
@@ -241,7 +235,7 @@ describe("AI gateway — the health probe must not lie", () => {
   });
 
   it("gateway health action: a working GET /models with a failing chat endpoint is NOT online", async () => {
-    // The classic lying endpoint (OpenRouter & most proxies answer /models
+    // The classic lying endpoint (many proxies answer /models
     // without a valid key): the old healthCheck reported "online" here while
     // every real chat request failed with 401.
     resetHealthCacheForTests();

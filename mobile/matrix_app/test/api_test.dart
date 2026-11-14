@@ -37,7 +37,7 @@ void main() {
           'force_update': false,
           'apk_url': 'https://github.com/cht25/matrix-ai/releases/latest/download/matrix-android.apk',
           'chat_url': 'https://matrix.thamjj13.top/chat',
-          'release_notes': 'GLM + OTA update',
+          'release_notes': 'OTA update',
         }),
         200,
       );

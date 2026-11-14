@@ -42,34 +42,13 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
-      - key: GLM_API_KEY
-        sync: false
-      # Z.ai international keys use ZAI_API_KEY (defaults to api.z.ai).
-      # Existing GLM_API_KEY uses the mainland endpoint unless GLM_BASE_URL is set.
-      - key: ZAI_API_KEY
-        sync: false
-      - key: GLM_BASE_URL
-        sync: false
-      - key: GLM_IMAGE_BASE_URL
-        sync: false
-      - key: GLM_IMAGE_API_KEY
-        sync: false
-      - key: GLM_MODEL
-        value: glm-4.7
-      - key: GLM_CODING_MODEL
-        value: glm-4.7
-      - key: GLM_VISION_MODEL
-        value: glm-4.6v
-      - key: GLM_IMAGE_MODEL
-        value: cogview-4
+      # The only language model is GPT OSS 120B on Groq (openai/gpt-oss-120b).
+      # The model ID lives in src/lib/ai/model.ts and is not configurable here.
       - key: GROQ_API_KEY
         sync: false
-      - key: GROQ_CHAT_MODEL
-        value: openai/gpt-oss-120b
-      # Optional Agent fallback after GLM. Model IDs are discovered from the
-      # catalogue of this key; no GEMINI_MODEL is needed.
-      - key: GEMINI_API_KEY
-        sync: false
+      # Whisper speech-to-text (same Groq key); not a language model.
+      - key: GROQ_AUDIO_MODEL
+        value: whisper-large-v3-turbo
       - key: RESEND_API_KEY
         sync: false
       - key: RESEND_FROM_EMAIL

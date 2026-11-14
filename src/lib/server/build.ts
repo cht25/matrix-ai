@@ -22,9 +22,9 @@ import { nowTs } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
 import { RpcError } from "@/lib/server/errors";
 import type { AIMessage } from "@/lib/ai/groq";
-import { completeWithFallback, type CompletedAIResponse } from "@/lib/ai/executor";
+import { completeWithModel, type CompletedAIResponse } from "@/lib/ai/executor";
 import { resolveExecutionRoutes, type AIRouteTarget } from "@/lib/ai/config";
-import { describeRoutes } from "@/lib/ai/model-routing";
+import { MATRIX_MODEL_LABEL } from "@/lib/ai/model";
 import {
   classifyDesignRevision, createDesignSpec, designFingerprint, designPlanPrompt, formatDesignSpecForPrompt, isWebsiteRequest,
   mergeModelDesignSpec, parseStoredDesignSpec, reviseDesignSpec, serializeDesignSpec, type DesignRevision, type SiteDesignSpec,
@@ -79,7 +79,6 @@ export type BuildPipelineInput = {
   /** Code-mode file generation persists source but deliberately skips build claims. */
   workspaceOnly?: boolean;
   chatMode?: "code" | "agent";
-  selectedModel?: { providerId: string; modelId: string } | null;
   onEvent?: (event: { run: BuildRun; stage?: BuildStageId; copy?: ReturnType<typeof buildRunCopy> }) => void;
 };
 
@@ -307,30 +306,20 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     } else {
       await begin("generate", input.actions.fix === true ? "Agent is repairing the project files." : "Agent is writing the project files.");
       const assets = input.imageRequests?.length ? await generateImageAssets(d, user, projectId, input.imageRequests, note, emit) : [];
-      // The user's selection (when healthy) leads; the automatic Agent chain
-      // (GLM → Gemini → GPT OSS 120B → others) follows as recorded fallbacks.
-      const resolved = await resolveExecutionRoutes(d, { mode: "agent", selected: input.selectedModel ?? null });
+      // Every Agent step (design, generation, repair, polish) runs on the one
+      // MATRIX model. There is no alternative model to fall back to.
+      const resolved = await resolveExecutionRoutes(d);
       const routes: AIRouteTarget[] = resolved.routes;
-      const requestedModel = input.selectedModel?.modelId ? input.selectedModel.modelId : null;
-      if (resolved.selectionError) note("generate", "warn", `Selected model not used: ${resolved.selectionError}. Continuing with the automatic Agent model.`);
       if (!routes.length) {
         return await abort(
           "AI_NOT_CONFIGURED",
-          "No Agent-capable AI provider is configured or reachable on this deployment (checked GLM, Gemini, GPT OSS and managed providers), so MATRIX cannot generate project files. Add a provider key in Admin → AI providers or the server environment. Existing project files can still be validated and published.",
+          `${MATRIX_MODEL_LABEL} is not configured on this deployment (GROQ_API_KEY is missing), so MATRIX cannot generate project files. Nothing was changed.`,
           "generate",
         );
       }
-      note("generate", "info", `Agent model order: ${describeRoutes(routes).slice(0, 5).map((route) => `${route.provider} ${route.model}${route.catalog === "missing" ? " (not in catalogue)" : ""}`).join(" → ")}.`);
-      const failedSoFar: string[] = [];
+      note("generate", "info", `Agent model: ${routes[0].provider} ${routes[0].model}.`);
       const useModel = (completion: CompletedAIResponse): void => {
-        for (const failed of completion.attempts) {
-          const line = `${failed.provider} ${failed.model}: ${failed.type}${failed.status ? ` ${failed.status}` : ""}`;
-          if (!failedSoFar.includes(line)) {
-            failedSoFar.push(line);
-            note("generate", "warn", `Model fallback — ${line}. Switched to ${completion.target.provider} ${completion.target.model}.`);
-          }
-        }
-        run = { ...run, model: { provider: completion.target.provider, model: completion.target.model, fallback: failedSoFar.length > 0 || (requestedModel !== null && completion.target.model !== requestedModel), failed: failedSoFar.slice(0, 8), requested: requestedModel } };
+        run = { ...run, model: { provider: completion.target.provider, model: completion.target.model } };
       };
 
       // ------------------------------------------------ design specification --
@@ -365,7 +354,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
           note("generate", "info", `Design plan: ${designSpec.direction.name} · ${designSpec.palette.mode} · primary ${designSpec.palette.primary} · ${designSpec.typography.heading.split(",")[0].replace(/'/g, "")}.`);
           await emit("generate");
           try {
-            const planned = await completeWithFallback(routes, {
+            const planned = await completeWithModel(routes, {
               messages: [{ role: "user", content: designPlanPrompt(`${originalBrief ? `${originalBrief}\n\nRevision request: ` : ""}${input.prompt}`, designSpec, fingerprintBefore) }],
               temperature: 0.8, maxTokens: 1400, deadlineAt: Math.min(aiDeadline, Date.now() + 45_000),
               requestId: input.requestId ? `${input.requestId}-design` : undefined,
@@ -437,21 +426,21 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       // most-probable page. Precise edits and repairs stay low.
       const generationTemperature = workspaceOnly || input.actions.fix === true ? 0.2 : !isEdit ? 0.75 : changedAspects.length ? 0.6 : 0.2;
       let raw = "";
-      let calls: NonNullable<Awaited<ReturnType<typeof completeWithFallback>>["response"]["toolCalls"]> = [];
+      let calls: NonNullable<Awaited<ReturnType<typeof completeWithModel>>["response"]["toolCalls"]> = [];
       try {
-        const completion = await completeWithFallback(routes, { messages, temperature: generationTemperature, maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline, requestId: input.requestId ?? undefined });
+        const completion = await completeWithModel(routes, { messages, temperature: generationTemperature, maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline, requestId: input.requestId ?? undefined });
         useModel(completion);
         raw = completion.response.content ?? "";
         calls = completion.response.toolCalls ?? [];
       } catch (error) {
         const detail = error instanceof Error ? error.message : "provider error";
-        return await abort("AI_PROVIDER_FAILED", `Every configured Agent model failed (${routes.length} tried: ${describeRoutes(routes).slice(0, 4).map((route) => `${route.provider} ${route.model}`).join(", ")}). Last error: ${detail.slice(0, 160)}. No files were written.`, "generate");
+        return await abort("AI_PROVIDER_FAILED", `${MATRIX_MODEL_LABEL} (${routes[0].provider} ${routes[0].model}) did not answer: ${detail.slice(0, 200)}. No files were written and the project is unchanged — retry when the provider is available.`, "generate");
       }
       if (agentGenerationIncomplete(raw)) {
         note("generate", "warn", "The provider response ended mid-file; requesting one completion before saving.");
         await emit("generate");
         try {
-          const continuation = await completeWithFallback(routes, {
+          const continuation = await completeWithModel(routes, {
             messages: [
               ...messages,
               { role: "assistant", content: raw },
@@ -489,7 +478,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         note("generate", "warn", "No file operations returned; requesting complete files once more.");
         await emit("generate");
         try {
-          const retry = await completeWithFallback(routes, {
+          const retry = await completeWithModel(routes, {
             messages: [...messages, { role: "assistant", content: raw }, { role: "user", content: "The task is ready for implementation. Return actual complete project files (MATRIX_FILE blocks or filename-tagged code fences), not a summary of the work. If an essential detail is missing, ask one specific question instead." }],
             temperature: 0.1, maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline, requestId: input.requestId ? `${input.requestId}-files` : undefined,
           });
@@ -540,7 +529,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         note("generate", "warn", effective.length ? "The returned files do not change the site's design; requesting the actual design change once more." : "The returned files are identical to the saved project; requesting the actual change once more.");
         await emit("generate");
         try {
-          const retry = await completeWithFallback(routes, {
+          const retry = await completeWithModel(routes, {
             messages: [...messages, { role: "assistant", content: raw.slice(0, 6000) }, { role: "user", content: `Your files did not change the saved project${wantsDesignChange ? "'s design" : ""}. Apply the request to the real files now: "${input.prompt.slice(0, 600)}". Return the complete new content of every file that must change${wantsDesignChange ? " (the HTML pages and stylesheet that define the look)" : ""} as MATRIX_FILE blocks. The result must differ from the saved content.` }],
             temperature: Math.max(0.5, generationTemperature), maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline,
             requestId: input.requestId ? `${input.requestId}-change` : undefined,
@@ -559,7 +548,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       }
       if (isEdit && !effective.length) {
         reply = "";
-        return await abort("NO_CHANGES_MADE", "The model returned files identical to the saved project, so nothing was changed and no change is reported. Describe the change more specifically or try another model.", "generate");
+        return await abort("NO_CHANGES_MADE", "The model returned files identical to the saved project, so nothing was changed and no change is reported. Describe the change more specifically and try again.", "generate");
       }
       if (wantsDesignChange && !designTouched(effective)) {
         reply = "";
@@ -597,7 +586,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       // What the user is told changed comes from the stored diff, not from
       // the model's own account of its work.
       const changedList = changes.slice(0, 8).map((change) => `${change.path} (${change.kind})`).join(", ");
-      const modelLine = run.model ? `Model: ${run.model.provider} ${run.model.model}${run.model.fallback ? ` (fallback${run.model.failed.length ? ` after ${run.model.failed[0]}` : ""})` : ""}.` : "";
+      const modelLine = run.model ? `Model: ${run.model.provider} ${run.model.model}.` : "";
       reply = [reply.trim(), `Files changed: ${changedList || "none"}${changes.length > 8 ? ` +${changes.length - 8} more` : ""}. ${modelLine}`.trim()].filter(Boolean).join("\n\n");
       await finish("generate", `Wrote ${applied.count} file${applied.count === 1 ? "" : "s"} · ${files.length} in the project${run.model ? ` · ${run.model.provider} ${run.model.model}` : ""}.`);
     }
@@ -663,7 +652,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       const issueText = formatIssues(blockingIssues(built.report), 6);
       note("validate", "warn", `Build attempt ${attempt} failed — asking the Agent to fix it.`);
       await emit("validate");
-      const routes = (await resolveExecutionRoutes(d, { mode: "agent", selected: input.selectedModel ?? null })).routes;
+      const routes = (await resolveExecutionRoutes(d)).routes;
       if (!routes.length) break;
       // The repair model needs the real source: with only an error list it
       // rewrote files from memory and lost the design.
@@ -673,8 +662,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         { role: "user", content: `${buildFixPrompt(built.report, files.length)}\n\nReturn only the corrected files, complete. Problems:\n${issueText}` },
       ];
       try {
-        const fix = await completeWithFallback(routes, { messages: fixMessages, temperature: 0.1, maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline + 20_000, requestId: input.requestId ?? undefined });
-        if (fix.attempts.length) note("validate", "warn", `Repair model fallback: ${fix.attempts.map((failed) => `${failed.provider} ${failed.model} (${failed.type})`).join(", ")} → ${fix.target.provider} ${fix.target.model}.`);
+        const fix = await completeWithModel(routes, { messages: fixMessages, temperature: 0.1, maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline + 20_000, requestId: input.requestId ?? undefined });
         const fixed = parseAgentResponse(fix.response.content ?? "", { allowUnlabelledFences: true, allowRawHtmlDocument: true });
         if (fixed.files.length) {
           const fixedResult = await applyProjectFiles(d, user, { project_id: projectId, files: fixed.files as ProjectFile[], source: "agent", expected_revision: sourceRevision });
@@ -706,8 +694,8 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       note("validate", "info", `Design review found ${designProblems.length} issue${designProblems.length === 1 ? "" : "s"}; requesting one improvement pass.`);
       await emit("validate");
       try {
-        const routes = (await resolveExecutionRoutes(d, { mode: "agent", selected: input.selectedModel ?? null })).routes;
-        const polish = routes.length ? await completeWithFallback(routes, {
+        const routes = (await resolveExecutionRoutes(d)).routes;
+        const polish = routes.length ? await completeWithModel(routes, {
           messages: [
             { role: "system", content: AGENT_SYSTEM_PROMPT },
             { role: "user", content: sourceContext(files, "") },
@@ -870,7 +858,7 @@ async function persistBuildMessage(
         mode: input.chatMode ?? "agent",
         execution_state: executionState,
         project_id: run.projectId,
-        ...(run.model ? { model: run.model.model, provider: run.model.provider, fallback: run.model.fallback } : {}),
+        ...(run.model ? { model: run.model.model, provider: run.model.provider } : {}),
         ...(run.status === "awaiting_input" ? { agent_task: {
           originalRequest: input.taskContext?.originalRequest ?? input.prompt,
           clarifications: input.taskContext?.clarifications ?? [],

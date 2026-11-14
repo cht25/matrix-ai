@@ -17,7 +17,7 @@ export default async function AdminAiPage() {
   return (
     <AdminShell
       title="AI configuration"
-      subtitle="Text models, image generation, agent providers and API keys — with live health checks."
+      subtitle="The MATRIX model (GPT OSS 120B), image generation and usage — with live health checks."
       role={role}
       codes={codes}
     >

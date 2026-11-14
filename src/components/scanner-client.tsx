@@ -2,7 +2,8 @@
 
 // Screenshot & Image Analyser (spec §29): upload, drag & drop, or paste an
 // image. Assets upload privately to Cloudinary via a server-signed grant, then
-// MATRIX analyses them with the configured vision model (Gemini by default).
+// Screenshot analysis needs a vision-capable model. MATRIX runs only GPT OSS
+// 120B (text), so the page explains this and points to the text-based check.
 //
 // Real analysis only: failures render "Server problem" / category-aware cards
 // with [Retry] — never a fabricated finding.
@@ -74,7 +75,8 @@ export function ScannerClient() {
       return;
     }
 
-    await runAnalysis(file);
+    // No vision-capable model exists in MATRIX: do not upload the image.
+    setFailure(failureCopy("vision-unsupported"));
   }
 
   async function runAnalysis(file: File | null = pendingFile.current) {
@@ -163,6 +165,10 @@ export function ScannerClient() {
 
   return (
     <div className="space-y-4">
+      <div className="rounded-lg border border-warning/30 bg-warn-soft/15 px-3.5 py-3 text-sm leading-6 text-ink-2" role="status">
+        <p className="font-semibold text-ink">Screenshot analysis is not available.</p>
+        <p className="mt-1">MATRIX runs entirely on GPT OSS 120B, a text model that cannot read images, and it does not switch to another model. To check a suspicious message, copy its text and <a href="/chat" className="text-accent underline underline-offset-2">paste it into Chat</a> — the same scam and phishing review is done on the text.</p>
+      </div>
       {/* Source chips */}
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="Where does this image come from?">
         {SOURCES.map((s) => (

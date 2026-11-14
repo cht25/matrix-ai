@@ -4,8 +4,8 @@ Native Flutter Android phone app for **MATRIX AI**, preconfigured for the canoni
 
 ## Features
 
-- **GLM + `gpt-oss-120b` Tiered Chat & GLM CogView Image Generation** (`lib/chat_screen.dart`):
-  - Modes for **Fast / Auto**, **Code (GLM)**, **Deep Study**, and **GLM Image**.
+- **GPT OSS 120B Chat & Image Generation** (`lib/chat_screen.dart`):
+  - Modes for **Fast / Auto**, **Code**, **Deep Study**, and **Image**.
   - Compact Arena-style collapsible `Worked · N steps` pill above assistant messages.
   - One-tap launch into the full web workspace at `https://matrix.thamjj13.top/chat`.
 - **Over-the-Air (OTA) Phone Update System** (`lib/update_service.dart` + `GET /api/app/version`):

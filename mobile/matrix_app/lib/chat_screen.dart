@@ -55,9 +55,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   static const _modes = <({String id, String label, IconData icon})>[
     (id: 'general', label: 'Fast / Auto', icon: Icons.bolt_rounded),
-    (id: 'code', label: 'Code (GLM)', icon: Icons.code_rounded),
+    (id: 'code', label: 'Code', icon: Icons.code_rounded),
     (id: 'study', label: 'Deep Study', icon: Icons.psychology_outlined),
-    (id: 'image', label: 'GLM Image', icon: Icons.palette_outlined),
+    (id: 'image', label: 'Image', icon: Icons.palette_outlined),
   ];
 
   Future<void> _send() async {
@@ -92,14 +92,14 @@ class _ChatScreenState extends State<ChatScreen> {
         setState(() {
           _messages.add(_Message(
             role: 'assistant',
-            content: 'Generated with ${res['model'] ?? 'GLM CogView'}',
+            content: 'Generated with ${res['model'] ?? 'image service'}',
             model: res['model']?.toString(),
-            provider: (res['provider'] ?? 'glm').toString().toUpperCase(),
+            provider: (res['provider'] ?? 'image').toString().toUpperCase(),
             imageDataUrl: dataUrl,
             steps: parsedSteps.isNotEmpty
                 ? parsedSteps
                 : const [
-                    _StepItem(label: 'Prompt prepared', detail: 'GLM CogView'),
+                    _StepItem(label: 'Prompt prepared', detail: 'Image service'),
                     _StepItem(label: 'Image rendered'),
                   ],
           ));
@@ -209,7 +209,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          'GLM powers coding, web dev & high-load reasoning · gpt-oss-120b handles fast everyday tasks · CogView generates images.\nSynced with ${MatrixConfig.chatUri}',
+                          'GPT OSS 120B powers chat, coding and web development.\nSynced with ${MatrixConfig.chatUri}',
                           textAlign: TextAlign.center,
                           style: const TextStyle(color: Colors.white60, fontSize: 12.5, height: 1.45),
                         ),
@@ -295,7 +295,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     textInputAction: TextInputAction.send,
                     onSubmitted: (_) => _send(),
                     decoration: InputDecoration(
-                      hintText: _mode == 'image' ? 'Describe an image for GLM CogView…' : 'Message MATRIX…',
+                      hintText: _mode == 'image' ? 'Describe an image…' : 'Message MATRIX…',
                     ),
                   ),
                 ),

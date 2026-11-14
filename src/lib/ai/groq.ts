@@ -1,11 +1,7 @@
 // =============================================================================
 // Groq provider (spec §15: AIProvider abstraction). The Groq API key NEVER
-// leaves the server. Additional providers can be added behind this interface.
-//
-// Model IDs must stay current — Groq retires production models. As of
-// 2026-08-16 llama-3.3-70b-versatile / llama-3.1-8b-instant / the Llama 3.2
-// vision previews are shut down for free/developer tiers. Chat uses the
-// operator-configured IDs verified against the account catalog; no guessed defaults.
+// leaves the server. Groq hosts the one MATRIX model, GPT OSS 120B; the model
+// ID is defined in src/lib/ai/model.ts and passed in by the caller.
 // =============================================================================
 
 import { fetchModelCatalog, verifyCatalogModel, type CatalogModel } from "@/lib/ai/model-catalog";
@@ -66,7 +62,7 @@ export interface AIProvider {
 }
 
 function isReasoningModel(model: string): boolean {
-  return model.includes("gpt-oss") || model.includes("qwen");
+  return model.includes("gpt-oss");
 }
 
 export class GroqProvider implements AIProvider {
@@ -94,7 +90,7 @@ export class GroqProvider implements AIProvider {
     if (isReasoningModel(req.model)) {
       body.max_completion_tokens = maxTokens;
       body.reasoning_format = "hidden";
-      body.reasoning_effort = req.imageDataUrl || req.model.includes("qwen") ? "none" : "low";
+      body.reasoning_effort = "low";
     }
     if (req.tools?.length && !stream) {
       body.tools = req.tools;
@@ -288,15 +284,6 @@ export class GroqProvider implements AIProvider {
     }
   }
 }
-
-export const GPT_OSS_DEFAULT_MODEL = "openai/gpt-oss-120b";
-
-// Server-side model defaults. Low-load routing uses openai/gpt-oss-120b; vision requires an operator-verified provider ID.
-export const MODELS = {
-  get chat() { return process.env.GROQ_CHAT_MODEL?.trim() || process.env.GPT_OSS_MODEL?.trim() || GPT_OSS_DEFAULT_MODEL; },
-  get vision() { return process.env.GROQ_VISION_MODEL?.trim() || ""; },
-  get fast() { return process.env.GROQ_FAST_MODEL?.trim() || process.env.GPT_OSS_MODEL?.trim() || process.env.GROQ_CHAT_MODEL?.trim() || GPT_OSS_DEFAULT_MODEL; },
-} as const;
 
 export function createProvider(): AIProvider | null {
   const key = (process.env.GROQ_API_KEY || process.env.GPT_OSS_API_KEY)?.trim();

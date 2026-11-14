@@ -1,4 +1,3 @@
-import { preferenceForMode } from "@/lib/ai/model-preferences";
 import { cancelAgentTask } from "@/lib/server/agent-tasks";
 import { classifyAgentOutput, requestsClarificationFirst, type PendingAgentTask } from "@/lib/ai/agent-execution";
 // =============================================================================
@@ -6,13 +5,13 @@ import { classifyAgentOutput, requestsClarificationFirst, type PendingAgentTask 
 //
 // The ONLY way the frontend talks to an AI provider. Pipeline:
 //   Auth → rate limit → PII redaction → safety classification → prompt/RAG
-//   → automatic routing (admin-configured OpenAI-compatible provider first,
-//     then Groq general / OpenRouter Nemotron coding/Agent fallbacks)
+//   → the single MATRIX model, GPT OSS 120B (src/lib/ai/config.ts); the
+//     request class only changes prompts, tools and limits — never the model
 //   → output validation → artifact parsing → store allowed response → return
 //
 // Actions:
 //   POST { action: "chat", conversation_id?, is_temporary, message }
-//   POST { action: "scan", storage_path }   (screenshot analysis)
+//   POST { action: "scan", storage_path }   (422: the model cannot read images)
 //   POST { action: "health" }               (unauthenticated, real Groq check)
 //
 // Failure contract: failures return error codes — the gateway NEVER stores or
@@ -26,8 +25,9 @@ import { verifyDeviceCredential, DEVICE_TOKEN_PREFIX, deviceScopeResponse } from
 import { redactPII, containsCredentials, leakedPII } from "@/lib/ai/pii";
 import { classify } from "@/lib/ai/domain";
 import { type AIMessage, type AIProvider, type AIProviderResponse } from "@/lib/ai/groq";
-import { AI_CONFIG, createAIRoutesFromDb, createScanRoutesFromDb, resolveSelectedAIRoute, logAIConfiguration, type AIRouteTarget } from "@/lib/ai/config";
-import { completeWithFallback, streamWithFallback } from "@/lib/ai/executor";
+import { createAIRoutesFromDb, logAIConfiguration, type AIRouteTarget } from "@/lib/ai/config";
+import { MATRIX_MODEL_ID, MATRIX_MODEL_LABEL } from "@/lib/ai/model";
+import { completeWithModel, streamWithModel } from "@/lib/ai/executor";
 import { AIProviderError, logGatewayFailure, logProviderFailure, providerPublicCode } from "@/lib/ai/provider-error";
 import { stripReasoningContent } from "@/lib/ai/reasoning";
 import { formatAttachmentContext, isCodingRequest, safeAgentPath, type AgentFile, type ChatMode, type TextAttachment } from "@/lib/ai/agent";
@@ -507,23 +507,13 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     if (saved.transcription_status !== "complete" || !saved.transcript || saved.transcript.trim() !== message) return json({ error: "AUDIO_TRANSCRIPT_MISMATCH" }, 409, requestId);
     voiceMetadata = { audio_asset_id: audioAssetId, audio_duration_ms: Number(saved.duration_ms ?? 0), audio_waveform: Array.isArray(saved.waveform) ? saved.waveform.slice(0, 64) : [], audio_language: saved.detected_language ?? null };
   }
-  const imageStoragePath = typeof body.image_storage_path === "string" ? body.image_storage_path.trim() : "";
-  let chatImageDataUrl: string | undefined;
-  if (imageStoragePath) {
-    if (!imageStoragePath.startsWith(`security-screenshots/${user.uid}/`)) {
-      await logSafety(d, user.uid, "safety_refusal", "chat image ownership violation");
-      return json({ error: "STORAGE_OWNERSHIP_VIOLATION" }, 403, requestId);
-    }
-    const imgBuf = await downloadImage(imageStoragePath);
-    if (!imgBuf) return json({ error: "FILE_NOT_FOUND" }, 404, requestId);
-    const imgBytes = new Uint8Array(imgBuf);
-    const imgCheck = validateImageUpload(imgBytes, null);
-    if (!imgCheck.ok) {
-      await logSafety(d, user.uid, "safety_refusal", "invalid chat image upload: " + imgCheck.error);
-      return json({ error: imgCheck.error }, 400, requestId);
-    }
-    chatImageDataUrl = `data:${imgCheck.mime};base64,${Buffer.from(imgBytes).toString("base64")}`;
+  // GPT OSS 120B is a text model and MATRIX routes to no other model, so an
+  // attached image cannot be read. Say so before anything is stored, rather
+  // than sending pixels to a model that would ignore or reject them.
+  if (typeof body.image_storage_path === "string" && body.image_storage_path.trim()) {
+    return json({ error: "VISION_NOT_SUPPORTED", detail: `${MATRIX_MODEL_LABEL} cannot read images. Remove the image and describe it in text, or paste the text it contains.` }, 422, requestId);
   }
+  const chatImageDataUrl: string | undefined = undefined;
   let activeProjectId: string | null = null;
   const requestedProjectId = typeof body.project_id === "string" && body.project_id.trim() ? body.project_id.trim().slice(0, 128) : null;
   if (requestedProjectId) {
@@ -589,11 +579,8 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   }
 
   // --- prompt construction + automatic model routing --------------------------
-  // When an admin has saved an OpenAI-compatible endpoint/model/key it is the
-  // primary route (for both general and coding/Agent work). If it fails
-  // transiently, the environment-keyed providers (Groq / OpenRouter) are used
-  // as fallbacks. Without a saved admin configuration the previous Groq /
-  // OpenRouter automatic routing is unchanged.
+  // decideRoute classifies the request (coding / agent / plain chat) to pick
+  // prompts, tools and limits. Every class runs on the same model.
   const route = decideRoute({ mode, message, attachments, lane, strategy });
   const taskRaw = body.task_context as Record<string, unknown> | undefined;
   const taskContext: PendingAgentTask | null = mode === "agent" && taskRaw && typeof taskRaw.originalRequest === "string" && taskRaw.originalRequest.length <= 12_000
@@ -619,46 +606,11 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     return json({ error: "AGENT_RUNTIME_REQUIRED", detail: "Executable Agent work must use /api/build so files, task state, validation and deployment are persisted together.", conversation_id: convId, project_id: activeProjectId }, 409, requestId);
   }
   const codingDetected = route.coding || mode === "agent" || isCodingRequest(message, attachments);
-  const preferFallback = body.prefer_fallback === true;
   const useAgentPolicy = mode === "agent" || mode === "code";
-  let targets = await createAIRoutesFromDb(d, useAgentPolicy, preferFallback, route.tier);
-  if (chatImageDataUrl) {
-    const visionTargets = (await createScanRoutesFromDb(d)).filter((target) => useAgentPolicy || target.provider !== "GLM");
-    if (visionTargets.length) {
-      const seen = new Set(visionTargets.map((t) => `${t.provider}:${t.model}`));
-      targets = [...visionTargets, ...targets.filter((t) => !seen.has(`${t.provider}:${t.model}`))];
-    }
-  }
-  const savedSelection = await d.collection("user_security_settings").doc(user.uid).get().catch(() => null);
-  const preference = preferenceForMode(savedSelection?.data(), useAgentPolicy ? "agent" : "chat");
-  const modelId = typeof body.model_id === "string" && body.model_id.trim() ? body.model_id.trim() : preference.model_id.trim();
-  const providerId = typeof body.model_id === "string" && body.model_id.trim() ? String(body.provider_id ?? "") : preference.provider_id;
-  let selectionNotice: string | null = null;
-  if (modelId) {
-    // The user's choice leads the chain and is used whenever it answers. If it
-    // fails — or cannot be initialized at all — execution continues on the
-    // automatic chain and the switch is reported, rather than failing the
-    // request while another configured model is healthy.
-    try {
-      const selected = await resolveSelectedAIRoute(d, providerId, modelId);
-      if (useAgentPolicy && mode === "agent" && selected.client.supportsToolCalls !== true) {
-        selectionNotice = `${selected.provider} ${selected.model} does not support Agent tool calling; using the automatic Agent model instead.`;
-      } else {
-        const sameRoute = (t: AIRouteTarget) => t.model === selected.model && (t.providerId ?? t.provider) === (selected.providerId ?? selected.provider);
-        targets = [selected, ...targets.filter((t) => !sameRoute(t))];
-      }
-    } catch (error) {
-      logProviderFailure(error, requestId);
-      if (!targets.length) {
-        return json({ error: "AI_MODEL_NOT_AVAILABLE", detail: error instanceof Error ? error.message : "Select a verified model from the catalog." }, 400, requestId);
-      }
-      selectionNotice = `The selected model (${modelId}) could not be initialized: ${error instanceof Error ? error.message.slice(0, 140) : "unavailable"}. Using ${targets[0].provider} ${targets[0].model} instead.`;
-    }
-  }
-  const automaticAlternative = !modelId && (useAgentPolicy
-    ? targets[0]?.provider !== "GLM" && targets.some((candidate) => candidate.provider === "GLM")
-    : !/gpt-oss-120b/i.test(targets[0]?.model ?? "") && targets.some((candidate) => /gpt-oss-120b/i.test(candidate.model)));
-  const selectedModel = targets[0]?.model ?? (useAgentPolicy ? AI_CONFIG.coding.model : AI_CONFIG.general.model);
+  // One model for every mode. Model or provider fields in the request body
+  // and any saved legacy preference are ignored.
+  const targets = await createAIRoutesFromDb(d);
+  const selectedModel = targets[0]?.model ?? MATRIX_MODEL_ID;
   if (!targets.length) {
     await logUsage(d, user.uid, "none", "chat", {}, Date.now() - started, "error", requestId);
     return json({ error: useAgentPolicy ? "CODING_MODEL_NOT_CONFIGURED" : "AI_GATEWAY_NOT_CONFIGURED", conversation_id: convId }, 503, requestId);
@@ -726,7 +678,6 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     let done = false;
     let full = "";
     let activeTarget: AIRouteTarget = targets[0];
-    let usedFallback = false;
     let streamUsage: AIProviderResponse["usage"] | undefined;
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
@@ -756,18 +707,16 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
             provider: activeTarget.provider,
             tier: route.tier,
             coding_detected: codingDetected,
-            fallback: automaticAlternative,
             stream_status: "connecting",
           });
           upsertStep({
             id: "route",
             label: `Routed to ${activeTarget.provider} · ${activeTarget.model}`,
-            detail: route.tier === "high" ? "High-load / Coding engine" : "Fast low-load engine",
+            detail: MATRIX_MODEL_LABEL,
             status: "done",
             at: Date.now(),
             durationMs: Math.max(1, Date.now() - started),
           });
-          if (selectionNotice) upsertStep({ id: "selection", label: "Selected model unavailable", detail: selectionNotice, status: "done", at: Date.now() });
           if (rag || safeAttachments.length || chatImageDataUrl) {
             upsertStep({
               id: "context",
@@ -788,7 +737,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
             status: "running",
             at: genStartAt,
           });
-          for await (const item of streamWithFallback(
+          for await (const item of streamWithModel(
             targets,
             {
               messages,
@@ -820,20 +769,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
                 }
               },
             },
-            (target, fallback, failed) => {
-              activeTarget = target;
-              if (fallback) {
-                usedFallback = true;
-                emit({ model: target.model, provider: target.provider, fallback: true });
-                upsertStep({
-                  id: "fallback",
-                  label: `Switched to fallback · ${target.provider} (${target.model})`,
-                  ...(failed ? { detail: `${failed.provider} ${failed.model} failed: ${failed.type}${failed.status ? ` ${failed.status}` : ""}` } : {}),
-                  status: "done",
-                  at: Date.now(),
-                });
-              }
-            },
+            (target) => { activeTarget = target; },
           )) {
             const delta = item.delta;
             if (firstTokenAt === null) firstTokenAt = Date.now();
@@ -896,7 +832,6 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
             tier: route.tier,
             steps: recordedSteps,
             duration_ms: Math.max(1, Date.now() - started),
-            fallback: usedFallback || automaticAlternative,
             coding_detected: codingDetected,
             files: streamedFiles,
             project_id: projectId,
@@ -960,7 +895,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     const safeTools = mode === "agent" && targets[0].client.supportsToolCalls ? modelCallableTools() : [];
     const agentMessages = [...messages];
     const callStarted = Date.now();
-    let result = await completeWithFallback(targets, {
+    let result = await completeWithModel(targets, {
       messages: agentMessages,
       ...(chatImageDataUrl ? { imageDataUrl: chatImageDataUrl } : {}),
       ...(safeTools.length ? { tools: safeTools } : {}),
@@ -973,15 +908,11 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     nonStreamSteps.push({
       id: "route",
       label: `Routed to ${activeTarget.provider} · ${activeTarget.model}`,
-      detail: route.tier === "high" ? "High-load / Coding engine" : "Fast low-load engine",
+      detail: MATRIX_MODEL_LABEL,
       status: "done",
       at: started,
       durationMs: Math.max(1, callStarted - started),
     });
-    if (selectionNotice) nonStreamSteps.push({ id: "selection", label: "Selected model unavailable", detail: selectionNotice, status: "done", at: Date.now() });
-    for (const failed of result.attempts) {
-      nonStreamSteps.push({ id: `fallback-${failed.provider}-${failed.model}`.slice(0, 80), label: `Skipped ${failed.provider} (${failed.model})`, detail: `${failed.type}${failed.status ? ` ${failed.status}` : ""} — continued on ${activeTarget.provider} ${activeTarget.model}`, status: "done", at: Date.now() });
-    }
     if (sawReasoning) {
       nonStreamSteps.push({
         id: "reasoning",
@@ -1029,7 +960,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
         const toolCallId = typeof call.id === "string" ? call.id.slice(0, 128) : "invalid_tool_call";
         agentMessages.push({ role: "tool", tool_call_id: toolCallId, name: name.slice(0, 64), content: JSON.stringify(toolResult).slice(0, 6000) });
       }
-      result = await completeWithFallback([result.target], {
+      result = await completeWithModel([result.target], {
         messages: agentMessages,
         ...(toolCallsProcessed < 3 ? { tools: safeTools } : {}),
         temperature: 0.25,
@@ -1104,7 +1035,6 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     tier: route.tier,
     steps: nonStreamSteps,
     duration_ms: Math.max(1, Date.now() - started),
-    fallback: automaticAlternative || (targets.length > 1 && (targets.indexOf(activeTarget) > 0 || (preferFallback && targets.indexOf(activeTarget) < targets.length - 1))),
     coding_detected: codingDetected,
     usage,
     analytics: computeAnalytics({
@@ -1164,7 +1094,7 @@ async function handleImage(d: Db, user: SessionUser, body: Record<string, unknow
         id: "prompt",
         label: "Prompt prepared",
         status: "done",
-        detail: image.provider === "glm" ? "GLM CogView" : image.provider,
+        detail: image.provider,
         at: started,
       },
       {
@@ -1233,13 +1163,13 @@ async function handleOrchestrate(d: Db, user: SessionUser, body: Record<string, 
     }
     const coding = task.mode === "code" || task.mode === "agent";
     const taskTier: "high" | "low" = coding || task.mode === "study" || task.mode === "research" ? "high" : "low";
-    const targets = await createAIRoutesFromDb(d, coding, false, taskTier);
+    const targets = await createAIRoutesFromDb(d);
     if (!targets.length) {
       sections.push({ id: task.id, title: task.title, mode: task.mode, error: "AI_GATEWAY_NOT_CONFIGURED" });
       continue;
     }
     try {
-      const completed = await completeWithFallback(targets, {
+      const completed = await completeWithModel(targets, {
         messages: [
           ...buildModeSystemMessages(task.mode, "", undefined),
           { role: "user", content: task.prompt },
@@ -1287,112 +1217,15 @@ async function handleOrchestrate(d: Db, user: SessionUser, body: Record<string, 
 // ---------------------------------------------------------------------------
 // Scan action (screenshot analysis, spec §14)
 // ---------------------------------------------------------------------------
-async function handleScan(d: Db, user: SessionUser, body: Record<string, unknown>) {
-  const started = Date.now();
-  const requestId = requestIdFrom(body);
-  const storagePath = typeof body.storage_path === "string" ? body.storage_path.trim() : "";
-  if (!storagePath) return json({ error: "STORAGE_PATH_REQUIRED" }, 400);
-
-  // Ownership: files must live in the user's own Cloudinary folder.
-  if (!storagePath.startsWith(`security-screenshots/${user.uid}/`)) {
-    await logSafety(d, user.uid, "safety_refusal", "storage path ownership violation");
-    return json({ error: "STORAGE_OWNERSHIP_VIOLATION" }, 403);
-  }
-
-  const rate = await checkRateLimit(d, user.uid, "scan");
-  if (!rate.ok) return json({ error: rate.message }, 429);
-
-  // Private (authenticated) asset — bytes only via a server-signed URL.
-  const fileBuffer = await downloadImage(storagePath);
-  if (!fileBuffer) return json({ error: "FILE_NOT_FOUND" }, 404);
-  const bytes = new Uint8Array(fileBuffer);
-
-  const check = validateImageUpload(bytes, null);
-  if (!check.ok) {
-    await logSafety(d, user.uid, "safety_refusal", "invalid upload: " + check.error);
-    return json({ error: check.error }, 400);
-  }
-
-  const targets = await createScanRoutesFromDb(d);
-  if (!targets.length) return json({ error: "AI_GATEWAY_NOT_CONFIGURED" }, 503, requestId);
-  // Vision is a real capability, not an assumption: the first route must have a
-  // model configured for image understanding. A text-only main model with no
-  // vision alternative is reported honestly instead of sending an image to a
-  // provider that silently ignores it.
-  if (!targets.some((target) => Boolean(target.model))) return json({ error: "VISION_NOT_CONFIGURED" }, 503, requestId);
-  const model = targets[0].model;
-
-  const dataUrl = `data:${check.mime};base64,${Buffer.from(bytes).toString("base64")}`;
-
-  const agentReference = body.purpose === "agent_reference";
-  const generalQuestion = typeof body.prompt === "string" ? body.prompt.trim().slice(0, 1500) : "";
-  const sourceLabel = typeof body.source === "string" && body.source.trim() ? body.source.trim().slice(0, 40) : "screenshot";
-  const prompt = agentReference
-    ? `Describe this image as implementation context for a software coding agent. Identify the visible layout, hierarchy, components, spacing, colours, typography, states, text purpose and responsive clues. If it is an object rather than an interface, describe the object's relevant visible properties and what the user may want to reproduce. Be precise and concise. Never transcribe personal information, access tokens, account details or private messages; use neutral placeholders instead. Do not give cybersecurity risk advice unless the image itself is a security warning.`
-    : generalQuestion
-      ? `${generalQuestion}\n\n(Never repeat sensitive personal tokens or passwords visible in the image; refer to them as "your details".)`
-      : `Analyse this ${sourceLabel} screenshot for a teen cybersecurity education platform. The user uploaded it to ask whether it is suspicious. ` +
-        `Answer with EXACTLY these sections:\nRisk (low/medium/high/critical)\nConfidence (0-100%)\nWhat I noticed\nWhy it matters\nWhat to do now\nWhat not to do\nIf you already clicked/shared information\nReporting options\n` +
-        `Rules: never repeat personal information visible in the image (refer to it as "your details"); never invent reporting websites; if none are known, say to use the platform's verified reporting resources; be calm and non-judgmental.`;
-
-  let reply = "";
-  let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-  let usedModel = model;
-  try {
-    const completed = await completeWithFallback(targets, {
-      messages: [{ role: "user", content: prompt }],
-      imageDataUrl: dataUrl,
-      maxTokens: 1200,
-      requestId,
-    });
-    usedModel = completed.target.model;
-    reply = completed.response.content;
-    usage = completed.response.usage;
-  } catch (e) {
-    logProviderFailure(e, requestId);
-    await logUsage(d, user.uid, usedModel, "scan", {}, Date.now() - started, "error", requestId);
-    return json({ error: providerPublicCode(e) }, providerStatus(e), requestId);
-  }
-
-  if (agentReference) {
-    await logUsage(d, user.uid, usedModel, "scan", usage, Date.now() - started, "ok", requestId);
-    return json({ reply, reference: true, request_id: requestId }, 200, requestId);
-  }
-
-  const riskMatch = reply.match(/\b(critical|high|medium|low)\b/i);
-  const risk = (riskMatch ? riskMatch[1].toLowerCase() : "unknown") as "low" | "medium" | "high" | "critical" | "unknown";
-  const confMatch = reply.match(/(\d{1,3})\s*%/);
-  const confidence = confMatch ? Math.min(100, parseInt(confMatch[1], 10)) / 100 : 0;
-
-  let analysis;
-  try {
-    analysis = await d.collection("security_analyses").add({
-      user_id: user.uid,
-      analysis_type: "screenshot",
-      input_reference: storagePath,
-      risk_level: risk,
-      confidence,
-      findings: { reply, width: check.width, height: check.height, mime: check.mime, size: check.size },
-      recommendation: reply.slice(0, 2000),
-      redaction_applied: false,
-      created_at: nowTs(),
-    });
-  } catch (error) {
-    logGatewayFailure("scan_persist", { requestId }, error);
-    return json({ error: "SCAN_STORAGE_UNAVAILABLE" }, 503, requestId);
-  }
-
-  await logUsage(d, user.uid, usedModel, "scan", usage, Date.now() - started, "ok", requestId);
-  await d.collection("notifications").add({
-    user_id: user.uid,
-    type: "scan",
-    title: `Screenshot analysis complete (${risk} risk)`,
-    body: `Your ${sourceLabel} screenshot was analysed on Cloudinary private storage.`,
-    link: "/scanner",
-    read_at: null,
-    created_at: nowTs(),
-  }).catch(() => {});
-  return json({ analysis_id: analysis.id, risk_level: risk, confidence, reply, request_id: requestId }, 200, requestId);
+async function handleScan(_d: Db, _user: SessionUser, body: Record<string, unknown>) {
+  // Screenshot analysis needs a model that can read images. MATRIX runs only
+  // GPT OSS 120B, a text model, and never routes to another model — so this
+  // is reported honestly instead of being answered by a different model.
+  void _d; void _user;
+  return json({
+    error: "VISION_NOT_SUPPORTED",
+    detail: `${MATRIX_MODEL_LABEL} cannot read images. Paste the text from the screenshot into the chat or the scanner's text box instead.`,
+  }, 422, requestIdFrom(body));
 }
 
 // ---------------------------------------------------------------------------
@@ -1408,7 +1241,7 @@ async function handleHealth(mode: ChatMode = "general") {
   } catch {
     /* not configured yet */
   }
-  const targets = await createAIRoutesFromDb(d, mode === "agent");
+  const targets = await createAIRoutesFromDb(d);
   if (!targets.length) return json({ status: "unconfigured", mode }, 503);
   for (let i = 0; i < targets.length; i += 1) {
     const target = targets[i];
@@ -1418,7 +1251,6 @@ async function handleHealth(mode: ChatMode = "general") {
         mode,
         provider: target.provider,
         chat_model: target.model,
-        fallback: i > 0,
       });
     }
   }
