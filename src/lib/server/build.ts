@@ -39,20 +39,25 @@ import { classifyAgentOutput, transitionAgentExecution, type AgentExecutionState
 import { planFromRequest, type BuildIntent } from "@/lib/ai/build-intent";
 import { generateImage } from "@/lib/ai/image/generate";
 import { isImageGenerationConfigured } from "@/lib/ai/image/config";
-import { applyProjectFiles, ensureAgentProject, loadProjectFiles } from "@/lib/server/projects";
+import { applyProjectFiles, ensureAgentProject, loadProjectFiles, saveProjectVersion } from "@/lib/server/projects";
 import { bindConversationProject, resolveProjectContext } from "@/lib/server/project-resolution";
 import { appendCheckpoint, bindBuildTask, syncBuildTask, type CheckpointStep } from "@/lib/server/agent-tasks";
 import { PROJECT_LIMITS, type ProjectFile } from "@/lib/projects/paths";
 import {
   applyStaleness, beginStage, buildRunCopy, cancelRun, completeStage, createBuildRun, failRun, failStage,
   setDeployment, setChanges, setPreviewUrl, setValidation, skipStage, stageProgress, succeedRun,
-  summarizeChanges, bumpAttempt,
+  summarizeChanges, bumpAttempt, pauseRun, reopenRun, MAX_RUN_SEGMENTS,
   toRunSnapshot,
   type BuildActions, type BuildEnvironment, type BuildLogLine, type BuildRun, type BuildStageId,
 } from "@/lib/deploy/stages";
-import { blockingIssues, buildFixPrompt, formatIssues, type BuildReport } from "@/lib/deploy/validate";
+import { blockingIssues, formatIssues, type BuildReport } from "@/lib/deploy/validate";
 import type { DeploymentProvider } from "@/lib/deploy/provider";
 import { toFirestoreRun, runFromFirestore } from "@/lib/deploy/run-store";
+import { deployVerdict, type ClassifiedIssue } from "@/lib/deploy/classify";
+import { repairStopCopy, runRepairLoop, type RepairModel } from "@/lib/deploy/repair";
+import { AIProviderError } from "@/lib/ai/provider-error";
+import { nextAvailability } from "@/lib/ai/accounts";
+import { clearResumeState, saveResumeState, type ResumePhase, type ResumeState } from "@/lib/server/continuation";
 
 export type ImageAssetRequest = { name: string; prompt: string };
 
@@ -83,6 +88,13 @@ export type BuildPipelineInput = {
   workspaceOnly?: boolean;
   chatMode?: "code" | "agent";
   onEvent?: (event: { run: BuildRun; stage?: BuildStageId; copy?: ReturnType<typeof buildRunCopy> }) => void;
+  /**
+   * Continue an earlier execution session of the SAME run (same chat, project
+   * and task). The stored run is reopened and work starts at `state.phase`.
+   */
+  resume?: { state: ResumeState; run: BuildRun } | null;
+  /** Time this execution session may spend on model work (tests shorten it). */
+  aiBudgetMs?: number;
 };
 
 export type BuildPipelineResult = { run: BuildRun; reply: string; projectId: string | null };
@@ -93,7 +105,7 @@ export function requiresNonStaticRuntime(prompt: string): boolean {
   return /\b(?:python|django|flask|fastapi|rust|cargo|golang|go\s+(?:app|service|program|server|cli)|java|spring\s+boot|c\+\+|c#|dotnet|\.net|php|laravel|ruby|rails|kotlin|swift|dart|flutter|node\.js\s+server|express\s+server|backend|api\s+server|command.line|cli\s+app)(?:\b|(?<=[+#]))/i.test(prompt);
 }
 
-const MAX_FIX_ATTEMPTS = 2;
+const MAX_FIX_ATTEMPTS = 4;
 /** The build route may run for 300 s; leave room to validate, publish and persist. */
 const AI_BUDGET_MS = 235_000;
 
@@ -139,9 +151,13 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
   let executionState: AgentExecutionState = "PLANNING";
   let resolvedProjectId: string | null = input.projectId ?? null;
   const done = (run: BuildRun): BuildPipelineResult => ({ run, reply, projectId: resolvedProjectId });
-  const aiDeadline = Date.now() + AI_BUDGET_MS;
+  const aiDeadline = Date.now() + (input.aiBudgetMs ?? AI_BUDGET_MS);
   let designSpec: SiteDesignSpec | null = null;
-  let run = createBuildRun({
+  const resumed = input.resume ?? null;
+  const resumePhase: ResumePhase | null = resumed?.state.phase ?? null;
+  let phase: ResumePhase = resumePhase ?? "generate";
+  let progressSaved = false;
+  let run = resumed ? { ...reopenRun(resumed.run, now()), maxAttempts: Math.min(input.maxFixAttempts ?? resumed.run.maxAttempts ?? MAX_FIX_ATTEMPTS, 8) } : createBuildRun({
     id: runId,
     projectId: input.projectId ?? null,
     conversationId: input.conversationId ?? null,
@@ -150,11 +166,11 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     actions: input.actions,
     workspaceOnly,
     environment: input.environment ?? "production",
-    maxAttempts: Math.min(input.maxFixAttempts ?? MAX_FIX_ATTEMPTS, 5),
+    maxAttempts: Math.min(input.maxFixAttempts ?? MAX_FIX_ATTEMPTS, 8),
     now: now(),
   });
 
-  if (input.taskId) await bindBuildTask(d, user, input.taskId, { project_id: null, build_run_id: runId });
+  if (input.taskId && !resumed) await bindBuildTask(d, user, input.taskId, { project_id: null, build_run_id: runId });
   const emit = async (stage?: BuildStageId): Promise<void> => {
     await persist(d, runId, run);
     if (run.taskId) {
@@ -215,8 +231,69 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     return done(run);
   };
 
+  // ---- continuation --------------------------------------------------------
+  // What a later execution session needs to carry on with this same run. The
+  // files themselves are already in project storage.
+  const resumeState = (unresolved: string[] = []): ResumeState => ({
+    prompt: input.prompt,
+    projectId: resolvedProjectId,
+    workspaceProjectId: input.workspaceProjectId ?? null,
+    conversationId: input.conversationId ?? null,
+    taskId: input.taskId ?? null,
+    requestId: input.requestId ?? null,
+    actions: input.actions,
+    chatMode: input.chatMode ?? "agent",
+    environment: input.environment ?? "production",
+    slug: input.slug ?? null,
+    allowOverride: input.allowOverride === true,
+    isTemporary: input.isTemporary === true,
+    workspaceOnly: input.workspaceOnly === true,
+    maxFixAttempts: input.maxFixAttempts ?? null,
+    phase,
+    segment: run.segment ?? 1,
+    messageId: resumed?.state.messageId ?? null,
+    completed: run.stages.filter((stage) => stage.state === "completed" || stage.state === "skipped").map((stage) => stage.id),
+    pending: run.stages.filter((stage) => stage.state !== "completed" && stage.state !== "skipped").map((stage) => stage.id),
+    unresolved,
+    attemptsUsed: run.attempts,
+    revision: null,
+  });
+  const saveProgress = async (unresolved: string[] = []): Promise<void> => {
+    try {
+      await saveResumeState(d, runId, resumeState(unresolved));
+      progressSaved = true;
+    } catch (error) {
+      note(null, "warn", `Progress record could not be saved (${error instanceof Error ? error.message.slice(0, 80) : "storage error"}); the project files are unaffected.`);
+    }
+  };
+  /**
+   * End this execution session without ending the request. The run stays
+   * open: the next session (same chat, same project) starts at `phase`.
+   */
+  const pause = async (reason: "time_limit" | "provider_unavailable", message: string, retryAt: number | null, unresolved: string[] = [], stage?: BuildStageId): Promise<BuildPipelineResult> => {
+    const available = (run.segment ?? 1) < MAX_RUN_SEGMENTS;
+    if (!available) {
+      return await abort("CONTINUATION_LIMIT", `${message} This request already used ${MAX_RUN_SEGMENTS} execution sessions, so it was stopped. Everything saved so far is in the project — send a follow-up to carry on from there.`, stage);
+    }
+    await saveProgress(unresolved);
+    if (!progressSaved) return await abort("BUILD_RUN_FAILED", `${message} The progress record could not be saved, so the run cannot continue automatically. Saved files are still in the project.`, stage);
+    run = pauseRun(run, { available, reason, phase, retryAt, message }, now());
+    note(stage ?? null, "warn", message);
+    await emit(stage);
+    return done(run);
+  };
+  /** Was this failure the provider being unavailable/limited (as opposed to a bad request)? */
+  const providerOutage = (error: unknown): { outage: boolean; retryAt: number | null } => {
+    const text = error instanceof Error ? error.message : "";
+    const typed = error instanceof AIProviderError ? error : null;
+    const outage = typed ? typed.retryable : /rate[_ ]limit|provider_unavailable|timeout|network|empty_response|cool(?:ing)?[- ]?down|no model available|deadline/i.test(text);
+    const model = run.model?.model ?? "";
+    return { outage, retryAt: typed?.retryAt ?? (outage && model ? nextAvailability(model) : null) };
+  };
+
   try {
     await emit();
+    if (resumed) note(null, "info", `Continuing in a new execution session (${run.segment} of up to ${MAX_RUN_SEGMENTS}) — same chat, same project. Resuming at: ${phase}.`);
     // ---------------------------------------------------------------- plan --
     await begin("plan", "Resolving project, entry page and public address.");
     if (nonStatic && (input.actions.publish || input.actions.preview)) {
@@ -344,8 +421,16 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
 
     // ------------------------------------------------------------ generate --
     let files = before;
-    const needsGeneration = input.actions.build === true || input.actions.fix === true;
-    if (!needsGeneration) {
+    const wantsGeneration = input.actions.build === true || input.actions.fix === true;
+    // A continued run whose files were already written goes straight to
+    // checking/publishing them; it never regenerates the project.
+    const alreadyGenerated = Boolean(resumePhase && resumePhase !== "generate");
+    const needsGeneration = wantsGeneration && !alreadyGenerated;
+    if (alreadyGenerated) {
+      note("generate", "info", `Using the ${before.length} file${before.length === 1 ? "" : "s"} already saved in the project by the earlier session.`);
+      run = completeStageSafe(run, "generate");
+      await emit("generate");
+    } else if (!needsGeneration) {
       await skipped("generate", before.length ? "Publishing the project's existing files." : "No files to generate.");
     } else {
       await begin("generate", input.actions.fix === true ? "Agent is repairing the project files." : "Agent is writing the project files.");
@@ -477,6 +562,16 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         calls = completion.response.toolCalls ?? [];
       } catch (error) {
         const detail = error instanceof Error ? error.message : "provider error";
+        const failure = providerOutage(error);
+        if (failure.outage) {
+          // Nothing was written, nothing is lost: keep the request and carry
+          // on in the next session instead of failing it.
+          const timedOut = Date.now() >= aiDeadline - 5_000;
+          return await pause(timedOut ? "time_limit" : "provider_unavailable",
+            timedOut ? "This session's time ran out while the files were being written. The request is saved and continues automatically."
+              : `The AI provider is not available right now (${detail.slice(0, 140)}). The request is saved and continues automatically when a model is available.`,
+            failure.retryAt, [], "generate");
+        }
         return await abort("AI_PROVIDER_FAILED", `${routes.length > 1 ? "None of the enabled models" : modelLabel(routes[0].model)} could produce the files: ${detail.slice(0, 200)}. No files were written and the project is unchanged — retry when the provider is available.`, "generate");
       }
       if (agentGenerationIncomplete(raw)) {
@@ -607,6 +702,9 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       executionState = transitionAgentExecution(executionState, "files_saved");
       sourceRevision = applied.revision;
       files = await loadProjectFiles(d, projectId);
+      // From here on a later session must never regenerate: the files exist.
+      phase = "repair";
+      await saveProgress();
       if (input.conversationId && !input.isTemporary) await bindConversationProject(d, user, input.conversationId, projectId);
       const changes = summarizeChanges(before, files);
       run = setChanges(run, changes, files.length, now());
@@ -687,43 +785,106 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     run = setValidation(run, built.report.checks, now());
     await emit("validate");
 
-    // ----------------------------------------------------- auto-fix loop (§15) --
-    let attempt = 0;
-    while (built.report.blocking && attempt < run.maxAttempts && (input.actions.build || input.actions.fix)) {
-      attempt += 1;
-      run = bumpAttempt(run, now());
-      const issueText = formatIssues(blockingIssues(built.report), 6);
-      note("validate", "warn", `Build attempt ${attempt} failed — asking the Agent to fix it.`);
-      await emit("validate");
-      if (!(await getTeam()).length) break;
-      // The repair model needs the real source: with only an error list it
-      // rewrote files from memory and lost the design.
-      const fixMessages: AIMessage[] = [
-        { role: "system", content: AGENT_SYSTEM_PROMPT },
-        { role: "user", content: sourceContext(files, issueText) },
-        { role: "user", content: `${buildFixPrompt(built.report, files.length)}\n\nReturn only the corrected files, complete. Problems:\n${issueText}` },
-      ];
-      try {
-        const fix = await completeAs("repair", { messages: fixMessages, temperature: 0.1, maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline + 20_000, requestId: input.requestId ?? undefined });
-        const fixed = parseAgentResponse(fix.response.content ?? "", { allowUnlabelledFences: true, allowRawHtmlDocument: true });
-        if (fixed.files.length) {
-          const fixedResult = await applyProjectFiles(d, user, { project_id: projectId, files: fixed.files as ProjectFile[], source: "agent", expected_revision: sourceRevision });
-          sourceRevision = fixedResult.revision;
-          files = await loadProjectFiles(d, projectId);
-          if (input.conversationId && !input.isTemporary) await bindConversationProject(d, user, input.conversationId, projectId);
-          const changes = summarizeChanges(before, files);
-          run = setChanges(run, changes, files.length, now());
-          run = { ...run, stages: run.stages.map((stage) => (stage.id === "validate" ? { ...stage, state: "running", message: `Rebuilding after fix ${attempt}.` } : stage)) };
-          note("validate", "info", `Applied ${fixed.files.length} corrected file${fixed.files.length === 1 ? "" : "s"} (attempt ${attempt}).`);
+    // ------------------------------------------------- self-healing repair --
+    // Every problem the validators found is worked on until the project passes
+    // or a blocker is clearly identified:
+    //   1. deterministic repairs from the parsers (unclosed tags, unterminated
+    //      scripts, stray code fences) — no model involved;
+    //   2. model repairs that receive the exact errors and only the files that
+    //      have them. Each proposal is validated in memory first and is saved
+    //      only when it leaves fewer errors, so a bad repair can never replace
+    //      working files.
+    // Accepted changes are saved (revision-checked) straight away, so progress
+    // survives a time limit, a provider outage or a restart.
+    const priorChanges = resumed ? run.changes : [];
+    const allChanges = () => {
+      const fresh = summarizeChanges(before, files);
+      const seenPaths = new Set(fresh.map((change) => change.path));
+      return [...priorChanges.filter((change) => !seenPaths.has(change.path)), ...fresh];
+    };
+    const canRepair = input.actions.build === true || input.actions.fix === true || input.actions.publish === true;
+    let repairStop: ReturnType<typeof repairStopCopy> = "";
+    let repairRetryAt: number | null = null;
+    let repairPaused: "time_limit" | "provider_unavailable" | null = null;
+    if (canRepair && (built.report.blocking || deployVerdict(built.report).repairable.length)) {
+      const hasTeam = (await getTeam()).length > 0;
+      const model: RepairModel = async (request) => {
+        const context = request.targets.map((file) => `<<<FILE ${file.path}>>>\n${file.content}\n<<<END FILE>>>`).join("\n\n");
+        const fix = await completeAs("repair", {
+          messages: [
+            { role: "system", content: AGENT_SYSTEM_PROMPT },
+            { role: "user", content: `Files that need repair (complete current source):\n\n${context}${request.otherPaths.length ? `\n\nOther files in the project (unchanged, do not return them): ${request.otherPaths.slice(0, 80).join(", ")}` : ""}` },
+            { role: "user", content: `${request.instruction}\n\nOriginal request, for intent only: "${input.prompt.slice(0, 500)}"` },
+          ],
+          temperature: 0.1, maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline + 20_000,
+          requestId: input.requestId ? `${input.requestId}-repair-${request.attempt}` : undefined,
+        });
+        if (!run.model) run = { ...run, model: { provider: fix.target.provider, model: fix.target.model } };
+        return parseAgentResponse(fix.response.content ?? "", { allowUnlabelledFences: true, allowRawHtmlDocument: request.targets.length === 1 }).files;
+      };
+      let checkpointed = false;
+      let lastProviderError: unknown = null;
+      const guardedModel: RepairModel = async (request) => {
+        try { return await model(request); }
+        catch (error) { lastProviderError = error; throw error; }
+      };
+      // Each execution session gets the configured number of attempts; the
+      // session cap (MAX_RUN_SEGMENTS) bounds the total.
+      const attemptsLeft = run.maxAttempts;
+      const outcome = await runRepairLoop({
+        files,
+        evaluate: async (candidate) => (await buildProject(candidate)).report,
+        model: hasTeam ? guardedModel : null,
+        maxAttempts: attemptsLeft,
+        deadlineAt: aiDeadline,
+        withhold: (path, content) => shouldWithholdProjectFile(path, content, "utf8") || withheldExistingPaths.has(path.toLowerCase()),
+        onAttempt: async (attempt, issues) => {
+          run = bumpAttempt(run, now());
+          run = { ...run, stages: run.stages.map((stage) => (stage.id === "validate" ? { ...stage, state: "running", message: `Fixing ${issues.length} problem${issues.length === 1 ? "" : "s"} (attempt ${attempt}).` } : stage)) };
+          note("validate", "warn", `Fixing issue… attempt ${attempt}: ${issues.slice(0, 3).map((issue) => `${issue.path}${issue.line ? `:${issue.line}` : ""} ${issue.message}`).join("; ").slice(0, 300)}`);
           await emit("validate");
-        }
-      } catch {
-        break;
-      }
+        },
+        onAccept: async (changed, _record, state) => {
+          if (!checkpointed) {
+            // Restore point before the first repair touches the saved files.
+            checkpointed = true;
+            try { await saveProjectVersion(d, user, { project_id: projectId, source: "agent", summary: "Before automatic repair" }); }
+            catch { note("validate", "warn", "A restore point could not be saved before the repair; continuing because the repair was verified to reduce errors."); }
+          }
+          const saved = await applyProjectFiles(d, user, { project_id: projectId, files: changed, source: "agent", expected_revision: sourceRevision });
+          sourceRevision = saved.revision;
+          files = state.files;
+          run = setChanges(run, allChanges(), files.length, now());
+          run = setValidation(run, withDesignQuality(state.report, files, specForChecks).checks, now());
+        },
+        onProgress: async (record) => {
+          run = { ...run, repairs: [...(run.repairs ?? []), record].slice(-24) };
+          const level = record.outcome === "accepted" || record.outcome === "partly_accepted" ? "success" : record.outcome === "provider_error" ? "warn" : "info";
+          const label = record.kind === "deterministic" ? "Automatic repair" : `Repair attempt ${record.attempt}`;
+          note("validate", level, `${label}: ${record.outcome.replace(/_/g, " ")} — ${record.errorsBefore} → ${record.errorsAfter} problem${record.errorsAfter === 1 ? "" : "s"}. ${record.detail}`.slice(0, 380));
+          await emit("validate");
+        },
+      });
+      // Storage is authoritative: rebuild from what was actually saved.
+      files = await loadProjectFiles(d, projectId);
       built = await buildProject(files);
+      run = setChanges(run, allChanges(), files.length, now());
       run = setValidation(run, built.report.checks, now());
+      if (outcome.history.some((item) => item.outcome === "accepted" || item.outcome === "partly_accepted")) {
+        note("validate", "success", deployVerdict(built.report).repairable.length ? "Repair applied; some problems remain." : "Repair completed.");
+        if (input.conversationId && !input.isTemporary) await bindConversationProject(d, user, input.conversationId, projectId);
+      }
       await emit("validate");
+      if (outcome.stop !== "clean") {
+        repairStop = repairStopCopy(outcome.stop);
+        if (outcome.stop === "deadline") repairPaused = "time_limit";
+        if (outcome.stop === "provider") {
+          const failure = providerOutage(lastProviderError);
+          if (failure.outage) { repairPaused = "provider_unavailable"; repairRetryAt = failure.retryAt; }
+        }
+      }
     }
+    const describe = (issue: ClassifiedIssue): string => `${issue.path}${issue.line ? `:${issue.line}` : ""} — ${issue.message}`;
 
     // ------------------------------------------------ design polish pass --
     // A build can pass while the page is still poor on a phone. When this run
@@ -732,7 +893,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     // only if it is strictly better. Never loops, never blocks publishing.
     const designCheck = built.report.checks.find((check) => check.id === "design");
     const designProblems = designCheck ? significantDesignIssues(designCheck) : [];
-    if (!built.report.blocking && needsGeneration && designProblems.length && Date.now() < aiDeadline - 60_000) {
+    if (!built.report.blocking && wantsGeneration && designProblems.length && Date.now() < aiDeadline - 60_000) {
       note("validate", "info", `Design review found ${designProblems.length} issue${designProblems.length === 1 ? "" : "s"}; requesting one improvement pass.`);
       await emit("validate");
       try {
@@ -771,24 +932,51 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       }
     }
 
-    if (built.report.blocking) {
-      const summary = blockingIssues(built.report)
-        .slice(0, 3)
-        .map((issue) => `${issue.path}${issue.line ? `:${issue.line}` : ""} — ${issue.message}`)
-        .join(" ");
+    // --------------------------------------------------------- verdict --
+    // Three classes decide what happens next (see lib/deploy/classify.ts):
+    //   blocking   — stops the deployment (broken entry page, fatal build
+    //                failure, a page that cannot work);
+    //   repairable — was sent through the repair loop; whatever could not be
+    //                fixed AND does not break the site is published and
+    //                reported as a known issue;
+    //   warning    — never stops a deployment.
+    const verdict = deployVerdict(built.report);
+    const unresolved = [...verdict.blockers, ...verdict.knownIssues].map(describe);
+    run = { ...run, knownIssues: verdict.deployable ? verdict.knownIssues.length : 0 };
+    if (!verdict.deployable) {
+      const summary = (verdict.blockers.length ? verdict.blockers.map(describe) : blockingIssues(built.report).map((issue) => `${issue.path}${issue.line ? `:${issue.line}` : ""} — ${issue.message}`)).slice(0, 3).join(" ");
+      if (repairPaused && !input.allowOverride) {
+        // Not a failure: the repair simply ran out of this session's time or
+        // the provider went away. Everything fixed so far is saved.
+        return await pause(repairPaused,
+          repairPaused === "time_limit"
+            ? `This session's time ran out with ${verdict.blockers.length || built.report.errors} problem${(verdict.blockers.length || built.report.errors) === 1 ? "" : "s"} still being repaired. Progress is saved and the repair continues automatically.`
+            : "The AI provider became unavailable during the repair. Progress is saved and the repair continues automatically when a model is available.",
+          repairRetryAt, unresolved, "validate");
+      }
       if (!input.allowOverride) {
-        return await abort("BUILD_FAILED", `Build failed: ${summary || built.report.summary}`.slice(0, 480), "validate");
+        // Keep the request resumable: "Continue fixing" picks up at the repair
+        // with the files as they are now.
+        await saveProgress(unresolved);
+        const why = repairStop ? ` Automatic repair stopped because ${repairStop}.` : "";
+        return await abort("BUILD_FAILED", `Build failed: ${summary || built.report.summary}${why}`.slice(0, 480), "validate");
       }
       note("validate", "warn", "Publishing anyway: you chose to publish with failing checks.");
       run = completeStage(run, "validate", now(), `Published with ${built.report.errors} unresolved problem(s), at your request.`);
       await emit("validate");
+    } else if (verdict.knownIssues.length) {
+      const count = verdict.knownIssues.length;
+      note("validate", "warn", `${count} non-critical problem${count === 1 ? "" : "s"} could not be repaired automatically${repairStop ? ` (${repairStop})` : ""}: ${verdict.knownIssues.slice(0, 4).map(describe).join("; ")}`.slice(0, 380));
+      await finish("validate", `Build verified with ${count} known issue${count === 1 ? "" : "s"} that ${count === 1 ? "does" : "do"} not stop the site from working.`);
+      reply = [reply.trim(), `Known issue${count === 1 ? "" : "s"} left in the project (the site works, but ${count === 1 ? "this needs" : "these need"} attention):\n${verdict.knownIssues.slice(0, 6).map((issue) => `- ${describe(issue)}`).join("\n")}`].filter(Boolean).join("\n\n");
     } else {
-      await finish("validate", built.report.summary);
+      await finish("validate", built.report.blocking ? "Build verified." : built.report.summary);
     }
 
-    if (!built.report.blocking) {
+    if (verdict.deployable) {
       await d.collection("projects").doc(projectId).set({ last_successful_build_at: nowTs(), updated_at: nowTs() }, { merge: true });
     }
+    phase = "publish";
 
     // ------------------------------------------------------------- preview ---
     const previewUrl = `/api/projects/${projectId}/preview`;
@@ -816,7 +1004,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         slug: input.slug?.trim() ? slug : null,
         environment: run.environment,
         report: built.report,
-        overridden: input.allowOverride === true && built.report.blocking,
+        overridden: input.allowOverride === true && !verdict.deployable,
         onLog: (entry) => note("publish", entry.step === "error" ? "error" : "info", `${entry.step}: ${entry.detail}`),
       });
       run = setDeployment(run, {
@@ -848,6 +1036,9 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     } catch (error) {
       const code = error instanceof RpcError ? error.code : "DEPLOY_FAILED";
       const message = publishFailureCopy(code, error);
+      // The build is verified and saved; only the publish step is left. Keep
+      // that on record so Retry publishes again without rebuilding anything.
+      if (!["SLUG_TAKEN", "SLUG_INVALID", "NO_FILES", "INDEX_REQUIRED", "BUILD_FAILED"].includes(code)) await saveProgress([message]);
       return await abort(code, message, "publish");
     }
   } catch (error) {
@@ -863,7 +1054,15 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     const activeStage = run.stages.find((stage) => stage.state === "running");
     return await abort(code, detail || (code === "PROJECT_STORAGE_UNAVAILABLE" ? "Project storage could not be reached. No files were changed; retry after checking Firestore connectivity." : error instanceof Error ? error.message.slice(0, 240) : "The build stopped unexpectedly."), activeStage?.id);
   } finally {
-    await persistBuildMessage(d, user, input, run, reply, run.status === "succeeded" ? transitionAgentExecution(executionState, "complete") : executionState);
+    const messageId = await persistBuildMessage(d, user, input, run, reply, run.status === "succeeded" ? transitionAgentExecution(executionState, "complete") : executionState, resumed?.state.messageId ?? null);
+    try {
+      if (run.status === "succeeded" || run.status === "cancelled" || run.status === "awaiting_input") {
+        if (progressSaved || resumed) await clearResumeState(d, runId);
+      } else if (messageId && (progressSaved || resumed)) {
+        // The chat shows ONE message for this run; later sessions update it.
+        await d.collection("build_runs").doc(runId).set({ resume_message_id: messageId }, { merge: true });
+      }
+    } catch { /* the run document already holds the outcome */ }
   }
 }
 
@@ -879,13 +1078,16 @@ async function persistBuildMessage(
   run: BuildRun,
   reply: string,
   executionState: AgentExecutionState,
-): Promise<void> {
-  if (!input.conversationId || input.isTemporary) return;
+  existingMessageId: string | null = null,
+): Promise<string | null> {
+  if (!input.conversationId || input.isTemporary) return null;
   const summary = buildRunCopy(run);
   const body =
     reply.trim() ||
     (run.status === "cancelled"
       ? "Build cancelled. No success was reported."
+      : run.status === "paused"
+      ? `${run.continuation?.message ?? "This request is paused and will continue."}`
       : run.status === "failed"
       ? `MATRIX stopped during ${summary.detail.toLowerCase()} — nothing else was changed.`
       : `Build finished. ${run.fileCount} project file${run.fileCount === 1 ? "" : "s"} ready.`);
@@ -893,7 +1095,8 @@ async function persistBuildMessage(
     ? `${body}\n\nLive: ${run.deployment?.url ?? ""}`.trim()
     : body;
   try {
-    await d.collection("conversations").doc(input.conversationId).collection("messages").add({
+    const messages = d.collection("conversations").doc(input.conversationId).collection("messages");
+    const payload = {
       role: "assistant",
       content: text,
       metadata: {
@@ -919,11 +1122,20 @@ async function persistBuildMessage(
             }
           : null,
       },
-      created_at: nowTs(),
-    });
+    };
+    let messageId: string;
+    if (existingMessageId) {
+      // A continued run updates its one message; it never adds another.
+      await messages.doc(existingMessageId).set({ ...payload, updated_at: nowTs() }, { merge: true });
+      messageId = existingMessageId;
+    } else {
+      messageId = (await messages.add({ ...payload, created_at: nowTs() })).id;
+    }
     await d.collection("conversations").doc(input.conversationId).set({ updated_at: nowTs(), mode: input.chatMode ?? "agent" }, { merge: true });
+    return messageId;
   } catch {
     /* chat persistence is best-effort; the run itself is already stored */
+    return null;
   }
 }
 
@@ -1023,7 +1235,7 @@ async function persist(d: Db, runId: string, run: BuildRun): Promise<void> {
   await d
     .collection("build_runs")
     .doc(runId)
-    .set({ run: toFirestoreRun(run), updated_at: nowTs() }, { merge: true })
+    .set({ run: toFirestoreRun(run), resumable: run.status === "paused" && run.continuation?.available === true, updated_at: nowTs() }, { merge: true })
     .catch(() => { throw new RpcError("PROJECT_STORAGE_UNAVAILABLE", 503, "Build state could not be saved. No further file operations were started."); });
 }
 

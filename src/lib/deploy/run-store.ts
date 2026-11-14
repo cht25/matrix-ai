@@ -21,6 +21,7 @@ import {
   type StageState,
 } from "@/lib/deploy/stages";
 import type { BuildCheck, BuildReport } from "@/lib/deploy/validate";
+import type { RunContinuation, RunRepair } from "@/lib/deploy/stages";
 
 /** Stored logs are capped tighter than in-memory ones: the doc has a size budget. */
 export const STORED_LOG_LIMIT = 80;
@@ -43,7 +44,7 @@ function nullableStr(value: unknown): string | null {
 }
 
 const STAGE_STATES: StageState[] = ["queued", "running", "completed", "failed", "skipped"];
-const RUN_STATUSES: BuildRunStatus[] = ["requested", "running", "succeeded", "failed", "cancelled", "awaiting_input"];
+const RUN_STATUSES: BuildRunStatus[] = ["requested", "running", "succeeded", "failed", "cancelled", "awaiting_input", "paused"];
 
 /** Firestore-safe copy of a run (bounded, no undefined, no functions). */
 export function toFirestoreRun(run: BuildRun): Json {
@@ -91,6 +92,15 @@ export function toFirestoreRun(run: BuildRun): Json {
         }
       : null,
     error: run.error ? { code: run.error.code, message: run.error.message.slice(0, 600) } : null,
+    continuation: run.continuation
+      ? { available: run.continuation.available === true, reason: run.continuation.reason, phase: run.continuation.phase, retryAt: run.continuation.retryAt ?? null, message: run.continuation.message.slice(0, 300) }
+      : null,
+    segment: run.segment ?? 1,
+    knownIssues: run.knownIssues ?? 0,
+    repairs: (run.repairs ?? []).slice(-24).map((item) => ({
+      attempt: item.attempt, kind: item.kind, outcome: item.outcome, errorsBefore: item.errorsBefore, errorsAfter: item.errorsAfter,
+      files: item.files.slice(0, 12).map((path) => path.slice(0, 200)), detail: item.detail.slice(0, 400),
+    })),
     logs: run.logs.slice(-LOG_LIMIT).map((line) => ({
       at: line.at,
       stage: line.stage ?? null,
@@ -116,6 +126,7 @@ function serializeReport(report: BuildReport | BuildCheck[]): Json {
         line: issue.line ?? null,
         message: issue.message.slice(0, 300),
         severity: issue.severity,
+        code: issue.code ?? null,
       })),
     })),
     blocking: Array.isArray(report) ? report.some((check) => check.status === "failed") : report.blocking,
@@ -213,6 +224,10 @@ export function runFromFirestore(raw: unknown, now: number): BuildRun | null {
           }
         : null,
     error: errorRaw ? { code: str(errorRaw.code, "BUILD_RUN_FAILED"), message: str(errorRaw.message, "The build stopped unexpectedly.") } : null,
+    continuation: readContinuation(data.continuation),
+    segment: Math.max(1, num(data.segment, 1)),
+    knownIssues: num(data.knownIssues),
+    repairs: readRepairs(data.repairs),
     logs: Array.isArray(data.logs)
       ? (data.logs as Json[]).map(
           (line): BuildLogLine => ({
@@ -263,6 +278,7 @@ function readValidation(value: unknown): BuildCheck[] | null {
             line: typeof issue.line === "number" ? issue.line : undefined,
             message: str(issue.message),
             severity: (issue.severity === "warning" ? "warning" : "error") as "error" | "warning",
+            ...(typeof issue.code === "string" && issue.code ? { code: issue.code } : {}),
           }))
         : [],
     }),
@@ -274,3 +290,25 @@ export function storedDeploymentStatus(run: BuildRun | null): DeploymentStatus {
   return run?.deployment?.status ?? "none";
 }
 
+
+function readContinuation(raw: unknown): RunContinuation | null {
+  if (!raw || typeof raw !== "object") return null;
+  const data = raw as Json;
+  const reason = data.reason === "time_limit" || data.reason === "provider_unavailable" ? data.reason : "interrupted";
+  const phase = data.phase === "repair" || data.phase === "publish" ? data.phase : "generate";
+  return { available: data.available === true, reason, phase, retryAt: typeof data.retryAt === "number" ? data.retryAt : null, message: str(data.message) };
+}
+
+function readRepairs(raw: unknown): RunRepair[] {
+  if (!Array.isArray(raw)) return [];
+  const outcomes = ["accepted", "partly_accepted", "rejected", "no_change", "provider_error"];
+  return (raw as Json[]).slice(-24).map((item) => ({
+    attempt: num(item.attempt),
+    kind: item.kind === "deterministic" ? "deterministic" as const : "model" as const,
+    outcome: (outcomes.includes(String(item.outcome)) ? item.outcome : "rejected") as RunRepair["outcome"],
+    errorsBefore: num(item.errorsBefore),
+    errorsAfter: num(item.errorsAfter),
+    files: Array.isArray(item.files) ? (item.files as unknown[]).map((path) => String(path)) : [],
+    detail: str(item.detail),
+  }));
+}

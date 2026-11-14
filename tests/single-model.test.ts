@@ -277,10 +277,10 @@ describe("3–4. website generation and project editing", () => {
       prompt: "Build a one-page website for a neighbourhood bakery called Rise with a menu and contact section.",
       actions: { build: true, publish: false, preview: false }, chatMode: "agent", isTemporary: true,
     });
-    expect(result.run.status).toBe("failed");
-    expect(result.run.error?.code).toBe("AI_PROVIDER_FAILED");
-    expect(result.run.error?.message).toContain("GPT OSS 120B");
-    expect(result.run.error?.message).toMatch(/No files were written/i);
+    expect(result.run.status).toBe("paused");
+    expect(result.run.continuation?.reason).toBe("provider_unavailable");
+    expect(result.run.continuation?.message).toMatch(/continues automatically/i);
+    expect(result.run.deployment).toBeNull();
     expect([...stub._state.docs.keys()].filter((key) => key.includes("/files/")).length).toBe(filesBefore);
     expectOnlyTheOneModel();
   });
@@ -339,8 +339,8 @@ describe("3–4. website generation and project editing", () => {
       prompt: "Change the heading colour to dark green and add an opening-hours section.",
       actions: { build: true, publish: false, preview: false }, chatMode: "agent", isTemporary: true,
     });
-    expect(result.run.status).toBe("failed");
-    expect(result.run.error?.code).toBe("AI_PROVIDER_FAILED");
+    expect(result.run.status).toBe("paused");
+    expect(result.run.continuation?.phase).toBe("generate");
     expect(completions().length).toBeGreaterThanOrEqual(1);
     expect(JSON.stringify([...stub._state.docs.entries()].filter(([key]) => key.startsWith(`projects/${projectId}`)))).toBe(snapshot);
     for (const call of completions()) expect(call.body?.model).toBe(MATRIX_MODEL_ID);

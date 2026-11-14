@@ -18,6 +18,8 @@
 
 import type { ProjectFile } from "@/lib/projects/paths";
 import { PROJECT_LIMITS, isImagePath } from "@/lib/projects/paths";
+import { analyzeHtml, inlineBlocks } from "@/lib/deploy/analyze/html";
+import { cssSyntaxError, jsSyntaxError, tsSyntaxErrors } from "@/lib/deploy/analyze/code";
 
 export type CheckStatus = "passed" | "failed" | "skipped";
 
@@ -26,6 +28,8 @@ export type BuildIssue = {
   line?: number;
   message: string;
   severity: "error" | "warning";
+  /** Stable machine-readable kind; drives classification and deterministic repair. */
+  code?: string;
 };
 
 /** `design` is produced by design-quality.ts and appended by the build pipeline. */
@@ -218,40 +222,12 @@ export function bracketBalance(code: string): Balance {
   return { unbalanced, stray };
 }
 
-/** HTML tag stack check: returns unclosed tags and unmatched closers with lines. */
+/** Structural HTML problems (parser-based; scripts, styles and comments are not read as markup). */
 export function htmlTagIssues(html: string): BuildIssue[] {
-  const issues: BuildIssue[] = [];
-  const stack: Array<{ tag: string; line: number }> = [];
-  const tagRe = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)((?:"[^"]*"|'[^']*'|[^>"'])*)>/g;
-  let match: RegExpExecArray | null;
-  while ((match = tagRe.exec(html)) !== null) {
-    const closing = match[1] === "/";
-    const tag = match[2].toLowerCase();
-    const selfClosed = /\/\s*$/.test(match[3] ?? "");
-    const line = lineAt(html, match.index);
-    if (VOID_TAGS.has(tag) || selfClosed) continue;
-    if (!closing) {
-      stack.push({ tag, line });
-      continue;
-    }
-    const top = stack[stack.length - 1];
-    if (top && top.tag === tag) stack.pop();
-    else if (top) {
-      issues.push({ path: "", line, message: `</${tag}> closes <${top.tag}> opened on line ${top.line}.`, severity: "error" });
-      // Recover by popping until the matching tag is found (or the stack empties).
-      const idx = [...stack].map((s) => s.tag).lastIndexOf(tag);
-      if (idx >= 0) stack.length = idx;
-    } else {
-      issues.push({ path: "", line, message: `</${tag}> has no matching opening tag.`, severity: "error" });
-    }
-  }
-  for (const open of stack.slice(0, 4)) {
-    issues.push({ path: "", line: open.line, message: `<${open.tag}> opened here is never closed.`, severity: "error" });
-  }
-  return issues;
+  return analyzeHtml(html).map((issue) => ({ path: "", line: issue.line, message: issue.message, severity: issue.severity, code: issue.code }));
 }
 
-function isRemote(ref: string): boolean {
+export function isRemote(ref: string): boolean {
   return (
     !ref ||
     /^(?:https?:)?\/\//i.test(ref) ||
@@ -260,7 +236,7 @@ function isRemote(ref: string): boolean {
   );
 }
 
-function normalizeRef(ref: string): string {
+export function normalizeRef(ref: string): string {
   return ref.replace(/^[./]+/, "").split(/[?#]/)[0];
 }
 
@@ -283,7 +259,7 @@ export function htmlLocalRefs(html: string, attrs: string[]): Array<{ ref: strin
 // File helpers
 // ---------------------------------------------------------------------------
 
-function pathSet(files: ProjectFile[]): Set<string> {
+export function pathSet(files: ProjectFile[]): Set<string> {
   const set = new Set<string>();
   for (const file of files) {
     const clean = file.path.replace(/^[./]+/, "").toLowerCase();
@@ -294,7 +270,7 @@ function pathSet(files: ProjectFile[]): Set<string> {
   return set;
 }
 
-function resolveLocal(files: ProjectFile[], paths: Set<string>, ref: string, fromPath: string): ProjectFile | null {
+export function resolveLocal(files: ProjectFile[], paths: Set<string>, ref: string, fromPath: string): ProjectFile | null {
   if (!ref) return null;
   const dir = fromPath.includes("/") ? fromPath.slice(0, fromPath.lastIndexOf("/") + 1) : "";
   const candidates = [ref, dir + ref, ref.replace(/^\//, "")];
@@ -398,6 +374,7 @@ function dependenciesCheck(text: ProjectFile[], files: ProjectFile[]): BuildChec
   if (needsBundler && !hasStaticEntry) {
     issues.push({
       path: "package.json",
+      code: "needs-bundler",
       message: "This project needs a bundler (React/Vite/Next) and MATRIX hosting serves built static files, so nothing was installed or compiled. Ask MATRIX for a self-contained static build (index.html + CSS + JS) instead.",
       severity: "error",
     });
@@ -422,59 +399,68 @@ function syntaxCheck(text: ProjectFile[]): BuildCheck {
   for (const file of text) {
     const content = file.content ?? "";
     if (UNPARSABLE_RE.test(file.path)) {
+      const found = tsSyntaxErrors(file.path, content);
+      // Parsing proves the syntax only: the file is still never compiled or
+      // type-checked against its dependencies here, so it stays "not verified".
       skipped.push(file.path);
+      for (const item of found ?? []) issues.push({ path: file.path, line: item.line, message: item.message, severity: "error", code: "ts-syntax" });
       continue;
     }
     if (HTML_RE.test(file.path)) {
       for (const issue of htmlTagIssues(content)) issues.push({ ...issue, path: file.path });
+      for (const block of inlineBlocks(content)) {
+        if (block.kind === "script") {
+          const error = jsSyntaxError(block.content, block.module ? true : undefined);
+          if (error) issues.push({ path: file.path, line: block.line + (error.line ?? 1) - 1, message: `Inline script: ${error.message}.`, severity: "error", code: "js-syntax-inline" });
+        } else if (block.kind === "style") {
+          const error = cssSyntaxError(block.content);
+          if (error) issues.push({ path: file.path, line: block.line + (error.line ?? 1) - 1, message: `Inline style: ${error.message}.`, severity: "error", code: "css-syntax-inline" });
+        } else {
+          try { JSON.parse(block.content); }
+          catch (error) { issues.push({ path: file.path, line: block.line, message: `Inline JSON block is not valid JSON (${jsonErrorMessage(error)}).`, severity: "warning", code: "json-inline" }); }
+        }
+      }
       continue;
     }
     if (JSON_RE.test(file.path)) {
       try {
         JSON.parse(stripJsonComments(content));
       } catch (error) {
-        issues.push({ path: file.path, line: jsonErrorLine(content, error), message: `${file.path} is not valid JSON (${jsonErrorMessage(error)}).`, severity: "error" });
+        issues.push({ path: file.path, line: jsonErrorLine(content, error), message: `${file.path} is not valid JSON (${jsonErrorMessage(error)}).`, severity: "error", code: "json-syntax" });
       }
       continue;
     }
     if (JS_RE.test(file.path)) {
-      const clean = neutralizeCode(content);
-      const balance = bracketBalance(clean);
-      for (const item of balance.unbalanced) {
+      const error = jsSyntaxError(content, /\.mjs$/i.test(file.path) ? true : /\.cjs$/i.test(file.path) ? false : undefined);
+      if (error) {
+        // Name what is actually wrong: a file cut off mid-block reads very
+        // differently from a stray character.
+        const balance = bracketBalance(neutralizeCode(content));
+        const owed = balance.unbalanced.map((item) => `${item.count} ${labelFor(item.open)} never closed`).join(", ");
         issues.push({
           path: file.path,
-          message: `${item.count} ${labelFor(item.open)} never closed — unexpected end of ${file.path}.`,
+          line: error.line,
+          message: `${error.message}${owed ? ` — ${owed} (unexpected end of ${file.path})` : ""}.`,
           severity: "error",
+          code: "js-syntax",
         });
       }
-      if (balance.stray) {
-        issues.push({
-          path: file.path,
-          line: firstStrayLine(clean),
-          message: `${balance.stray} unmatched closing ${balance.stray === 1 ? "bracket" : "brackets"} — unexpected token.`,
-          severity: "error",
-        });
-      }
-      const smart = /[\u201c\u201d\u2018\u2019]/.exec(clean);
-      if (smart) {
-        issues.push({
-          path: file.path,
-          line: lineAt(content, smart.index),
-          message: "Smart quotes found in code — use straight quotes \" ' instead.",
-          severity: "error",
-        });
-      }
+      continue;
+    }
+    if (/\.css$/i.test(file.path)) {
+      const error = cssSyntaxError(content);
+      if (error) issues.push({ path: file.path, line: error.line, message: `CSS: ${error.message}${/Unclosed block|Unexpected }/.test(error.message) ? " — braces are unbalanced" : ""}.`, severity: "error", code: "css-syntax" });
       continue;
     }
     if (CSS_RE.test(file.path)) {
       const balance = bracketBalance(neutralizeCode(content));
       if (balance.unbalanced.some((item) => item.open === "{") || balance.stray) {
-        issues.push({ path: file.path, message: "CSS braces are unbalanced.", severity: "error" });
+        issues.push({ path: file.path, message: "CSS braces are unbalanced.", severity: "error", code: "css-syntax" });
       }
     }
   }
   const errors = issues.filter((issue) => issue.severity === "error").length;
-  if (errors) return { id: "syntax", label: BUILD_CHECK_LABELS.syntax, status: "failed", message: `${errors} file${errors === 1 ? "" : "s"} failed the syntax check.`, issues };
+  if (errors) return { id: "syntax", label: BUILD_CHECK_LABELS.syntax, status: "failed", message: `${errors} syntax problem${errors === 1 ? "" : "s"} found.`, issues };
   if (skipped.length) {
     return {
       id: "syntax",
@@ -487,7 +473,7 @@ function syntaxCheck(text: ProjectFile[]): BuildCheck {
       ],
     };
   }
-  return { id: "syntax", label: BUILD_CHECK_LABELS.syntax, status: "passed", message: "HTML, JavaScript, CSS and JSON structure look sound.", issues };
+  return { id: "syntax", label: BUILD_CHECK_LABELS.syntax, status: "passed", message: "HTML, JavaScript, CSS and JSON parsed without errors.", issues };
 }
 
 /** Offset of the first closing bracket with no matching opener. */
@@ -517,7 +503,7 @@ function buildCheck(html: ProjectFile[], files: ProjectFile[], bundle: BundleOut
   const issues: BuildIssue[] = [];
   const entry = htmlEntry(files);
   if (!entry) {
-    issues.push({ path: "index.html", message: "A publishable site needs an index.html entry page.", severity: "error" });
+    issues.push({ path: "index.html", message: "A publishable site needs an index.html entry page.", severity: "error", code: "entry-missing" });
     return { id: "build", label: BUILD_CHECK_LABELS.build, status: "failed", message: "No entry page to build.", issues };
   }
   if (!bundle) {
@@ -527,7 +513,7 @@ function buildCheck(html: ProjectFile[], files: ProjectFile[], bundle: BundleOut
     return { id: "build", label: BUILD_CHECK_LABELS.build, status: "skipped", message: bundle.reason, issues };
   }
   if (!bundle.ok) {
-    issues.push({ path: entry.path, message: bundle.error ?? "The bundler could not produce a publishable page.", severity: "error" });
+    issues.push({ path: entry.path, message: bundle.error ?? "The bundler could not produce a publishable page.", severity: "error", code: "bundle-failed" });
     return { id: "build", label: BUILD_CHECK_LABELS.build, status: "failed", message: "Bundling failed.", issues };
   }
   return {
@@ -554,7 +540,7 @@ function routesCheck(html: ProjectFile[], files: ProjectFile[], paths: Set<strin
       const target = ref.ref.replace(/\/$/, "") || "index.html";
       const hit = resolveLocal(files, paths, target, file.path);
       if (!hit) {
-        issues.push({ path: file.path, line: ref.line, message: `Link "${ref.raw}" does not match any project file.`, severity: "error" });
+        issues.push({ path: file.path, line: ref.line, message: `Link "${ref.raw}" does not match any project file.`, severity: "error", code: "broken-link" });
       }
     }
   }
@@ -577,15 +563,25 @@ function assetsCheck(text: ProjectFile[], files: ProjectFile[], paths: Set<strin
       checked++;
       const hit = resolveLocal(files, paths, ref.ref, file.path);
       if (!hit) {
-        issues.push({ path: file.path, line: ref.line, message: `Asset "${ref.raw}" was not found in the project.`, severity: "error" });
+        issues.push({ path: file.path, line: ref.line, message: `Asset "${ref.raw}" was not found in the project.`, severity: "error", code: /\.(m?js|cjs)(?:[?#]|$)/i.test(ref.raw) ? "missing-script" : "missing-asset" });
       } else if (isImagePath(hit.path) && !hit.content.trim()) {
-        issues.push({ path: file.path, line: ref.line, message: `Asset "${hit.path}" has no content.`, severity: "error" });
+        issues.push({ path: file.path, line: ref.line, message: `Asset "${hit.path}" has no content.`, severity: "error", code: "missing-asset" });
+      }
+    }
+    // Stylesheets, scripts and icons linked with href were never resolved
+    // before, so a page could ship without its CSS and still pass.
+    for (const ref of htmlLocalRefs(file.content, ["href"])) {
+      if (!/\.(css|m?js|json|webmanifest|png|jpe?g|gif|webp|svg|ico|avif|woff2?)$/i.test(ref.ref)) continue;
+      checked++;
+      if (!resolveLocal(files, paths, ref.ref, file.path)) {
+        const style = /\.css$/i.test(ref.ref);
+        issues.push({ path: file.path, line: ref.line, message: `${style ? "Stylesheet" : "File"} "${ref.raw}" was not found in the project.`, severity: "error", code: style ? "missing-style" : /\.m?js$/i.test(ref.ref) ? "missing-script" : "missing-asset" });
       }
     }
     for (const raw of cssUrlRefs(file.content)) {
       checked++;
       if (!resolveLocal(files, paths, normalizeRef(raw.value), file.path)) {
-        issues.push({ path: file.path, line: raw.line, message: `CSS url("${raw.value}") does not exist in the project.`, severity: "error" });
+        issues.push({ path: file.path, line: raw.line, message: `CSS url("${raw.value}") does not exist in the project.`, severity: "error", code: "missing-asset" });
       }
     }
   }
@@ -595,7 +591,7 @@ function assetsCheck(text: ProjectFile[], files: ProjectFile[], paths: Set<strin
     for (const raw of cssUrlRefs(file.content)) {
       checked++;
       if (!resolveLocal(files, paths, normalizeRef(raw.value), file.path)) {
-        issues.push({ path: file.path, line: raw.line, message: `CSS url("${raw.value}") does not exist in the project.`, severity: "error" });
+        issues.push({ path: file.path, line: raw.line, message: `CSS url("${raw.value}") does not exist in the project.`, severity: "error", code: "missing-asset" });
       }
     }
   }
@@ -615,7 +611,7 @@ function assetsCheck(text: ProjectFile[], files: ProjectFile[], paths: Set<strin
 }
 
 /** Every non-remote `url(...)` value in a stylesheet or inline style, with lines. */
-function cssUrlRefs(content: string): Array<{ value: string; line: number }> {
+export function cssUrlRefs(content: string): Array<{ value: string; line: number }> {
   const found: Array<{ value: string; line: number }> = [];
   for (const match of content.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/g)) {
     const value = (match[1] ?? "").trim();

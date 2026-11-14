@@ -24,6 +24,7 @@ import {
   isMatrixModelId,
 } from "@/lib/ai/model";
 import { DEFAULT_MODEL_KEY, type ModelSpec } from "@/lib/ai/models/registry";
+import { ensureAccounts, listAccounts } from "@/lib/ai/accounts";
 
 export type AIRouteTarget = {
   provider: AIProviderName;
@@ -79,20 +80,22 @@ export function matrixModelRoute(): AIRouteTarget | null {
       tier: "high",
     };
   }
-  const groqKey = secret(process.env.GROQ_API_KEY) || dedicatedKey;
+  const groqKey = hostedProviderKey() || dedicatedKey;
   if (!groqKey) return null;
   return {
     provider: MATRIX_MODEL_PROVIDER,
     providerId: MATRIX_MODEL_PROVIDER_ID,
     model: MATRIX_MODEL_ID,
-    client: new GroqProvider(groqKey),
+    client: new GroqProvider(groqKey, { pooled: true }),
     tier: "high",
   };
 }
 
 /** Server credential for the hosted provider, or "" when none is installed. */
 export function hostedProviderKey(): string {
-  return secret(process.env.GROQ_API_KEY);
+  // The first connected account: the environment key when there is one,
+  // otherwise an account the administrator registered.
+  return listAccounts().find((account) => account.enabled)?.key ?? "";
 }
 
 /**
@@ -104,7 +107,7 @@ export function routeForModel(spec: ModelSpec): AIRouteTarget | null {
   if (spec.key === DEFAULT_MODEL_KEY) return matrixModelRoute();
   const key = hostedProviderKey();
   if (!key) return null;
-  return { provider: MATRIX_MODEL_PROVIDER, providerId: MATRIX_MODEL_PROVIDER_ID, model: spec.id, client: new GroqProvider(key), tier: "high", contextTokens: spec.contextTokens };
+  return { provider: MATRIX_MODEL_PROVIDER, providerId: MATRIX_MODEL_PROVIDER_ID, model: spec.id, client: new GroqProvider(key, { pooled: true }), tier: "high", contextTokens: spec.contextTokens };
 }
 
 export function matrixModelStatus(): MatrixModelStatus {
@@ -160,14 +163,15 @@ export function aiProviderConfigured(_coding = false): boolean {
  * Agent, Code, Research, orchestrator and comparison turns all receive the
  * same single route; the mode only changes instructions and tools.
  */
-export async function createAIRoutesFromDb(_d?: Db | null, _coding = false): Promise<AIRouteTarget[]> {
-  void _d; void _coding;
+export async function createAIRoutesFromDb(d?: Db | null, _coding = false): Promise<AIRouteTarget[]> {
+  void _coding;
+  await ensureAccounts(d);
   return createAIRoutes();
 }
 
 /** The Agent/build pipeline's route. Identical to Chat's. */
-export async function resolveExecutionRoutes(_d?: Db | null): Promise<{ routes: AIRouteTarget[] }> {
-  void _d;
+export async function resolveExecutionRoutes(d?: Db | null): Promise<{ routes: AIRouteTarget[] }> {
+  await ensureAccounts(d);
   return { routes: createAIRoutes() };
 }
 

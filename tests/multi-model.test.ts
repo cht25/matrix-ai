@@ -634,10 +634,13 @@ describe("gateway end to end", () => {
     failing = new Set([MATRIX_MODEL_ID, QWEN, LLAMA]);
     const filesBefore = [...stub._state.docs.keys()].filter((key) => key.includes("/files/")).length;
     const result = await build("mm-build-3", "Crumb");
-    expect(result.run.status).toBe("failed");
-    expect(result.run.error?.code).toBe("AI_PROVIDER_FAILED");
-    expect(result.run.error?.message).toMatch(/None of the enabled models could produce the files/);
-    expect(result.run.error?.message).toMatch(/No files were written/i);
+    // Nothing is written and nothing is claimed; the request is kept and
+    // continues in the same chat when a model is available again.
+    expect(result.run.status).toBe("paused");
+    expect(result.run.error).toBeNull();
+    expect(result.run.continuation?.reason).toBe("provider_unavailable");
+    expect(result.run.continuation?.phase).toBe("generate");
+    expect(result.run.deployment).toBeNull();
     expect([...stub._state.docs.keys()].filter((key) => key.includes("/files/")).length).toBe(filesBefore);
   });
 });

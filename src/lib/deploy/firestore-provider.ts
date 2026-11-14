@@ -15,6 +15,7 @@
 // really activated. Nothing here can report success without doing the work.
 // =============================================================================
 
+import { deployVerdict } from "@/lib/deploy/classify";
 import "server-only";
 import crypto from "node:crypto";
 import type { Db } from "@/lib/firebase/admin";
@@ -166,7 +167,14 @@ export class FirestoreDeploymentProvider {
     // report from an earlier chat/build run cannot approve different files.
     if (Number((await ref.get()).data()?.revision ?? 0) !== Number(data.revision ?? 0)) throw new RpcError("PROJECT_REVISION_CONFLICT", 409);
     const report = built.report;
-    if (report.blocking && !input.overridden) throw new RpcError("BUILD_FAILED", 400);
+    // Only problems that would break the published site stop a deployment.
+    // Repairable problems that leave the site working (a dead link, a missing
+    // optional image) and warnings are published and recorded on the release.
+    const verdict = deployVerdict(report);
+    if (!verdict.deployable && !input.overridden) {
+      const first = verdict.blockers[0];
+      throw new RpcError("BUILD_FAILED", 400, first ? `${first.path}${first.line ? `:${first.line}` : ""} — ${first.message}` : report.summary);
+    }
     if (!built.artifacts.length) throw new RpcError("BUILD_EMPTY", 500);
 
     const slug = await this.resolveSlug(
@@ -184,8 +192,10 @@ export class FirestoreDeploymentProvider {
     };
 
     push("plan", `Preparing deployment (${report.checks.filter((check) => check.status === "passed").length}/${report.checks.length} checks passed).`);
-    if (input.overridden && report.blocking) {
+    if (input.overridden && !verdict.deployable) {
       push("warn", "Published with failing checks at the user's explicit request.");
+    } else if (verdict.knownIssues.length) {
+      push("warn", `Publishing with ${verdict.knownIssues.length} known non-critical issue${verdict.knownIssues.length === 1 ? "" : "s"}: ${verdict.knownIssues.slice(0, 3).map((issue) => `${issue.path} — ${issue.message}`).join("; ")}`.slice(0, 400));
     }
 
     const version = await this.nextVersion(input.projectId);
@@ -196,7 +206,8 @@ export class FirestoreDeploymentProvider {
       status: "building",
       source_revision: Number(data.revision ?? 0),
       build_status: "passed",
-      validation_status: report.blocking ? "overridden" : "passed",
+      validation_status: !verdict.deployable ? "overridden" : verdict.knownIssues.length ? "passed_with_issues" : "passed",
+      known_issues: verdict.knownIssues.slice(0, 12).map((issue) => ({ path: issue.path, line: issue.line ?? null, message: issue.message.slice(0, 240), code: issue.code ?? null })),
       publishing_status: "pending",
       verification_status: "pending",
       environment: input.environment,

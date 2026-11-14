@@ -82,8 +82,11 @@ export class AIProviderError extends Error {
   readonly code?: string;
   /** The provider reports that the model ID itself is unknown/unavailable. */
   readonly modelUnavailable: boolean;
+  /** Epoch ms at which the provider can be asked again, when it is known. */
+  readonly retryAt: number | null;
 
   constructor(opts: {
+    retryAt?: number | null;
     code?: string;
     modelUnavailable?: boolean;
     provider: AIProviderName;
@@ -105,6 +108,7 @@ export class AIProviderError extends Error {
     this.requestId = opts.requestId;
     this.code = opts.code;
     this.modelUnavailable = opts.modelUnavailable === true;
+    this.retryAt = opts.retryAt ?? null;
     this.retryable = opts.retryable ?? ["rate_limit", "provider_unavailable", "timeout", "network", "empty_response"].includes(type);
   }
 }

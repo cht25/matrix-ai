@@ -7,6 +7,7 @@
 import { modelById } from "@/lib/ai/models/registry";
 import { fetchModelCatalog, verifyCatalogModel, type CatalogModel } from "@/lib/ai/model-catalog";
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
+import { listAccounts, markFailure, markInvalid, markOk, markRateLimited, nextAvailability, observeHeaders, parseResetDuration, selectAccount, unavailableReason } from "@/lib/ai/accounts";
 import { assistantContentOnly, assistantDeltaContent, createReasoningStreamFilter, hasReasoningDelta } from "@/lib/ai/reasoning";
 
 export type AIProviderToolCall = {
@@ -68,9 +69,100 @@ export class GroqProvider implements AIProvider {
   readonly supportsToolCalls = true;
   private apiKey: string;
   private baseUrl = "https://api.groq.com/openai/v1";
+  /** When true, each request picks a connected account and rotates on a provider limit. */
+  private pooled: boolean;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, options: { pooled?: boolean } = {}) {
     this.apiKey = apiKey;
+    this.pooled = options.pooled === true;
+  }
+
+  /**
+   * Send one chat-completions request.
+   *
+   * With a single fixed key this is one HTTP call. With connected accounts the
+   * request goes to the account with the most headroom; when the provider
+   * answers that the account is rate-limited, rejected or failing, the same
+   * request is sent once to each remaining eligible account. Nothing is lost
+   * in between: the request body is rebuilt from the same input every time.
+   */
+  private async send(req: AIProviderRequest, stream: boolean): Promise<Response> {
+    const body = JSON.stringify(this.buildBody(req, stream));
+    const post = (key: string) => fetch(`${this.baseUrl}/chat/completions`, {
+      method: "POST",
+      redirect: "error",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body,
+      signal: req.signal ?? AbortSignal.timeout(60_000),
+    });
+    if (!this.pooled || !listAccounts().length) {
+      let res: Response;
+      try { res = await post(this.apiKey); }
+      catch (error) { throw providerErrorFromException("Groq", req.model, error, req.requestId); }
+      if (!res.ok) throw providerErrorFromResponse("Groq", req.model, res, await res.text().catch(() => ""), req.requestId);
+      return res;
+    }
+    const estimate = Math.ceil(body.length / 4) + Math.min(req.maxTokens ?? 1024, 8192);
+    const tried = new Set<string>();
+    let lastError: AIProviderError | null = null;
+    let nextAt: number | null = null;
+    for (let turn = 0; turn < 8; turn += 1) {
+      if (req.signal?.aborted) break;
+      const choice = selectAccount(req.model, estimate, tried);
+      if (!choice.account) {
+        nextAt = choice.nextAvailableAt;
+        break;
+      }
+      const account = choice.account;
+      tried.add(account.id);
+      let res: Response;
+      try {
+        res = await post(account.key);
+      } catch (error) {
+        if (req.signal?.aborted) throw providerErrorFromException("Groq", req.model, error, req.requestId);
+        lastError = providerErrorFromException("Groq", req.model, error, req.requestId);
+        markFailure(account.id, req.model, lastError.detail);
+        continue;
+      }
+      observeHeaders(account.id, req.model, res.headers);
+      if (res.ok) {
+        markOk(account.id, req.model, estimate);
+        return res;
+      }
+      const detail = await res.text().catch(() => "");
+      const error = providerErrorFromResponse("Groq", req.model, res, detail, req.requestId);
+      lastError = error;
+      if (res.status === 429 || res.status === 413) {
+        // Groq states the wait in `retry-after` and repeats it in the message.
+        const retryAfter = parseResetDuration(res.headers?.get?.("retry-after")) ?? parseResetDuration(/try again in ([0-9hms.]+)/i.exec(detail)?.[1]?.replace(/\.$/, ""));
+        markRateLimited(account.id, req.model, retryAfter, error.detail);
+        continue;
+      }
+      if ((res.status === 401 || res.status === 403) && !error.modelUnavailable) {
+        markInvalid(account.id, error.detail);
+        continue;
+      }
+      if (res.status >= 500) {
+        markFailure(account.id, req.model, error.detail);
+        continue;
+      }
+      // The request itself was refused (bad input, unknown model): another
+      // account would answer the same way.
+      throw error;
+    }
+    const retryAt = nextAt ?? nextAvailability(req.model, estimate);
+    if (lastError) {
+      throw new AIProviderError({
+        provider: "Groq", model: req.model, status: lastError.status, type: lastError.type, detail: tried.size > 1 ? `${lastError.detail} (all ${tried.size} connected accounts tried)` : lastError.detail,
+        requestId: lastError.requestId, code: lastError.code, modelUnavailable: lastError.modelUnavailable, retryAt,
+      });
+    }
+    const reason = unavailableReason(req.model);
+    const wait = retryAt ? ` Next attempt possible in ${Math.max(1, Math.ceil((retryAt - Date.now()) / 1000))}s.` : "";
+    throw new AIProviderError({
+      provider: "Groq", model: req.model, status: reason === "rate_limit" ? 429 : reason === "authentication" ? 401 : 503, type: reason, requestId: req.requestId, retryAt,
+      detail: (reason === "rate_limit" ? "every connected account is at its provider limit for this model." : reason === "authentication" ? "every connected account's key was rejected by the provider." : "the provider is failing on every connected account.") + wait,
+    });
   }
 
   private buildBody(req: AIProviderRequest, stream: boolean): Record<string, unknown> {
@@ -148,26 +240,7 @@ export class GroqProvider implements AIProvider {
   }
 
   async chat(req: AIProviderRequest): Promise<AIProviderResponse> {
-    let res: Response;
-    try {
-      res = await fetch(`${this.baseUrl}/chat/completions`, {
-        method: "POST",
-        redirect: "error",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify(this.buildBody(req, false)),
-        signal: req.signal ?? AbortSignal.timeout(60_000),
-      });
-    } catch (error) {
-      throw providerErrorFromException("Groq", req.model, error, req.requestId);
-    }
-
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      throw providerErrorFromResponse("Groq", req.model, res, detail, req.requestId);
-    }
+    const res = await this.send(req, false);
 
     let data: {
       choices?: { message?: { content?: string | null; tool_calls?: AIProviderToolCall[] }; finish_reason?: string }[];
@@ -197,22 +270,8 @@ export class GroqProvider implements AIProvider {
   async *streamChat(req: AIProviderRequest): AsyncGenerator<string> {
     let res: Response;
     try {
-      res = await fetch(`${this.baseUrl}/chat/completions`, {
-        method: "POST",
-        redirect: "error",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify(this.buildBody(req, true)),
-        signal: req.signal ?? AbortSignal.timeout(60_000),
-      });
-
-      if (!res.ok || !res.body) {
-        const detail = await res.text().catch(() => "");
-        if (!res.ok) throw providerErrorFromResponse("Groq", req.model, res, detail, req.requestId);
-        throw new Error("Groq returned an empty stream");
-      }
+      res = await this.send(req, true);
+      if (!res.body) throw new Error("Groq returned an empty stream");
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
