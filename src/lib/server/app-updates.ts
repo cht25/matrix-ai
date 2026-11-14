@@ -60,7 +60,7 @@ export const SHIPPED_APP_RELEASE: AppReleaseRecord = {
   apk_url: process.env.MATRIX_ANDROID_APK_URL?.trim() || DEFAULT_ANDROID_APK_URL,
   sha256: process.env.MATRIX_ANDROID_APK_SHA256?.trim() || "",
   release_notes:
-    "• One model for everything: GPT OSS 120B powers Chat, Agent, website generation and coding\n" +
+    "• Chat, Agent, website generation and coding from one workspace\n" +
     "• Compact Arena-style live step timeline\n" +
     "• Over-the-air phone update checker & direct matrix.thamjj13.top/chat sync",
   published_at: "2026-11-12T00:00:00.000Z",

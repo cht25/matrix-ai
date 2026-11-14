@@ -1,15 +1,14 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'agent_screen.dart';
-import 'automations_screen.dart';
+import 'api.dart';
 import 'chat_screen.dart';
 import 'config.dart';
 import 'devices_screen.dart';
-import 'family_screen.dart';
 import 'update_service.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, required this.api});
+  final MatrixApi api;
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
@@ -19,11 +18,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   AppUpdateInfo? _forcedUpdate;
   bool _checkingUpdate = false;
 
-  static const _tabs = <({String label, IconData icon, Widget page})>[
-    (label: 'Chat', icon: Icons.chat_bubble_outline, page: ChatScreen()),
-    (label: 'Agent', icon: Icons.terminal, page: AgentScreen()),
-    (label: 'Automations', icon: Icons.schedule, page: AutomationsScreen()),
-    (label: 'Devices', icon: Icons.devices_other, page: DevicesScreen()),
+  late final List<({String label, IconData icon, Widget page})> _tabs = [
+    (label: 'Chat', icon: Icons.chat_bubble_outline, page: const ChatScreen()),
+    (label: 'Devices', icon: Icons.devices_other, page: DevicesScreen(api: widget.api)),
   ];
 
   @override
@@ -155,14 +152,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               const Divider(height: 1, color: Colors.white10),
               ListTile(
-                leading: const Icon(Icons.family_restroom_outlined),
-                title: const Text('Family'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => const FamilyScreen()));
-                },
-              ),
-              ListTile(
                 leading: const Icon(Icons.open_in_browser_rounded),
                 title: const Text('Open Web Workspace'),
                 subtitle: const Text('matrix.thamjj13.top/chat', style: TextStyle(fontSize: 11, color: Colors.white54)),
@@ -186,6 +175,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 title: const Text('Sign out', style: TextStyle(color: Color(0xFFF87171))),
                 onTap: () async {
                   Navigator.of(context).pop();
+                  // The device registration belongs to the signed-in account.
+                  await MatrixApi.clearDeviceCredential();
                   await FirebaseAuth.instance.signOut();
                 },
               ),

@@ -33,7 +33,8 @@ export async function verifyDeviceCredential(d: Db, token: string, nowMs = Date.
   }
   if (!snap.exists) return null;
   const data = snap.data()!;
-  if (data.revoked_at || millis(data.access_token_expires_at) <= nowMs || typeof data.access_token_hash !== "string") return null;
+  // Revoked, disconnected (suspended) and expired credentials are all refused.
+  if (data.revoked_at || data.suspended_at || millis(data.access_token_expires_at) <= nowMs || typeof data.access_token_hash !== "string") return null;
   const actual = Buffer.from(deviceCredentialHash(parsed.deviceId, parsed.secret));
   const expected = Buffer.from(data.access_token_hash);
   if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return null;
@@ -65,6 +66,7 @@ export function rpcDeviceScope(action: string, method = "POST"): string | null {
   if (action === "onboarding_status") return "account:read";
   if (action === "device_activity_report") return "devices:write";
   if (action === "device_activity_latest") return "devices:read";
+  if (action === "device_self" || action === "device_list") return "devices:read";
   if (action === "family_activity_report") return "family:report";
   if (action === "family_mirror_frame_upload" || action === "family_mirror_active" || action === "family_mirror_consent" || action === "family_mirror_stop") return "family:mirror";
   if (action === "family_list" || action === "family_overview" || action === "family_request_parent_access") return "family:read";

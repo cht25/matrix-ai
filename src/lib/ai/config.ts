@@ -1,11 +1,11 @@
 // Server-side AI configuration.
 //
-// ONE PLATFORM, ONE MODEL: every AI request in MATRIX is executed by GPT OSS
-// 120B (see `@/lib/ai/model`). This module turns that single identifier plus
-// the server-side credential into the one executable route. There is no
-// provider registry, no ranking, no per-user or per-mode model and no
-// fallback: when the model is unavailable the request fails with a clear
-// provider error and the user can retry.
+// MATRIX runs a pool of collaborating models (see `@/lib/ai/models/registry`).
+// GPT OSS 120B is the default; additional models are used only when the
+// provider's live catalog confirms they are offered to this deployment and
+// the user has them enabled (see `@/lib/ai/models/pool`). This module turns a
+// model plus the server-side credential into an executable route. Credentials
+// never leave the server.
 
 import "server-only";
 
@@ -23,6 +23,7 @@ import {
   dedicatedEndpointModelId,
   isMatrixModelId,
 } from "@/lib/ai/model";
+import { DEFAULT_MODEL_KEY, type ModelSpec } from "@/lib/ai/models/registry";
 
 export type AIRouteTarget = {
   provider: AIProviderName;
@@ -89,6 +90,23 @@ export function matrixModelRoute(): AIRouteTarget | null {
   };
 }
 
+/** Server credential for the hosted provider, or "" when none is installed. */
+export function hostedProviderKey(): string {
+  return secret(process.env.GROQ_API_KEY);
+}
+
+/**
+ * Executable route for one registered model, or null when this deployment has
+ * no credential that can serve it. The default model may be served by the
+ * dedicated endpoint; every other model needs the hosted provider key.
+ */
+export function routeForModel(spec: ModelSpec): AIRouteTarget | null {
+  if (spec.key === DEFAULT_MODEL_KEY) return matrixModelRoute();
+  const key = hostedProviderKey();
+  if (!key) return null;
+  return { provider: MATRIX_MODEL_PROVIDER, providerId: MATRIX_MODEL_PROVIDER_ID, model: spec.id, client: new GroqProvider(key), tier: "high", contextTokens: spec.contextTokens };
+}
+
 export function matrixModelStatus(): MatrixModelStatus {
   const route = matrixModelRoute();
   const dedicated = route?.providerId === "gpt-oss";
@@ -111,21 +129,21 @@ export function logAIConfiguration(): void {
   globalState[CONFIG_LOGGED] = true;
   const status = matrixModelStatus();
   console.info("[MATRIX] AI configuration", {
-    architecture: "single model — GPT OSS 120B for Chat, Agent and every AI feature; no fallback model",
+    architecture: "collaborative model pool — GPT OSS 120B by default; other models only when the provider catalog lists them",
     provider: status.provider,
     model: status.model,
     credential: status.configured ? "configured" : "missing",
   });
-  // A leftover override must not silently change the model — say so once.
+  // These legacy variables never select a model — say so once.
   for (const name of ["GROQ_CHAT_MODEL", "GROQ_CODING_MODEL", "GROQ_FAST_MODEL", "GPT_OSS_MODEL"] as const) {
     const value = process.env[name]?.trim();
     if (value && !isMatrixModelId(value)) {
-      console.warn(`[MATRIX] ${name} is set to a different model and is ignored: MATRIX only runs ${MATRIX_MODEL_ID}.`);
+      console.warn(`[MATRIX] ${name} is set to a different model and is ignored: models are chosen from the registry (default ${MATRIX_MODEL_ID}).`);
     }
   }
 }
 
-/** The route list for any workload. Always zero or one entry: GPT OSS 120B. */
+/** The default model's route (zero or one entry). The user's pool is resolved in models/pool.ts. */
 export function createAIRoutes(_coding = false): AIRouteTarget[] {
   void _coding;
   const route = matrixModelRoute();

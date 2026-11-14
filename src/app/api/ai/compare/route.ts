@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — /api/ai/compare: response-style comparison on the one model.
+// MATRIX AI — /api/ai/compare: response-style comparison on the default model.
 //
 // Sends the SAME redacted prompt to several routing lanes in parallel and
 // returns one attributed result per lane (provider + model + content or an

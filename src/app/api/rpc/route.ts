@@ -20,6 +20,8 @@ import * as deploy from "@/lib/server/deploy";
 import * as design from "@/lib/server/design";
 import * as family from "@/lib/server/family";
 import * as pairing from "@/lib/server/pairing";
+import * as hub from "@/lib/server/device-hub";
+import QRCode from "qrcode";
 import * as esp32 from "@/lib/server/esp32";
 import * as agentTasks from "@/lib/server/agent-tasks";
 import * as toolApprovals from "@/lib/server/tool-approvals";
@@ -264,6 +266,58 @@ const ACTIONS: Record<string, Handler> = {
       browser_history: b.browser_history,
     }),
   device_activity_latest: (d, u) => pairing.getOwnDeviceActivity(d, u),
+  // --- Device hub: Parent / Child registration with approved QR pairing ------
+  device_register_parent: (d, u, b) =>
+    hub.registerParentDevice(d, u, {
+      client_id: z.string().min(16).max(64).parse(b.client_id),
+      device_name: z.string().min(1).max(80).parse(b.device_name),
+      device_type: z.string().min(1).max(40).parse(b.device_type),
+      platform: z.string().min(1).max(40).parse(b.platform),
+      os: b.os ? z.string().max(60).parse(b.os) : undefined,
+      app_version: b.app_version ? z.string().max(40).parse(b.app_version) : undefined,
+    }),
+  device_pairing_create: async (d, u, b) => {
+    const challenge = await hub.createParentPairing(d, u, {
+      parent_device_id: z.string().min(1).max(128).parse(b.parent_device_id),
+      device_label: b.device_label ? z.string().max(80).parse(b.device_label) : undefined,
+    });
+    const qr_data_url = await QRCode.toDataURL(challenge.qr_payload, { errorCorrectionLevel: "M", margin: 1, width: 320 });
+    return { ...challenge, qr_data_url };
+  },
+  device_pairing_request: (d, u, b) =>
+    hub.requestPairing(d, u, {
+      qr_payload: b.qr_payload ? z.string().min(10).max(2000).parse(b.qr_payload) : undefined,
+      manual_code: b.manual_code ? z.string().min(8).max(16).parse(b.manual_code) : undefined,
+      device_name: z.string().min(1).max(80).parse(b.device_name),
+      device_type: z.string().min(1).max(40).parse(b.device_type),
+      platform: z.string().min(1).max(40).parse(b.platform),
+      os: b.os ? z.string().max(60).parse(b.os) : undefined,
+      app_version: b.app_version ? z.string().max(40).parse(b.app_version) : undefined,
+    }),
+  device_pairing_requests: (d, u) => hub.listPairingRequests(d, u),
+  device_pairing_decide: (d, u, b) =>
+    hub.decidePairing(d, u, {
+      challenge_id: z.string().min(1).max(128).parse(b.challenge_id),
+      approve: z.boolean().parse(b.approve),
+      permissions: b.permissions === undefined ? undefined : z.array(z.string().max(40)).max(12).parse(b.permissions),
+      device_name: b.device_name ? z.string().max(80).parse(b.device_name) : undefined,
+    }),
+  device_pairing_claim: (d, u, b) =>
+    hub.claimPairing(d, u, {
+      challenge_id: z.string().min(1).max(128).parse(b.challenge_id),
+      claim_secret: z.string().min(20).max(128).parse(b.claim_secret),
+    }),
+  device_list: (d, u, b) => hub.listHubDevices(d, u, { current_device_id: b.current_device_id ? z.string().max(128).parse(b.current_device_id) : null }),
+  device_update: (d, u, b) =>
+    hub.updateDevice(d, u, {
+      device_id: z.string().min(1).max(128).parse(b.device_id),
+      device_name: b.device_name === undefined ? undefined : z.string().min(1).max(80).parse(b.device_name),
+      permissions: b.permissions === undefined ? undefined : z.array(z.string().max(40)).max(12).parse(b.permissions),
+    }),
+  device_connection: (d, u, b) =>
+    hub.setDeviceConnection(d, u, { device_id: z.string().min(1).max(128).parse(b.device_id), connected: z.boolean().parse(b.connected) }),
+  device_revoke: (d, u, b) => hub.revokeHubDevice(d, u, z.string().min(1).max(128).parse(b.device_id)),
+  device_self: (d, u) => hub.deviceSelf(d, u),
   esp32_pairing_create: (d, u, b) =>
     esp32.createEsp32Pairing(d, u, {
       label: b.label ? z.string().max(64).parse(b.label) : undefined,

@@ -34,7 +34,7 @@ const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retr
   },
   "not-configured": {
     title: "AI service not configured",
-    detail: "GPT OSS 120B, the model MATRIX runs on, is not configured on this server. Your message is kept. Ask the administrator to check the provider API key, then retry.",
+    detail: "No AI model is configured on this server. Your message is kept. Ask the administrator to check the provider API key, then retry.",
     retryable: true,
   },
   network: {
@@ -44,7 +44,7 @@ const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retr
   },
   timeout: {
     title: "AI request timed out",
-    detail: "GPT OSS 120B took too long to answer. Your message and project are kept — retry.",
+    detail: "The model took too long to answer. Your message and project are kept — retry.",
     retryable: true,
   },
   auth: {
@@ -55,7 +55,7 @@ const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retr
   },
   "provider-auth": {
     title: "AI provider authentication failed",
-    detail: "MATRIX could not authenticate with the GPT OSS 120B provider. Your message is kept. The administrator needs to check the API key; you can retry once it is fixed.",
+    detail: "MATRIX could not authenticate with the model provider. Your message is kept. The administrator needs to check the API key; you can retry once it is fixed.",
     retryable: true,
   },
   "rate-limit": {
@@ -65,22 +65,22 @@ const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retr
   },
   "provider-rate-limit": {
     title: "AI model temporarily rate limited",
-    detail: "GPT OSS 120B is temporarily rate limited by its provider. Your message is kept — wait a moment and retry.",
+    detail: "The model is temporarily rate limited by its provider. Your message is kept — wait a moment and retry.",
     retryable: true,
   },
   "provider-invalid-request": {
     title: "AI request rejected",
-    detail: "GPT OSS 120B rejected this request. Your message is kept — shorten or simplify it and retry.",
+    detail: "The model rejected this request. Your message is kept — shorten or simplify it and retry.",
     retryable: true,
   },
   "provider-unavailable": {
     title: "AI service temporarily unavailable",
-    detail: "GPT OSS 120B is temporarily unavailable. Your message and project are kept — retry in a moment. MATRIX does not switch to a different model.",
+    detail: "The model is temporarily unavailable and no other enabled model could take the request. Your message and project are kept — retry in a moment.",
     retryable: true,
   },
   billing: {
     title: "AI provider quota reached",
-    detail: "The GPT OSS 120B provider account has reached its quota or needs billing attention. Your message is kept. Retry after the administrator resolves it.",
+    detail: "The model provider account has reached its quota or needs billing attention. Your message is kept. Retry after the administrator resolves it.",
     retryable: true,
   },
   "invalid-request": {
@@ -90,7 +90,7 @@ const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retr
   },
   "vision-unsupported": {
     title: "Images are not supported",
-    detail: "GPT OSS 120B is a text model and cannot read images. Remove the image and describe it, or paste the text it contains.",
+    detail: "MATRIX's models are text models and cannot read images. Remove the image and describe it, or paste the text it contains.",
     retryable: false,
   },
   server: {

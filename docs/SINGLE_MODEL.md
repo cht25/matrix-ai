@@ -1,5 +1,9 @@
 # MATRIX AI runs on GPT OSS 120B only
 
+> **Superseded.** MATRIX now uses a collaborative model pool with GPT OSS 120B
+> as the default — see `MULTI_MODEL.md`. This page is kept as the record of the
+> earlier single-model state.
+
 ## The model
 
 | | |

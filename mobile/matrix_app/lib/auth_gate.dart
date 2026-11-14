@@ -18,7 +18,7 @@ class AuthGate extends StatelessWidget {
         if (snap.connectionState == ConnectionState.waiting) {
           return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
-        if (snap.data != null) return HomeScreen(api: MatrixApi());
+        if (snap.data != null) return HomeScreen(api: MatrixApi.instance);
         return const LoginScreen();
       },
     );

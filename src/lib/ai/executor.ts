@@ -1,7 +1,8 @@
-// Controlled execution against the one MATRIX model (GPT OSS 120B).
+// Controlled execution of ONE request against ONE registered model.
 //
 // Policy:
-//   • There is exactly one route. Nothing here can switch to another model.
+//   • Each call has exactly one route. Nothing here switches model; moving a
+//     task to another model is an explicit orchestrator decision.
 //   • A transient failure (rate limit, network blip, empty reply) is retried
 //     once against the SAME model. Timeouts and malformed requests are not.
 //   • After that the real provider error is thrown. The caller shows it,
@@ -11,7 +12,7 @@
 
 import type { AIMessage, AIProviderRequest, AIProviderResponse } from "@/lib/ai/groq";
 import { AIConfigurationError, type AIRouteTarget } from "@/lib/ai/config";
-import { MATRIX_MODEL_LABEL, isMatrixModelId } from "@/lib/ai/model";
+import { isRegisteredModelId } from "@/lib/ai/models/registry";
 import { AIProviderError, logProviderFailure, providerErrorFromException } from "@/lib/ai/provider-error";
 
 export type CompletedAIResponse = {
@@ -108,14 +109,15 @@ async function aggregateStream(target: AIRouteTarget, request: RequestOptions): 
 }
 
 /**
- * Last line of defence: whatever a caller passes, a request is only ever sent
- * for the one MATRIX model, on exactly one route.
+ * Last line of defence: one call goes to exactly one route, and only to a
+ * model in the registry. Choosing between models (and falling back from one to
+ * another) is the orchestrator's job, never an accident of this function.
  */
-function theOneRoute(targets: AIRouteTarget[], coding: boolean): AIRouteTarget {
+function soleRoute(targets: AIRouteTarget[], coding: boolean): AIRouteTarget {
   const target = targets[0];
   if (!target) throw new AIConfigurationError(coding);
-  if (targets.length !== 1 || !isMatrixModelId(target.model)) {
-    throw new Error(`MATRIX only runs ${MATRIX_MODEL_LABEL}; refusing to send a request to ${targets.length} route(s) / model "${target.model}".`);
+  if (targets.length !== 1 || !isRegisteredModelId(target.model)) {
+    throw new Error(`Refusing to send a request to ${targets.length} route(s) / unregistered model "${target.model}".`);
   }
   return target;
 }
@@ -125,7 +127,7 @@ export async function completeWithModel(
   targets: AIRouteTarget[],
   request: RequestOptions,
 ): Promise<CompletedAIResponse> {
-  const target = theOneRoute(targets, true);
+  const target = soleRoute(targets, true);
   let lastError: AIProviderError | null = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     if (budgetExhausted(request.deadlineAt) && lastError) throw lastError;
@@ -175,7 +177,7 @@ export async function* streamWithModel(
   request: RequestOptions,
   onStart?: (target: AIRouteTarget) => void,
 ): AsyncGenerator<{ delta: string; target: AIRouteTarget }> {
-  const target = theOneRoute(targets, false);
+  const target = soleRoute(targets, false);
   let lastError: AIProviderError | null = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     let yielded = false;

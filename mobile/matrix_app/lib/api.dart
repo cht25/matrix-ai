@@ -23,12 +23,17 @@ class ApiException implements Exception {
 class MatrixApi {
   MatrixApi({http.Client? client}) : _client = client ?? http.Client();
   final http.Client _client;
+
+  /// Shared client for screens that are created without one.
+  static final MatrixApi instance = MatrixApi();
   static const _storage = FlutterSecureStorage();
 
   Future<String> _accountToken() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw ApiException('UNAUTHENTICATED', 401);
-    return user.getIdToken(true);
+    final token = await user.getIdToken(true);
+    if (token == null || token.isEmpty) throw ApiException('UNAUTHENTICATED', 401);
+    return token;
   }
 
   Future<String> _token() async {
@@ -66,6 +71,65 @@ class MatrixApi {
       'device_id': (data['device'] as Map?)?['id'],
     }));
     return data;
+  }
+
+  /// Account-authenticated RPC (Firebase ID token). Registering, requesting
+  /// and claiming a pairing are account actions: the server refuses them from
+  /// a device credential.
+  Future<Map<String, dynamic>> accountRpc(String action, [Map<String, dynamic> args = const {}]) async {
+    final token = await _accountToken();
+    final res = await _sendRaw('POST', MatrixConfig.baseUri.resolve('/api/rpc'), token, {'action': action, ...args});
+    final data = _decode(res);
+    if (res.statusCode != 200 || data['success'] != true) {
+      final err = data['error'];
+      final code = err is String ? err : (err is Map ? (err['code'] ?? 'HTTP_${res.statusCode}') : 'HTTP_${res.statusCode}');
+      throw ApiException(code.toString(), res.statusCode);
+    }
+    return Map<String, dynamic>.from(data['data'] as Map? ?? {'ok': true});
+  }
+
+  /// Child registration, step 1: send the scanned Parent QR (or the typed
+  /// pairing code). Returns `challenge_id`, `claim_secret` and `decide_by`.
+  /// No credential is issued until the Parent approves.
+  Future<Map<String, dynamic>> requestPairing({String? qrPayload, String? manualCode, required String deviceName}) {
+    return accountRpc('device_pairing_request', {
+      if (qrPayload != null) 'qr_payload': qrPayload,
+      if (manualCode != null) 'manual_code': manualCode,
+      'device_name': deviceName,
+      'device_type': 'phone',
+      'platform': 'android',
+      'app_version': MatrixConfig.appVersion,
+    });
+  }
+
+  /// Child registration, step 2: ask whether the Parent has decided. On
+  /// approval the device credential is returned once and stored securely.
+  /// Returns the server payload; `status` is requested / approved / denied / expired.
+  Future<Map<String, dynamic>> claimPairing({required String challengeId, required String claimSecret}) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw ApiException('UNAUTHENTICATED', 401);
+    final data = await accountRpc('device_pairing_claim', {'challenge_id': challengeId, 'claim_secret': claimSecret});
+    if (data['status'] == 'approved' && data['access_token'] != null) {
+      final device = data['device'] as Map?;
+      final parent = data['parent'] as Map?;
+      await _storage.write(key: 'matrix_device_credential', value: jsonEncode({
+        'access_token': data['access_token'],
+        'expires_at': data['access_token_expires_at'],
+        'owner_uid': user.uid,
+        'device_id': device?['id'],
+        'parent_name': parent?['device_name'],
+      }));
+    }
+    return data;
+  }
+
+  /// This device's own registration and its Parent, read with the device
+  /// credential. Throws when the device is not registered or was removed.
+  Future<Map<String, dynamic>> deviceSelf() => rpc('device_self');
+
+  static Future<bool> hasDeviceCredential() async {
+    final raw = await _storage.read(key: 'matrix_device_credential');
+    return raw != null && raw.isNotEmpty;
   }
 
   /// Cross-account Family pairing (`matrix-family-pair:v1.<token>`).
@@ -108,26 +172,6 @@ class MatrixApi {
       }));
     }
     return data;
-  }
-
-  /// Sync own + family opt-in app usage, hidden apps, and browser history.
-  Future<Map<String, dynamic>> reportDeviceActivity({
-    required int screenTimeMinutes,
-    required List<Map<String, dynamic>> apps,
-    required List<Map<String, dynamic>> hiddenApps,
-    required List<Map<String, dynamic>> browserHistory,
-    String? deviceName,
-  }) async {
-    final deviceId = await currentDeviceId();
-    return rpc('device_activity_report', {
-      if (deviceId != null) 'device_id': deviceId,
-      if (deviceName != null) 'device_name': deviceName,
-      'platform': 'android',
-      'screen_time_minutes': screenTimeMinutes,
-      'apps': apps,
-      'hidden_apps': hiddenApps,
-      'browser_history': browserHistory,
-    });
   }
 
   /// Poll active family screen-mirror sessions and Google Family Link lock state.
@@ -219,9 +263,12 @@ class MatrixApi {
   }
 
   /// Sends a chat or image request to the real MATRIX `/api/ai` gateway
-  /// (GPT OSS 120B for all text; image generation is a separate media service).
+  /// (image generation is a separate media service).
   Future<Map<String, dynamic>> sendAiGateway(Map<String, dynamic> payload) async {
-    final res = await _send('POST', '/api/ai', {'stream': false, ...payload});
+    // Chat always runs as the signed-in account; the device credential only
+    // covers what the Parent allowed this device to do.
+    final token = await _accountToken();
+    final res = await _sendRaw('POST', MatrixConfig.baseUri.resolve('/api/ai'), token, {'stream': false, ...payload});
     final data = _decode(res);
     if (res.statusCode >= 400 || data['ok'] == false) {
       final err = data['error'] ?? data['code'] ?? 'HTTP_${res.statusCode}';

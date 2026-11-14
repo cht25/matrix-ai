@@ -126,6 +126,9 @@ export async function completePairing(
     if (!snap.exists) throw new RpcError("PAIRING_INVALID", 404);
     const data = snap.data()!;
     if (data.owner_uid !== verified.ownerUid) throw new RpcError("PAIRING_INVALID", 400);
+    // Approval-flow QR codes can only be used through the Parent-approved path
+    // (device-hub.ts); they never grant a credential directly.
+    if (data.flow === "approval") throw new RpcError("PAIRING_APPROVAL_REQUIRED", 403);
     if (data.status !== "pending" || data.consumed_at) throw new RpcError("PAIRING_USED", 409); // replay protection
     const expiresAt = (data.expires_at as Timestamp | undefined)?.toMillis?.() ?? 0;
     if (Date.now() > expiresAt) throw new RpcError("PAIRING_EXPIRED", 410);
@@ -184,6 +187,8 @@ export async function completePairing(
 export async function listDevices(d: Db, uid: string): Promise<PairedDevice[]> {
   const snap = await d.collection(DEVICES).where("user_id", "==", uid).get();
   return snap.docs
+    // An approved registration its device has not collected yet is not a device.
+    .filter((doc) => doc.data().role !== "child" || typeof doc.data().access_token_hash === "string")
     .map((doc) => {
       const data = doc.data();
       return {

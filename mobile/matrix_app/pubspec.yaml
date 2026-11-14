@@ -1,7 +1,7 @@
 name: matrix_app
-description: MATRIX AI — Android phone app (GPT OSS 120B chat, OTA updates, QR pairing, Family & Agent).
+description: MATRIX AI — Android phone app (chat, Parent/Child device registration with QR pairing, update checks).
 publish_to: 'none'
-version: 1.1.0+2
+version: 1.2.0+3
 
 environment:
   sdk: '>=3.4.0 <4.0.0'

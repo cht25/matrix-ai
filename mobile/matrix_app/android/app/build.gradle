@@ -2,7 +2,6 @@ plugins {
     id "com.android.application"
     id "kotlin-android"
     id "dev.flutter.flutter-gradle-plugin"
-    id "com.google.gms.google-services"
 }
 
 android {
@@ -13,12 +12,14 @@ android {
         applicationId = "top.thamjj13.matrix"
         minSdk = 24
         targetSdk = 35
-        versionCode = flutter.versionCode ?: 2
-        versionName = flutter.versionName ?: "1.1.0"
+        versionCode = flutter.versionCode ?: 3
+        versionName = flutter.versionName ?: "1.2.0"
     }
 
-    // Release signing: reads android/key.properties when present (CI provides
-    // it from secrets; see .github/workflows/build-android-release.yml).
+    // Release signing: reads android/key.properties when present (CI writes it
+    // from repository secrets; see docs/ci/android.yml). The file and
+    // the keystore are git-ignored. Without them the release build is signed
+    // with the debug key so it still installs, and CI labels it as such.
     def keystorePropertiesFile = rootProject.file("key.properties")
     def keystoreProperties = new Properties()
     if (keystorePropertiesFile.exists()) {

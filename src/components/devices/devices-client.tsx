@@ -29,6 +29,7 @@ import {
 } from "@/lib/esp32";
 import type { FamilyListRow, FamilyMemberSummary, MirrorState } from "@/lib/family";
 import { cn } from "@/lib/utils";
+import { DeviceHub } from "@/components/devices/device-hub";
 
 type Device = {
   id: string;
@@ -491,36 +492,16 @@ export function DevicesClient() {
             const nativeSnap = (await invoke("matrix_collect_device_activity")) as Record<string, unknown> | null;
             if (nativeSnap && typeof nativeSnap === "object") payload = nativeSnap;
           } catch {
-            // Fall back to web session snapshot below.
+            // No native report available; handled below.
           }
         }
       }
 
       if (!payload) {
-        const navMinutes = Math.max(1, Math.round(performance.now() / 60_000));
-        payload = {
-          device_id: `web-${platform}`,
-          device_name: deviceName.trim() || `${platform.toUpperCase()} Workspace`,
-          platform,
-          screen_time_minutes: navMinutes,
-          apps: [
-            {
-              name: isTauriApp() ? "MATRIX Desktop" : "MATRIX Web Workspace",
-              package: isTauriApp() ? "ai.matrix.desktop" : window.location.host,
-              minutes: navMinutes,
-              hidden: false,
-              last_used: new Date().toISOString(),
-            },
-          ],
-          hidden_apps: [],
-          browser_history: [
-            {
-              url: window.location.href,
-              title: document.title || "MATRIX — Devices",
-              visited_at: new Date().toISOString(),
-            },
-          ],
-        };
+        // A web page cannot see app usage or screen time, and MATRIX never
+        // substitutes made-up figures for a real device report.
+        setError("Activity reports come from the MATRIX desktop app. A browser can't measure app usage or screen time, so there is nothing to sync from here.");
+        return;
       }
 
       await rpc("device_activity_report", payload);
@@ -592,8 +573,8 @@ export function DevicesClient() {
           <p className="eyebrow">MATRIX Connect &amp; Hardware</p>
           <h1 className="mt-1 font-display text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Devices</h1>
           <p className="mt-1 max-w-2xl text-sm text-ink-2">
-            Pair phones, desktops, cross-account family devices, and ESP32 hardware nodes. Every QR code opens cleanly
-            in a popup modal, and different accounts work seamlessly through Family pairing.
+            Register this device as a Parent or a Child, approve new devices, and manage what each one can do.
+            Family devices and ESP32 hardware are below.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -601,17 +582,7 @@ export function DevicesClient() {
             <RefreshCw size={15} /> Refresh
           </Button>
           <Button variant="secondary" onClick={() => setPairOpen(true)}>
-            Enter pairing code
-          </Button>
-          <Button
-            onClick={() => {
-              setChallenge(null);
-              void createChallenge();
-            }}
-            disabled={busy === "challenge"}
-          >
-            {busy === "challenge" ? <Loader2 size={15} className="animate-spin" /> : <QrCode size={15} />} Pair my
-            device (QR)
+            Enter Family code
           </Button>
         </div>
       </header>
@@ -624,13 +595,15 @@ export function DevicesClient() {
             <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink">
               <Smartphone size={16} className="text-accent" /> MATRIX Phone App &amp; OTA Updates
             </span>
-            <Badge className="!border-accent/40 !text-accent">
-              v{phoneRelease?.latest_version ?? "1.1.0"} · build {phoneRelease?.latest_build ?? 2}
-            </Badge>
+            {phoneRelease ? (
+              <Badge className="!border-accent/40 !text-accent">
+                v{phoneRelease.latest_version} · build {phoneRelease.latest_build}
+              </Badge>
+            ) : null}
             {phoneRelease?.force_update ? <Badge className="!border-warning/40 !text-warning">Mandatory update</Badge> : null}
           </div>
           <p className="mt-1 text-xs text-ink-2">
-            Official Android companion app with automatic over-the-air version checks, QR pairing, Family screen supervision, and instant sync with{" "}
+            Android app with chat, update checks and Parent/Child device registration by QR code. It connects to{" "}
             <span className="mono text-ink">{phoneRelease?.chat_url ?? "https://matrix.thamjj13.top/chat"}</span>.
           </p>
         </div>
@@ -659,7 +632,7 @@ export function DevicesClient() {
             tab === "devices" ? "bg-accent text-accent-ink" : "bg-surface-2/70 text-ink-2 hover:text-ink",
           )}
         >
-          <Smartphone size={15} /> Connected Devices ({active.length + familyDevices.length})
+          <Smartphone size={15} /> Devices
         </button>
         <button
           type="button"
@@ -688,60 +661,8 @@ export function DevicesClient() {
       {/* =================================================================== */}
       {tab === "devices" ? (
         <div className="space-y-5">
-          <div className="grid gap-4 lg:grid-cols-2">
-            {/* Own-account devices */}
-            <Card className="space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <h2 className="font-semibold text-ink">My account&apos;s devices</h2>
-                  <p className="text-xs text-ink-3">Phones, watches, and desktops signed in to your account.</p>
-                </div>
-                <Badge>{active.length} linked</Badge>
-              </div>
-              {loading ? (
-                <p className="flex items-center gap-2 text-sm text-ink-3">
-                  <Loader2 size={14} className="animate-spin" /> Loading…
-                </p>
-              ) : active.length === 0 ? (
-                <EmptyState
-                  icon={<Smartphone size={20} />}
-                  title="No personal devices paired yet"
-                  body="Click “Pair my device (QR)” at the top to open a 5-minute QR popup for your phone or desktop."
-                />
-              ) : (
-                <ul className="space-y-2">
-                  {active.map((device) => (
-                    <li
-                      key={device.id}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-surface-2/60 p-3"
-                    >
-                      <span className="flex min-w-0 items-center gap-2.5">
-                        <span className="text-ink-3">{platformIcon(device.platform)}</span>
-                        <span className="min-w-0">
-                          <span className="block truncate text-sm font-medium text-ink">{device.device_name}</span>
-                          <span className="block text-[11px] text-ink-3">
-                            {device.platform} · {device.device_type} · seen {relative(device.last_seen_at || device.paired_at)}
-                          </span>
-                        </span>
-                      </span>
-                      <span className="flex items-center gap-2">
-                        <Badge className="!border-success/40 !text-success">
-                          <Wifi size={11} /> active
-                        </Badge>
-                        <Button
-                          variant="ghost"
-                          className="!min-h-8 !px-2 text-danger"
-                          onClick={() => setConfirmUnlink({ id: device.id, name: device.device_name, kind: "own" })}
-                        >
-                          <Trash2 size={14} /> Unlink
-                        </Button>
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Card>
-
+          <DeviceHub />
+          <div className="grid gap-4">
             {/* Cross-account family devices */}
             <Card className="space-y-4">
               <div className="flex flex-wrap items-start justify-between gap-2">
@@ -876,7 +797,7 @@ export function DevicesClient() {
             <EmptyState
               icon={<Activity size={22} />}
               title="No device activity synced yet"
-              body="Click “Sync this device now” above, or pair the MATRIX Desktop (Tauri) or Android Companion app to report app usage, hidden apps, and browser history."
+              body="Activity appears here once the MATRIX desktop app reports it. Browsers and the current Android app do not collect app usage."
               action={
                 <Button onClick={() => void syncThisDeviceActivity()} disabled={busy === "sync-activity"}>
                   Sync this device now

@@ -23,7 +23,10 @@ import type { SessionUser } from "@/lib/firebase/session";
 import { RpcError } from "@/lib/server/errors";
 import type { AIMessage } from "@/lib/ai/groq";
 import { completeWithModel, type CompletedAIResponse } from "@/lib/ai/executor";
-import { resolveExecutionRoutes, type AIRouteTarget } from "@/lib/ai/config";
+import { AIConfigurationError, type AIRouteTarget } from "@/lib/ai/config";
+import { resolvePool } from "@/lib/ai/models/pool";
+import { modelById, modelLabel, type ModelStrength } from "@/lib/ai/models/registry";
+import { completeWithRole } from "@/lib/ai/orchestrator/run";
 import { MATRIX_MODEL_LABEL } from "@/lib/ai/model";
 import {
   classifyDesignRevision, createDesignSpec, designFingerprint, designPlanPrompt, formatDesignSpecForPrompt, isWebsiteRequest,
@@ -298,6 +301,47 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     const slug = (input.slug ?? "").trim() || plan.slug;
     await finish("plan", `Project ready · ${before.length} existing file${before.length === 1 ? "" : "s"} · address /s/${slug}.`);
 
+    // ------------------------------------------------------ model team --
+    // Every model works on the SAME project (one workspace, one revision
+    // counter): a model's files are only saved through applyProjectFiles with
+    // the revision they were based on, so a stale write is rejected instead of
+    // overwriting newer work. Each stage is one model's responsibility; when
+    // that model cannot run, the next suitable enabled model takes the stage.
+    let team: AIRouteTarget[] | null = null;
+    let authorIndex = 0;
+    const getTeam = async (): Promise<AIRouteTarget[]> => {
+      if (team) return team;
+      const resolved = await resolvePool(d, user.uid);
+      for (const skipped of resolved.skipped) note("generate", "warn", `${skipped.label} is enabled but not available: ${skipped.reason}`);
+      // Stages write or repair real project files, so only code-capable models take part.
+      const capable = resolved.targets.filter((target) => modelById(target.model)?.strengths.includes("coding"));
+      team = capable.length ? capable : resolved.targets.slice(0, 1);
+      return team;
+    };
+    type TeamStage = "design" | "implement" | "repair" | "review";
+    const STAGE_NEEDS: Record<TeamStage, readonly ModelStrength[]> = {
+      design: ["planning", "writing"],
+      implement: ["coding", "planning"],
+      repair: ["review", "coding", "reasoning"],
+      review: ["review", "writing", "coding"],
+    };
+    const completeAs = async (stage: TeamStage, request: Parameters<typeof completeWithModel>[1]): Promise<CompletedAIResponse> => {
+      const members = await getTeam();
+      if (!members.length) throw new AIConfigurationError(true);
+      // The lead writes the files. Design, repair and review go to a
+      // different model when one is enabled, so work is checked by a model
+      // that did not produce it.
+      const options = stage === "implement" ? { prefer: authorIndex } : members.length > 1 ? { avoid: stage === "design" ? 0 : authorIndex } : {};
+      const { completed, attempts } = await completeWithRole(members, STAGE_NEEDS[stage], request, { ...options, maxWaitMs: 8_000 });
+      for (const attempt of attempts) {
+        if (attempt.outcome !== "ok") note(stage === "repair" || stage === "review" ? "validate" : "generate", "warn", `${attempt.label} could not take the ${stage} stage (${attempt.detail}); continuing with the next model.`);
+      }
+      if (!completed) throw new Error(attempts.map((attempt) => `${attempt.label}: ${attempt.detail}`).join("; ") || "no model available");
+      if (stage === "implement") authorIndex = Math.max(0, members.indexOf(completed.target));
+      if (members.length > 1) note(stage === "repair" || stage === "review" ? "validate" : "generate", "info", `${stage[0].toUpperCase()}${stage.slice(1)}: ${modelLabel(completed.target.model)}.`);
+      return completed;
+    };
+
     // ------------------------------------------------------------ generate --
     let files = before;
     const needsGeneration = input.actions.build === true || input.actions.fix === true;
@@ -306,10 +350,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     } else {
       await begin("generate", input.actions.fix === true ? "Agent is repairing the project files." : "Agent is writing the project files.");
       const assets = input.imageRequests?.length ? await generateImageAssets(d, user, projectId, input.imageRequests, note, emit) : [];
-      // Every Agent step (design, generation, repair, polish) runs on the one
-      // MATRIX model. There is no alternative model to fall back to.
-      const resolved = await resolveExecutionRoutes(d);
-      const routes: AIRouteTarget[] = resolved.routes;
+      const routes: AIRouteTarget[] = await getTeam();
       if (!routes.length) {
         return await abort(
           "AI_NOT_CONFIGURED",
@@ -317,7 +358,9 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
           "generate",
         );
       }
-      note("generate", "info", `Agent model: ${routes[0].provider} ${routes[0].model}.`);
+      note("generate", "info", routes.length > 1
+        ? `Model team: ${routes.map((route) => modelLabel(route.model)).join(", ")} — working on project ${projectId} at revision ${sourceRevision}.`
+        : `Agent model: ${modelLabel(routes[0].model)}.`);
       const useModel = (completion: CompletedAIResponse): void => {
         run = { ...run, model: { provider: completion.target.provider, model: completion.target.model } };
       };
@@ -354,7 +397,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
           note("generate", "info", `Design plan: ${designSpec.direction.name} · ${designSpec.palette.mode} · primary ${designSpec.palette.primary} · ${designSpec.typography.heading.split(",")[0].replace(/'/g, "")}.`);
           await emit("generate");
           try {
-            const planned = await completeWithModel(routes, {
+            const planned = await completeAs("design", {
               messages: [{ role: "user", content: designPlanPrompt(`${originalBrief ? `${originalBrief}\n\nRevision request: ` : ""}${input.prompt}`, designSpec, fingerprintBefore) }],
               temperature: 0.8, maxTokens: 1400, deadlineAt: Math.min(aiDeadline, Date.now() + 45_000),
               requestId: input.requestId ? `${input.requestId}-design` : undefined,
@@ -428,19 +471,19 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       let raw = "";
       let calls: NonNullable<Awaited<ReturnType<typeof completeWithModel>>["response"]["toolCalls"]> = [];
       try {
-        const completion = await completeWithModel(routes, { messages, temperature: generationTemperature, maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline, requestId: input.requestId ?? undefined });
+        const completion = await completeAs("implement", { messages, temperature: generationTemperature, maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline, requestId: input.requestId ?? undefined });
         useModel(completion);
         raw = completion.response.content ?? "";
         calls = completion.response.toolCalls ?? [];
       } catch (error) {
         const detail = error instanceof Error ? error.message : "provider error";
-        return await abort("AI_PROVIDER_FAILED", `${MATRIX_MODEL_LABEL} (${routes[0].provider} ${routes[0].model}) did not answer: ${detail.slice(0, 200)}. No files were written and the project is unchanged — retry when the provider is available.`, "generate");
+        return await abort("AI_PROVIDER_FAILED", `${routes.length > 1 ? "None of the enabled models" : modelLabel(routes[0].model)} could produce the files: ${detail.slice(0, 200)}. No files were written and the project is unchanged — retry when the provider is available.`, "generate");
       }
       if (agentGenerationIncomplete(raw)) {
         note("generate", "warn", "The provider response ended mid-file; requesting one completion before saving.");
         await emit("generate");
         try {
-          const continuation = await completeWithModel(routes, {
+          const continuation = await completeAs("implement", {
             messages: [
               ...messages,
               { role: "assistant", content: raw },
@@ -478,7 +521,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         note("generate", "warn", "No file operations returned; requesting complete files once more.");
         await emit("generate");
         try {
-          const retry = await completeWithModel(routes, {
+          const retry = await completeAs("implement", {
             messages: [...messages, { role: "assistant", content: raw }, { role: "user", content: "The task is ready for implementation. Return actual complete project files (MATRIX_FILE blocks or filename-tagged code fences), not a summary of the work. If an essential detail is missing, ask one specific question instead." }],
             temperature: 0.1, maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline, requestId: input.requestId ? `${input.requestId}-files` : undefined,
           });
@@ -529,7 +572,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         note("generate", "warn", effective.length ? "The returned files do not change the site's design; requesting the actual design change once more." : "The returned files are identical to the saved project; requesting the actual change once more.");
         await emit("generate");
         try {
-          const retry = await completeWithModel(routes, {
+          const retry = await completeAs("implement", {
             messages: [...messages, { role: "assistant", content: raw.slice(0, 6000) }, { role: "user", content: `Your files did not change the saved project${wantsDesignChange ? "'s design" : ""}. Apply the request to the real files now: "${input.prompt.slice(0, 600)}". Return the complete new content of every file that must change${wantsDesignChange ? " (the HTML pages and stylesheet that define the look)" : ""} as MATRIX_FILE blocks. The result must differ from the saved content.` }],
             temperature: Math.max(0.5, generationTemperature), maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline,
             requestId: input.requestId ? `${input.requestId}-change` : undefined,
@@ -652,8 +695,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       const issueText = formatIssues(blockingIssues(built.report), 6);
       note("validate", "warn", `Build attempt ${attempt} failed — asking the Agent to fix it.`);
       await emit("validate");
-      const routes = (await resolveExecutionRoutes(d)).routes;
-      if (!routes.length) break;
+      if (!(await getTeam()).length) break;
       // The repair model needs the real source: with only an error list it
       // rewrote files from memory and lost the design.
       const fixMessages: AIMessage[] = [
@@ -662,7 +704,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         { role: "user", content: `${buildFixPrompt(built.report, files.length)}\n\nReturn only the corrected files, complete. Problems:\n${issueText}` },
       ];
       try {
-        const fix = await completeWithModel(routes, { messages: fixMessages, temperature: 0.1, maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline + 20_000, requestId: input.requestId ?? undefined });
+        const fix = await completeAs("repair", { messages: fixMessages, temperature: 0.1, maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline + 20_000, requestId: input.requestId ?? undefined });
         const fixed = parseAgentResponse(fix.response.content ?? "", { allowUnlabelledFences: true, allowRawHtmlDocument: true });
         if (fixed.files.length) {
           const fixedResult = await applyProjectFiles(d, user, { project_id: projectId, files: fixed.files as ProjectFile[], source: "agent", expected_revision: sourceRevision });
@@ -694,8 +736,8 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       note("validate", "info", `Design review found ${designProblems.length} issue${designProblems.length === 1 ? "" : "s"}; requesting one improvement pass.`);
       await emit("validate");
       try {
-        const routes = (await resolveExecutionRoutes(d)).routes;
-        const polish = routes.length ? await completeWithModel(routes, {
+        const routes = await getTeam();
+        const polish = routes.length ? await completeAs("review", {
           messages: [
             { role: "system", content: AGENT_SYSTEM_PROMPT },
             { role: "user", content: sourceContext(files, "") },
