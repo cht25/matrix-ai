@@ -60,8 +60,7 @@ export const SHIPPED_APP_RELEASE: AppReleaseRecord = {
   apk_url: process.env.MATRIX_ANDROID_APK_URL?.trim() || DEFAULT_ANDROID_APK_URL,
   sha256: process.env.MATRIX_ANDROID_APK_SHA256?.trim() || "",
   release_notes:
-    "• GLM primary engine for coding, web development, vision & high-load tasks + gpt-oss-120b fast tier\n" +
-    "• GLM CogView image generation\n" +
+    "• One model for everything: GPT OSS 120B powers Chat, Agent, website generation and coding\n" +
     "• Compact Arena-style live step timeline\n" +
     "• Over-the-air phone update checker & direct matrix.thamjj13.top/chat sync",
   published_at: "2026-11-12T00:00:00.000Z",

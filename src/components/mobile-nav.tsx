@@ -43,7 +43,7 @@ export function buildMoreLinks({ isAdmin }: { isAdmin: boolean }): MoreLink[] {
     { href: "/workspace", label: "AI Workspace", icon: <LayoutGrid size={18} />, group: "Workspace" },
     { href: "/temporary-chat", label: "Private Workspace", icon: <History size={18} />, group: "Workspace" },
     { href: "/design", label: "Design studio", icon: <Sliders size={18} strokeWidth={1.7} />, group: "Workspace" },
-    { href: "/compare", label: "Compare models", icon: <Columns3 size={18} strokeWidth={1.7} />, group: "Workspace" },
+    { href: "/compare", label: "Compare styles", icon: <Columns3 size={18} strokeWidth={1.7} />, group: "Workspace" },
 
     { href: "/courses", label: "Courses", icon: <GraduationCap size={18} strokeWidth={1.7} />, group: "Learn" },
     { href: "/certificates", label: "Certificates", icon: <BookOpen size={18} strokeWidth={1.7} />, group: "Learn" },

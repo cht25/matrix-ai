@@ -43,19 +43,17 @@ describe("OpenAICompatibleProvider", () => {
     expect(body.max_tokens).toBe(1024);
   });
 
-  it("uses the validated canonical origin for OpenRouter request metadata", async () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://localhost:3000");
+  it("sends no third-party router headers", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ choices: [{ message: { content: "hello" } }], model: "my-model", usage: {} }),
     }) as unknown as typeof fetch;
 
-    const provider = new OpenAICompatibleProvider("sk-private", "https://openrouter.ai/api/v1");
+    const provider = new OpenAICompatibleProvider("sk-private", "https://gateway.example/v1");
     await provider.chat({ model: "my-model", messages: [{ role: "user", content: "hi" }] });
     const [, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(init.headers["HTTP-Referer"]).toBe("https://matrix.thamjj13.top");
-    expect(init.headers["HTTP-Referer"]).not.toContain("localhost");
+    expect(init.headers["HTTP-Referer"]).toBeUndefined();
+    expect(init.headers["X-OpenRouter-Title"]).toBeUndefined();
   });
 
   it("sends function tools and returns model tool calls without requiring text content", async () => {

@@ -94,15 +94,10 @@ export type BuildActions = {
   fix?: boolean;
 };
 
+/** The model that produced the run. Always the single MATRIX model. */
 export type RunModelInfo = {
   provider: string;
   model: string;
-  /** True when this is not the first route that was tried. */
-  fallback: boolean;
-  /** "Provider model: reason" for each route that failed before this one. */
-  failed: string[];
-  /** The user's explicit selection, when one was made. */
-  requested?: string | null;
 };
 
 export type RunDesignInfo = {
@@ -496,7 +491,6 @@ export type BuildRunSnapshot = {
   /** Model that actually produced the files (absent on runs before this field). */
   model?: string;
   provider?: string;
-  model_fallback?: boolean;
   design_direction?: string;
 };
 
@@ -517,7 +511,7 @@ export function toRunSnapshot(run: BuildRun): BuildRunSnapshot {
     attempts: run.attempts,
     error_code: run.error?.code ?? null,
     preview_url: run.previewUrl ?? null,
-    ...(run.model ? { model: run.model.model, provider: run.model.provider, model_fallback: run.model.fallback } : {}),
+    ...(run.model ? { model: run.model.model, provider: run.model.provider } : {}),
     ...(run.design ? { design_direction: run.design.direction } : {}),
   };
 }
@@ -559,7 +553,7 @@ export function runFromSnapshot(snapshot: Partial<BuildRunSnapshot> & { run_id: 
     maxAttempts: 2,
     fileCount: snapshot.file_count ?? 0,
     previewUrl: snapshot.preview_url ?? null,
-    model: snapshot.model && snapshot.provider ? { provider: snapshot.provider, model: snapshot.model, fallback: snapshot.model_fallback === true, failed: [] } : null,
+    model: snapshot.model && snapshot.provider ? { provider: snapshot.provider, model: snapshot.model } : null,
     deployment:
       snapshot.deployment_status && snapshot.deployment_status !== "none"
         ? {

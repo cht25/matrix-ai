@@ -9,7 +9,7 @@ export const PRIMARY_NAV = [
   { id: "devices", label: "Devices", href: "/devices" },
   { id: "family", label: "Family", href: "/family" },
   { id: "projects", label: "Projects", href: "/projects" },
-  { id: "models", label: "Models", href: "/models" },
+  { id: "models", label: "AI model", href: "/models" },
   { id: "settings", label: "Settings", href: "/settings" },
 ] as const;
 

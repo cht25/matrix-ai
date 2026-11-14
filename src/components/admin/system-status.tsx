@@ -101,8 +101,7 @@ export function SystemStatusPill() {
 
   const rows = health
     ? [
-        { name: "AI provider", value: health.ai },
-        { name: "Coding AI", value: health.codingAi },
+        { name: "AI model (GPT OSS 120B)", value: health.ai },
         { name: "Database", value: health.firebase },
         { name: "Web auth config", value: health.webConfig },
         { name: "Media storage", value: health.cloudinary },
@@ -152,7 +151,7 @@ export function SystemStatusPill() {
             </ul>
             {health?.codingProvider ? (
               <p className="mt-3 font-mono text-[11px] text-ink-3">
-                coding route: {health.codingProvider} · {health.codingModel}
+                model route: {health.codingProvider} · {health.codingModel}
               </p>
             ) : null}
             <p className="mt-1 font-mono text-[11px] text-ink-3">checked {health ? new Date(health.checkedAt).toLocaleTimeString() : "—"}</p>

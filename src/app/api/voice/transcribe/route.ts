@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { adminDb, nowTs } from "@/lib/firebase/admin";
 import { getSessionUser } from "@/lib/firebase/session";
 import { isCloudinaryConfigured } from "@/lib/env";
-import { GeminiProvider } from "@/lib/ai/gemini";
 import { isOwnedChatAudioPath, matchesAudioContainer } from "@/lib/ai/audio";
 import { AIProviderError, logProviderFailure, providerPublicCode, providerErrorFromResponse } from "@/lib/ai/provider-error";
 import { deletePrivateAudio, downloadPrivateAudio, uploadPrivateAudio } from "@/lib/server/cloudinary";
@@ -81,12 +80,9 @@ export async function POST(req: NextRequest) {
 
   const groqKey = keyPresent(process.env.GROQ_API_KEY);
   const openaiKey = keyPresent(process.env.OPENAI_API_KEY);
-  const geminiKey = keyPresent(process.env.GEMINI_API_KEY);
-  const geminiAudioModel = process.env.GEMINI_AUDIO_MODEL?.trim() ?? "";
-
-  // A Gemini key alone is enough: without GEMINI_AUDIO_MODEL the audio model
-  // is taken from the key's live catalogue at call time.
-  const hasProvider = Boolean(groqKey || openaiKey || geminiKey);
+  // Speech-to-text is a speech service (Whisper), separate from the language
+  // model. The transcript it returns is then sent to GPT OSS 120B as text.
+  const hasProvider = Boolean(groqKey || openaiKey);
   if (!hasProvider) return NextResponse.json({ error: "VOICE_TRANSCRIPTION_NOT_CONFIGURED" }, { status: 503 });
 
   const form = await req.formData().catch(() => null);
@@ -173,23 +169,6 @@ export async function POST(req: NextRequest) {
     if (openaiKey) {
       const model = process.env.OPENAI_AUDIO_MODEL?.trim() || "whisper-1";
       attempts.push({ model, run: () => transcribeViaOpenAICompatible({ baseUrl: process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1", apiKey: openaiKey, providerLabel: "OpenAI", model, bytes, filename, mimeType, language: languageHint, signal: req.signal }) });
-    }
-    if (geminiKey) {
-      attempts.push({ model: geminiAudioModel || "gemini (catalogue)", run: async () => {
-        const provider = new GeminiProvider(geminiKey);
-        let model = geminiAudioModel;
-        if (!model) {
-          // Audio understanding is a Flash-family capability; take the newest
-          // listed stable Flash model rather than assuming an identifier.
-          const listed = (await provider.listModels()).map((entry) => entry.id)
-            .filter((id) => /^gemini-[\d.]+-flash(?:-lite)?(?:-\d+)?$/.test(id) || /^gemini-flash-latest$/.test(id));
-          model = listed.sort((a, b) => (parseFloat(b.replace(/^gemini-/, "")) || 0) - (parseFloat(a.replace(/^gemini-/, "")) || 0) || a.length - b.length)[0] ?? "";
-          if (!model) throw new AIProviderError({ provider: "Gemini", model: "catalog", type: "invalid_request", detail: "No audio-capable Gemini model is listed for this key." });
-        }
-        usedModel = model;
-        const response = await provider.transcribeAudio({ model, mimeType, base64: bytes.toString("base64"), ...(languageHint ? { language: languageHint } : {}), signal: req.signal });
-        return { transcript: response.content, model: response.model, provider: "Gemini", usage: { ...response.usage, detected_language: languageHint || null } };
-      } });
     }
     let out: Transcription | null = null;
     let lastError: unknown = null;

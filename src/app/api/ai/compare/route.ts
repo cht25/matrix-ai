@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — /api/ai/compare: multi-model comparison.
+// MATRIX AI — /api/ai/compare: response-style comparison on the one model.
 //
 // Sends the SAME redacted prompt to several routing lanes in parallel and
 // returns one attributed result per lane (provider + model + content or an
@@ -77,7 +77,7 @@ async function runLane(
 ): Promise<LaneResult> {
   const started = Date.now();
   const route = decideRoute({ mode, message, lane });
-  const targets: AIRouteTarget[] = await createAIRoutesFromDb(d, route.coding, false, route.tier);
+  const targets: AIRouteTarget[] = await createAIRoutesFromDb(d);
   const target = targets[0];
   if (!target) {
     return { lane, provider: "none", model: "unconfigured", ok: false, error: "AI_GATEWAY_NOT_CONFIGURED" };

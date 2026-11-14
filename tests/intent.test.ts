@@ -100,7 +100,7 @@ describe("intent detection — explicit artifacts", () => {
 });
 
 describe("intent detection — image, agent and code", () => {
-  it("test 5: explicit image generation uses GLM primary image engine", () => {
+  it("test 5: explicit image generation uses the image service", () => {
     for (const text of [
       "Generate an image of a futuristic Matrix city.",
       "Create a cyberpunk poster.",
@@ -110,7 +110,7 @@ describe("intent detection — image, agent and code", () => {
       const result = detectIntent(text);
       expect(result.intent, text).toBe("IMAGE_GENERATION");
       expect(result.artifact, text).toBe("IMAGE");
-      expect(result.provider, text).toBe("glm");
+      expect(result.provider, text).toBe("together_ai");
       expect(selectCapability(result, "general"), text).toBe("image");
     }
   });

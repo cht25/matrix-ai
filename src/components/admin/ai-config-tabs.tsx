@@ -3,8 +3,8 @@
 // Admin → AI configuration.
 //
 //   Overview  · live provider status dashboard
-//   Text      · OpenAI-compatible chat provider
-//   Image     · image generation provider (Together AI, extensible)
+//   Model     · the single MATRIX model (GPT OSS 120B) — read-only status
+//   Image     · image generation service (Together AI)
 //   Usage     · real gateway call log
 //
 // Panels are code-split: opening AI configuration no longer downloads the
@@ -15,8 +15,8 @@ import { Spinner } from "@/components/ui";
 import { ProviderStatus } from "@/components/admin/provider-status";
 import { cn } from "@/lib/utils";
 
-const AiProviderSettings = lazy(() =>
-  import("@/components/admin/ai-provider-settings").then((m) => ({ default: m.AiProviderSettings })),
+const ModelsClient = lazy(() =>
+  import("@/components/models-client").then((m) => ({ default: m.ModelsClient })),
 );
 const ImageProviderSettings = lazy(() =>
   import("@/components/admin/image-provider-settings").then((m) => ({ default: m.ImageProviderSettings })),
@@ -24,18 +24,14 @@ const ImageProviderSettings = lazy(() =>
 const AiUsagePanel = lazy(() =>
   import("@/components/admin/ai-usage-panel").then((m) => ({ default: m.AiUsagePanel })),
 );
-const ManagedAIProviders = lazy(() =>
-  import("@/components/admin/managed-ai-providers").then((m) => ({ default: m.ManagedAIProviders })),
-);
 const AppReleaseSettings = lazy(() =>
   import("@/components/admin/app-release-settings").then((m) => ({ default: m.AppReleaseSettings })),
 );
 
 const TABS = [
   { id: "overview", label: "Overview" },
-  { id: "text", label: "Text models" },
+  { id: "text", label: "AI model" },
   { id: "image", label: "Image generation" },
-  { id: "providers", label: "Providers & models" },
   { id: "updates", label: "Phone & Updates" },
   { id: "usage", label: "Usage" },
 ] as const;
@@ -69,9 +65,8 @@ export function AiConfigTabs({ initialTab = "overview" }: { initialTab?: TabId }
 
       <Suspense fallback={<Loading />}>
         {tab === "overview" ? <ProviderStatus /> : null}
-        {tab === "text" ? <AiProviderSettings /> : null}
+        {tab === "text" ? <ModelsClient showChatLink={false} /> : null}
         {tab === "image" ? <ImageProviderSettings /> : null}
-        {tab === "providers" ? <ManagedAIProviders /> : null}
         {tab === "updates" ? <AppReleaseSettings /> : null}
         {tab === "usage" ? <AiUsagePanel /> : null}
       </Suspense>

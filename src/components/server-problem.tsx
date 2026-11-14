@@ -17,12 +17,10 @@ export function ServerProblem({
   failure,
   onRetry,
   onDismiss,
-  onTryAnotherModel,
 }: {
   failure: ApiFailure;
   onRetry?: () => void;
   onDismiss?: () => void;
-  onTryAnotherModel?: () => void;
 }) {
   const router = useRouter();
   return (
@@ -45,15 +43,6 @@ export function ServerProblem({
         {failure.action === "sign-in" ? (
           <Button variant="outline" onClick={() => router.push("/login")} className="!min-h-8 !px-3 !py-1 text-xs">
             Sign in
-          </Button>
-        ) : null}
-        {failure.action === "try-model" ? (
-          <Button
-            variant="outline"
-            onClick={onTryAnotherModel ?? onRetry}
-            className="!min-h-8 !px-3 !py-1 text-xs"
-          >
-            Try another model
           </Button>
         ) : null}
         {onDismiss ? (

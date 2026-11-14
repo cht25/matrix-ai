@@ -70,7 +70,6 @@ export const env = {
   serviceEmail,
   serviceKeyRaw,
   groqApiKey: process.env.GROQ_API_KEY ?? "",
-  openRouterApiKey: process.env.OPENROUTER_API_KEY ?? "",
   togetherApiKey: process.env.TOGETHER_API_KEY ?? "",
   identityPepper: clean(process.env.IDENTITY_PEPPER ?? ""),
   adminBootstrapKey: clean(process.env.ADMIN_BOOTSTRAP_KEY ?? ""),
@@ -107,9 +106,9 @@ export function isAiConfigured(): boolean {
   return Boolean(env.groqApiKey) && !PLACEHOLDERS.some((p) => env.groqApiKey.includes(p));
 }
 
-/** True when coding auto-routing and Agent mode have an OpenRouter key. */
+/** Agent/coding uses the same model and key as chat. */
 export function isCodingAiConfigured(): boolean {
-  return Boolean(env.openRouterApiKey) && !PLACEHOLDERS.some((p) => env.openRouterApiKey.includes(p));
+  return isAiConfigured();
 }
 
 /** True when the secure GitHub OAuth connection can be used. */

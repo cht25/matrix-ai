@@ -78,22 +78,10 @@ export async function GET() {
     }
   }
 
-  let codingAi: "online" | "unavailable" | "unknown" | "not-configured" = "not-configured";
-  let codingProvider: string | undefined;
-  let codingModel: string | undefined;
-  let codingFallback = false;
-  const codingTargets = await createAIRoutesFromDb(runtimeDb, true);
-  for (let i = 0; i < codingTargets.length; i += 1) {
-    const target = codingTargets[i];
-    if (await target.client.healthCheck(target.model)) {
-      codingAi = "online";
-      codingProvider = target.provider;
-      codingModel = target.model;
-      codingFallback = i > 0;
-      break;
-    }
-    codingAi = "unavailable";
-  }
+  // Agent and coding work run on the same model as chat: one probe, one answer.
+  const codingAi = ai;
+  const codingProvider = generalTargets[0]?.provider;
+  const codingModel = generalTargets[0]?.model;
 
   // Image generation: a real probe against the configured provider. "online"
   // is only ever reported after the provider answered.
@@ -120,7 +108,7 @@ export async function GET() {
     cloudinary,
     ai,
     codingAi,
-    ...(codingProvider ? { codingProvider, codingModel, codingFallback } : {}),
+    ...(codingProvider ? { aiProvider: codingProvider, aiModel: codingModel, codingProvider, codingModel } : {}),
     imageAi,
     ...(imageProvider ? { imageProvider, imageModel } : {}),
     checkedAt,

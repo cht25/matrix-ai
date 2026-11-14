@@ -11,7 +11,7 @@
 //                has it and a specific language is selected. Instant, free,
 //                shows words while the user is still talking.
 //   • server   — the recorded audio is sent to /api/voice/transcribe
-//                (Whisper via Groq → OpenAI → Gemini). Detects the spoken
+//                (Whisper via Groq → OpenAI). Detects the spoken
 //                language automatically and works on every browser that can
 //                record audio (Safari iOS, Firefox, Android WebViews).
 //

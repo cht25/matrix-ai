@@ -34,7 +34,7 @@ describe("privacy preferences and navigation", () => {
     expect(settings).toEqual({ memory_enabled: false, notifications_email: false, chat_history_enabled: false });
   });
   it("exposes the requested primary order and five mobile destinations", () => {
-    expect(PRIMARY_NAV.map((item) => item.label)).toEqual(["New Chat", "Chat", "Agent", "Workspace", "Canvas", "Automations", "Devices", "Family", "Projects", "Models", "Settings"]);
+    expect(PRIMARY_NAV.map((item) => item.label)).toEqual(["New Chat", "Chat", "Agent", "Workspace", "Canvas", "Automations", "Devices", "Family", "Projects", "AI model", "Settings"]);
     expect(MOBILE_NAV.map((item) => item.label)).toEqual(["Chat", "Agent", "Automations", "Devices"]);
     for (const item of PRIMARY_NAV) expect(existsSync(`src/app/(app)${item.href.split("?")[0]}/page.tsx`), item.href).toBe(true);
     expect(navigationActive("/chat", new URLSearchParams("mode=agent"), "/chat?mode=agent")).toBe(true);

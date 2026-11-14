@@ -32,7 +32,6 @@ export const MODEL_LANES: Array<{ id: ModelLane; label: string }> = [
   { id: "balanced", label: "Balanced" },
   { id: "reasoning", label: "Reasoning" },
   { id: "coding", label: "Coding" },
-  { id: "vision", label: "Vision" },
   { id: "image", label: "Image" },
 ];
 

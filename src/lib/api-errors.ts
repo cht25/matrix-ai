@@ -7,13 +7,14 @@ export type ApiFailureKind =
   | "network"
   | "timeout"
   | "auth" // MATRIX session authentication
-  | "provider-auth" // OpenRouter/Groq authentication
+  | "provider-auth" // model provider authentication
   | "rate-limit" // MATRIX usage limit
   | "provider-rate-limit"
   | "provider-invalid-request"
   | "provider-unavailable"
   | "billing"
   | "invalid-request"
+  | "vision-unsupported" // the model cannot read images
   | "storage" // MATRIX backend (Firestore) unavailable — NOT an AI problem
   | "server";
 
@@ -22,10 +23,10 @@ export type ApiFailure = {
   title: string;
   detail: string;
   retryable: boolean;
-  action?: "sign-in" | "try-model";
+  action?: "sign-in";
 };
 
-const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retryable: boolean; action?: "sign-in" | "try-model" }> = {
+const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retryable: boolean; action?: "sign-in" }> = {
   storage: {
     title: "Chat storage unavailable",
     detail: "MATRIX's chat database is temporarily unreachable, so this message cannot be saved or answered right now. Nothing is wrong on your side — please try again shortly.",
@@ -33,7 +34,7 @@ const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retr
   },
   "not-configured": {
     title: "AI service not configured",
-    detail: "No eligible configured model is currently available for this mode. Chat needs a configured OSS 120B provider; Agent needs a tool-capable coding provider. Ask the administrator to check provider credentials and availability.",
+    detail: "GPT OSS 120B, the model MATRIX runs on, is not configured on this server. Your message is kept. Ask the administrator to check the provider API key, then retry.",
     retryable: true,
   },
   network: {
@@ -43,9 +44,8 @@ const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retr
   },
   timeout: {
     title: "AI request timed out",
-    detail: "The AI request took too long to finish. Please try again.",
+    detail: "GPT OSS 120B took too long to answer. Your message and project are kept — retry.",
     retryable: true,
-    action: "try-model",
   },
   auth: {
     title: "Authentication failed",
@@ -55,9 +55,8 @@ const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retr
   },
   "provider-auth": {
     title: "AI provider authentication failed",
-    detail: "MATRIX could not authenticate with the selected AI provider. Please try another model or contact the administrator.",
-    retryable: false,
-    action: "try-model",
+    detail: "MATRIX could not authenticate with the GPT OSS 120B provider. Your message is kept. The administrator needs to check the API key; you can retry once it is fixed.",
+    retryable: true,
   },
   "rate-limit": {
     title: "Slow down",
@@ -66,31 +65,32 @@ const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retr
   },
   "provider-rate-limit": {
     title: "AI model temporarily rate limited",
-    detail: "The selected AI model is temporarily rate limited. MATRIX can try another configured model.",
+    detail: "GPT OSS 120B is temporarily rate limited by its provider. Your message is kept — wait a moment and retry.",
     retryable: true,
-    action: "try-model",
   },
   "provider-invalid-request": {
     title: "AI request rejected",
-    detail: "The selected AI model rejected this request. Try another model or simplify the request.",
-    retryable: false,
-    action: "try-model",
+    detail: "GPT OSS 120B rejected this request. Your message is kept — shorten or simplify it and retry.",
+    retryable: true,
   },
   "provider-unavailable": {
     title: "AI service temporarily unavailable",
-    detail: "The selected AI provider is temporarily unavailable. Please try again or use another model.",
+    detail: "GPT OSS 120B is temporarily unavailable. Your message and project are kept — retry in a moment. MATRIX does not switch to a different model.",
     retryable: true,
-    action: "try-model",
   },
   billing: {
-    title: "AI model needs billing",
-    detail: "The selected AI model is not available on this provider account. MATRIX can try another configured model.",
-    retryable: false,
-    action: "try-model",
+    title: "AI provider quota reached",
+    detail: "The GPT OSS 120B provider account has reached its quota or needs billing attention. Your message is kept. Retry after the administrator resolves it.",
+    retryable: true,
   },
   "invalid-request": {
     title: "Request rejected",
     detail: "The request could not be processed. Check the request and try again.",
+    retryable: false,
+  },
+  "vision-unsupported": {
+    title: "Images are not supported",
+    detail: "GPT OSS 120B is a text model and cannot read images. Remove the image and describe it, or paste the text it contains.",
     retryable: false,
   },
   server: {
@@ -107,7 +107,8 @@ export function failureCopy(kind: ApiFailureKind): ApiFailure {
 const CODE_TO_KIND: Record<string, ApiFailureKind> = {
   AI_GATEWAY_NOT_CONFIGURED: "not-configured",
   AI_MODEL_NOT_AVAILABLE: "provider-invalid-request",
-  VISION_NOT_CONFIGURED: "not-configured",
+  VISION_NOT_CONFIGURED: "vision-unsupported",
+  VISION_NOT_SUPPORTED: "vision-unsupported",
   CODING_MODEL_NOT_CONFIGURED: "not-configured",
   CHAT_STORAGE_UNAVAILABLE: "storage",
   SCAN_STORAGE_UNAVAILABLE: "storage",

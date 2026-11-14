@@ -10,12 +10,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import type { Db } from "@/lib/firebase/admin";
-import { GLMProvider } from "@/lib/ai/glm";
 import { decideRoute } from "@/lib/ai/router";
-import { createAIRoutesFromDb, createScanRoutesFromDb } from "@/lib/ai/config";
-import { environmentProviders } from "@/lib/ai/provider-registry";
-import { glmImageProvider } from "@/lib/ai/image/glm-provider";
-import { getImageProviderConfigPublic } from "@/lib/ai/image/config";
 import { CompactStepsPill, ResponseProgress } from "@/components/response-status";
 import { ChatClient } from "@/components/chat-client";
 import {
@@ -34,8 +29,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("Pillar 1 — GLM High-Load + gpt-oss-120b Low-Load Tiered Routing", () => {
-  it("routes coding, web-dev, agent/build, deep study, and complex requests to HIGH tier (GLM)", () => {
+describe("Pillar 1 — request classes on the single GPT OSS 120B model", () => {
+  it("routes coding, web-dev, agent/build, deep study, and complex requests to the HIGH request class", () => {
     const coding = decideRoute({ mode: "general", message: "Build a Next.js landing page with Tailwind CSS and TypeScript" });
     expect(coding.tier).toBe("high");
     expect(coding.coding).toBe(true);
@@ -53,112 +48,13 @@ describe("Pillar 1 — GLM High-Load + gpt-oss-120b Low-Load Tiered Routing", ()
     expect(deepAnalysis.tier).toBe("high");
   });
 
-  it("routes everyday lightweight chat to LOW tier (openai/gpt-oss-120b)", () => {
+  it("routes everyday lightweight chat to the LOW request class", () => {
     const quickGreeting = decideRoute({ mode: "general", message: "Hey! How's your day going?" });
     expect(quickGreeting.tier).toBe("low");
     expect(quickGreeting.coding).toBe(false);
 
     const quickFact = decideRoute({ mode: "general", message: "What is the capital of Japan?" });
     expect(quickFact.tier).toBe("low");
-  });
-
-  it("prioritizes GLM for high-load & vision, gpt-oss-120b for low-load, and keeps secondary providers working", async () => {
-    vi.stubEnv("GLM_API_KEY", "glm-live-test-key");
-    vi.stubEnv("GLM_MODEL", "glm-4.7");
-    vi.stubEnv("GLM_VISION_MODEL", "glm-4.6v");
-    vi.stubEnv("GROQ_API_KEY", "gsk-live-test-key");
-    vi.stubEnv("GROQ_CHAT_MODEL", "openai/gpt-oss-120b");
-    vi.stubEnv("OPENAI_API_KEY", "sk-openai-secondary-key");
-    vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-secondary-key");
-    vi.stubEnv("GEMINI_API_KEY", "AIza-explicit-only-key");
-
-    const highTargets = await createAIRoutesFromDb(null, true, false, "high");
-    expect(highTargets[0].provider).toBe("GLM");
-    expect(highTargets[0].model).toBe("glm-5-turbo");
-    expect(highTargets.some((t) => t.provider !== "GLM")).toBe(true);
-
-    const lowTargets = await createAIRoutesFromDb(null, false, false, "low");
-    expect(lowTargets[0].model).toBe("openai/gpt-oss-120b");
-    expect(lowTargets.every((t) => t.provider !== "GLM")).toBe(true);
-    // Gemini is never auto-injected into default routes.
-    expect(lowTargets.some((t) => t.provider === "Gemini")).toBe(false);
-
-    const scanTargets = await createScanRoutesFromDb(null);
-    expect(scanTargets[0].provider).toBe("GLM");
-    expect(scanTargets[0].model).toBe("glm-4.6v");
-
-    // All other environment providers (OpenAI, Anthropic, Groq, GLM) remain registered & healthy.
-    const registered = environmentProviders();
-    expect(registered.map((p) => p.name)).toEqual(expect.arrayContaining(["GLM", "Groq", "OpenAI", "Anthropic"]));
-  });
-
-  it("GLMProvider streams clean output, strips chain-of-thought, and fires onReasoningActivity", async () => {
-    const sseChunks = [
-      `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "hidden internal draft" } }] })}\n\n`,
-      `data: ${JSON.stringify({ choices: [{ delta: { content: "Clean production answer." } }], usage: { prompt_tokens: 12, completion_tokens: 5 } })}\n\n`,
-      "data: [DONE]\n\n",
-    ];
-    const stream = new ReadableStream({
-      start(controller) {
-        const enc = new TextEncoder();
-        for (const chunk of sseChunks) controller.enqueue(enc.encode(chunk));
-        controller.close();
-      },
-    });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } })),
-    );
-
-    const glm = new GLMProvider("glm-key", "https://open.bigmodel.cn/api/paas/v4");
-    let reasoningSignals = 0;
-    const tokens: string[] = [];
-    for await (const tok of glm.streamChat({
-      model: "glm-4.7",
-      messages: [{ role: "user", content: "Write a clean function" }],
-      onReasoningActivity: () => {
-        reasoningSignals += 1;
-      },
-    })) {
-      tokens.push(tok);
-    }
-
-    expect(reasoningSignals).toBeGreaterThanOrEqual(1);
-    expect(tokens.join("")).toBe("Clean production answer.");
-    expect(tokens.join("")).not.toContain("hidden internal draft");
-  });
-});
-
-describe("Pillar 2 — GLM CogView Primary Image Generation", () => {
-  it("defaults image configuration to GLM (cogview-4) and supports both b64_json and hosted URLs", async () => {
-    vi.stubEnv("GLM_API_KEY", "glm-image-key-1234");
-    const emptyDb = {
-      collection: () => ({ doc: () => ({ get: async () => ({ exists: false }) }) }),
-    } as unknown as Db;
-    const pub = await getImageProviderConfigPublic(emptyDb);
-    expect(pub.provider).toBe("glm");
-    expect(pub.configured).toBe(true);
-    expect(pub.model).toBe("cogview-4");
-
-    const pngBytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
-    const fetchMock = vi.fn(async (url: string | URL) => {
-      if (String(url).endsWith("/images/generations")) {
-        return new Response(
-          JSON.stringify({ data: [{ url: "https://cdn.bigmodel.cn/generated/sample.png" }] }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
-      }
-      return new Response(pngBytes, { status: 200, headers: { "Content-Type": "image/png" } });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const generated = await glmImageProvider.generate(
-      { apiKey: "glm-image-key-1234", model: "cogview-4" },
-      "Futuristic emerald matrix skyline",
-    );
-    expect(generated.model).toBe("cogview-4");
-    expect(generated.mime).toBe("image/png");
-    expect(Buffer.from(generated.b64, "base64")).toEqual(Buffer.from(pngBytes));
   });
 });
 
@@ -178,14 +74,14 @@ describe("Pillar 3 — Arena-Style Compact Collapsible Steps UI", () => {
             created_at: new Date().toISOString(),
             metadata: {
               mode: "code",
-              provider: "GLM",
-              model: "glm-4.7",
+              provider: "Groq",
+              model: "openai/gpt-oss-120b",
               tier: "high",
               duration_ms: 1420,
               steps: [
-                { id: "route", label: "Routed to GLM", status: "done", detail: "High-load / coding tier", at: 1 },
+                { id: "route", label: "Routed to GPT OSS 120B", status: "done", detail: "High-load / coding tier", at: 1 },
                 { id: "reasoning", label: "Analyzed & structured solution", status: "done", durationMs: 410, at: 2 },
-                { id: "generate", label: "Generated response", status: "done", detail: "GLM · glm-4.7", durationMs: 980, at: 3 },
+                { id: "generate", label: "Generated response", status: "done", detail: "Groq · openai/gpt-oss-120b", durationMs: 980, at: 3 },
               ],
             },
           },
@@ -203,10 +99,10 @@ describe("Pillar 3 — Arena-Style Compact Collapsible Steps UI", () => {
     const liveHtml = renderToStaticMarkup(
       createElement(ResponseProgress, {
         mode: "code",
-        provider: "GLM",
+        provider: "Groq",
         tier: "high",
         steps: [
-          { id: "route", label: "Routed to GLM", status: "done", at: 1 },
+          { id: "route", label: "Routed to GPT OSS 120B", status: "done", at: 1 },
           { id: "reasoning", label: "Analyzing & structuring solution", status: "running", at: 2 },
         ],
       }),
@@ -280,7 +176,7 @@ describe("Pillars 4 & 5 — Phone-First OTA Update System, Phone App & Canonical
       min_supported_version: "1.1.0",
       force_update: true,
       apk_url: "https://github.com/cht25/matrix-ai/releases/download/mobile-v1.2.0/matrix-android.apk",
-      release_notes: "Mandatory security + GLM speed upgrade",
+      release_notes: "Mandatory security + speed upgrade",
     });
     expect(saved.version).toBe("1.2.0");
     expect(saved.build_number).toBe(3);

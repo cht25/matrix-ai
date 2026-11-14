@@ -184,15 +184,12 @@ describe("POST /api/rpc admin_set_role", () => {
     expect(r.status).toBe(403);
   });
 
-  it("only system.settings admins can read or mutate the managed AI provider registry", async () => {
-    sessionUid = "regular-user";
-    const denied = await call("admin_ai_managed_providers_get");
-    expect(denied.status).toBe(403);
-    expect(denied.body).toMatchObject({ error: { code: "PERMISSION_DENIED" } });
-
+  it("the removed model-selection and provider-registry actions no longer exist", async () => {
     sessionUid = "actor-super";
-    const allowed = await call("admin_ai_managed_providers_get");
-    expect(allowed.status).toBe(200);
-    expect(allowed.body).toMatchObject({ success: true, data: [] });
+    for (const action of ["admin_ai_managed_providers_get", "admin_ai_managed_provider_save", "admin_ai_provider_get", "admin_ai_provider_save", "model_preference_set"]) {
+      const r = await call(action);
+      expect(r.body.success, action).toBe(false);
+      expect(r.body.error, action).toMatchObject({ code: "UNKNOWN_ACTION" });
+    }
   });
 });

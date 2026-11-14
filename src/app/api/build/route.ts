@@ -1,4 +1,3 @@
-import { preferenceForMode } from "@/lib/ai/model-preferences";
 // =============================================================================
 // MATRIX build endpoint (§1, §3, §4, §14–§16, §24)
 //
@@ -167,11 +166,8 @@ export async function POST(req: NextRequest) {
   }
 
   const d = adminDb();
-  const preferences = await d.collection("user_security_settings").doc(user.uid).get().catch(() => null);
-  const agentPreference = preferenceForMode(preferences?.data(), "agent");
-  const chosenModel = typeof body.model_id === "string" && body.model_id.trim() ? body.model_id.trim() : agentPreference.model_id.trim();
-  const chosenProvider = typeof body.model_id === "string" && body.model_id.trim() ? String(body.provider_id ?? "") : agentPreference.provider_id;
-  const selectedModel = chosenModel ? { providerId: chosenProvider, modelId: chosenModel } : null;
+  // The Agent always runs on the single MATRIX model; any `model_id` in the
+  // request body or a saved legacy preference is ignored.
   const runId = crypto.randomUUID().replace(/-/g, "").slice(0, 24);
   const wantsStream = (req.headers.get("accept") ?? "").includes("text/event-stream");
   const isTemporary = body.is_temporary === true;
@@ -246,7 +242,6 @@ export async function POST(req: NextRequest) {
       taskId,
       prompt,
       taskContext,
-      selectedModel,
       actions,
       workspaceOnly,
       chatMode,
@@ -288,8 +283,7 @@ export async function POST(req: NextRequest) {
           taskId,
           prompt,
           taskContext,
-          selectedModel,
-          actions,
+              actions,
           workspaceOnly,
           chatMode,
           environment,

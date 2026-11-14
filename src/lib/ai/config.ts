@@ -1,27 +1,28 @@
-// Server-side AI routes.
-//   Normal Chat → GPT OSS 120B first (GLM never enters Chat automatically).
-//   Agent       → strongest catalogue-verified GLM → other GLM → strongest
-//                 Gemini → remaining tool-capable models, with automatic,
-//                 recorded failover. A user-selected model leads the chain
-//                 while it is healthy and is never silently replaced.
+// Server-side AI configuration.
+//
+// ONE PLATFORM, ONE MODEL: every AI request in MATRIX is executed by GPT OSS
+// 120B (see `@/lib/ai/model`). This module turns that single identifier plus
+// the server-side credential into the one executable route. There is no
+// provider registry, no ranking, no per-user or per-mode model and no
+// fallback: when the model is unavailable the request fails with a clear
+// provider error and the user can retry.
 
 import "server-only";
 
 import type { Db } from "@/lib/firebase/admin";
-import { GPT_OSS_DEFAULT_MODEL, MODELS, createProvider, type AIProvider, type AIProviderRequest, type AIProviderResponse } from "@/lib/ai/groq";
-import { GLM_DEFAULT_CODING_MODEL, GLM_DEFAULT_MODEL, GLM_DEFAULT_VISION_MODEL } from "@/lib/ai/glm";
+import { GroqProvider, type AIProvider } from "@/lib/ai/groq";
+import { createOpenAICompatibleProvider } from "@/lib/ai/openai";
 import type { WorkloadTier } from "@/lib/ai/router";
+import type { AIProviderName } from "@/lib/ai/provider-error";
 import {
-  createRuntimeAgentRoute,
-  createRuntimeAIRoute,
-  createRuntimeVisionRoute,
-  resolveMainModelConfig,
-  type RuntimeAIRoute,
-} from "@/lib/ai/runtime-config";
-import { environmentProviders, CatalogValidatedProvider, type RegisteredProvider } from "@/lib/ai/provider-registry";
-import { AIProviderError, type AIProviderName } from "@/lib/ai/provider-error";
-import { getManagedProviderCatalogEntries, getManagedProviderRoutes } from "@/lib/ai/managed-providers";
-import { describeRoutes, discoverAgentModels, modelProfile, rankModelRoutes, type CatalogStatus, type RouteDiagnostic } from "@/lib/ai/model-routing";
+  MATRIX_MODEL_BASE_URL,
+  MATRIX_MODEL_ID,
+  MATRIX_MODEL_LABEL,
+  MATRIX_MODEL_PROVIDER,
+  MATRIX_MODEL_PROVIDER_ID,
+  dedicatedEndpointModelId,
+  isMatrixModelId,
+} from "@/lib/ai/model";
 
 export type AIRouteTarget = {
   provider: AIProviderName;
@@ -30,274 +31,139 @@ export type AIRouteTarget = {
   providerId?: string;
   tier?: WorkloadTier;
   contextTokens?: number;
-  /** Whether the provider's authenticated catalogue lists this exact ID. */
-  catalog?: CatalogStatus;
+};
+
+/** Displayed defaults. Every role is the same model. */
+export const AI_CONFIG = {
+  general: { provider: MATRIX_MODEL_PROVIDER, model: MATRIX_MODEL_ID },
+  coding: { provider: MATRIX_MODEL_PROVIDER, model: MATRIX_MODEL_ID },
+} as const;
+
+function secret(value: string | undefined): string {
+  const key = value?.trim() ?? "";
+  return key && !key.endsWith("...") && !key.includes("...") && !key.startsWith("YOUR-") && !key.startsWith("replace-with") ? key : "";
+}
+
+export type MatrixModelStatus = {
+  configured: boolean;
+  provider: string;
+  provider_id: string;
+  model: string;
+  label: string;
+  /** Which server credential is in use. Never the credential itself. */
+  credential: "GROQ_API_KEY" | "GPT_OSS_API_KEY" | "none";
+  endpoint: string;
 };
 
 /**
- * Shipped defaults displayed when no credentials have been set yet.
+ * The one executable route, or null when no credential is installed.
+ *
+ *   GROQ_API_KEY                       → Groq, MATRIX_MODEL_ID          (default)
+ *   GPT_OSS_API_KEY + GPT_OSS_BASE_URL → the same model on a dedicated
+ *                                        OpenAI-compatible endpoint
+ *
+ * Both serve GPT OSS 120B. Exactly one is active per deployment; the second
+ * is never a fallback for the first.
  */
-export const AI_CONFIG = {
-  general: { provider: "Groq" as const, model: GPT_OSS_DEFAULT_MODEL, fallback: "" },
-  coding: { provider: "GLM" as const, model: GLM_DEFAULT_CODING_MODEL, fallbackProvider: "OpenAI" as const, fallbackModel: "" },
-  vision: { provider: "GLM" as const, model: GLM_DEFAULT_VISION_MODEL },
-} as const;
-
-class FallbackSafeProvider implements AIProvider {
-  readonly supportsToolCalls: boolean;
-  constructor(private readonly inner: AIProvider) { this.supportsToolCalls = inner.supportsToolCalls === true; }
-
-  async chat(req: AIProviderRequest): Promise<AIProviderResponse> {
-    try {
-      return await this.inner.chat(req);
-    } catch (error) {
-      throw reclassifyAsFallbackEligible(error);
-    }
+export function matrixModelRoute(): AIRouteTarget | null {
+  const dedicatedKey = secret(process.env.GPT_OSS_API_KEY);
+  const dedicatedBase = process.env.GPT_OSS_BASE_URL?.trim() ?? "";
+  if (dedicatedKey && dedicatedBase) {
+    const model = dedicatedEndpointModelId(process.env.GPT_OSS_MODEL);
+    return {
+      provider: "OpenAI",
+      providerId: "gpt-oss",
+      model,
+      client: createOpenAICompatibleProvider({ apiKey: dedicatedKey, baseUrl: dedicatedBase, label: MATRIX_MODEL_LABEL, model }),
+      tier: "high",
+    };
   }
-
-  async *streamChat(req: AIProviderRequest): AsyncGenerator<string> {
-    try {
-      if (!this.inner.streamChat) throw new Error("provider does not support streaming");
-      yield* this.inner.streamChat(req);
-    } catch (error) {
-      throw reclassifyAsFallbackEligible(error);
-    }
-  }
-
-  async healthCheck(model?: string): Promise<boolean> {
-    return this.inner.healthCheck(model);
-  }
+  const groqKey = secret(process.env.GROQ_API_KEY) || dedicatedKey;
+  if (!groqKey) return null;
+  return {
+    provider: MATRIX_MODEL_PROVIDER,
+    providerId: MATRIX_MODEL_PROVIDER_ID,
+    model: MATRIX_MODEL_ID,
+    client: new GroqProvider(groqKey),
+    tier: "high",
+  };
 }
 
-function reclassifyAsFallbackEligible(error: unknown): unknown {
-  if (error instanceof AIProviderError && (error.type === "authentication" || error.type === "invalid_request")) {
-    return new AIProviderError({ ...error, retryable: true, fallbackEligible: true });
-  }
-  return error;
+export function matrixModelStatus(): MatrixModelStatus {
+  const route = matrixModelRoute();
+  const dedicated = route?.providerId === "gpt-oss";
+  return {
+    configured: Boolean(route),
+    provider: dedicated ? "Dedicated GPT OSS endpoint" : MATRIX_MODEL_PROVIDER,
+    provider_id: route?.providerId ?? MATRIX_MODEL_PROVIDER_ID,
+    model: route?.model ?? MATRIX_MODEL_ID,
+    label: MATRIX_MODEL_LABEL,
+    credential: !route ? "none" : dedicated ? "GPT_OSS_API_KEY" : secret(process.env.GROQ_API_KEY) ? "GROQ_API_KEY" : "GPT_OSS_API_KEY",
+    endpoint: dedicated ? "dedicated" : MATRIX_MODEL_BASE_URL,
+  };
 }
 
 const CONFIG_LOGGED = "__matrixAiConfigurationLogged";
-
-function keyConfigured(value: string | undefined): boolean {
-  const normalized = value?.trim() ?? "";
-  return Boolean(normalized) && !normalized.endsWith("...") && !normalized.startsWith("YOUR-") && !normalized.startsWith("replace-with");
-}
 
 export function logAIConfiguration(): void {
   const globalState = globalThis as Record<string, unknown>;
   if (globalState[CONFIG_LOGGED]) return;
   globalState[CONFIG_LOGGED] = true;
+  const status = matrixModelStatus();
   console.info("[MATRIX] AI configuration", {
-    architecture: "OSS 120B Normal Chat; capability-ranked GLM-first Agent with automatic fallback",
-    glm: keyConfigured(process.env.ZAI_API_KEY) || keyConfigured(process.env.GLM_API_KEY) ? "configured" : "missing",
-    glmModel: process.env.GLM_MODEL?.trim() || AI_CONFIG.coding.model,
-    lowTaskEngine: keyConfigured(process.env.GROQ_API_KEY) || keyConfigured(process.env.GPT_OSS_API_KEY) ? "configured" : "missing",
-    lowTaskModel: MODELS.chat || GPT_OSS_DEFAULT_MODEL,
-    fallback: "any provider failure advances to the next eligible configured model; every switch is logged and shown",
+    architecture: "single model — GPT OSS 120B for Chat, Agent and every AI feature; no fallback model",
+    provider: status.provider,
+    model: status.model,
+    credential: status.configured ? "configured" : "missing",
   });
-}
-
-function isLowTierTarget(target: AIRouteTarget): boolean {
-  return target.providerId === "groq" || target.providerId === "gpt-oss" || /gpt-oss-120b/i.test(target.model);
-}
-
-/** Environment-only routes. Chat never silently routes to GLM. */
-export function createAIRoutes(coding: boolean, preferFallback = false, _tier: WorkloadTier = "high"): AIRouteTarget[] {
-  const providers = environmentProviders();
-  const candidates: AIRouteTarget[] = providers.map((entry) => ({
-    provider: entry.name as AIProviderName, providerId: entry.id,
-    model: coding ? entry.codingModel : entry.defaultModel, client: entry.client,
-    tier: coding ? "high" : "low",
-  }));
-  const routes = rankModelRoutes(candidates, coding ? "agent" : "chat");
-  return preferFallback && routes.length > 1 ? [...routes.slice(1), routes[0]] : routes;
-}
-
-export function aiProviderConfigured(coding: boolean): boolean {
-  return createAIRoutes(coding).length > 0;
-}
-
-/** Build independent Chat and Agent routes from configured, eligible models. */
-export async function createAIRoutesFromDb(
-  d: Db | null,
-  coding: boolean,
-  preferFallback = false,
-  tier: WorkloadTier = coding ? "high" : "low",
-): Promise<AIRouteTarget[]> {
-  const providers = environmentProviders();
-  const managed = d ? await getManagedProviderRoutes(d, coding ? "agent" : "chat").catch(() => []) : [];
-  const config = await resolveMainModelConfig(d).catch(() => null);
-  const runtime = coding ? createRuntimeAgentRoute(config) : createRuntimeAIRoute(config);
-  const candidates: AIRouteTarget[] = [
-    ...managed.map((entry) => ({ ...entry, tier: coding ? "high" as const : "low" as const })),
-    ...providers.map((entry) => ({
-      provider: entry.name as AIProviderName, providerId: entry.id,
-      model: coding ? entry.codingModel : entry.defaultModel, client: entry.client,
-      tier: coding ? "high" as const : "low" as const,
-    })),
-  ];
-  // The main admin record may be a different account, but a GLM model must
-  // never leak into Chat's automatic candidate pool.
-  if (runtime && config && (config.source === "database" || !candidates.some((entry) => entry.provider === runtime.provider && entry.model === runtime.model))) {
-    candidates.push({ ...runtime, providerId: `main-${config.kind}`, tier: coding ? "high" : tier });
+  // A leftover override must not silently change the model — say so once.
+  for (const name of ["GROQ_CHAT_MODEL", "GROQ_CODING_MODEL", "GROQ_FAST_MODEL", "GPT_OSS_MODEL"] as const) {
+    const value = process.env[name]?.trim();
+    if (value && !isMatrixModelId(value)) {
+      console.warn(`[MATRIX] ${name} is set to a different model and is ignored: MATRIX only runs ${MATRIX_MODEL_ID}.`);
+    }
   }
-  if (coding) {
-    // Ask each GLM / Gemini account what it really offers. This both verifies
-    // the configured ID and supplies alternatives of the same family, so an
-    // unknown or retired ID degrades to the next strongest listed model
-    // instead of ending the run. A Gemini key with no GEMINI_MODEL set used to
-    // contribute no route at all; it now contributes its best listed model.
-    const seenAccounts = new Set<string>();
-    const accounts = candidates.filter((candidate) => {
-      if (candidate.provider !== "GLM" && candidate.provider !== "Gemini") return false;
-      if (candidate.client.supportsToolCalls !== true) return false;
-      const account = candidate.providerId ?? candidate.provider;
-      if (seenAccounts.has(account)) return false;
-      seenAccounts.add(account);
-      return true;
-    });
-    const discovered = await Promise.all(accounts.slice(0, 4).map((candidate) =>
-      discoverAgentModels(candidate.client, candidate.model, candidate.provider, candidate.providerId ?? candidate.provider.toLowerCase())));
-    candidates.push(...discovered.flat());
-  }
-  const routes = rankModelRoutes(candidates, coding ? "agent" : "chat");
-  return preferFallback && routes.length > 1 ? [...routes.slice(1), routes[0]] : routes;
+}
+
+/** The route list for any workload. Always zero or one entry: GPT OSS 120B. */
+export function createAIRoutes(_coding = false): AIRouteTarget[] {
+  void _coding;
+  const route = matrixModelRoute();
+  return route ? [route] : [];
+}
+
+export function aiProviderConfigured(_coding = false): boolean {
+  void _coding;
+  return matrixModelRoute() !== null;
 }
 
 /**
- * Routes used by the screenshot scanner and chat vision attachments.
- * GLM vision (`glm-4.6v` or admin-configured vision model) leads, followed by
- * managed vision models and Groq vision fallback.
+ * Async form kept for call sites that used to consult the database. Chat,
+ * Agent, Code, Research, orchestrator and comparison turns all receive the
+ * same single route; the mode only changes instructions and tools.
  */
-export async function createScanRoutesFromDb(d: Db | null): Promise<AIRouteTarget[]> {
-  const groq = createProvider();
-  const envTarget: AIRouteTarget | null = groq && MODELS.vision
-    ? { provider: "Groq", model: MODELS.vision, client: groq }
-    : null;
-
-  let runtimeRoute: RuntimeAIRoute | null = null;
-  let managedTargets: Awaited<ReturnType<typeof getManagedProviderRoutes>> = [];
-  if (d) {
-    try {
-      managedTargets = await getManagedProviderRoutes(d, "vision");
-    } catch (error) {
-      console.error("[MATRIX] Managed vision provider registry could not be read; using remaining providers.", error instanceof Error ? error.message.slice(0, 160) : "unknown");
-    }
-    try {
-      runtimeRoute = createRuntimeVisionRoute(await resolveMainModelConfig(d));
-    } catch (error) {
-      console.error(
-        "[MATRIX] Main model settings could not be read; using environment vision fallback.",
-        error instanceof Error ? error.message.slice(0, 160) : "unknown",
-      );
-    }
-  } else {
-    try {
-      runtimeRoute = createRuntimeVisionRoute(await resolveMainModelConfig(null));
-    } catch { /* environment vision fallback below */ }
-  }
-
-  const routes: AIRouteTarget[] = managedTargets.map((target) => ({ ...target, client: new FallbackSafeProvider(target.client) }));
-  if (runtimeRoute) routes.unshift({ ...runtimeRoute, providerId: `main-${runtimeRoute.kind}`, client: new FallbackSafeProvider(runtimeRoute.client) });
-  if (envTarget) routes.push(envTarget);
-  return routes;
+export async function createAIRoutesFromDb(_d?: Db | null, _coding = false): Promise<AIRouteTarget[]> {
+  void _d; void _coding;
+  return createAIRoutes();
 }
 
-export type ExecutionRoutes = {
-  routes: AIRouteTarget[];
-  /** The user's explicit model, when one was chosen and resolved. */
-  selected: AIRouteTarget | null;
-  /** Why an explicit selection could not be honoured (it is not hidden). */
-  selectionError: string | null;
-};
+/** The Agent/build pipeline's route. Identical to Chat's. */
+export async function resolveExecutionRoutes(_d?: Db | null): Promise<{ routes: AIRouteTarget[] }> {
+  void _d;
+  return { routes: createAIRoutes() };
+}
 
 /**
- * The single place that decides which models a request may use, in order.
- *
- * An explicit user/admin selection leads the chain and is used whenever it
- * answers. If it fails, execution continues on the automatic chain and the
- * switch is reported — a selection that cannot be resolved at all is likewise
- * reported and the automatic chain is used, instead of failing the request
- * while other configured models are healthy.
+ * Image understanding. GPT OSS 120B is a text model, and MATRIX does not route
+ * to any other model, so there is no vision route. Callers report
+ * `VISION_NOT_SUPPORTED` instead of sending an image to a model that cannot
+ * read it.
  */
-export async function resolveExecutionRoutes(
-  d: Db | null,
-  input: { mode: "chat" | "agent"; selected?: { providerId: string; modelId: string } | null; tier?: WorkloadTier; preferFallback?: boolean },
-): Promise<ExecutionRoutes> {
-  const coding = input.mode === "agent";
-  const automatic = await createAIRoutesFromDb(d, coding, input.preferFallback === true, input.tier ?? (coding ? "high" : "low"));
-  if (!input.selected?.modelId) return { routes: automatic, selected: null, selectionError: null };
-  try {
-    const selected = await resolveSelectedAIRoute(d, input.selected.providerId, input.selected.modelId);
-    const same = (route: AIRouteTarget) => route.model === selected.model && (route.providerId ?? route.provider) === (selected.providerId ?? selected.provider);
-    const usable = !coding || selected.client.supportsToolCalls === true;
-    // A chat-only model must not be treated as an Agent model.
-    if (!usable) return { routes: automatic, selected: null, selectionError: `${selected.provider} ${selected.model} does not support the tool calling Agent mode requires` };
-    return { routes: [selected, ...automatic.filter((route) => !same(route))], selected, selectionError: null };
-  } catch (error) {
-    return { routes: automatic, selected: null, selectionError: error instanceof Error ? error.message.slice(0, 200) : "The selected model could not be initialized" };
-  }
-}
-
-/** Ranked Agent/Chat chain for operator diagnostics and the model picker. */
-export async function describeExecutionRoutes(d: Db | null, mode: "chat" | "agent"): Promise<RouteDiagnostic[]> {
-  return describeRoutes(await createAIRoutesFromDb(d, mode === "agent"));
-}
-
-export { modelProfile };
+export const VISION_SUPPORTED = false;
 
 export class AIConfigurationError extends Error {
-  constructor(public readonly coding: boolean) {
-    super(coding ? "No coding AI provider is configured" : "No general AI provider is configured");
+  constructor(public readonly coding: boolean = false) {
+    super(`${MATRIX_MODEL_LABEL} is not configured on this server`);
     this.name = "AIConfigurationError";
   }
-}
-
-/** Runtime record first, then managed & environment registries. Never contains public credentials. */
-export async function providerCatalogEntries(d: Db | null): Promise<RegisteredProvider[]> {
-  const entries = environmentProviders().filter((entry) => entry.id !== "openrouter");
-  if (d) {
-    const config = await resolveMainModelConfig(d);
-    const route = createRuntimeAIRoute(config);
-    if (config && route) {
-      entries.unshift({
-        id: `main-${config.kind}`,
-        name: config.label || `${config.kind} (main model)`,
-        client: route.client,
-        baseUrl: config.base_url,
-        defaultModel: config.model,
-        codingModel: config.agent_model || config.model,
-        visionModel: config.vision_model || config.model,
-      });
-    }
-    entries.unshift(...await getManagedProviderCatalogEntries(d));
-  } else {
-    const config = await resolveMainModelConfig(null);
-    const route = createRuntimeAIRoute(config);
-    if (config && route) {
-      entries.unshift({
-        id: `main-${config.kind}`,
-        name: config.label || `${config.kind} (main model)`,
-        client: route.client,
-        baseUrl: config.base_url,
-        defaultModel: config.model,
-        codingModel: config.agent_model || config.model,
-        visionModel: config.vision_model || config.model,
-      });
-    }
-  }
-  return entries;
-}
-
-export async function resolveSelectedAIRoute(d: Db | null, providerId: string, model: string): Promise<AIRouteTarget> {
-  const entry = (await providerCatalogEntries(d)).find((item) => item.id === providerId);
-  if (!entry) throw new AIProviderError({ provider: "GLM", model, type: "invalid_request", detail: "The selected provider is not configured on this server." });
-  const explicitlyConfigured = [entry.defaultModel, entry.codingModel, entry.visionModel].filter(Boolean).includes(model);
-  if (explicitlyConfigured) {
-    return { provider: entry.name as AIProviderName, providerId: entry.id, model, client: new FallbackSafeProvider(entry.client) };
-  }
-  if (!entry.client.listModels || !(await entry.client.listModels()).some((item) => item.id === model)) {
-    throw new AIProviderError({ provider: entry.name as AIProviderName, model, type: "invalid_request", status: 404, detail: `Model ${model} is not listed by ${entry.name}. Select a verified catalog entry.` });
-  }
-  return { provider: entry.name as AIProviderName, providerId: entry.id, model, client: new CatalogValidatedProvider(entry.client) };
 }

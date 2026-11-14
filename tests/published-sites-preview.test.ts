@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { buildPreviewHtml } from "../src/lib/projects/preview";
 import { contentTypeForPath } from "../src/lib/projects/paths";
 import { GroqProvider } from "../src/lib/ai/groq";
-import { OpenRouterProvider } from "../src/lib/ai/openrouter";
 
 describe("buildPreviewHtml", () => {
   it("inlines local CSS and JS files into HTML", () => {
@@ -101,13 +100,4 @@ describe("AI provider token safety", () => {
     expect(body.max_completion_tokens).toBeLessThanOrEqual(8192);
   });
 
-  it("sets safe maxTokens on OpenRouter", () => {
-    const or = new OpenRouterProvider("sk-or-test");
-    const body = (or as unknown as { buildBody: (req: { model: string; messages: []; maxTokens: number }, stream: boolean) => Record<string, unknown> }).buildBody(
-      { model: "nvidia/nemotron-3-ultra-550b-a55b:free", messages: [], maxTokens: 16384 },
-      false,
-    );
-    expect(body.max_tokens).toBe(16384);
-    expect(body.max_completion_tokens).toBe(16384);
-  });
 });

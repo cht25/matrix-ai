@@ -7,7 +7,7 @@
 // the UI; the admin picks one from the registry.
 // =============================================================================
 
-export type ImageProviderId = "glm" | "together";
+export type ImageProviderId = "together";
 
 export type ImageGenerateOptions = {
   width?: number;

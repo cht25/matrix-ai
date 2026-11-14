@@ -1,37 +1,22 @@
-// Controlled provider execution with capability-aware failover.
+// Controlled execution against the one MATRIX model (GPT OSS 120B).
 //
-// Policy (see docs/AI_PLATFORM_OVERHAUL.md):
-//   • The first route may be retried once for a transient failure.
-//   • ANY provider failure advances to the next eligible route. A failure that
-//     belongs to the credential (authentication, billing/quota) or to the
-//     request shape for that adapter skips the remaining routes that share the
-//     same provider account, because they would fail identically.
-//   • Every skipped route is recorded (`attempts`) so the caller can show and
-//     log the real active model. A weaker model is never used silently.
-//   • Once visible content has been streamed to the browser, the answer is
-//     never spliced with a second model's output.
+// Policy:
+//   • There is exactly one route. Nothing here can switch to another model.
+//   • A transient failure (rate limit, network blip, empty reply) is retried
+//     once against the SAME model. Timeouts and malformed requests are not.
+//   • After that the real provider error is thrown. The caller shows it,
+//     keeps the user's message and project context, and offers Retry.
+//   • Once visible content has been streamed, the request is never restarted.
 //   • A caller-supplied abort (the user pressed Stop) is never retried.
 
 import type { AIMessage, AIProviderRequest, AIProviderResponse } from "@/lib/ai/groq";
 import { AIConfigurationError, type AIRouteTarget } from "@/lib/ai/config";
+import { MATRIX_MODEL_LABEL, isMatrixModelId } from "@/lib/ai/model";
 import { AIProviderError, logProviderFailure, providerErrorFromException } from "@/lib/ai/provider-error";
-import { reportModelResult } from "@/lib/ai/model-routing";
-
-export type FailedAttempt = {
-  provider: string;
-  model: string;
-  type: string;
-  status: number | null;
-  detail: string;
-};
 
 export type CompletedAIResponse = {
   target: AIRouteTarget;
   response: AIProviderResponse;
-  /** Routes that failed before `target` answered, in order. Empty = primary. */
-  attempts: FailedAttempt[];
-  /** True when `target` is not the first route that was tried. */
-  fallback: boolean;
 };
 
 type RequestOptions = Omit<AIProviderRequest, "model" | "messages"> & {
@@ -45,10 +30,8 @@ type RequestOptions = Omit<AIProviderRequest, "model" | "messages"> & {
    * idle watchdogs instead.
    */
   aggregateStream?: boolean;
-  /** Absolute epoch-ms budget for the whole call including failover. */
+  /** Absolute epoch-ms budget for the whole call including the single retry. */
   deadlineAt?: number;
-  /** Notified each time a route fails and another one is about to be tried. */
-  onFallback?: (failed: FailedAttempt, next: AIRouteTarget) => void;
 };
 
 const FIRST_BYTE_TIMEOUT_MS = 120_000;
@@ -63,30 +46,6 @@ function asProviderError(target: AIRouteTarget, error: unknown, requestId?: stri
 function canTryAgain(error: AIProviderError): boolean {
   // Repeating a timed-out or malformed request only doubles the wait.
   return error.retryable === true && error.type !== "timeout";
-}
-
-function scopeOf(target: AIRouteTarget): string {
-  return target.providerId ?? target.provider;
-}
-
-/** Errors that will repeat for every model behind the same account/adapter. */
-function accountScoped(error: AIProviderError): boolean {
-  if (error.modelUnavailable) return false;
-  return error.type === "authentication" || error.type === "billing" || error.type === "invalid_request";
-}
-
-/** Index of the next route worth trying after `error`, or -1. */
-export function nextRouteIndex(targets: AIRouteTarget[], index: number, error: AIProviderError): number {
-  const skipScope = accountScoped(error) ? scopeOf(targets[index]) : null;
-  for (let i = index + 1; i < targets.length; i += 1) {
-    if (skipScope && scopeOf(targets[i]) === skipScope) continue;
-    return i;
-  }
-  return -1;
-}
-
-function failedAttempt(error: AIProviderError): FailedAttempt {
-  return { provider: error.provider, model: error.model, type: error.type, status: error.status, detail: error.detail.slice(0, 200) };
 }
 
 function waitBriefly(): Promise<void> {
@@ -120,8 +79,8 @@ async function aggregateStream(target: AIRouteTarget, request: RequestOptions): 
   let usage: AIProviderResponse["usage"] = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   arm(FIRST_BYTE_TIMEOUT_MS, `no output within ${FIRST_BYTE_TIMEOUT_MS / 1000}s of sending the request`);
   try {
-    const { aggregateStream: _a, deadlineAt: _d, onFallback: _f, ...providerRequest } = request;
-    void _a; void _d; void _f;
+    const { aggregateStream: _a, deadlineAt: _d, ...providerRequest } = request;
+    void _a; void _d;
     for await (const delta of target.client.streamChat!({
       ...providerRequest,
       model: target.model,
@@ -148,144 +107,110 @@ async function aggregateStream(target: AIRouteTarget, request: RequestOptions): 
   return { content, model: target.model, usage, finishReason: undefined, toolCalls: [] };
 }
 
-/** Completion used by Agent mode, builds and scans. */
-export async function completeWithFallback(
+/**
+ * Last line of defence: whatever a caller passes, a request is only ever sent
+ * for the one MATRIX model, on exactly one route.
+ */
+function theOneRoute(targets: AIRouteTarget[], coding: boolean): AIRouteTarget {
+  const target = targets[0];
+  if (!target) throw new AIConfigurationError(coding);
+  if (targets.length !== 1 || !isMatrixModelId(target.model)) {
+    throw new Error(`MATRIX only runs ${MATRIX_MODEL_LABEL}; refusing to send a request to ${targets.length} route(s) / model "${target.model}".`);
+  }
+  return target;
+}
+
+/** Completion used by Agent mode, builds and non-streaming chat. */
+export async function completeWithModel(
   targets: AIRouteTarget[],
   request: RequestOptions,
 ): Promise<CompletedAIResponse> {
-  if (!targets.length) throw new AIConfigurationError(true);
+  const target = theOneRoute(targets, true);
   let lastError: AIProviderError | null = null;
-  const attempts: FailedAttempt[] = [];
-  let routeIndex = 0;
-  let first = true;
-
-  while (routeIndex >= 0 && routeIndex < targets.length) {
-    const target = targets[routeIndex];
-    const tries = first ? 2 : 1;
-    let advanceTo = -1;
-    for (let attempt = 0; attempt < tries; attempt += 1) {
-      if (budgetExhausted(request.deadlineAt) && lastError) throw lastError;
-      const started = Date.now();
-      try {
-        const useStream = request.aggregateStream === true && !request.tools?.length && typeof target.client.streamChat === "function";
-        let response: AIProviderResponse;
-        if (useStream) {
-          response = await aggregateStream(target, request);
-        } else {
-          const { aggregateStream: _a, deadlineAt: _d, onFallback: _f, ...providerRequest } = request;
-          void _a; void _d; void _f;
-          response = await target.client.chat({ ...providerRequest, model: target.model, messages: request.messages });
-        }
-        if (!response.content?.trim() && !response.toolCalls?.length) {
-          throw new AIProviderError({
-            provider: target.provider,
-            model: target.model,
-            type: "empty_response",
-            detail: "provider returned no assistant content",
-            requestId: request.requestId,
-            retryable: true,
-            fallbackEligible: true,
-          });
-        }
-        reportModelResult(target, Date.now() - started);
-        return { target, response, attempts, fallback: routeIndex > 0 };
-      } catch (error) {
-        if (request.signal?.aborted) throw error;
-        const typed = asProviderError(target, error, request.requestId);
-        lastError = typed;
-        reportModelResult(target, Date.now() - started, typed);
-        logProviderFailure(typed, request.requestId);
-        if (attempt + 1 < tries && canTryAgain(typed)) {
-          await waitBriefly();
-          continue;
-        }
-        attempts.push(failedAttempt(typed));
-        advanceTo = nextRouteIndex(targets, routeIndex, typed);
-        if (advanceTo < 0) throw typed;
-        request.onFallback?.(attempts[attempts.length - 1], targets[advanceTo]);
-        break;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (budgetExhausted(request.deadlineAt) && lastError) throw lastError;
+    try {
+      const useStream = request.aggregateStream === true && !request.tools?.length && typeof target.client.streamChat === "function";
+      let response: AIProviderResponse;
+      if (useStream) {
+        response = await aggregateStream(target, request);
+      } else {
+        const { aggregateStream: _a, deadlineAt: _d, ...providerRequest } = request;
+        void _a; void _d;
+        response = await target.client.chat({ ...providerRequest, model: target.model, messages: request.messages });
       }
+      if (!response.content?.trim() && !response.toolCalls?.length) {
+        throw new AIProviderError({
+          provider: target.provider,
+          model: target.model,
+          type: "empty_response",
+          detail: "provider returned no assistant content",
+          requestId: request.requestId,
+          retryable: true,
+        });
+      }
+      return { target, response };
+    } catch (error) {
+      if (request.signal?.aborted) throw error;
+      const typed = asProviderError(target, error, request.requestId);
+      lastError = typed;
+      logProviderFailure(typed, request.requestId);
+      if (attempt === 0 && canTryAgain(typed)) {
+        await waitBriefly();
+        continue;
+      }
+      throw typed;
     }
-    first = false;
-    routeIndex = advanceTo;
   }
   throw lastError ?? new AIConfigurationError(true);
 }
 
-export type StreamRouteCallback = (target: AIRouteTarget, fallback: boolean, failed?: FailedAttempt) => void;
-
 /**
- * Streaming equivalent. A failed upstream is retried once before the
- * fallback. Once any content has been yielded, the response is not silently
- * switched to a second model; the partial output is preserved and the caller
- * receives the real provider error.
+ * Streaming equivalent. A failure before any output is retried once on the
+ * same model. Once content has been yielded the stream is never restarted:
+ * the partial output is preserved and the caller receives the real error.
  */
-export async function* streamWithFallback(
+export async function* streamWithModel(
   targets: AIRouteTarget[],
   request: RequestOptions,
-  onRoute: StreamRouteCallback,
+  onStart?: (target: AIRouteTarget) => void,
 ): AsyncGenerator<{ delta: string; target: AIRouteTarget }> {
-  if (!targets.length) throw new AIConfigurationError(false);
+  const target = theOneRoute(targets, false);
   let lastError: AIProviderError | null = null;
-  let lastFailed: FailedAttempt | undefined;
-  let routeIndex = 0;
-  let first = true;
-
-  while (routeIndex >= 0 && routeIndex < targets.length) {
-    const target = targets[routeIndex];
-    const tries = first ? 2 : 1;
-    let advanceTo = -1;
-    for (let attempt = 0; attempt < tries; attempt += 1) {
-      let yielded = false;
-      const started = Date.now();
-      try {
-        onRoute(target, routeIndex > 0, lastFailed);
-        if (!target.client.streamChat) throw new Error("provider does not support streaming");
-        const { aggregateStream: _a, deadlineAt: _d, onFallback: _f, ...providerRequest } = request;
-        void _a; void _d; void _f;
-        for await (const delta of target.client.streamChat({
-          ...providerRequest,
-          model: target.model,
-          messages: request.messages,
-        })) {
-          yielded = true;
-          yield { delta, target };
-        }
-        if (!yielded) {
-          throw new AIProviderError({
-            provider: target.provider,
-            model: target.model,
-            type: "empty_response",
-            detail: "provider returned no streamed assistant content",
-            requestId: request.requestId,
-            retryable: true,
-            fallbackEligible: true,
-          });
-        }
-        reportModelResult(target, Date.now() - started);
-        return;
-      } catch (error) {
-        if (request.signal?.aborted) throw error;
-        const typed = asProviderError(target, error, request.requestId);
-        lastError = typed;
-        reportModelResult(target, Date.now() - started, typed);
-        logProviderFailure(typed, request.requestId);
-        // Do not splice two unrelated answers together after content reached
-        // the browser. The route persists the partial answer and reports it.
-        if (yielded) throw typed;
-        if (attempt + 1 < tries && canTryAgain(typed)) {
-          await waitBriefly();
-          continue;
-        }
-        lastFailed = failedAttempt(typed);
-        advanceTo = nextRouteIndex(targets, routeIndex, typed);
-        if (advanceTo < 0) throw typed;
-        request.onFallback?.(lastFailed, targets[advanceTo]);
-        break;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let yielded = false;
+    try {
+      onStart?.(target);
+      if (!target.client.streamChat) throw new Error("provider does not support streaming");
+      const { aggregateStream: _a, deadlineAt: _d, ...providerRequest } = request;
+      void _a; void _d;
+      for await (const delta of target.client.streamChat({ ...providerRequest, model: target.model, messages: request.messages })) {
+        yielded = true;
+        yield { delta, target };
       }
+      if (!yielded) {
+        throw new AIProviderError({
+          provider: target.provider,
+          model: target.model,
+          type: "empty_response",
+          detail: "provider returned no streamed assistant content",
+          requestId: request.requestId,
+          retryable: true,
+        });
+      }
+      return;
+    } catch (error) {
+      if (request.signal?.aborted) throw error;
+      const typed = asProviderError(target, error, request.requestId);
+      lastError = typed;
+      logProviderFailure(typed, request.requestId);
+      if (yielded) throw typed;
+      if (attempt === 0 && canTryAgain(typed)) {
+        await waitBriefly();
+        continue;
+      }
+      throw typed;
     }
-    first = false;
-    routeIndex = advanceTo;
   }
   throw lastError ?? new AIConfigurationError(false);
 }

@@ -1,7 +1,7 @@
 // Shared, honest provider health probing.
 //
 // A GET /models "health check" LIES on many OpenAI-compatible services:
-// OpenRouter (and most proxies/mirrors) answer 200 for /models WITHOUT any
+// many proxies/mirrors answer 200 for /models WITHOUT any
 // valid API key, so an operator with a revoked/typo'd key sees
 // "ai: online" in /api/health and "AI Online" in the UI while EVERY real chat
 // request fails with 401. The only truthful check is a tiny real

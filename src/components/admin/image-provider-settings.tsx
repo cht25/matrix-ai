@@ -45,12 +45,6 @@ const TEST_MESSAGES: Record<string, string> = {
 };
 
 const PROVIDER_MODELS: Record<string, Array<{ id: string; label: string }>> = {
-  glm: [
-    { id: "cogview-4", label: "GLM CogView-4 (Primary)" },
-    { id: "glm-image", label: "GLM Image" },
-    { id: "cogview-4-250304", label: "GLM CogView-4 (250304)" },
-    { id: "cogview-3-flash", label: "GLM CogView-3 Flash (Fast)" },
-  ],
   together: [
     { id: "black-forest-labs/FLUX.1-schnell-Free", label: "FLUX.1 schnell (free)" },
     { id: "black-forest-labs/FLUX.1-schnell", label: "FLUX.1 schnell" },
@@ -63,7 +57,7 @@ const PROVIDER_MODELS: Record<string, Array<{ id: string; label: string }>> = {
 export function ImageProviderSettings() {
   const [config, setConfig] = useState<PublicConfig | null>(null);
   const [loading, setLoading] = useState(true);
-  const [provider, setProvider] = useState("glm");
+  const [provider, setProvider] = useState("together");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [replacingKey, setReplacingKey] = useState(false);
@@ -149,15 +143,15 @@ export function ImageProviderSettings() {
 
   const models = config?.provider === provider && config.available_models?.length
     ? config.available_models
-    : (PROVIDER_MODELS[provider] ?? PROVIDER_MODELS.glm);
+    : (PROVIDER_MODELS[provider] ?? PROVIDER_MODELS.together);
 
   return (
     <Card className="space-y-5">
       <div>
         <p className="eyebrow">AI providers</p>
-        <h2 className="mt-1 text-lg font-semibold text-ink">Image generation (GLM Primary)</h2>
+        <h2 className="mt-1 text-lg font-semibold text-ink">Image generation</h2>
         <p className="mt-1 text-sm text-ink-2">
-          MATRIX generates images with GLM (Zhipu / Z.ai CogView) by default from the server. The API key is encrypted at rest and is
+          MATRIX generates images with Together AI from the server. This is a media service; all language work is done by GPT OSS 120B. The API key is encrypted at rest and is
           never sent to the browser.
         </p>
       </div>
@@ -174,7 +168,6 @@ export function ImageProviderSettings() {
               if (nextModels[0]) setModel(nextModels[0].id);
             }}
           >
-            <option value="glm">GLM (Zhipu / Z.ai CogView)</option>
             <option value="together">Together AI</option>
           </Select>
         </Field>

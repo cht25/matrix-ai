@@ -39,7 +39,6 @@ export type BuildStreamHandlers = {
 export type BuildStartInput = {
   prompt: string;
   taskContext?: PendingAgentTask | null;
-  selectedModel?: { providerId: string; modelId: string } | null;
   visibleMessage?: string;
   projectId?: string | null;
   workspaceProjectId?: string | null;
@@ -109,8 +108,6 @@ export async function streamBuildRun(
       body: JSON.stringify({
         prompt: input.prompt,
         task_context: input.taskContext ?? null,
-        provider_id: input.selectedModel?.providerId ?? null,
-        model_id: input.selectedModel?.modelId ?? null,
         visible_message: input.visibleMessage ?? null,
         project_id: input.projectId ?? null,
         workspace_project_id: input.workspaceProjectId ?? null,

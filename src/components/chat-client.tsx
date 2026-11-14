@@ -35,6 +35,7 @@ import { Markdown } from "@/components/markdown";
 import { MatrixMark, MatrixWordmark } from "@/components/logo";
 import { useToast } from "@/components/toast";
 import { ServerProblem } from "@/components/server-problem";
+import { MATRIX_MODEL_LABEL } from "@/lib/ai/model";
 import { classifyGatewayResponse, classifyRequestException, failureCopy, withRequestReference, type ApiFailure } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n/client";
 import { useIsCompact } from "@/lib/client/use-media-query";
@@ -195,15 +196,13 @@ export function ChatClient({
   const [lane, setLane] = useState<ModelLane>("auto");
   const [revealMode, setRevealMode] = useState<RevealMode>("adaptive");
   const revealModeRef = useRef<RevealMode>("adaptive");
-  const [modelPreferences, setModelPreferences] = useState<{ chat: { provider_id: string; model_id: string }; agent: { provider_id: string; model_id: string } }>({ chat: { provider_id: "", model_id: "" }, agent: { provider_id: "", model_id: "" } });
   const preferenceMode = mode === "agent" || mode === "code" ? "agent" : "chat";
-  const modelPreference = modelPreferences[preferenceMode];
   useEffect(() => {
     let active = true;
     void fetch("/api/models", { credentials: "same-origin", cache: "no-store" }).then(async (response) => {
       if (!response.ok) return null;
-      return response.json() as Promise<{ preference?: { provider_id: string; model_id: string }; preferences?: typeof modelPreferences; reveal_mode?: RevealMode }>;
-    }).then((data) => { if (active && data?.preferences) setModelPreferences(data.preferences);
+      return response.json() as Promise<{ reveal_mode?: RevealMode }>;
+    }).then((data) => {
       if (active && data?.reveal_mode && ["adaptive", "word", "natural", "reduced"].includes(data.reveal_mode)) { setRevealMode(data.reveal_mode); revealModeRef.current = data.reveal_mode; } }).catch(() => {});
     return () => { active = false; };
   }, []);
@@ -1114,7 +1113,6 @@ export function ChatClient({
       replaceLastAssistant?: boolean;
       reuseUser?: boolean;
       regenerate?: boolean;
-      preferFallback?: boolean;
       attachments?: PendingAttachment[];
       imageStoragePath?: string | null;
       intent?: IntentResult;
@@ -1242,8 +1240,6 @@ export function ChatClient({
           is_temporary: isTemporary,
           mode: messageMode,
           lane,
-          provider_id: modelPreference.provider_id || undefined,
-          model_id: modelPreference.model_id || undefined,
           strategy,
           study_level: studyLevel,
           explain_style: explainStyle,
@@ -1255,7 +1251,6 @@ export function ChatClient({
           language: locale,
           regenerate: opts.regenerate === true,
           reuse_user: opts.reuseUser === true || opts.regenerate === true,
-          prefer_fallback: opts.preferFallback === true,
           request_id: requestId,
         }),
         signal: controller.signal,
@@ -1286,7 +1281,6 @@ export function ChatClient({
           tier?: "high" | "low";
           steps?: WorkingStep[];
           duration_ms?: number;
-          fallback?: boolean;
           theme_gallery?: boolean;
           storage_degraded?: boolean;
           image?: { data_url?: string };
@@ -1305,7 +1299,7 @@ export function ChatClient({
           streamMetadata.mode = "image";
           streamMetadata.image_data_url = data.image.data_url;
           streamMetadata.model = data.model;
-          streamMetadata.provider = data.provider ?? "GLM";
+          streamMetadata.provider = data.provider ?? "together";
           commit(data.reply || "Image ready.");
           if (trackExecution) setExecution((current) => finishExecution(advanceExecution(current, { event: { at: Date.now(), type: "complete", message: "Response ready" } }), "complete"));
           setStreamStatus("complete");
@@ -1322,7 +1316,6 @@ export function ChatClient({
           streamMetadata.tier = data.tier;
           if (data.steps?.length) streamMetadata.steps = data.steps;
           if (typeof data.duration_ms === "number") streamMetadata.duration_ms = data.duration_ms;
-          streamMetadata.fallback = data.fallback;
           streamMetadata.action = data.theme_gallery ? "theme_gallery" : undefined;
           commit(data.reply);
           maybeAutoSpeak(data.reply);
@@ -1367,7 +1360,6 @@ export function ChatClient({
         step?: WorkingStep;
         steps?: WorkingStep[];
         duration_ms?: number;
-        fallback?: boolean;
         storage_degraded?: boolean;
         stage?: AgentStageId;
         label?: string;
@@ -1420,7 +1412,6 @@ export function ChatClient({
         if (data.mode) streamMetadata.mode = data.mode;
         if (typeof data.coding_detected === "boolean") streamMetadata.coding_detected = data.coding_detected;
         if (data.provider) { streamMetadata.provider = data.provider; setActiveProvider((old) => old === data.provider ? old : data.provider!); }
-        if (typeof data.fallback === "boolean") streamMetadata.fallback = data.fallback;
         if (typeof data.delta === "string") {
           collected += data.delta;
           if (messageMode !== "agent") queuePaint();
@@ -1747,7 +1738,6 @@ export function ChatClient({
         {
           prompt: message,
           taskContext,
-          selectedModel: modelPreferences.agent.model_id ? { providerId: modelPreferences.agent.provider_id, modelId: modelPreferences.agent.model_id } : null,
           visibleMessage,
           projectId: selectedForThisRequest,
           workspaceProjectId: agentProjectId,
@@ -1766,8 +1756,7 @@ export function ChatClient({
           onRun: (run) => {
             setBuildPending(false);
             setBuildRun(run);
-            // Show the model that is actually producing the files, including
-            // after a server-side fallback — not the one that was requested.
+            // Show the model that is producing the files.
             if (run.model) {
               const { model: runModel, provider: runProvider } = run.model;
               setActiveModel((old) => old === runModel ? old : runModel);
@@ -1853,7 +1842,7 @@ export function ChatClient({
       {
         mode: mode === "code" ? "code" : "agent",
         project_id: projectId ?? undefined,
-        ...(run?.model ? { model: run.model.model, provider: run.model.provider, fallback: run.model.fallback } : {}),
+        ...(run?.model ? { model: run.model.model, provider: run.model.provider } : {}),
         build: run && run.status !== "awaiting_input" ? toRunSnapshot(run) : undefined,
         agent_task: run?.status === "awaiting_input" ? agentTaskRef.current ?? undefined : undefined,
         deployment: run?.deployment
@@ -1960,20 +1949,6 @@ export function ChatClient({
     });
   }
 
-  function tryAnotherModel() {
-    if (!lastUserMessage || streaming || requestInFlightRef.current) return;
-    setFailure(null);
-    const hasUser = messages.some((message) => message.role === "user" && message.content === lastUserMessage);
-    if (!hasUser) {
-      setMessages((current) => [...current, { role: "user", content: lastUserMessage, created_at: new Date().toISOString() }]);
-    }
-    void streamMessage(lastUserMessage, {
-      reuseUser: Boolean(convIdRef.current),
-      preferFallback: true,
-      attachments: lastAttachmentsRef.current,
-      imageStoragePath: lastImagePathRef.current,
-    });
-  }
 
   /** Follow-up prompt used by contextual actions (Explain, Sources, …). */
   function askFollowUp(prompt: string) {
@@ -2010,102 +1985,9 @@ export function ChatClient({
       }
       return;
     }
-    if (file.size > 8 * 1024 * 1024) {
-      setFailure({ ...failureCopy("invalid-request"), title: "Upload failed", detail: "The image is too large (maximum 8 MB). Choose a smaller screenshot.", retryable: false });
-      return;
-    }
-    if (!firebaseBrowserConfigured) {
-      setFailure({ ...failureCopy("not-configured"), detail: "The MATRIX backend is not configured on this deployment yet, so screenshots cannot be analysed." });
-      return;
-    }
-    if (mode === "agent" && attachments.length >= 8) {
-      setFailure({ ...failureCopy("invalid-request"), title: "Attachment limit reached", detail: "You can attach up to 8 files in one Agent request.", retryable: false });
-      return;
-    }
-
-    if (mode !== "agent") {
-      setUploadingImage(true);
-      try {
-        const user = await waitForAuthUser();
-        if (!user) {
-          setFailure(failureCopy("auth"));
-          return;
-        }
-        const path = await uploadOwnedFile("security-screenshots", file);
-        if (!path) {
-          setFailure({ ...failureCopy("server"), title: "Upload failed", detail: "The image could not be uploaded to Cloudinary. Please try again." });
-          return;
-        }
-        setPendingImage((prev) => {
-          if (prev) URL.revokeObjectURL(prev.previewUrl);
-          return { name: file.name || "image.png", storagePath: path, previewUrl: URL.createObjectURL(file), size: file.size };
-        });
-        setNotice(`${file.name || "Image"} uploaded privately to Cloudinary. Add a question or press Send to analyse it.`);
-      } catch (err) {
-        setFailure(classifyRequestException(err));
-      } finally {
-        setUploadingImage(false);
-      }
-      return;
-    }
-
-    setStreaming(true);
-    setStreamedText("");
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    try {
-      const user = await waitForAuthUser();
-      if (!user) {
-        setFailure(failureCopy("auth"));
-        return;
-      }
-
-      armIdleTimer(CONNECT_TIMEOUT_MS, controller);
-      const path = await uploadOwnedFile("security-screenshots", file);
-      if (!path) {
-        clearIdleTimer();
-        setFailure({ ...failureCopy("server"), title: "Upload failed", detail: "The screenshot could not be uploaded. Please try again." });
-        return;
-      }
-
-      const res = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({ action: "scan", storage_path: path, purpose: "agent_reference" }),
-        signal: controller.signal,
-      });
-      clearIdleTimer();
-
-      if (!res.ok) {
-        setFailure(classifyGatewayResponse(res.status, await parseErrorCode(res)));
-        return;
-      }
-      const data = (await res.json()) as { reply?: string; error?: string };
-      if (!data.reply || data.error) {
-        setFailure(classifyGatewayResponse(502, typeof data.error === "string" ? data.error : null));
-        return;
-      }
-      setAttachments((current) => [
-        ...current.filter((item) => item.name !== file.name),
-        {
-          name: file.name,
-          type: "text/plain",
-          content: `Visual reference derived from the attached image ${file.name}:\n${data.reply}`,
-          size: file.size,
-        },
-      ]);
-      setNotice(`${file.name} was inspected and is ready as Agent context. Add an instruction, then send.`);
-    } catch (err) {
-      const userStopped = err instanceof DOMException && err.name === "AbortError";
-      if (!userStopped) setFailure(classifyRequestException(err));
-    } finally {
-      clearIdleTimer();
-      setStreaming(false);
-      setStreamedText(null);
-      abortRef.current = null;
-    }
+    // MATRIX runs only GPT OSS 120B, a text model. Images cannot be read, so
+    // nothing is uploaded and the limitation is stated plainly.
+    setFailure(failureCopy("vision-unsupported"));
   }
 
   function copyMessage(text: string) {
@@ -2305,7 +2187,7 @@ export function ChatClient({
                       }}
                       artifactActions={{
                         canOpen: Boolean(format && OPENABLE.includes(format)),
-                        provider: kind === "image" ? (message.metadata?.provider ?? "GLM") : null,
+                        provider: kind === "image" ? (message.metadata?.provider ?? "together") : null,
                       }}
                     />
                   </div>
@@ -2331,7 +2213,7 @@ export function ChatClient({
           onToggleAutoSpeak={toggleAutoSpeak}
           demoMode={demoMode}
           onToggleDemo={() => setDemoMode((value) => !value)}
-          routingLabel={modelPreference.model_id ? `${modelPreference.provider_id} · ${modelPreference.model_id}` : routingLabel ?? (preferenceMode === "agent" ? "Agent · best eligible model" : "Chat · OSS 120B")}
+          routingLabel={MATRIX_MODEL_LABEL}
           workspaceCount={mode === "agent" ? agentFiles.length : 0}
           onOpenWorkspace={() => setWorkspaceOpen(true)}
           autoSpeakLabels={{ on: t("chat.autoSpeakOn"), off: t("chat.autoSpeakOff") }}
@@ -2425,7 +2307,7 @@ export function ChatClient({
                   {imageRun ? (
                     <ArtifactCard
                       state={beginArtifact(requestArtifact(emptyArtifactState(), { type: "IMAGE", title: "Matrix image" }))}
-                      provider="GLM"
+                      provider="together"
                     />
                   ) : null}
                   {buildRun ? null : (
@@ -2456,7 +2338,7 @@ export function ChatClient({
             ) : null}
 
             {failure ? (
-              <ServerProblem failure={failure} onRetry={buildRun?.status === "failed" ? retryBuild : retry} onTryAnotherModel={tryAnotherModel} onDismiss={() => setFailure(null)} />
+              <ServerProblem failure={failure} onRetry={buildRun?.status === "failed" ? retryBuild : retry} onDismiss={() => setFailure(null)} />
             ) : null}
             {projectChoices.length ? (
               <div className="rounded-xl border border-border bg-surface p-4" role="group" aria-label="Choose project to edit">
@@ -2482,7 +2364,7 @@ export function ChatClient({
       ) : null}
       </div>
 
-      <div className="mx-auto mb-2 flex max-w-2xl flex-wrap items-center justify-end gap-2 text-[11px] text-ink-3">{modelPreference.model_id ? <button type="button" className="rounded-md border border-border px-2 py-1" onClick={() => { void rpc("model_preference_set", { mode: preferenceMode, provider_id: "", model_id: "" }).then(() => setModelPreferences((current) => ({ ...current, [preferenceMode]: { provider_id: "", model_id: "" } }))).catch(() => setNotice("Could not reset model preference.")); }}>Return to {preferenceMode === "agent" ? "Agent auto" : "OSS 120B"}</button> : null}<label htmlFor="stream-reveal">Response display</label><select id="stream-reveal" aria-label="Response display mode" className="rounded-md border border-border bg-surface px-2 py-1 text-ink" value={revealMode} onChange={(event) => { const next = event.target.value as RevealMode; setRevealMode(next); revealModeRef.current = next; void rpc("settings_update", { stream_reveal_mode: next }).catch(() => setNotice("Display preference could not be saved.")); }}><option value="adaptive">Adaptive typing</option><option value="word">Word by word</option><option value="natural">Natural stream</option><option value="reduced">Reduced motion</option></select></div>
+      <div className="mx-auto mb-2 flex max-w-2xl flex-wrap items-center justify-end gap-2 text-[11px] text-ink-3"><label htmlFor="stream-reveal">Response display</label><select id="stream-reveal" aria-label="Response display mode" className="rounded-md border border-border bg-surface px-2 py-1 text-ink" value={revealMode} onChange={(event) => { const next = event.target.value as RevealMode; setRevealMode(next); revealModeRef.current = next; void rpc("settings_update", { stream_reveal_mode: next }).catch(() => setNotice("Display preference could not be saved.")); }}><option value="adaptive">Adaptive typing</option><option value="word">Word by word</option><option value="natural">Natural stream</option><option value="reduced">Reduced motion</option></select></div>
       {transcribing ? <VoiceProcessing onCancel={() => transcribeAbortRef.current?.abort()} /> : null}
       {voiceReview && !recording && !transcribing ? (
         <VoiceReviewBar
@@ -2578,7 +2460,7 @@ export function ChatClient({
           <input
             ref={fileRef}
             type="file"
-            accept="image/png,image/jpeg,image/webp,.txt,.md,.mdx,.json,.jsonc,.js,.jsx,.mjs,.cjs,.ts,.tsx,.py,.html,.htm,.css,.scss,.sass,.less,.vue,.svelte,.sql,.graphql,.yaml,.yml,.toml,.xml,.env,.sh,.bash,.go,.rs,.java,.kt,.php,.rb,.swift,.dart,.c,.h,.cc,.cpp,.cs,Dockerfile,Makefile"
+            accept=".txt,.md,.mdx,.json,.jsonc,.js,.jsx,.mjs,.cjs,.ts,.tsx,.py,.html,.htm,.css,.scss,.sass,.less,.vue,.svelte,.sql,.graphql,.yaml,.yml,.toml,.xml,.env,.sh,.bash,.go,.rs,.java,.kt,.php,.rb,.swift,.dart,.c,.h,.cc,.cpp,.cs,Dockerfile,Makefile"
             className="sr-only"
             onChange={(e) => void handleFile(e.target.files?.[0])}
           />
@@ -2643,9 +2525,6 @@ export function ChatClient({
               <button type="button" onClick={() => void toggleVoiceRecording()} disabled={streaming || transcribing} aria-label={voiceReview ? "Record more voice input" : "Voice input"} title={`Voice input · ${voiceLanguage(voiceLang).label}`} className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors duration-150 hover:bg-surface-2 hover:text-ink disabled:opacity-50", voiceReview ? "bg-accent-soft text-accent" : "text-ink-3")}><Mic size={16} strokeWidth={1.7} /></button>
               <button type="button" onClick={() => fileRef.current?.click()} disabled={streaming} aria-label="Attach a file" title="Attach a file" className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] text-ink-3 transition-colors duration-150 hover:bg-surface-2 hover:text-ink disabled:opacity-40">
                 <Paperclip size={16} strokeWidth={1.7} />
-              </button>
-              <button type="button" onClick={() => imageRef.current?.click()} disabled={streaming} aria-label="Attach an image" title="Attach an image" className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] text-ink-3 transition-colors duration-150 hover:bg-surface-2 hover:text-ink disabled:opacity-40">
-                <ImageIcon size={16} strokeWidth={1.7} />
               </button>
               <button
                 type="button"

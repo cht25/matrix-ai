@@ -14,6 +14,7 @@ import { Check, ChevronRight, Loader2, XCircle } from "lucide-react";
 import type { ChatMode } from "@/lib/ai/modes";
 import type { WorkingStep } from "@/lib/chat-messages";
 import { cn } from "@/lib/utils";
+import { MATRIX_MODEL_LABEL, isMatrixModelId } from "@/lib/ai/model";
 
 function useElapsed(active: boolean) {
   const [elapsed, setElapsed] = useState(0);
@@ -40,10 +41,10 @@ export function statusCopy(mode: ChatMode, streamStatus?: string | null): string
   if (streamStatus === "finalizing") return "Finalizing response…";
   if (streamStatus && streamStatus !== "connecting" && streamStatus !== "complete") return "Generating response…";
   switch (mode) {
-    case "image": return "Generating image with GLM…";
+    case "image": return "Generating image…";
     case "agent": return "Running agent task…";
     case "research": return "Synthesizing research…";
-    case "code": return "Writing code with GLM…";
+    case "code": return "Writing code…";
     case "study": return "Preparing study guide…";
     default: return "Working…";
   }
@@ -99,15 +100,7 @@ export function ResponseProgress({
   const activeStep = [...steps].reverse().find((s) => s.status === "running") ?? steps[steps.length - 1];
   const label = activeStep ? activeStep.label : statusCopy(mode, streamStatus);
   const hasSteps = steps.length > 0;
-  const badge = provider
-    ? provider === "GLM"
-      ? "GLM"
-      : model?.includes("gpt-oss-120b")
-        ? "gpt-oss-120b"
-        : provider
-    : tier === "high"
-      ? "GLM"
-      : null;
+  const badge = isMatrixModelId(model) ? MATRIX_MODEL_LABEL : provider || (tier ? MATRIX_MODEL_LABEL : null);
 
   return (
     <div className={cn("mb-2 max-w-xl", className)} role="status" aria-live="polite">
@@ -173,11 +166,7 @@ export function CompactStepsPill({
   const totalMs = typeof durationMs === "number" && durationMs > 0
     ? durationMs
     : steps.reduce((acc, s) => acc + (s.durationMs ?? 0), 0);
-  const badge = provider === "GLM"
-    ? "GLM"
-    : model?.includes("gpt-oss-120b")
-      ? "gpt-oss-120b"
-      : provider || null;
+  const badge = isMatrixModelId(model) ? MATRIX_MODEL_LABEL : provider || null;
 
   return (
     <div className={cn("mb-2 max-w-xl", className)}>

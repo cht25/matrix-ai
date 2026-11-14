@@ -1,6 +1,6 @@
 // Reasoning / chain-of-thought scrubbing.
 //
-// Some reasoning models (DeepSeek, Qwen3, GPT-OSS, NVIDIA Nemotron, and a few
+// Some reasoning models (DeepSeek, Qwen3, GPT-OSS, and a few
 // OpenAI-compatible mirrors of those models) return their "thinking" either in
 // a separate `reasoning_content` / `reasoning` field or — for endpoints that do
 // not separate it — inline inside `content`. MATRIX is an education assistant,

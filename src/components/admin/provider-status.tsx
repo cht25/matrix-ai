@@ -68,7 +68,7 @@ export function ProviderStatus() {
           health.imageAi,
           health.imageAi === "online" ? `${health.imageProvider ?? "Provider"} connected` : "",
         ),
-        rowFor("Agent runtime", health.codingAi, health.codingAi === "online" ? `${health.codingProvider ?? ""} ${health.codingModel ?? ""}`.trim() : ""),
+        rowFor("Agent runtime (same model)", health.codingAi, health.codingAi === "online" ? `${health.codingProvider ?? ""} ${health.codingModel ?? ""}`.trim() : ""),
         rowFor("Database", health.firebase, health.firebase === "reachable" ? "Healthy" : ""),
       ]
     : [];

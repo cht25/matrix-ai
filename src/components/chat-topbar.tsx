@@ -89,7 +89,7 @@ export function ChatTopBar({
             <option key={item.id} value={item.id}>{item.label}</option>
           ))}
         </select>
-        <Link href="/models" className={cn(SELECT, "hidden text-ink-2 sm:inline-flex")} title="Choose a verified model"><Cpu size={14} /> Models</Link>
+        <Link href="/models" className={cn(SELECT, "hidden text-ink-2 sm:inline-flex")} title="AI model status"><Cpu size={14} /> GPT OSS 120B</Link>
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">

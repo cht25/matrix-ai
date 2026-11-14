@@ -167,16 +167,9 @@ export function DeploymentRow({
             {overview?.last_deployed_at ? <Stat label="Deployed" value={relativeTime(overview.last_deployed_at)} /> : null}
             {overview?.deployments?.[0]?.bytes ? <Stat label="Uploaded" value={formatBytes(overview.deployments[0].bytes)} /> : null}
             {run.attempts ? <Stat label="Auto-fix" value={`${run.attempts}/${run.maxAttempts}`} /> : null}
-            {run.model ? <Stat label={run.model.fallback ? "Model (fallback)" : "Model"} value={`${run.model.provider} · ${run.model.model}`} /> : null}
+            {run.model ? <Stat label="Model" value={`${run.model.provider} · ${run.model.model}`} /> : null}
             {run.design ? <Stat label="Design" value={`${run.design.direction} · ${run.design.mode}`} /> : null}
           </dl>
-          {run.model?.failed.length ? (
-            <p className="break-words rounded-lg border border-warning/30 bg-warn-soft/15 px-2.5 py-2 text-[11.5px] leading-5 text-ink-2" role="status">
-              <span className="font-semibold text-ink">Model fallback used.</span>{" "}
-              {run.model.requested ? `Requested ${run.model.requested}. ` : ""}
-              {run.model.failed.join(" · ")} → answered by {run.model.provider} {run.model.model}.
-            </p>
-          ) : null}
           {run.design ? (
             <p className="flex flex-wrap items-center gap-2 text-[11.5px] text-ink-3">
               <span className="inline-flex items-center gap-1"><span aria-hidden className="inline-block h-3 w-3 rounded-full border border-border" style={{ background: run.design.primary }} />{run.design.primary}</span>

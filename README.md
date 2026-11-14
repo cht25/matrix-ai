@@ -5,7 +5,7 @@
 MATRIX AI is a production-ready, multilingual workspace that combines a broadly useful assistant with
 cyber-safety tools, learning, and a dedicated software Agent. General Chat helps with writing, study,
 planning, research, technology and safe digital life. Normal Chat defaults to configured
-**OSS 120B**; Agent has an independent, capability-ranked GLM-first coding policy. Explicit Agent mode adds text/code attachments,
+**GPT OSS 120B** — the one model behind Chat, Agent and every AI feature. Explicit Agent mode adds text/code attachments,
 reviewable file artifacts, a sandboxed static live preview, and encrypted GitHub OAuth with
 review-before-push atomic commits. Existing screenshot scanning, scam reporting, courses, certificates,
 security dashboard and RBAC administration remain available.
@@ -55,11 +55,11 @@ the browser or an AI prompt.
 | Storage | **Cloudinary** (free tier) — server-signed uploads, private (authenticated) assets only |
 | Authorization | Firestore **security rules** + a server-side RPC layer (`src/lib/server/rpc.ts`) that ports every Postgres `SECURITY DEFINER` function |
 | Backend/API | Next.js route handlers (Node runtime, Admin SDK) |
-| AI | **Separate policies**: Normal Chat defaults to configured OSS 120B (Groq or dedicated compatible provider), never GLM automatically; Agent ranks configured tool-capable GLM and other provider models by estimated capability, live catalogue IDs where supported, recent result/latency and bounded fallbacks. Explicit per-mode model preferences are preserved; `/api/ai` reports the actual provider/model. Whisper/OpenAI/Gemini speech-to-text is separate from both model policies. |
+| AI | **One model**: GPT OSS 120B (`openai/gpt-oss-120b` on Groq) for Chat, Agent, website generation, code and every specialized agent. The ID is defined once in `src/lib/ai/model.ts`; `src/lib/ai/config.ts` builds the single server-side route. There is no model selector, no alternative provider and no fallback — a provider failure is shown as a real error with Retry. Whisper speech-to-text and Together image generation are separate media services. |
 | i18n | English + Bangla dictionaries (architecture ready for more) |
 | Tests | Vitest (AI pipeline, PII, classification, file validation, age rules, env config) |
 
-The Firebase service account, AI provider keys, GitHub OAuth secret and encrypted GitHub access tokens exist **only server-side** and are never exposed to the browser. For Z.ai international GLM chat, Agent coding, and image generation, see [Z.ai GLM setup and verification](docs/zai-glm-setup.md).
+The Firebase service account, AI provider keys, GitHub OAuth secret and encrypted GitHub access tokens exist **only server-side** and are never exposed to the browser.
 
 ---
 
@@ -79,7 +79,7 @@ Next.js server (any Node host / Firebase App Hosting)
   ├─ /api/rpc           ALL mutations — ports of the Postgres RPC layer
   │                      (ownership checks, validation, RBAC, audit, security events)
   ├─ /api/ai            AI gateway: rate limit → PII redaction → domain/safety
-  │                      classification → RAG → Groq or OpenRouter → validation
+  │                      classification → RAG → GPT OSS 120B → validation
   ├─ /api/upload-signature  one-shot signed Cloudinary upload grants
   ├─ /api/account/*     data export (GDPR-style) + self-service deletion w/ re-auth
   └─ /api/auth/session  session-cookie minting + user provisioning
@@ -123,7 +123,7 @@ src/
   lib/
     firebase/              client SDK (Auth/Firestore), Admin SDK, session cookies
     server/                rpc.ts (Postgres function ports) + queries.ts (page reads)
-    ai/                    Admin OpenAI-compatible provider, Groq + OpenRouter
+    ai/                    model.ts + config.ts: the single GPT OSS 120B route
                            fallbacks, coding detection, Agent artifact parser,
                            PII redaction, safety prompts, uploads
     server/github.ts       encrypted OAuth token store + atomic Git push
@@ -242,13 +242,10 @@ Whichever you choose, remember to:
 | `FIREBASE_CLIENT_EMAIL` | server only | Admin SDK service account |
 | `FIREBASE_PRIVATE_KEY` | server only | Admin SDK private key |
 | `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | server only | Private image and authenticated voice storage |
-| `GROQ_API_KEY` or `GPT_OSS_API_KEY` | server only | Normal Chat OSS 120B and optional Agent fallback; `GROQ_API_KEY` also enables Whisper multilingual STT |
+| `GROQ_API_KEY` | server only | GPT OSS 120B (the only language model) and Whisper multilingual STT |
+| `GPT_OSS_API_KEY` + `GPT_OSS_BASE_URL` | server only | Optional dedicated OpenAI-compatible endpoint serving the same GPT OSS 120B model instead of Groq (not a fallback) |
 | `GROQ_AUDIO_MODEL` | server only | Optional STT model (`whisper-large-v3-turbo` by default; `whisper-large-v3` for accuracy-sensitive multilingual recordings) |
-| `ZAI_API_KEY` or `GLM_API_KEY` | server only | Agent GLM account; `/models` discovery where supported, real model execution checks |
-| `OPENAI_API_KEY` / `OPENAI_AUDIO_MODEL` | server only | Optional alternative AI/STT provider (`whisper-1` default for STT) |
-| `GEMINI_API_KEY` / `GEMINI_AUDIO_MODEL` | server only | Optional explicitly configured audio transcription alternative |
-| `OPENROUTER_API_KEY` | server only | Coding auto-routing + Agent environment fallback → OpenRouter |
-| `OPENROUTER_CODING_MODEL` | server only | Optional coding-model override; defaults to `nvidia/nemotron-3-ultra-550b-a55b:free` |
+| `OPENAI_API_KEY` / `OPENAI_AUDIO_MODEL` | server only | Optional second speech-to-text service (`whisper-1` default). Speech only — never used for text generation |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | server only | GitHub OAuth App for Agent-mode repository access |
 | `GITHUB_TOKEN_ENCRYPTION_KEY` | server only | Encrypts GitHub tokens at rest (32+ random characters) |
 | `GITHUB_OAUTH_CALLBACK_URL` | server only | Exact OAuth callback (`https://host/api/github/callback`) |
@@ -284,18 +281,17 @@ Auth → Rate limit (ai_usage_logs: 20/min · 300/day chat; 5/min · 50/day scan
      → Broad task/coding detection + cyber-safety classification
      → Prompt construction (system + rolling summary + last 8 messages + safe memories)
      → RAG retrieval (document_chunks + scam articles + lessons + reporting resources)
-     → Chat: OSS 120B; other non-GLM providers on eligible failure.
-       Agent: rank discovered/configured tool-capable models by coding, reasoning,
-       latency and observed availability; GLM first when suitable. Never fall
-       through on bad credentials, permissions, billing, or malformed requests.
+     → GPT OSS 120B for every mode (Chat, Agent, build). One retry on the same
+       model for a transient error, then the real provider error — never
+       another model, never a fabricated reply.
      → streaming or structured Agent artifacts + output validation + PII-leak filter
      → Store allowed response → usage/safety logs
 ```
 
 Voice messages use browser MediaRecorder and an AnalyserNode-backed Canvas in the existing
 composer. Stop uploads an authenticated private Cloudinary recording, transcribes it with
-configured Whisper/OpenAI/Gemini speech-to-text (never with GLM text generation), and
-sends its transcript to the selected Chat model in the same conversation. Firestore
+Whisper speech-to-text (Groq, then OpenAI if configured), and
+sends its transcript to GPT OSS 120B as text in the same conversation. Firestore
 `chat_audio_assets` stores duration, real waveform samples, detected language,
 transcription status, and atomic conversation/message linkage; retry uses the stored
 asset without duplicating uploads. New-format unattached drafts older than a day are
@@ -448,14 +444,11 @@ reachability) — never a cached lie.
 **Health checks verify the real thing.** An AI provider is reported
 `online` only after a request that proves it:
 
-- admin-configured OpenAI-compatible endpoint → a **real 1-token
-  `/chat/completions` call against the configured model** (results cached 60 s
-  for successes / 5 s for failures so the UI poller cannot hammer quotas).
-  A `GET /models` check is NOT used: OpenRouter and most proxies answer it
-  `200` **without any valid key**, which once let the UI show "AI Online" while
-  every chat request failed with 401.
-- OpenRouter → `GET /auth/key` with the API key (validates the key + quota
-  without burning the per-model free-tier budget).
+- dedicated GPT OSS 120B endpoint (`GPT_OSS_BASE_URL`) → a **real 1-token
+  `/chat/completions` call against the model** (results cached 60 s for
+  successes / 5 s for failures so the UI poller cannot hammer quotas). A
+  `GET /models` check is NOT used there: many proxies answer it `200`
+  **without any valid key**.
 - Groq → `GET /models` with the API key (Groq's `/models` requires a valid
   key, so it is an honest signal).
 

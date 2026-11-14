@@ -126,9 +126,9 @@ export const DOC_SECTIONS: DocSection[] = [
         "Retry and Regenerate — recover from errors or get a fresh answer.",
         "Copy button on every assistant message.",
         "Markdown, lists and code blocks rendered safely.",
-        "Attach images, plain-text documents and common source-code files. If you refer to missing material, MATRIX asks you to provide it instead of guessing.",
+        "Attach plain-text documents and common source-code files (the model is text-only, so images cannot be read). If you refer to missing material, MATRIX asks you to provide it instead of guessing.",
         "Switch between General Chat and Agent; existing conversations keep their original mode.",
-        "See when a coding request was automatically handled by Nemotron 3 Ultra.",
+        "Every reply — chat, Agent, websites and code — comes from one model, GPT OSS 120B.",
         "Rename, archive, export (JSON) and delete conversations.",
         "Search your conversations from the sidebar.",
       ]},
@@ -188,7 +188,8 @@ export const DOC_SECTIONS: DocSection[] = [
     title: "Screenshot Scanner",
     icon: "🔍",
     blocks: [
-      { t: "p", text: "The scanner ( /scanner ) analyses screenshots of suspicious content: SMS messages, emails, websites, login pages, payment requests and social media posts." },
+      { t: "p", text: "Screenshot analysis is currently unavailable: MATRIX runs entirely on GPT OSS 120B, a text model that cannot read images, and it never switches to another model. To check a suspicious SMS, email or payment request, copy its text and paste it into Chat." },
+      { t: "p", text: "The steps below describe the scanner as it works when image analysis is available." },
       { t: "h2", text: "How to use it" },
       { t: "ol", items: [
         "Open /scanner.",
