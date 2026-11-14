@@ -175,7 +175,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
 
   if (input.taskId && !resumed) await bindBuildTask(d, user, input.taskId, { project_id: null, build_run_id: runId });
   const emit = async (stage?: BuildStageId): Promise<void> => {
-    await persist(d, runId, run);
+    await persist(d, runId, run, user.uid);
     if (run.taskId) {
       try { await syncBuildTask(d, user, run.taskId, run); }
       catch (error) { console.error("[build] task sync failed", error instanceof Error ? error.message : "unknown"); }
@@ -924,7 +924,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     // only if it is strictly better. Never loops, never blocks publishing.
     const designCheck = built.report.checks.find((check) => check.id === "design");
     const designProblems = designCheck ? significantDesignIssues(designCheck) : [];
-    if (!built.report.blocking && wantsGeneration && designProblems.length && Date.now() < aiDeadline - 60_000) {
+    if (!built.report.blocking && wantsGeneration && resumePhase !== "publish" && designProblems.length && Date.now() < aiDeadline - 60_000) {
       note("validate", "info", `Design review found ${designProblems.length} issue${designProblems.length === 1 ? "" : "s"}; requesting one improvement pass.`);
       await emit("validate");
       try {
@@ -1094,7 +1094,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         if (!closed.verified && run.status === "succeeded" && !run.deployment) {
           // Never report a success whose files are not in storage.
           run = failRun(run, { code: "PERSISTENCE_UNVERIFIED", message: `The work finished but could not be verified in project storage. ${closed.detail}` }, now());
-          await persist(d, runId, run).catch(() => undefined);
+          await persist(d, runId, run, user.uid).catch(() => undefined);
         }
       } catch { /* the cleanup job releases the environment */ }
     }
@@ -1275,11 +1275,13 @@ async function generateImageAssets(
 // Persistence
 // ---------------------------------------------------------------------------
 
-async function persist(d: Db, runId: string, run: BuildRun): Promise<void> {
+async function persist(d: Db, runId: string, run: BuildRun, ownerId?: string): Promise<void> {
   await d
     .collection("build_runs")
     .doc(runId)
-    .set({ run: toFirestoreRun(run), resumable: (run.status === "paused" && run.continuation?.available === true) || run.status === "running" || run.status === "requested", updated_at: nowTs() }, { merge: true })
+    // The owner is written with the run. Without it the stored run cannot be
+    // read back, cancelled, counted against the concurrency limit or resumed.
+    .set({ ...(ownerId ? { owner_id: ownerId } : {}), project_id: run.projectId ?? null, conversation_id: run.conversationId ?? null, run: toFirestoreRun(run), resumable: (run.status === "paused" && run.continuation?.available === true) || run.status === "running" || run.status === "requested", updated_at: nowTs() }, { merge: true })
     .catch(() => { throw new RpcError("PROJECT_STORAGE_UNAVAILABLE", 503, "Build state could not be saved. No further file operations were started."); });
 }
 

@@ -46,14 +46,16 @@ export function createFirestoreStub() {
     let limitCount: number | null = null;
 
     const self = {
-      doc: (docId: string) => makeDocRef(name, docId),
+      // Like Firestore: `doc()` with no id allocates one.
+      doc: (docId?: string) => makeDocRef(name, docId ?? nextId()),
       add: async (data: DocRecord) => {
         state.calls.push({ collection: name, method: "add" });
         const fault = takeFault(name, "add");
         if (fault) throw fault;
         const id = nextId();
         state.docs.set(`${name}/${id}`, structuredClone(data));
-        return { id };
+        // Like Firestore: `add` resolves to the new document's reference.
+        return makeDocRef(name, id);
       },
       where: (field: string, op: string, value: unknown) => {
         whereClauses.push({ field, op, value });
@@ -78,7 +80,7 @@ export function createFirestoreStub() {
         if (fault) throw fault;
         let docs = [...state.docs.entries()]
           .filter(([k]) => k.startsWith(`${name}/`) && !k.slice(name.length + 1).includes("/"))
-          .map(([k, data]) => ({ id: k.slice(name.length + 1), data: () => data, exists: true }));
+          .map(([k, data]) => ({ id: k.slice(name.length + 1), data: () => data, exists: true, ref: makeDocRef(name, k.slice(name.length + 1)) }));
         for (const clause of whereClauses) {
           docs = docs.filter((d) => {
             const value = (d.data() as Record<string, unknown>)[clause.field];
@@ -90,6 +92,9 @@ export function createFirestoreStub() {
         if (limitCount !== null) docs = docs.slice(0, limitCount);
         return { empty: docs.length === 0, docs, size: docs.length };
       },
+      listDocuments: async () => [...state.docs.keys()]
+        .filter((k) => k.startsWith(`${name}/`) && !k.slice(name.length + 1).includes("/"))
+        .map((k) => makeDocRef(name, k.slice(name.length + 1))),
     };
     return self;
   }
@@ -103,7 +108,16 @@ export function createFirestoreStub() {
         const fault = takeFault(name, "get");
         if (fault) throw fault;
         const data = state.docs.get(path);
-        return { exists: data !== undefined, data: () => (data ? structuredClone(data) : undefined), id: docId };
+        return { exists: data !== undefined, data: () => (data ? structuredClone(data) : undefined), id: docId, ref: self };
+      },
+      delete: async () => {
+        state.calls.push({ collection: name, method: "delete", doc: docId });
+        state.docs.delete(path);
+      },
+      update: async (data: DocRecord) => {
+        state.calls.push({ collection: name, method: "update", doc: docId });
+        state.docs.set(path, { ...(state.docs.get(path) ?? {}), ...structuredClone(data) });
+        return self;
       },
       create: async (data: DocRecord) => {
         state.calls.push({ collection: name, method: "create", doc: docId });

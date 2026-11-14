@@ -13,6 +13,7 @@ import { getApiSessionUser, hasDeviceScope, rpcDeviceScope } from "@/lib/firebas
 import { RpcError } from "@/lib/server/rpc";
 import * as rpc from "@/lib/server/rpc";
 import * as imageConfig from "@/lib/ai/image/config";
+import * as providerAccounts from "@/lib/ai/accounts";
 import * as appUpdates from "@/lib/server/app-updates";
 import { getConversationHistoryPage } from "@/lib/server/queries";
 import * as projects from "@/lib/server/projects";
@@ -543,6 +544,34 @@ const ACTIONS: Record<string, Handler> = {
         latency_ms: e.data().latency_ms ?? 0,
         created_at: e.data().created_at?.toDate?.().toISOString() ?? "",
       }));
+  },
+  // --- AI provider accounts (multiple Groq keys, rotation) --------------------
+  // Keys are encrypted before they are stored and are never returned: these
+  // actions expose labels, the last four characters and live health only.
+  admin_provider_accounts_list: async (d, u) => {
+    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
+    await providerAccounts.ensureAccounts(d, true);
+    return { accounts: providerAccounts.accountStatuses(), stored: await providerAccounts.listStoredAccounts(d), can_store: imageConfig.canEncryptSecrets() };
+  },
+  admin_provider_account_add: async (d, u, b) => {
+    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
+    const result = await providerAccounts.addStoredAccount(d, { label: str(b.label, "Groq account"), apiKey: typeof b.api_key === "string" ? b.api_key : "", addedBy: u.uid });
+    await rpc.logAudit(d, u.uid, "provider_account_added", "provider_accounts", result.doc_id, "", { provider: "groq", account: result.id });
+    return result;
+  },
+  admin_provider_account_update: async (d, u, b) => {
+    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
+    const docId = z.string().min(1).max(128).parse(b.doc_id);
+    await providerAccounts.updateStoredAccount(d, docId, { label: typeof b.label === "string" ? b.label : undefined, enabled: typeof b.enabled === "boolean" ? b.enabled : undefined });
+    await rpc.logAudit(d, u.uid, "provider_account_updated", "provider_accounts", docId, "", { enabled: typeof b.enabled === "boolean" ? b.enabled : null });
+    return { ok: true };
+  },
+  admin_provider_account_remove: async (d, u, b) => {
+    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
+    const docId = z.string().min(1).max(128).parse(b.doc_id);
+    await providerAccounts.removeStoredAccount(d, docId);
+    await rpc.logAudit(d, u.uid, "provider_account_removed", "provider_accounts", docId, "", {});
+    return { ok: true };
   },
   // --- image generation provider (Together AI + future providers) -------------
   // The API key is written encrypted and is NEVER returned to the browser:

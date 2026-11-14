@@ -1,12 +1,15 @@
 import type { ProjectFile } from "@/lib/projects/paths";
 
-export type PublishedVerification = { ok: boolean; checked: string[]; error: string | null };
+export type PublishedVerification = { ok: boolean; checked: string[]; error: string | null; pages?: number; assets?: number };
+
+/** Upper bounds so a very large site cannot stall a publish. Everything beyond is reported as not checked. */
+export const VERIFY_LIMITS = { pages: 30, assets: 60, concurrency: 6 } as const;
 
 function localAssetPaths(html: string): string[] {
   const out = new Set<string>();
   const re = /(?:src|href)\s*=\s*["']([^"']+)["']/gi;
   let match: RegExpExecArray | null;
-  while ((match = re.exec(html)) && out.size < 12) {
+  while ((match = re.exec(html)) && out.size < 40) {
     const value = match[1].trim();
     if (!value || /^(?:[a-z][a-z0-9+.-]*:|#|\/\/)/i.test(value)) continue;
     out.add(value.replace(/^\.\//, "").split(/[?#]/)[0]);
@@ -60,21 +63,50 @@ export async function verifyPublishedDeployment(input: {
       // before comparing an unchanged source fragment. Never accept an old
       // document just because it also has a <base> element.
       const served = /<base\b/i.test(entry.content) ? body : body.replace(new RegExp(`<base\\s+href=["\']\/s\/${input.slug}\/["\']\\s*/?\\s*>`, "i"), "");
-      const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
+      // Compare with all whitespace removed: the host adds its <base> on a new
+      // line, which changed the spacing of a compact "<head><meta…" document and
+      // made a correct release look like different content.
+      const normalize = (text: string) => text.replace(/\s+/g, "");
       const marker = normalize(entry.content).slice(0, 100);
       if (marker && !normalize(served).includes(marker)) {
         return { ok: false, checked, error: "Public URL served different content than the staged entry document (possibly cached old release)." };
       }
     }
-    if (entry && entry.encoding !== "base64") {
-      for (const asset of localAssetPaths(entry.content)) {
-        const url = new URL(asset, base).toString();
-        if (new URL(url).origin !== new URL(input.origin).origin) continue;
-        const assetRes = await get(url);
-        if (!assetRes.ok) return { ok: false, checked, error: await httpError(`Asset ${asset}`, assetRes) };
+    // Every page of the site — nested routes included — must answer 200 with
+    // a document, exactly as a visitor opening or refreshing that URL gets it.
+    const pages = input.files.filter((file) => /\.html?$/i.test(file.path) && file.encoding !== "base64" && file !== entry).slice(0, VERIFY_LIMITS.pages);
+    const published = new Set(input.files.map((file) => file.path));
+    // Assets every page loads: stylesheets, scripts, images that are part of
+    // this release. (A reference to a file that was never in the release is a
+    // validation finding, reported there — not a hosting failure.)
+    const assets = new Set<string>();
+    for (const page of entry && entry.encoding !== "base64" ? [entry, ...pages] : pages) {
+      const dir = page.path.includes("/") ? page.path.slice(0, page.path.lastIndexOf("/") + 1) : "";
+      for (const ref of localAssetPaths(page.content)) {
+        let resolved: string;
+        try { resolved = decodeURIComponent(new URL(ref, `https://site.invalid/${dir}`).pathname.slice(1)); } catch { continue; }
+        if (/\.html?$/i.test(resolved) || !resolved || resolved.endsWith("/")) continue;
+        if (page === entry || published.has(resolved)) assets.add(resolved);
+        if (assets.size >= VERIFY_LIMITS.assets) break;
       }
     }
-    return { ok: true, checked, error: null };
+    const jobs: Array<{ label: string; url: string; page: boolean }> = [
+      ...pages.map((page) => ({ label: `Page ${page.path}`, url: new URL(page.path.split("/").map(encodeURIComponent).join("/"), base).toString(), page: true })),
+      ...[...assets].map((asset) => ({ label: `Asset ${asset}`, url: new URL(asset.split("/").map(encodeURIComponent).join("/"), base).toString(), page: false })),
+    ];
+    let failure: string | null = null;
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (cursor < jobs.length && !failure) {
+        const job = jobs[cursor++];
+        const response = await get(job.url);
+        if (!response.ok) { failure = failure ?? await httpError(job.label, response); return; }
+        if (job.page && !(await response.text()).trim()) { failure = failure ?? `${job.label} returned an empty document.`; return; }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(VERIFY_LIMITS.concurrency, jobs.length) }, worker));
+    if (failure) return { ok: false, checked, error: failure, pages: pages.length + 1, assets: assets.size };
+    return { ok: true, checked, error: null, pages: pages.length + 1, assets: assets.size };
   } catch (error) {
     return { ok: false, checked, error: error instanceof Error ? error.message.slice(0, 160) : "Public verification request failed." };
   }

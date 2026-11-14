@@ -251,9 +251,21 @@ export class FirestoreDeploymentProvider {
         throw new RpcError("DEPLOY_VERIFY_FAILED", 502, verification.error ?? undefined);
       }
       await stage.commit();
-      push("verify", `HTTP verified ${verification.checked.length} public URL/asset request(s).`);
+      push("verify", `Staging verified: ${verification.pages ?? 1} page${(verification.pages ?? 1) === 1 ? "" : "s"}, ${verification.assets ?? 0} asset${(verification.assets ?? 0) === 1 ? "" : "s"} (${verification.checked.length} HTTP requests).`);
       await siteRef.set({ status: "live", live_release_id: deploymentRef.id, deployment_id: deploymentRef.id, verifying_release_id: null, verification_token: null, updated_at: nowTs() }, { merge: true });
       push("activate", `Site live at /s/${slug}`);
+
+      // Production check: the same requests a visitor makes, with no staging
+      // credentials. If the live address does not serve the new release, the
+      // catch below puts the previous release back (automatic rollback) and
+      // the deployment is reported as failed — never as live.
+      const production = await verifyPublishedDeployment({ origin: siteOrigin(), slug, files: built.artifacts });
+      if (!production.ok) {
+        push("verify", `Production check failed after activation: ${production.error}`);
+        push("rollback", previousSite?.live_release_id ? "Restoring the previous live release automatically." : "No earlier release exists; the address was taken offline rather than left broken.");
+        throw new RpcError("DEPLOY_VERIFY_FAILED", 502, `${production.error ?? "The live address did not serve the new release."} ${previousSite?.live_release_id ? "The previous version was restored automatically and is still live." : "Nothing is live at this address."}`);
+      }
+      push("verify", `Production verified: ${production.pages ?? 1} page${(production.pages ?? 1) === 1 ? "" : "s"} and ${production.assets ?? 0} asset${(production.assets ?? 0) === 1 ? "" : "s"} return HTTP 200 at the public address.`);
 
       await this.d.collection("projects").doc(input.projectId).set(
         {

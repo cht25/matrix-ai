@@ -21,8 +21,14 @@ function tryParse(code: string, sourceType: "module" | "script"): AcornError | n
   }
 }
 
+const FENCE_OPEN = /^\s*```[a-zA-Z0-9_-]*[ \t]*\r?\n/;
+const FENCE_CLOSE = /\r?\n```[ \t]*\s*$/;
+
 /** Syntax error of a script, or null when it parses. `module` unknown → either grammar is accepted. */
 export function jsSyntaxError(code: string, module?: boolean): CodeIssue | null {
+  // ```js … ``` happens to be valid JavaScript (nested tagged templates), so
+  // the parser accepts it — and the browser then throws at run time.
+  if (FENCE_OPEN.test(code) && FENCE_CLOSE.test(code)) return { line: 1, column: 1, message: "The file is wrapped in a Markdown code fence (```), which is not JavaScript." };
   const first = tryParse(code, module === false ? "script" : "module");
   if (!first) return null;
   if (module === undefined && !tryParse(code, "script")) return null;
@@ -33,8 +39,6 @@ export function jsSyntaxError(code: string, module?: boolean): CodeIssue | null 
   };
 }
 
-const FENCE_OPEN = /^\s*```[a-zA-Z0-9_-]*[ \t]*\r?\n/;
-const FENCE_CLOSE = /\r?\n```[ \t]*\s*$/;
 
 /** Remove a Markdown code fence a model left around a file body. */
 export function stripFence(code: string): { content: string; stripped: boolean } {

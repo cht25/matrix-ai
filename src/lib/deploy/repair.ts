@@ -13,7 +13,6 @@
 //    reports success it did not measure.
 import type { ProjectFile } from "@/lib/projects/paths";
 import type { BuildIssue, BuildReport } from "@/lib/deploy/validate";
-import { htmlLocalRefs } from "@/lib/deploy/validate";
 import { inlineBlocks, repairHtml } from "@/lib/deploy/analyze/html";
 import { cssSyntaxError, jsSyntaxError, repairCss, repairJs, stripFence } from "@/lib/deploy/analyze/code";
 import { classifyReport, deployVerdict, errorFingerprint, issueKey, type ClassifiedIssue, type DeployVerdict } from "@/lib/deploy/classify";
@@ -201,13 +200,11 @@ function languageFor(path: string): string {
  * a broken script or stylesheet (they may need the reference corrected).
  */
 export function selectRepairTargets(files: ProjectFile[], issues: BuildIssue[], maxChars = 90_000): { targets: ProjectFile[]; otherPaths: string[] } {
+  // Only files that have a problem are sent. A page that merely loads a broken
+  // script is not part of the fix; a page that references a MISSING file is
+  // already listed, because that problem is reported on the page itself.
   const wanted = new Set<string>();
   for (const issue of issues) if (issue.path) wanted.add(issue.path);
-  for (const file of files) {
-    if (!HTML_RE.test(file.path) || file.encoding === "base64") continue;
-    const refs = htmlLocalRefs(file.content, ["src", "href"]).map((ref) => ref.ref.toLowerCase());
-    if ([...wanted].some((path) => refs.includes(path.toLowerCase()) || refs.includes((path.split("/").pop() ?? path).toLowerCase()))) wanted.add(file.path);
-  }
   const targets: ProjectFile[] = [];
   let used = 0;
   // Files that are themselves broken come first when the budget is tight.
