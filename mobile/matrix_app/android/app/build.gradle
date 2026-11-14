@@ -17,7 +17,7 @@ android {
     }
 
     // Release signing: reads android/key.properties when present (CI writes it
-    // from repository secrets; see .github/workflows/android.yml). The file and
+    // from repository secrets; see docs/ci/android.yml). The file and
     // the keystore are git-ignored. Without them the release build is signed
     // with the debug key so it still installs, and CI labels it as such.
     def keystorePropertiesFile = rootProject.file("key.properties")

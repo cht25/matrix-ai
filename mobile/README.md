@@ -61,7 +61,10 @@ install.
 
 ## CI
 
-`.github/workflows/android.yml` (copy kept at `docs/ci/android.yml`) analyzes, tests and builds the APK. On a
-`mobile-v*` tag with the signing secrets set, it attaches `matrix-android.apk`
-and its SHA-256 to the GitHub release, which is where `/api/app/version`
-points by default. The required secrets are listed at the top of the workflow.
+`docs/ci/android.yml` is a ready workflow that analyzes, tests and builds the
+APK. It is **not active yet**: the automation that maintains this repository is
+not permitted to create files under `.github/workflows/`. To enable it, copy
+the file to `.github/workflows/android.yml` (GitHub web UI is enough) and add
+the secrets listed at its top. On a `mobile-v*` tag with the signing secrets
+set, it attaches `matrix-android.apk` and its SHA-256 to the GitHub release,
+which is where `/api/app/version` points by default.
