@@ -17,12 +17,12 @@ class MatrixConfig {
 
   static const String appVersion = String.fromEnvironment(
     'MATRIX_APP_VERSION',
-    defaultValue: '1.1.0',
+    defaultValue: '1.2.0',
   );
 
   static const int appBuildNumber = int.fromEnvironment(
     'MATRIX_APP_BUILD',
-    defaultValue: 2,
+    defaultValue: 3,
   );
 
   static const String firebaseApiKey = String.fromEnvironment('FIREBASE_API_KEY');

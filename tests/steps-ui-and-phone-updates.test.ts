@@ -196,6 +196,6 @@ describe("Pillars 4 & 5 — Phone-First OTA Update System, Phone App & Canonical
     expect(read("src-tauri/tauri.conf.json")).toContain("https://matrix.thamjj13.top/chat");
     expect(read("apphosting.yaml")).toContain("https://matrix.thamjj13.top");
     expect(read("render.yaml")).toContain("https://matrix.thamjj13.top");
-    expect(read("docs/ci/build-android-release.yml")).toContain("matrix-android.apk");
+    expect(read("docs/ci/android.yml")).toContain("matrix-android.apk");
   });
 });

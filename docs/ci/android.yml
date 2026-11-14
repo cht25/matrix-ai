@@ -1,0 +1,160 @@
+# Builds the MATRIX Android app (mobile/matrix_app) and publishes the APK.
+#
+# Runs on: manual dispatch, tags `mobile-v*`, and pull requests / pushes that
+# touch the app. Pull requests only analyze, test and build an unsigned-by-us
+# (debug-key) APK as a build check; nothing is published from them.
+#
+# Repository secrets
+#   Required for a working app (public Firebase client config, same values as
+#   the web app's NEXT_PUBLIC_FIREBASE_*):
+#     FIREBASE_API_KEY, FIREBASE_APP_ID, FIREBASE_MESSAGING_SENDER_ID, FIREBASE_PROJECT_ID
+#   Required for a release-signed APK:
+#     ANDROID_KEYSTORE_BASE64 (base64 -w0 release.jks), ANDROID_KEYSTORE_PASSWORD,
+#     ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+# Optional repository variable: MATRIX_API_BASE (default https://matrix.thamjj13.top)
+#
+# Without the signing secrets the APK is signed with the debug key and is
+# named matrix-android-debugsigned.apk; it is never attached to a release.
+# Without the Firebase secrets the job fails on tags/dispatch instead of
+# shipping an app that cannot sign in.
+
+name: Android app
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_version:
+        description: "Version name (defaults to pubspec.yaml)"
+        required: false
+      build_number:
+        description: "Version code (defaults to pubspec.yaml)"
+        required: false
+  push:
+    tags: ['mobile-v*']
+    branches: [main]
+    paths: ['mobile/matrix_app/**', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['mobile/matrix_app/**', '.github/workflows/android.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: mobile/matrix_app
+    env:
+      FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+      FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+      FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
+      FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      MATRIX_API_BASE: ${{ vars.MATRIX_API_BASE || 'https://matrix.thamjj13.top' }}
+      INPUT_VERSION: ${{ inputs.app_version }}
+      INPUT_BUILD: ${{ inputs.build_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.3'
+          channel: stable
+          cache: true
+
+      - name: Resolve version and configuration
+        id: cfg
+        run: |
+          PUB=$(grep -E '^version:' pubspec.yaml | awk '{print $2}')
+          VERSION="${INPUT_VERSION:-${PUB%%+*}}"
+          BUILD="${INPUT_BUILD:-${PUB##*+}}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+
+          if [ -n "$FIREBASE_API_KEY" ] && [ -n "$FIREBASE_APP_ID" ] && [ -n "$FIREBASE_MESSAGING_SENDER_ID" ] && [ -n "$FIREBASE_PROJECT_ID" ]; then
+            echo "firebase=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "firebase=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ] && [ -n "$ANDROID_KEY_PASSWORD" ]; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Refuse to publish an app that cannot sign in
+        if: github.event_name != 'pull_request' && steps.cfg.outputs.firebase != 'true'
+        run: |
+          echo "::error::FIREBASE_API_KEY, FIREBASE_APP_ID, FIREBASE_MESSAGING_SENDER_ID and FIREBASE_PROJECT_ID must be set as repository secrets."
+          exit 1
+
+      - name: Write release signing configuration
+        if: steps.cfg.outputs.signed == 'true'
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/release.jks
+          {
+            echo "storeFile=release.jks"
+            echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+          } > android/key.properties
+
+      - name: Add the Gradle wrapper (not committed)
+        run: |
+          flutter create --platforms=android --project-name wrapper_src "$RUNNER_TEMP/wrapper_src" >/dev/null
+          cp "$RUNNER_TEMP/wrapper_src/android/gradlew" android/gradlew
+          cp "$RUNNER_TEMP/wrapper_src/android/gradle/wrapper/gradle-wrapper.jar" android/gradle/wrapper/gradle-wrapper.jar
+          chmod +x android/gradlew
+
+      - name: Dependencies, analysis and unit tests
+        run: |
+          flutter pub get
+          flutter analyze --no-fatal-infos
+          flutter test
+
+      - name: Build release APK
+        run: |
+          flutter build apk --release \
+            --build-name="${{ steps.cfg.outputs.version }}" \
+            --build-number="${{ steps.cfg.outputs.build }}" \
+            --dart-define=MATRIX_API_BASE="$MATRIX_API_BASE" \
+            --dart-define=MATRIX_APP_VERSION="${{ steps.cfg.outputs.version }}" \
+            --dart-define=MATRIX_APP_BUILD="${{ steps.cfg.outputs.build }}" \
+            --dart-define=FIREBASE_API_KEY="$FIREBASE_API_KEY" \
+            --dart-define=FIREBASE_APP_ID="$FIREBASE_APP_ID" \
+            --dart-define=FIREBASE_MESSAGING_SENDER_ID="$FIREBASE_MESSAGING_SENDER_ID" \
+            --dart-define=FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID"
+          OUT=build/app/outputs/flutter-apk
+          if [ "${{ steps.cfg.outputs.signed }}" = "true" ]; then NAME=matrix-android.apk; else NAME=matrix-android-debugsigned.apk; fi
+          cp "$OUT/app-release.apk" "$OUT/$NAME"
+          (cd "$OUT" && sha256sum "$NAME" > "$NAME.sha256" && cat "$NAME.sha256")
+          echo "APK_NAME=$NAME" >> "$GITHUB_ENV"
+
+      - name: Remove signing material
+        if: always()
+        run: rm -f android/release.jks android/key.properties
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matrix-android-${{ steps.cfg.outputs.version }}-${{ steps.cfg.outputs.build }}
+          path: |
+            mobile/matrix_app/build/app/outputs/flutter-apk/${{ env.APK_NAME }}
+            mobile/matrix_app/build/app/outputs/flutter-apk/${{ env.APK_NAME }}.sha256
+
+      - name: Attach the signed APK to the release
+        if: startsWith(github.ref, 'refs/tags/mobile-v') && steps.cfg.outputs.signed == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            mobile/matrix_app/build/app/outputs/flutter-apk/matrix-android.apk
+            mobile/matrix_app/build/app/outputs/flutter-apk/matrix-android.apk.sha256

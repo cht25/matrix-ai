@@ -155,7 +155,7 @@ describe("one authoritative model configuration", () => {
   });
 
   it("the Models API reports only the default model as available on this deployment", async () => {
-    const res = await getModels();
+    const res = await getModels(new Request("http://localhost/api/models?check=1"));
     expect(res.status).toBe(200);
     const body = await res.json() as Record<string, unknown>;
     expect(body.model).toMatchObject({ id: MATRIX_MODEL_ID, label: "GPT OSS 120B", configured: true, tool_calling: true, streaming: true, vision: false });

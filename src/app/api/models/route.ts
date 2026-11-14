@@ -17,10 +17,10 @@ export const dynamic = "force-dynamic";
  * `?check=1` also runs a live reachability probe of the default model and
  * re-reads the provider's model list.
  */
-export async function GET(request?: Request) {
+export async function GET(request: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
-  const check = request ? new URL(request.url).searchParams.get("check") === "1" : true;
+  const check = new URL(request.url).searchParams.get("check") === "1";
   const status = matrixModelStatus();
   const route = matrixModelRoute();
   let health: "online" | "unavailable" | "not-configured" | "unchecked" = route ? "unchecked" : "not-configured";

@@ -595,13 +595,15 @@ export function DevicesClient() {
             <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink">
               <Smartphone size={16} className="text-accent" /> MATRIX Phone App &amp; OTA Updates
             </span>
-            <Badge className="!border-accent/40 !text-accent">
-              v{phoneRelease?.latest_version ?? "1.1.0"} · build {phoneRelease?.latest_build ?? 2}
-            </Badge>
+            {phoneRelease ? (
+              <Badge className="!border-accent/40 !text-accent">
+                v{phoneRelease.latest_version} · build {phoneRelease.latest_build}
+              </Badge>
+            ) : null}
             {phoneRelease?.force_update ? <Badge className="!border-warning/40 !text-warning">Mandatory update</Badge> : null}
           </div>
           <p className="mt-1 text-xs text-ink-2">
-            Official Android companion app with automatic over-the-air version checks, QR pairing, Family screen supervision, and instant sync with{" "}
+            Android app with chat, update checks and Parent/Child device registration by QR code. It connects to{" "}
             <span className="mono text-ink">{phoneRelease?.chat_url ?? "https://matrix.thamjj13.top/chat"}</span>.
           </p>
         </div>

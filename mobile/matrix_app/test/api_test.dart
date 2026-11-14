@@ -12,8 +12,8 @@ void main() {
   test('MatrixConfig points to canonical https://matrix.thamjj13.top and /chat', () {
     expect(MatrixConfig.apiBase, 'https://matrix.thamjj13.top');
     expect(MatrixConfig.chatUri.toString(), 'https://matrix.thamjj13.top/chat');
-    expect(MatrixConfig.appVersion, '1.1.0');
-    expect(MatrixConfig.appBuildNumber, 2);
+    expect(MatrixConfig.appVersion, '1.2.0');
+    expect(MatrixConfig.appBuildNumber, 3);
   });
 
   test('ApiException exposes code and status', () {
