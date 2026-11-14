@@ -4,6 +4,7 @@
 // ID is defined in src/lib/ai/model.ts and passed in by the caller.
 // =============================================================================
 
+import { modelById } from "@/lib/ai/models/registry";
 import { fetchModelCatalog, verifyCatalogModel, type CatalogModel } from "@/lib/ai/model-catalog";
 import { AIProviderError, providerErrorFromException, providerErrorFromResponse } from "@/lib/ai/provider-error";
 import { assistantContentOnly, assistantDeltaContent, createReasoningStreamFilter, hasReasoningDelta } from "@/lib/ai/reasoning";
@@ -40,6 +41,8 @@ export type AIProviderRequest = {
   onUsage?: (usage: AIProviderResponse["usage"]) => void;
   /** Signals real model reasoning activity without exposing raw chain-of-thought. */
   onReasoningActivity?: (phase: "start" | "delta" | "done") => void;
+  /** Ask for a JSON object. Honoured only by models that support structured output. */
+  jsonMode?: boolean;
 };
 
 export type AIProviderResponse = {
@@ -61,10 +64,6 @@ export interface AIProvider {
   listModels?(): Promise<CatalogModel[]>;
 }
 
-function isReasoningModel(model: string): boolean {
-  return model.includes("gpt-oss");
-}
-
 export class GroqProvider implements AIProvider {
   readonly supportsToolCalls = true;
   private apiKey: string;
@@ -76,7 +75,7 @@ export class GroqProvider implements AIProvider {
 
   private buildBody(req: AIProviderRequest, stream: boolean): Record<string, unknown> {
     if (!req.model) throw new Error("GROQ_MODEL_NOT_CONFIGURED");
-    const maxTokens = Math.min(req.maxTokens ?? 1024, 8192);
+    const maxTokens = Math.min(req.maxTokens ?? 1024, modelById(req.model)?.maxOutputTokens ?? 8192, 8192);
     const body: Record<string, unknown> = {
       model: req.model,
       messages: req.messages,
@@ -87,11 +86,18 @@ export class GroqProvider implements AIProvider {
     // Reasoning models require max_completion_tokens and
     // ignore / reject a lone max_tokens. Hide chain-of-thought so the teen
     // only sees the actual answer; keep effort low so first tokens arrive fast.
-    if (isReasoningModel(req.model)) {
+    const spec = modelById(req.model);
+    if (spec?.reasoning === "effort") {
       body.max_completion_tokens = maxTokens;
       body.reasoning_format = "hidden";
       body.reasoning_effort = "low";
+    } else if (spec?.reasoning === "format") {
+      // Thinking models that take no effort level: only hide the scratchpad.
+      body.max_completion_tokens = maxTokens;
+      body.reasoning_format = "hidden";
     }
+    // Structured output is only requested from models that support it.
+    if (req.jsonMode && spec?.structuredOutput && !stream) body.response_format = { type: "json_object" };
     if (req.tools?.length && !stream) {
       body.tools = req.tools;
       body.tool_choice = "auto";

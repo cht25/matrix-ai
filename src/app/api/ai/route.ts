@@ -28,6 +28,10 @@ import { type AIMessage, type AIProvider, type AIProviderResponse } from "@/lib/
 import { createAIRoutesFromDb, logAIConfiguration, type AIRouteTarget } from "@/lib/ai/config";
 import { MATRIX_MODEL_ID, MATRIX_MODEL_LABEL } from "@/lib/ai/model";
 import { completeWithModel, streamWithModel } from "@/lib/ai/executor";
+import { resolvePool } from "@/lib/ai/models/pool";
+import { modelLabel } from "@/lib/ai/models/registry";
+import { planCollaboration } from "@/lib/ai/orchestrator/plan";
+import { completeWithFallback, runCollaboration, separateAnswers, streamWithFallback } from "@/lib/ai/orchestrator/run";
 import { AIProviderError, logGatewayFailure, logProviderFailure, providerPublicCode } from "@/lib/ai/provider-error";
 import { stripReasoningContent } from "@/lib/ai/reasoning";
 import { formatAttachmentContext, isCodingRequest, safeAgentPath, type AgentFile, type ChatMode, type TextAttachment } from "@/lib/ai/agent";
@@ -607,9 +611,12 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   }
   const codingDetected = route.coding || mode === "agent" || isCodingRequest(message, attachments);
   const useAgentPolicy = mode === "agent" || mode === "code";
-  // One model for every mode. Model or provider fields in the request body
-  // and any saved legacy preference are ignored.
-  const targets = await createAIRoutesFromDb(d);
+  // The user's model pool (coordinator first). A per-request selection in the
+  // body is honoured only for models that are really available; provider or
+  // raw model fields are ignored.
+  const pool = await resolvePool(d, user.uid, body.models && typeof body.models === "object" ? body.models as { auto?: boolean; enabled?: unknown } : null);
+  const poolTargets = pool.targets;
+  const targets = poolTargets.slice(0, 1);
   const selectedModel = targets[0]?.model ?? MATRIX_MODEL_ID;
   if (!targets.length) {
     await logUsage(d, user.uid, "none", "chat", {}, Date.now() - started, "error", requestId);
@@ -709,14 +716,71 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
             coding_detected: codingDetected,
             stream_status: "connecting",
           });
+          const collaborationPlan = chatImageDataUrl
+            ? planCollaboration({ message, pool: poolTargets.slice(0, 1) })
+            : planCollaboration({ message, pool: poolTargets, kind: codingDetected ? "code" : undefined });
           upsertStep({
             id: "route",
-            label: `Routed to ${activeTarget.provider} · ${activeTarget.model}`,
-            detail: MATRIX_MODEL_LABEL,
+            label: collaborationPlan.mode === "single" ? `Using ${modelLabel(activeTarget.model)}` : `${poolTargets.length} models working together`,
+            detail: collaborationPlan.mode === "single" ? collaborationPlan.reason : poolTargets.map((target) => modelLabel(target.model)).join(" · "),
             status: "done",
             at: Date.now(),
             durationMs: Math.max(1, Date.now() - started),
           });
+          for (const skipped of pool.skipped) {
+            upsertStep({ id: `skipped-${skipped.key}`, label: `${skipped.label} is not available`, detail: skipped.reason, status: "failed", at: Date.now() });
+          }
+          // --- Collaboration: each model does its own part, then the
+          // coordinator writes the one answer the user sees.
+          let finalMessages = messages;
+          let separateText: string | null = null;
+          if (collaborationPlan.mode !== "single") {
+            const collaboration = await runCollaboration({
+              plan: collaborationPlan,
+              pool: poolTargets,
+              messages,
+              requestId,
+              deadlineAt: Date.now() + 75_000,
+              onEvent: (event) => {
+                if (event.type === "task_start") {
+                  upsertStep({ id: `task-${event.task.id}`, label: `${event.task.role}: ${event.task.responsibility}`, detail: event.label, status: "running", at: Date.now() });
+                } else if (event.type === "task_done") {
+                  const { result } = event;
+                  const replaced = result.attempts.filter((attempt) => attempt.outcome !== "ok").map((attempt) => `${attempt.label} ${attempt.outcome === "skipped" ? "skipped" : "failed"} (${attempt.detail})`);
+                  upsertStep({
+                    id: `task-${result.task.id}`,
+                    label: `${result.task.role}: ${result.task.responsibility}`,
+                    detail: result.status === "done" ? [result.label, ...replaced].join(" · ") : replaced.join(" · ") || "No model could take this part",
+                    status: result.status === "done" ? "done" : "failed",
+                    at: Date.now() - result.durationMs,
+                    durationMs: Math.max(1, result.durationMs),
+                  });
+                } else {
+                  upsertStep({ id: "compare", label: event.agreement === "low" ? "Compared outputs — resolving differences" : "Compared outputs", detail: event.detail, status: "done", at: Date.now() });
+                }
+              },
+            });
+            for (const [model, usage] of Object.entries(collaboration.usageByModel)) {
+              void logUsage(d, user.uid, model, "chat_collaboration", usage, Date.now() - started, "ok", requestId);
+            }
+            if (collaborationPlan.mode === "separate") separateText = separateAnswers(collaboration.results);
+            else if (collaboration.brief) finalMessages = [...messages.slice(0, -1), collaboration.brief, messages[messages.length - 1]];
+          }
+          const answerStream = (request: Parameters<typeof streamWithModel>[1]) => {
+            if (separateText !== null) {
+              const text = separateText;
+              return (async function* () {
+                for (const part of text.split(/(?<=\n)/)) yield { delta: part, target: activeTarget };
+              })();
+            }
+            return streamWithFallback(poolTargets, { ...request, messages: finalMessages }, {
+              onStart: (target) => { activeTarget = target; },
+              onFallback: (from, to, error) => {
+                logProviderFailure(error, requestId);
+                upsertStep({ id: `fallback-${modelLabel(from.model)}`, label: `${modelLabel(from.model)} did not respond`, detail: `Continuing with ${modelLabel(to.model)}`, status: "failed", at: Date.now() });
+              },
+            });
+          };
           if (rag || safeAttachments.length || chatImageDataUrl) {
             upsertStep({
               id: "context",
@@ -733,12 +797,11 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
           genStartAt = Date.now();
           upsertStep({
             id: "generate",
-            label: codingDetected ? "Generating code & solution" : "Synthesizing response",
+            label: codingDetected ? "Generating code & solution" : "Writing the answer",
             status: "running",
             at: genStartAt,
           });
-          for await (const item of streamWithModel(
-            targets,
+          for await (const item of answerStream(
             {
               messages,
               ...(chatImageDataUrl ? { imageDataUrl: chatImageDataUrl } : {}),
@@ -769,7 +832,6 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
                 }
               },
             },
-            (target) => { activeTarget = target; },
           )) {
             const delta = item.delta;
             if (firstTokenAt === null) firstTokenAt = Date.now();
@@ -895,7 +957,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     const safeTools = mode === "agent" && targets[0].client.supportsToolCalls ? modelCallableTools() : [];
     const agentMessages = [...messages];
     const callStarted = Date.now();
-    let result = await completeWithModel(targets, {
+    const firstRequest = {
       messages: agentMessages,
       ...(chatImageDataUrl ? { imageDataUrl: chatImageDataUrl } : {}),
       ...(safeTools.length ? { tools: safeTools } : {}),
@@ -903,12 +965,26 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
       maxTokens: mode === "agent" ? 16384 : codingDetected ? 4096 : 1600,
       requestId,
       onReasoningActivity: () => { sawReasoning = true; },
-    });
+    };
+    let result: Awaited<ReturnType<typeof completeWithModel>>;
+    let fallbackNote = "";
+    try {
+      result = await completeWithModel(targets, firstRequest);
+    } catch (error) {
+      // The lead model could not answer: continue with the next suitable
+      // model in the user's pool. If none can, report the real error.
+      const others = poolTargets.slice(1).filter((target) => !safeTools.length || target.client.supportsToolCalls);
+      const { completed } = others.length ? await completeWithFallback(others, () => firstRequest) : { completed: null };
+      if (!completed) throw error;
+      logProviderFailure(error, requestId);
+      fallbackNote = `${modelLabel(targets[0].model)} did not respond`;
+      result = completed;
+    }
     activeTarget = result.target;
     nonStreamSteps.push({
       id: "route",
-      label: `Routed to ${activeTarget.provider} · ${activeTarget.model}`,
-      detail: MATRIX_MODEL_LABEL,
+      label: `Using ${modelLabel(activeTarget.model)}`,
+      detail: fallbackNote || undefined,
       status: "done",
       at: started,
       durationMs: Math.max(1, callStarted - started),
