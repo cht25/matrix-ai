@@ -33,7 +33,7 @@ describe("Agent artifact protocol", () => {
       { path: ".env", content: "GROQ_API_KEY=sk-secret-value" },
       { path: "config.ts", content: 'const API_KEY = "sk-12345678901234567890";' },
       { path: "assets/logo.png", content: "base64data", encoding: "base64" },
-      { path: "src/large.ts", content: "x".repeat(25_000) },
+      { path: "src/large.ts", content: "x".repeat(95_000) },
     ], "Edit src/app.ts");
     expect(context.includedPaths).toEqual(["src/app.ts"]);
     expect(context.omittedPaths).toEqual([".env", "config.ts", "assets/logo.png", "src/large.ts"]);

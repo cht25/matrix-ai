@@ -34,6 +34,10 @@ describe("AI provider diagnostics", () => {
   });
 });
 
+import { resetRoutingHealth } from "@/lib/ai/model-routing";
+import { afterEach as __afterEach } from "vitest";
+__afterEach(() => resetRoutingHealth());
+
 describe("controlled AI fallback", () => {
   it("retries a transient OpenRouter failure once, then uses Groq", async () => {
     const openRouterChat = vi.fn().mockRejectedValue(new AIProviderError({
@@ -64,7 +68,7 @@ describe("controlled AI fallback", () => {
     expect(groqChat).toHaveBeenCalledTimes(1);
   });
 
-  it("does not fall back for authentication failures", async () => {
+  it("moves to the next configured model when one account's credentials are rejected, and records why", async () => {
     const openRouterChat = vi.fn().mockRejectedValue(new AIProviderError({
       provider: "OpenRouter",
       model: "nvidia/nemotron-3-ultra-550b-a55b:free",
@@ -72,16 +76,26 @@ describe("controlled AI fallback", () => {
       type: "authentication",
       detail: "invalid key",
     }));
-    const groqChat = vi.fn();
+    const groqChat = vi.fn().mockResolvedValue({ content: "built", usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 }, latencyMs: 1 });
     console.error = vi.fn();
 
-    await expect(completeWithFallback(
+    const result = await completeWithFallback(
       [
         target("OpenRouter", "nvidia/nemotron-3-ultra-550b:free", openRouterChat),
         target("Groq", "openai/gpt-oss-120b", groqChat),
       ],
       { messages: [{ role: "user", content: "build" }] },
-    )).rejects.toMatchObject({ type: "authentication" });
-    expect(groqChat).not.toHaveBeenCalled();
+    );
+    // A bad key on one provider must not take the whole Agent down while
+    // another configured provider is healthy — but it is never hidden.
+    expect(result.target.provider).toBe("Groq");
+    expect(result.fallback).toBe(true);
+    expect(result.attempts).toEqual([expect.objectContaining({ provider: "OpenRouter", type: "authentication", status: 401 })]);
+  });
+
+  it("reports the real authentication error when no other route exists", async () => {
+    console.error = vi.fn();
+    const only = vi.fn().mockRejectedValue(new AIProviderError({ provider: "OpenRouter", model: "m", status: 401, type: "authentication", detail: "invalid key" }));
+    await expect(completeWithFallback([target("OpenRouter", "m", only)], { messages: [{ role: "user", content: "build" }] })).rejects.toMatchObject({ type: "authentication" });
   });
 });

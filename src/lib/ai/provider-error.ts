@@ -44,7 +44,7 @@ function typeForStatus(status: number): AIProviderErrorType {
   return "unknown";
 }
 
-function parseUpstreamBody(body: string): { detail: string; upstreamType?: string } {
+function parseUpstreamBody(body: string): { detail: string; upstreamType?: string; code?: string } {
   if (!body) return { detail: "empty provider error response" };
   try {
     const parsed = JSON.parse(body) as {
@@ -55,11 +55,12 @@ function parseUpstreamBody(body: string): { detail: string; upstreamType?: strin
     if (typeof error === "string") return { detail: sanitizeProviderDetail(error) };
     if (error && typeof error === "object") {
       const message = typeof error.message === "string" ? error.message : "provider rejected the request";
-      const code = typeof error.code === "string" ? error.code : undefined;
+      const code = typeof error.code === "string" ? error.code : typeof error.code === "number" ? String(error.code) : undefined;
       const type = typeof error.type === "string" ? error.type : undefined;
       return {
         detail: sanitizeProviderDetail([message, code ? `code=${code}` : ""].filter(Boolean).join("; ")),
         upstreamType: type,
+        code,
       };
     }
     return { detail: sanitizeProviderDetail(typeof parsed.message === "string" ? parsed.message : body) };
@@ -77,8 +78,14 @@ export class AIProviderError extends Error {
   readonly requestId?: string;
   readonly retryable: boolean;
   readonly fallbackEligible: boolean;
+  /** Provider's own error code (e.g. GLM "1211"), when it sent one. */
+  readonly code?: string;
+  /** The model ID itself is unknown/unavailable — other models may still work. */
+  readonly modelUnavailable: boolean;
 
   constructor(opts: {
+    code?: string;
+    modelUnavailable?: boolean;
     provider: AIProviderName;
     model: string;
     status?: number | null;
@@ -97,12 +104,44 @@ export class AIProviderError extends Error {
     this.type = type;
     this.detail = sanitizeProviderDetail(opts.detail);
     this.requestId = opts.requestId;
+    this.code = opts.code;
+    this.modelUnavailable = opts.modelUnavailable === true;
     this.retryable = opts.retryable ?? ["rate_limit", "provider_unavailable", "timeout", "network", "empty_response"].includes(type);
     // 400 malformed requests, authorization, and billing are not model outages.
     // 404 means an unavailable model/endpoint; try another eligible model.
     this.fallbackEligible = opts.fallbackEligible ?? (type !== "authentication" && type !== "billing" && (type !== "invalid_request" || opts.status === 404));
   }
 }
+
+/**
+ * Zhipu / Z.ai answer business failures with their own numeric codes, often
+ * on HTTP 400/429 and (on the mainland gateway) with Chinese messages. The
+ * English-only message regex used for OpenAI-style errors never matched them,
+ * so "model does not exist" was classified as a malformed request and stopped
+ * the Agent instead of advancing to the next model.
+ */
+export function glmBusinessErrorType(code: string | undefined): { type: AIProviderErrorType; modelUnavailable?: boolean; label: string } | null {
+  switch (code) {
+    case "1000": case "1001": case "1002": case "1003": case "1004":
+      return { type: "authentication", label: "GLM rejected the API key (wrong key, expired token, or key issued for a different gateway/region)" };
+    case "1110": case "1111": case "1112": case "1121":
+      return { type: "authentication", label: "GLM account is inactive, locked or not permitted to use this API" };
+    case "1113":
+      return { type: "billing", label: "GLM account has no balance or resource package on this endpoint (Coding Plan keys must use the /api/coding/paas/v4 endpoint)" };
+    case "1211": case "1220": case "1221": case "1222":
+      return { type: "invalid_request", modelUnavailable: true, label: "GLM model ID does not exist or is not enabled for this account" };
+    case "1302": case "1303": case "1305":
+      return { type: "rate_limit", label: "GLM rate or concurrency limit reached" };
+    case "1304": case "1308": case "1309": case "1310":
+      return { type: "billing", label: "GLM usage quota or plan limit reached" };
+    case "1301":
+      return { type: "invalid_request", label: "GLM content filter rejected the request" };
+    default:
+      return null;
+  }
+}
+
+const MODEL_UNAVAILABLE_RE = /(?:model.{0,60}(?:not found|not available|does not exist|unsupported|invalid|no access|not supported|decommissioned|deprecated|no longer)|(?:unknown|invalid) model|is not found for api version|模型不存在|模型.{0,12}(?:不可用|无权|未开通)|no such model)/i;
 
 export function providerErrorFromResponse(
   provider: AIProviderName,
@@ -112,17 +151,23 @@ export function providerErrorFromResponse(
   requestId?: string,
 ): AIProviderError {
   const parsed = parseUpstreamBody(body);
-  const type = typeForStatus(response.status);
+  const business = provider === "GLM" ? glmBusinessErrorType(parsed.code) : null;
+  const type = business?.type ?? typeForStatus(response.status);
   const requestHeader = response.headers?.get("x-request-id") ?? response.headers?.get("x-openrouter-request-id") ?? requestId;
+  const modelUnavailable = business?.modelUnavailable === true
+    || response.status === 404
+    || ((response.status === 400 || response.status === 403) && MODEL_UNAVAILABLE_RE.test(parsed.detail));
   return new AIProviderError({
     provider,
     model,
     status: response.status,
-    type,
-    detail: parsed.detail,
+    type: modelUnavailable && type === "authentication" ? "invalid_request" : type,
+    detail: business ? `${business.label}. Upstream: ${parsed.detail}` : parsed.detail,
     requestId: requestHeader ?? undefined,
-    fallbackEligible: type === "invalid_request"
-      ? response.status === 404 || (response.status === 400 && /(?:model.{0,50}(?:not found|not available|does not exist|unsupported|invalid)|(?:unknown|invalid) model)/i.test(parsed.detail))
+    code: parsed.code,
+    modelUnavailable,
+    fallbackEligible: type === "invalid_request" || modelUnavailable
+      ? modelUnavailable
       : type !== "authentication" && type !== "billing",
   });
 }

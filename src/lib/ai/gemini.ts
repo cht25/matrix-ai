@@ -47,25 +47,72 @@ function jsonObject(value: string): Record<string, unknown> {
   } catch { return {}; }
 }
 
-function contentsFor(messages: AIMessage[], imageDataUrl?: string) {
-  const system = messages.filter((message) => message.role === "system").map((message) => message.content).join("\n\n");
-  const conversation = messages.filter((message) => message.role !== "system").map((message) => {
+type GeminiPart = Record<string, unknown>;
+type GeminiTurn = { role: "user" | "model"; parts: GeminiPart[] };
+
+// Gemini 2.5/3 attach an opaque `thoughtSignature` to function-call parts and
+// REJECT the follow-up turn (400) when the call is replayed without it. The
+// shared tool-call type has no field for it and other adapters spread tool
+// calls straight into their request bodies, so signatures are kept here,
+// keyed by the synthetic call id, for the life of the tool loop.
+const thoughtSignatures = new Map<string, string>();
+function rememberSignature(id: string, signature: unknown): void {
+  if (typeof signature !== "string" || !signature) return;
+  thoughtSignatures.set(id, signature);
+  if (thoughtSignatures.size > 400) thoughtSignatures.delete(thoughtSignatures.keys().next().value!);
+}
+
+/**
+ * Translate MATRIX messages to Gemini `contents`.
+ *
+ * Gemini is stricter than OpenAI-style APIs:
+ *   • roles are only `user` / `model`, and turns must alternate — consecutive
+ *     same-role messages (project context followed by the request) are merged;
+ *   • a part may not be empty — blank assistant messages are dropped;
+ *   • the conversation must start with a `user` turn;
+ *   • a function response must directly follow the function call it answers.
+ */
+export function contentsFor(messages: AIMessage[], imageDataUrl?: string) {
+  const system = messages.filter((message) => message.role === "system").map((message) => message.content).filter((text) => text.trim()).join("\n\n");
+  const turns: GeminiTurn[] = [];
+  const push = (role: GeminiTurn["role"], parts: GeminiPart[]) => {
+    if (!parts.length) return;
+    const last = turns[turns.length - 1];
+    if (last && last.role === role) last.parts.push(...parts);
+    else turns.push({ role, parts: [...parts] });
+  };
+  for (const message of messages) {
+    if (message.role === "system") continue;
     if (message.role === "assistant" && message.tool_calls?.length) {
-      return { role: "model", parts: message.tool_calls.map((call) => ({ functionCall: { name: geminiFunctionName(call.function.name), args: jsonObject(call.function.arguments) } })) };
+      const parts: GeminiPart[] = [];
+      if (message.content?.trim()) parts.push({ text: message.content });
+      for (const call of message.tool_calls) {
+        const signature = thoughtSignatures.get(call.id);
+        parts.push({ functionCall: { name: geminiFunctionName(call.function.name), args: jsonObject(call.function.arguments) }, ...(signature ? { thoughtSignature: signature } : {}) });
+      }
+      push("model", parts);
+      continue;
     }
     if (message.role === "tool") {
-      return { role: "user", parts: [{ functionResponse: { name: geminiFunctionName(message.name ?? "unknown_tool"), response: jsonObject(message.content) } }] };
+      const parsed = jsonObject(message.content);
+      const response = Object.keys(parsed).length ? parsed : { result: message.content };
+      push("user", [{ functionResponse: { name: geminiFunctionName(message.name ?? "unknown_tool"), response } }]);
+      continue;
     }
-    return { role: message.role === "assistant" ? "model" : "user", parts: [{ text: message.content }] };
-  });
-  if (imageDataUrl && conversation.length) {
+    if (!message.content?.trim()) continue;
+    push(message.role === "assistant" ? "model" : "user", [{ text: message.content }]);
+  }
+  if (turns.length && turns[0].role === "model") turns.unshift({ role: "user", parts: [{ text: "Continue." }] });
+  if (!turns.length) turns.push({ role: "user", parts: [{ text: system || "Continue." }] });
+  if (imageDataUrl) {
     const match = /^data:([^;,]+);base64,([\s\S]+)$/.exec(imageDataUrl);
     if (!match) throw new Error("GEMINI_IMAGE_DATA_INVALID");
-    conversation[conversation.length - 1].parts.push({ inlineData: { mimeType: match[1], data: match[2] } } as never);
+    const target = [...turns].reverse().find((turn) => turn.role === "user") ?? turns[turns.length - 1];
+    target.parts.push({ inlineData: { mimeType: match[1], data: match[2] } });
   }
   return {
     ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
-    contents: conversation,
+    contents: turns,
   };
 }
 
@@ -99,7 +146,9 @@ function toolCallsFrom(data: Record<string, unknown>, req: AIProviderRequest): A
     const call = part && typeof part === "object" ? (part as Record<string, unknown>).functionCall as Record<string, unknown> | undefined : undefined;
     if (typeof call?.name !== "string") return [];
     const args = call.args && typeof call.args === "object" && !Array.isArray(call.args) ? call.args : {};
-    return [{ id: `gemini-${index}`, type: "function" as const, function: { name: names.get(call.name) ?? call.name, arguments: JSON.stringify(args) } }];
+    const id = `gemini-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}-${index}`;
+    rememberSignature(id, (part as Record<string, unknown>).thoughtSignature);
+    return [{ id, type: "function" as const, function: { name: names.get(call.name) ?? call.name, arguments: JSON.stringify(args) } }];
   }).slice(0, 10);
 }
 
@@ -114,8 +163,37 @@ function textFrom(data: Record<string, unknown>): string {
   const candidates = Array.isArray(data.candidates) ? data.candidates : [];
   const content = (candidates[0] as Record<string, unknown> | undefined)?.content as Record<string, unknown> | undefined;
   const parts = Array.isArray(content?.parts) ? content.parts : [];
-  return parts.map((part) => part && typeof part === "object" && typeof (part as Record<string, unknown>).text === "string" ? (part as Record<string, string>).text : "").join("");
+  // `thought: true` parts are the model's private reasoning summary, not the answer.
+  return parts.map((part) => part && typeof part === "object" && (part as Record<string, unknown>).thought !== true && typeof (part as Record<string, unknown>).text === "string" ? (part as Record<string, string>).text : "").join("");
 }
+
+/** Why a 200 response carried no usable answer — Gemini reports this in-band. */
+export function geminiEmptyReason(data: Record<string, unknown>): string {
+  const feedback = data.promptFeedback as Record<string, unknown> | undefined;
+  if (typeof feedback?.blockReason === "string") return `Gemini blocked the prompt (${feedback.blockReason})`;
+  const candidate = (Array.isArray(data.candidates) ? data.candidates[0] : undefined) as Record<string, unknown> | undefined;
+  const finish = typeof candidate?.finishReason === "string" ? candidate.finishReason : "";
+  if (finish === "MAX_TOKENS") return "Gemini spent the whole output budget on internal reasoning before writing an answer (finishReason MAX_TOKENS); raise the output limit or use a non-thinking model";
+  if (finish === "SAFETY" || finish === "RECITATION" || finish === "PROHIBITED_CONTENT" || finish === "BLOCKLIST") return `Gemini withheld the answer (finishReason ${finish})`;
+  if (finish === "MALFORMED_FUNCTION_CALL") return "Gemini produced a malformed function call";
+  return `Gemini returned no text or function-call content${finish ? ` (finishReason ${finish})` : ""}`;
+}
+
+/**
+ * Thinking models (2.5+, 3.x) count reasoning tokens against maxOutputTokens.
+ * A small caller budget therefore produced an EMPTY answer with a 200 status.
+ * Reserve headroom so the requested visible budget survives the reasoning.
+ */
+export function geminiOutputBudget(model: string, requested: number | undefined): number | undefined {
+  if (requested === undefined) return undefined;
+  const thinking = /gemini-(?:2\.5|[3-9])/.test(model.toLowerCase());
+  if (!thinking) return requested;
+  return Math.min(65_536, requested + Math.max(2_048, Math.min(8_192, Math.round(requested * 0.5))));
+}
+
+const geminiCatalogCache = new Map<string, { expires: number; models: CatalogModel[] }>();
+/** Test hook. */
+export function resetGeminiCatalogCache(): void { geminiCatalogCache.clear(); }
 
 export class GeminiProvider implements AIProvider {
   readonly providerName = "Gemini";
@@ -137,9 +215,12 @@ export class GeminiProvider implements AIProvider {
   }
 
   async listModels(): Promise<CatalogModel[]> {
+    const cacheKey = `${this.baseUrl}|${this.apiKey.slice(-8)}`;
+    const hit = geminiCatalogCache.get(cacheKey);
+    if (hit && hit.expires > Date.now()) return hit.models;
     let response: Response;
     try {
-      response = await fetch(`${this.baseUrl}/models`, { headers: this.headers(), redirect: "error", signal: AbortSignal.timeout(10_000), cache: "no-store" });
+      response = await fetch(`${this.baseUrl}/models?pageSize=1000`, { headers: this.headers(), redirect: "error", signal: AbortSignal.timeout(10_000), cache: "no-store" });
     } catch (error) {
       throw providerErrorFromException("Gemini", "catalog", error);
     }
@@ -148,6 +229,8 @@ export class GeminiProvider implements AIProvider {
     try { payload = await response.json(); } catch (error) { throw providerErrorFromException("Gemini", "catalog", error); }
     const models = parseGeminiModelCatalog(payload);
     if (!models.length) throw new AIProviderError({ provider: "Gemini", model: "catalog", type: "invalid_request", detail: "Gemini returned no models supporting generateContent." });
+    geminiCatalogCache.set(cacheKey, { expires: Date.now() + 5 * 60_000, models });
+    if (geminiCatalogCache.size > 50) geminiCatalogCache.delete(geminiCatalogCache.keys().next().value!);
     return models;
   }
 
@@ -162,7 +245,14 @@ export class GeminiProvider implements AIProvider {
       try {
         const models = await this.listModels();
         if (!models.some((entry) => entry.id === selected)) return { ok: false, status: 404, detail: "selected model is absent from the Gemini catalog" };
-        await this.chat({ model: selected, messages: [{ role: "user", content: "Reply with one character." }], maxTokens: 1 });
+        // A 200 from generateContent proves key, model and quota. The answer
+        // text is irrelevant (and is legitimately empty on thinking models
+        // with a tiny budget), so the probe must not require it.
+        const response = await fetch(`${this.baseUrl}${modelPath(selected, "generateContent")}`, {
+          method: "POST", headers: this.headers(), redirect: "error", signal: AbortSignal.timeout(20_000),
+          body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "ping" }] }], generationConfig: { maxOutputTokens: 16 } }),
+        });
+        if (!response.ok) return { ok: false, status: response.status, detail: (await response.text().catch(() => "")).slice(0, 200) };
         return { ok: true, status: 200, detail: "ok" };
       } catch (error) {
         return { ok: false, status: error instanceof AIProviderError ? error.status : null, detail: error instanceof Error ? error.message : "Gemini health probe failed" };
@@ -182,11 +272,11 @@ export class GeminiProvider implements AIProvider {
           ...(functionDeclarations(req) ? { tools: functionDeclarations(req) } : {}),
           generationConfig: {
             ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-            ...(req.maxTokens !== undefined ? { maxOutputTokens: req.maxTokens } : {}),
+            ...(req.maxTokens !== undefined ? { maxOutputTokens: geminiOutputBudget(req.model, req.maxTokens) } : {}),
           },
         }),
         redirect: "error",
-        signal: req.signal ?? AbortSignal.timeout(60_000),
+        signal: req.signal ?? AbortSignal.timeout(req.maxTokens && req.maxTokens > 4096 ? 240_000 : 120_000),
       });
     } catch (error) { throw providerErrorFromException("Gemini", req.model, error, req.requestId); }
     if (!response.ok) throw providerErrorFromResponse("Gemini", req.model, response, await response.text().catch(() => ""), req.requestId);
@@ -194,7 +284,7 @@ export class GeminiProvider implements AIProvider {
     try { data = await response.json() as Record<string, unknown>; } catch (error) { throw providerErrorFromException("Gemini", req.model, error, req.requestId); }
     const content = textFrom(data);
     const toolCalls = toolCallsFrom(data, req);
-    if (!content.trim() && !toolCalls.length) throw new AIProviderError({ provider: "Gemini", model: req.model, type: "empty_response", detail: "Gemini returned no text or function-call content", requestId: req.requestId });
+    if (!content.trim() && !toolCalls.length) throw new AIProviderError({ provider: "Gemini", model: req.model, type: "empty_response", detail: geminiEmptyReason(data), requestId: req.requestId });
     const candidate = (Array.isArray(data.candidates) ? data.candidates[0] : undefined) as Record<string, unknown> | undefined;
     return { content, toolCalls, model: typeof data.modelVersion === "string" ? data.modelVersion : req.model, finishReason: typeof candidate?.finishReason === "string" ? candidate.finishReason : undefined, usage: usageFrom(data) };
   }
@@ -209,11 +299,11 @@ export class GeminiProvider implements AIProvider {
           ...contentsFor(req.messages, req.imageDataUrl),
           generationConfig: {
             ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-            ...(req.maxTokens !== undefined ? { maxOutputTokens: req.maxTokens } : {}),
+            ...(req.maxTokens !== undefined ? { maxOutputTokens: geminiOutputBudget(req.model, req.maxTokens) } : {}),
           },
         }),
         redirect: "error",
-        signal: req.signal ?? AbortSignal.timeout(60_000),
+        signal: req.signal ?? AbortSignal.timeout(300_000),
       });
     } catch (error) { throw providerErrorFromException("Gemini", req.model, error, req.requestId); }
     if (!response.ok || !response.body) {
@@ -226,6 +316,7 @@ export class GeminiProvider implements AIProvider {
     const decoder = new TextDecoder();
     let buffer = "";
     let yielded = false;
+    let lastEvent: Record<string, unknown> = {};
     const consume = (line: string): string => {
       const trimmed = line.trim();
       if (!trimmed.startsWith("data:")) return "";
@@ -239,6 +330,7 @@ export class GeminiProvider implements AIProvider {
         throw new AIProviderError({ provider: "Gemini", model: req.model, type: "provider_unavailable", detail: typeof error.message === "string" ? error.message : "Gemini stream failed", requestId: req.requestId });
       }
       if (data.usageMetadata) req.onUsage?.(usageFrom(data));
+      lastEvent = data;
       return textFrom(data);
     };
     try {
@@ -260,7 +352,7 @@ export class GeminiProvider implements AIProvider {
           if (text) { yielded = true; yield text; }
         }
       }
-      if (!yielded) throw new AIProviderError({ provider: "Gemini", model: req.model, type: "empty_response", detail: "Gemini stream ended without text content", requestId: req.requestId });
+      if (!yielded) throw new AIProviderError({ provider: "Gemini", model: req.model, type: "empty_response", detail: geminiEmptyReason(lastEvent), requestId: req.requestId });
     } catch (error) {
       try { await reader.cancel(); } catch { /* response already ended */ }
       throw error instanceof AIProviderError ? error : providerErrorFromException("Gemini", req.model, error, req.requestId);

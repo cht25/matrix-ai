@@ -1,5 +1,9 @@
-// Server-side AI routes: GLM-5-Turbo is the Chat and Agent default.
-// User/Admin-selected alternatives remain explicit; no automatic OSS substitution.
+// Server-side AI routes.
+//   Normal Chat → GPT OSS 120B first (GLM never enters Chat automatically).
+//   Agent       → strongest catalogue-verified GLM → other GLM → strongest
+//                 Gemini → remaining tool-capable models, with automatic,
+//                 recorded failover. A user-selected model leads the chain
+//                 while it is healthy and is never silently replaced.
 
 import "server-only";
 
@@ -17,7 +21,7 @@ import {
 import { environmentProviders, CatalogValidatedProvider, type RegisteredProvider } from "@/lib/ai/provider-registry";
 import { AIProviderError, type AIProviderName } from "@/lib/ai/provider-error";
 import { getManagedProviderCatalogEntries, getManagedProviderRoutes } from "@/lib/ai/managed-providers";
-import { discoverAgentModels, rankModelRoutes } from "@/lib/ai/model-routing";
+import { describeRoutes, discoverAgentModels, modelProfile, rankModelRoutes, type CatalogStatus, type RouteDiagnostic } from "@/lib/ai/model-routing";
 
 export type AIRouteTarget = {
   provider: AIProviderName;
@@ -26,6 +30,8 @@ export type AIRouteTarget = {
   providerId?: string;
   tier?: WorkloadTier;
   contextTokens?: number;
+  /** Whether the provider's authenticated catalogue lists this exact ID. */
+  catalog?: CatalogStatus;
 };
 
 /**
@@ -87,7 +93,7 @@ export function logAIConfiguration(): void {
     glmModel: process.env.GLM_MODEL?.trim() || AI_CONFIG.coding.model,
     lowTaskEngine: keyConfigured(process.env.GROQ_API_KEY) || keyConfigured(process.env.GPT_OSS_API_KEY) ? "configured" : "missing",
     lowTaskModel: MODELS.chat || GPT_OSS_DEFAULT_MODEL,
-    fallback: "eligible configured models on model outage/rate-limit; no fallback for invalid credentials or billing",
+    fallback: "any provider failure advances to the next eligible configured model; every switch is logged and shown",
   });
 }
 
@@ -136,11 +142,22 @@ export async function createAIRoutesFromDb(
     candidates.push({ ...runtime, providerId: `main-${config.kind}`, tier: coding ? "high" : tier });
   }
   if (coding) {
-    // Discover suitable live catalogue IDs where available; official GLM
-    // defaults remain candidates when a region does not expose /models.
-    const glm = candidates.filter((candidate) => candidate.provider === "GLM" && candidate.client.supportsToolCalls === true);
-    const discovered = await Promise.all(glm.slice(0, 3).map((candidate) =>
-      discoverAgentModels(candidate.client, candidate.model, candidate.provider, candidate.providerId ?? "glm")));
+    // Ask each GLM / Gemini account what it really offers. This both verifies
+    // the configured ID and supplies alternatives of the same family, so an
+    // unknown or retired ID degrades to the next strongest listed model
+    // instead of ending the run. A Gemini key with no GEMINI_MODEL set used to
+    // contribute no route at all; it now contributes its best listed model.
+    const seenAccounts = new Set<string>();
+    const accounts = candidates.filter((candidate) => {
+      if (candidate.provider !== "GLM" && candidate.provider !== "Gemini") return false;
+      if (candidate.client.supportsToolCalls !== true) return false;
+      const account = candidate.providerId ?? candidate.provider;
+      if (seenAccounts.has(account)) return false;
+      seenAccounts.add(account);
+      return true;
+    });
+    const discovered = await Promise.all(accounts.slice(0, 4).map((candidate) =>
+      discoverAgentModels(candidate.client, candidate.model, candidate.provider, candidate.providerId ?? candidate.provider.toLowerCase())));
     candidates.push(...discovered.flat());
   }
   const routes = rankModelRoutes(candidates, coding ? "agent" : "chat");
@@ -185,6 +202,49 @@ export async function createScanRoutesFromDb(d: Db | null): Promise<AIRouteTarge
   if (envTarget) routes.push(envTarget);
   return routes;
 }
+
+export type ExecutionRoutes = {
+  routes: AIRouteTarget[];
+  /** The user's explicit model, when one was chosen and resolved. */
+  selected: AIRouteTarget | null;
+  /** Why an explicit selection could not be honoured (it is not hidden). */
+  selectionError: string | null;
+};
+
+/**
+ * The single place that decides which models a request may use, in order.
+ *
+ * An explicit user/admin selection leads the chain and is used whenever it
+ * answers. If it fails, execution continues on the automatic chain and the
+ * switch is reported — a selection that cannot be resolved at all is likewise
+ * reported and the automatic chain is used, instead of failing the request
+ * while other configured models are healthy.
+ */
+export async function resolveExecutionRoutes(
+  d: Db | null,
+  input: { mode: "chat" | "agent"; selected?: { providerId: string; modelId: string } | null; tier?: WorkloadTier; preferFallback?: boolean },
+): Promise<ExecutionRoutes> {
+  const coding = input.mode === "agent";
+  const automatic = await createAIRoutesFromDb(d, coding, input.preferFallback === true, input.tier ?? (coding ? "high" : "low"));
+  if (!input.selected?.modelId) return { routes: automatic, selected: null, selectionError: null };
+  try {
+    const selected = await resolveSelectedAIRoute(d, input.selected.providerId, input.selected.modelId);
+    const same = (route: AIRouteTarget) => route.model === selected.model && (route.providerId ?? route.provider) === (selected.providerId ?? selected.provider);
+    const usable = !coding || selected.client.supportsToolCalls === true;
+    // A chat-only model must not be treated as an Agent model.
+    if (!usable) return { routes: automatic, selected: null, selectionError: `${selected.provider} ${selected.model} does not support the tool calling Agent mode requires` };
+    return { routes: [selected, ...automatic.filter((route) => !same(route))], selected, selectionError: null };
+  } catch (error) {
+    return { routes: automatic, selected: null, selectionError: error instanceof Error ? error.message.slice(0, 200) : "The selected model could not be initialized" };
+  }
+}
+
+/** Ranked Agent/Chat chain for operator diagnostics and the model picker. */
+export async function describeExecutionRoutes(d: Db | null, mode: "chat" | "agent"): Promise<RouteDiagnostic[]> {
+  return describeRoutes(await createAIRoutesFromDb(d, mode === "agent"));
+}
+
+export { modelProfile };
 
 export class AIConfigurationError extends Error {
   constructor(public readonly coding: boolean) {

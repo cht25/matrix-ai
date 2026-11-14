@@ -40,6 +40,10 @@ import { useI18n } from "@/lib/i18n/client";
 import { useIsCompact } from "@/lib/client/use-media-query";
 import { useChatScroll } from "@/lib/use-chat-scroll";
 import { VoiceMessage } from "@/components/voice-message";
+import { StreamingReply } from "@/components/streaming-reply";
+import { createStreamStore } from "@/lib/stream-store";
+import { VoiceProcessing, VoiceRecordingPanel, VoiceReviewBar, type VoiceReview } from "@/components/voice-composer";
+import { VOICE_LANGUAGE_STORAGE_KEY, chooseVoiceEngine, mergeTranscript, voiceErrorMessage, voiceLanguage } from "@/lib/voice-input";
 import { revealReceived, type RevealMode } from "@/lib/stream-reveal";
 import { restoredPrependTop } from "@/lib/chat-scroll";
 import { cn } from "@/lib/utils";
@@ -214,7 +218,11 @@ export function ChatClient({
 
   // --- run state ----------------------------------------------------------
   const [streaming, setStreaming] = useState(false);
-  const [streamedText, setStreamedText] = useState<string | null>(null);
+  // Streamed text lives outside React state: see lib/stream-store.ts.
+  const streamStore = useMemo(() => createStreamStore(), []);
+  const setStreamedText = useCallback((value: string | null) => streamStore.set(value ?? ""), [streamStore]);
+  /** The message that replaced the live bubble — it must not replay the entry animation. */
+  const [settledKey, setSettledKey] = useState<string | null>(null);
   const [streamCommitted, setStreamCommitted] = useState(false);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
   const [activeModel, setActiveModel] = useState<string | null>(null);
@@ -280,6 +288,25 @@ export function ChatClient({
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // --- voice input (dictation into the composer, every mode incl. Agent) ----
+  const [voiceLang, setVoiceLangState] = useState("auto");
+  const voiceLangRef = useRef("auto");
+  const [voiceReview, setVoiceReview] = useState<VoiceReview | null>(null);
+  const [liveTranscript, setLiveTranscript] = useState("");
+  const [voiceEngineNote, setVoiceEngineNote] = useState("");
+  const [voiceHasWaveform, setVoiceHasWaveform] = useState(true);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the Web Speech API has no lib.dom typings
+  const recognitionRef = useRef<any>(null);
+  const liveFinalRef = useRef("");
+  const liveInterimRef = useRef("");
+  const recognitionWantedRef = useRef(false);
+  const transcribeAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(VOICE_LANGUAGE_STORAGE_KEY);
+      if (saved) { const code = voiceLanguage(saved).code; voiceLangRef.current = code; setVoiceLangState(code); }
+    } catch { /* private mode: the default (auto-detect) is used */ }
+  }, []);
   const generatedAudioRef = useRef<HTMLAudioElement | null>(null);
   const generatedAudioUrlRef = useRef<string | null>(null);
 
@@ -336,7 +363,7 @@ export function ChatClient({
   }, []);
   useEffect(() => { localeRef.current = locale; }, [locale]);
 
-  const chatScroll = useChatScroll(scrollAreaRef, scrollContentRef, `${messages.length}:${streamedText?.length ?? 0}:${buildRun?.updatedAt ?? 0}:${liveSteps.length}:${streamCommitted}`);
+  const chatScroll = useChatScroll(scrollAreaRef, scrollContentRef, `${messages.length}:${buildRun?.updatedAt ?? 0}:${liveSteps.length}:${streamCommitted}`);
 
   /** Fetch the previous page of messages and prepend it, keeping the reading
       position stable. */
@@ -720,6 +747,94 @@ export function ChatClient({
     }
   }
 
+  function setVoiceLang(code: string) {
+    const next = voiceLanguage(code).code;
+    voiceLangRef.current = next;
+    setVoiceLangState(next);
+    try { window.localStorage.setItem(VOICE_LANGUAGE_STORAGE_KEY, next); } catch { /* not persisted */ }
+    // Changing language mid-recording restarts live recognition in the new
+    // language; the audio recording itself continues untouched.
+    if (recognitionRef.current && recognitionWantedRef.current) {
+      stopRecognition();
+      if (next !== "auto") startRecognition(next);
+      else setVoiceEngineNote("Auto-detect: the recording is transcribed when you stop.");
+    }
+  }
+
+  /** Start the browser's speech recogniser. Returns false when unavailable. */
+  function startRecognition(lang: string): boolean {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- vendor-prefixed constructor
+    const Ctor = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
+    if (!Ctor) return false;
+    try {
+      const recognition = new Ctor();
+      recognition.lang = lang;
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SpeechRecognitionEvent
+      recognition.onresult = (event: any) => {
+        let interim = "";
+        for (let i = event.resultIndex; i < event.results.length; i += 1) {
+          const result = event.results[i];
+          const text = String(result[0]?.transcript ?? "");
+          if (result.isFinal) liveFinalRef.current = mergeTranscript(liveFinalRef.current, text);
+          else interim += text;
+        }
+        liveInterimRef.current = interim.trim();
+        setLiveTranscript(mergeTranscript(liveFinalRef.current, interim));
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SpeechRecognitionErrorEvent
+      recognition.onerror = (event: any) => {
+        const code = String(event?.error ?? "");
+        // "no-speech"/"aborted" are routine; the recogniser restarts in onend.
+        if (code === "not-allowed" || code === "service-not-allowed" || code === "language-not-supported" || code === "network") {
+          recognitionWantedRef.current = false;
+          // The recording (when there is one) is still transcribed by the server.
+          setVoiceEngineNote(recorderRef.current ? "Live transcription is unavailable here; the recording is transcribed when you stop." : voiceErrorMessage(code));
+          if (!recorderRef.current) { setRecording(false); setNotice(voiceErrorMessage(code)); if (recordingClockRef.current) clearInterval(recordingClockRef.current); }
+        }
+      };
+      recognition.onend = () => {
+        // Browsers end recognition after a pause; keep listening until Stop.
+        if (recognitionWantedRef.current && recognitionRef.current === recognition) {
+          try { recognition.start(); } catch { /* already restarting */ }
+        }
+      };
+      recognitionRef.current = recognition;
+      recognitionWantedRef.current = true;
+      recognition.start();
+      return true;
+    } catch {
+      recognitionRef.current = null;
+      recognitionWantedRef.current = false;
+      return false;
+    }
+  }
+
+  function stopRecognition() {
+    recognitionWantedRef.current = false;
+    const recognition = recognitionRef.current;
+    recognitionRef.current = null;
+    if (recognition) { try { recognition.stop(); } catch { /* not running */ } }
+  }
+
+  /** Put recognised words into the composer as ordinary, editable text. */
+  function placeTranscript(text: string, review: VoiceReview) {
+    setInput((current) => mergeTranscript(current, text));
+    setVoiceReview(review);
+    setNotice(null);
+    requestAnimationFrame(() => {
+      autosize();
+      const field = textareaRef.current;
+      if (field) { field.focus(); const end = field.value.length; try { field.setSelectionRange(end, end); } catch { /* unsupported input type */ } }
+    });
+  }
+
+  /**
+   * Server transcription of a recording. The transcript is placed in the
+   * composer for review — it is never sent automatically.
+   */
   async function uploadAndTranscribeVoice(draft: NonNullable<typeof draftAudio>, retryId?: string) {
     if (!draft.blob.size || voiceUploadRef.current) return;
     if (draft.blob.size > 24 * 1024 * 1024) {
@@ -730,6 +845,12 @@ export function ChatClient({
     voiceUploadRef.current = true;
     setTranscribing(true);
     setNotice(null);
+    const controller = new AbortController();
+    transcribeAbortRef.current = controller;
+    // Agent/Code turns and temporary chats send text only, so their audio is
+    // transcribed and discarded. Ordinary chats keep a private, playable copy
+    // when the deployment has storage configured.
+    const keepRecording = mode !== "agent" && mode !== "code" && !isTemporary;
     try {
       const form = new FormData();
       if (retryId) form.append("audio_asset_id", retryId);
@@ -738,56 +859,152 @@ export function ChatClient({
         form.append("duration_ms", String(draft.durationMs));
         form.append("waveform", draft.waveform.join(","));
       }
-      const response = await fetch("/api/voice/transcribe", { method: "POST", credentials: "same-origin", body: form });
-      const data = await response.json().catch(() => ({})) as { transcript?: string; audio_asset_id?: string; playback_url?: string; detected_language?: string; error?: string };
+      form.append("language", voiceLangRef.current);
+      form.append("store", keepRecording ? "1" : "0");
+      const response = await fetch("/api/voice/transcribe", { method: "POST", credentials: "same-origin", body: form, signal: controller.signal });
+      const data = await response.json().catch(() => ({})) as { transcript?: string; audio_asset_id?: string | null; playback_url?: string | null; detected_language?: string | null; error?: string };
       if (data.audio_asset_id && data.playback_url) setVoiceAsset({ id: data.audio_asset_id, playbackUrl: data.playback_url });
-      if (!response.ok || !data.transcript?.trim() || !data.audio_asset_id) {
+      const transcript = data.transcript?.trim() ?? "";
+      if (!response.ok || !transcript) {
+        // Server could not transcribe: fall back to whatever the browser heard.
+        const heard = mergeTranscript(liveFinalRef.current, liveInterimRef.current).trim();
+        if (heard) {
+          placeTranscript(heard, { source: "browser", language: voiceLangRef.current === "auto" ? null : voiceLangRef.current, durationMs: draft.durationMs });
+          setDraftAudio(draft);
+          return;
+        }
         setDraftAudio(draft); // recorded bytes survive upload and STT failures
-        setNotice(`Voice could not be sent (${data.error ?? response.status}). Retry below; your recording is safe.`);
+        setNotice(voiceErrorMessage(response.ok ? "EMPTY_TRANSCRIPT" : String(data.error ?? response.status)));
         return;
       }
-      await send(undefined, data.transcript.trim(), { id: data.audio_asset_id, durationMs: draft.durationMs, waveform: draft.waveform, language: data.detected_language ?? null });
-      URL.revokeObjectURL(draft.url);
-      setDraftAudio(null);
-      setNotice(null);
+      placeTranscript(transcript, {
+        source: "server", language: data.detected_language ?? null, durationMs: draft.durationMs,
+        asset: data.audio_asset_id ? { id: data.audio_asset_id, durationMs: draft.durationMs, waveform: draft.waveform, language: data.detected_language ?? null } : null,
+      });
+      // Keep the local recording so it can be transcribed again in another language.
+      setDraftAudio(draft);
     } catch (error) {
       setDraftAudio(draft);
-      setNotice(error instanceof Error ? `Voice upload failed: ${error.message}. Retry below.` : "Voice upload failed. Retry below.");
+      if (!(error instanceof Error && error.name === "AbortError")) {
+        setNotice(error instanceof Error ? `Voice transcription failed: ${error.message}. Your recording is kept — retry below.` : voiceErrorMessage("unknown"));
+      }
     } finally {
+      if (transcribeAbortRef.current === controller) transcribeAbortRef.current = null;
       voiceUploadRef.current = false;
       setTranscribing(false);
     }
+  }
+
+  /** Recording finished: use the browser's transcript when it has one, else the server. */
+  function finishVoiceCapture(draft: NonNullable<typeof draftAudio> | null, durationMs: number) {
+    stopRecognition();
+    const heard = mergeTranscript(liveFinalRef.current, liveInterimRef.current).trim();
+    setLiveTranscript("");
+    if (heard) {
+      placeTranscript(heard, { source: "browser", language: voiceLangRef.current === "auto" ? null : voiceLangRef.current, durationMs });
+      if (draft) setDraftAudio(draft);
+      return;
+    }
+    if (draft) { void uploadAndTranscribeVoice(draft); return; }
+    setNotice(voiceErrorMessage("no-speech"));
   }
 
   function discardDraftAudio() {
     setDraftAudio((current) => { if (current) URL.revokeObjectURL(current.url); return null; });
   }
 
+  /** Drop the transcript review state (the text itself is handled by the caller). */
+  function clearVoiceReview(options: { deleteAsset?: boolean } = {}) {
+    const assetId = voiceReview?.asset?.id ?? voiceAsset?.id ?? null;
+    setVoiceReview(null);
+    discardDraftAudio();
+    liveFinalRef.current = "";
+    liveInterimRef.current = "";
+    if (options.deleteAsset && assetId) void deleteVoiceAsset(assetId);
+  }
+
+  function retranscribeVoice() {
+    if (!draftAudio || transcribing) return;
+    // Replace the previous transcript rather than appending a second copy.
+    setInput("");
+    const previous = voiceReview?.asset?.id ?? null;
+    setVoiceReview(null);
+    liveFinalRef.current = "";
+    liveInterimRef.current = "";
+    if (previous) void deleteVoiceAsset(previous);
+    void uploadAndTranscribeVoice(draftAudio);
+  }
+
   function cancelVoiceRecording() {
     discardRecordingRef.current = true;
+    stopRecognition();
+    liveFinalRef.current = "";
+    liveInterimRef.current = "";
+    setLiveTranscript("");
     const active = recorderRef.current;
     if (active && active.state !== "inactive") active.stop();
-    discardDraftAudio();
+    else {
+      if (recordingClockRef.current) clearInterval(recordingClockRef.current);
+      setRecording(false);
+      setRecordingPaused(false);
+    }
     setNotice("Recording discarded. Nothing was uploaded.");
   }
 
   function pauseVoiceRecording() {
     const active = recorderRef.current;
     if (!active) return;
-    if (active.state === "recording") { active.pause(); setRecordingPaused(true); }
-    else if (active.state === "paused") { active.resume(); setRecordingPaused(false); }
+    if (active.state === "recording") {
+      active.pause(); setRecordingPaused(true);
+      if (recognitionRef.current) { recognitionWantedRef.current = false; try { recognitionRef.current.stop(); } catch { /* idle */ } }
+    } else if (active.state === "paused") {
+      active.resume(); setRecordingPaused(false);
+      if (recognitionRef.current) { recognitionWantedRef.current = true; try { recognitionRef.current.start(); } catch { /* already listening */ } }
+    }
   }
 
   async function toggleVoiceRecording() {
     const active = recorderRef.current;
     if (active && active.state !== "inactive") { active.stop(); return; }
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      setNotice("Voice recording is unsupported by this browser or device."); return;
+    // Recognition-only capture (no recorder on this browser) is stopped here.
+    if (recording && !active) {
+      if (recordingClockRef.current) clearInterval(recordingClockRef.current);
+      setRecording(false);
+      setRecordingPaused(false);
+      finishVoiceCapture(null, recordingElapsedRef.current * 1000);
+      return;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- vendor-prefixed constructor
+    const hasRecognition = Boolean((window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition);
+    const hasRecorder = Boolean(navigator.mediaDevices?.getUserMedia) && typeof MediaRecorder !== "undefined";
+    const plan = chooseVoiceEngine(voiceLangRef.current, {
+      speechRecognition: hasRecognition, mediaRecorder: hasRecorder,
+      mobile: /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent), online: navigator.onLine !== false,
+    });
+    if (!plan.engine) { setNotice("Voice input is unsupported by this browser or device."); return; }
+    liveFinalRef.current = "";
+    liveInterimRef.current = "";
+    setLiveTranscript("");
+    setVoiceEngineNote(plan.reason);
+    if (!hasRecorder) {
+      // Old WebViews: speech recognition only (no waveform, no server fallback).
+      const lang = voiceLangRef.current === "auto" ? (navigator.language || "en-US") : voiceLangRef.current;
+      if (!startRecognition(lang)) { setNotice("Voice input is unsupported by this browser or device."); return; }
+      setVoiceHasWaveform(false);
+      setRecordingSeconds(0);
+      recordingElapsedRef.current = 0;
+      recordingClockRef.current = setInterval(() => { recordingElapsedRef.current += 1; setRecordingSeconds(recordingElapsedRef.current); }, 1000);
+      setRecording(true);
+      setNotice(null);
+      return;
     }
     try {
+      setVoiceHasWaveform(true);
+      // A new recording appends to the transcript already in the composer;
+      // only the previous local audio is dropped.
       discardDraftAudio();
-      if (voiceAsset) await deleteVoiceAsset(voiceAsset.id);
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      if (plan.live) startRecognition(voiceLangRef.current);
       mediaStreamRef.current = stream;
       const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"]
         .find((candidate) => MediaRecorder.isTypeSupported(candidate));
@@ -862,14 +1079,17 @@ export function ChatClient({
         mediaStreamRef.current = null;
         const type = recorder.mimeType || "audio/webm";
         const extension = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : type.includes("wav") ? "wav" : "webm";
+        recorderRef.current = null;
         if (!discardRecordingRef.current) {
           const blob = new Blob(audioChunksRef.current, { type });
-          if (blob.size) {
-            const draft = { blob, url: URL.createObjectURL(blob), filename: `voice-${Date.now()}.${extension}`,
-              durationMs: recordingElapsedRef.current * 1000, waveform: [...waveformSamplesRef.current] };
-            void uploadAndTranscribeVoice(draft);
-          }
-          else setNotice("No audio was captured. Try again.");
+          const durationMs = recordingElapsedRef.current * 1000;
+          const draft = blob.size ? { blob, url: URL.createObjectURL(blob), filename: `voice-${Date.now()}.${extension}`,
+            durationMs, waveform: [...waveformSamplesRef.current] } : null;
+          // The transcript goes to the composer for review; nothing is sent yet.
+          if (draft || liveFinalRef.current || liveInterimRef.current) finishVoiceCapture(draft, durationMs);
+          else { stopRecognition(); setNotice("No audio was captured. Try again."); }
+        } else {
+          stopRecognition();
         }
         audioChunksRef.current = [];
       };
@@ -881,7 +1101,8 @@ export function ChatClient({
       }, 600_000);
     } catch (error) {
       setRecording(false);
-      setNotice(error instanceof Error ? `Microphone permission failed: ${error.message}` : "Microphone permission failed.");
+      stopRecognition();
+      setNotice(voiceErrorMessage(error instanceof Error ? error.name : "unknown"));
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
       mediaStreamRef.current = null;
     }
@@ -996,7 +1217,7 @@ export function ChatClient({
         agentTaskRef.current = state === "CLARIFICATION_REQUIRED" ? task : null;
       }
       const key = commitPartial(text, { replaceLastAssistant, turnId, intent }, streamMetadata);
-      if (key) committedKey = key;
+      if (key) { committedKey = key; setSettledKey(key); }
       committed = true;
       // An artifact the user explicitly asked for is built once the reply lands.
       if (key && !isImage) requestArtifactFromIntent(key, intent, text);
@@ -1309,6 +1530,14 @@ export function ChatClient({
     e?.preventDefault();
     const pending = messageOverride ? [] : attachments;
     const attachedImage = messageOverride ? null : pendingImage;
+    // A reviewed voice transcript in an ordinary chat is sent as a voice
+    // message (edited text + the private recording). Agent/Code turns, and
+    // turns with attachments, send the transcript as normal text.
+    if (!voice && !messageOverride && voiceReview?.asset && !pending.length && !attachedImage && mode !== "agent" && mode !== "code" && input.trim()) {
+      voice = voiceReview.asset;
+    }
+    const hadVoiceReview = Boolean(voiceReview);
+    const unusedVoiceAssetId = !voice ? voiceReview?.asset?.id ?? null : null;
     const audioAssetId = voice?.id ?? null;
     let message =
       (messageOverride ?? input).trim() ||
@@ -1320,7 +1549,14 @@ export function ChatClient({
       if (webSearch) message = `Use up-to-date public knowledge where it helps.\n\n${message}`;
       if (codeHint) message = `Answer with complete, runnable code when it helps.\n\n${message}`;
     }
-    if (!voice) setInput("");
+    if (!voice || hadVoiceReview) setInput("");
+    if (hadVoiceReview) {
+      setVoiceReview(null);
+      discardDraftAudio();
+      liveFinalRef.current = "";
+      liveInterimRef.current = "";
+      if (unusedVoiceAssetId) void deleteVoiceAsset(unusedVoiceAssetId);
+    }
     lastAttachmentsRef.current = pending;
     lastImagePathRef.current = attachedImage?.storagePath ?? null;
     setAttachments([]);
@@ -1530,6 +1766,13 @@ export function ChatClient({
           onRun: (run) => {
             setBuildPending(false);
             setBuildRun(run);
+            // Show the model that is actually producing the files, including
+            // after a server-side fallback — not the one that was requested.
+            if (run.model) {
+              const { model: runModel, provider: runProvider } = run.model;
+              setActiveModel((old) => old === runModel ? old : runModel);
+              setActiveProvider((old) => old === runProvider ? old : runProvider);
+            }
             if (run.projectId && run.projectId !== agentProjectId) setAgentProjectId(run.projectId);
           },
           onError: (code, detail) => {
@@ -1610,6 +1853,7 @@ export function ChatClient({
       {
         mode: mode === "code" ? "code" : "agent",
         project_id: projectId ?? undefined,
+        ...(run?.model ? { model: run.model.model, provider: run.model.provider, fallback: run.model.fallback } : {}),
         build: run && run.status !== "awaiting_input" ? toRunSnapshot(run) : undefined,
         agent_task: run?.status === "awaiting_input" ? agentTaskRef.current ?? undefined : undefined,
         deployment: run?.deployment
@@ -2012,7 +2256,7 @@ export function ChatClient({
               const actions = actionRegistry(index, message, signals, intent, artifact);
 
               return (
-                <div key={key} className="msg-in flex justify-start gap-3.5">
+                <div key={key} className={cn(key !== settledKey && "msg-in", "flex justify-start gap-3.5")}>
                   <span className="mt-0.5 hidden shrink-0 sm:block" aria-hidden="true">
                     <MatrixMark className="h-5 w-5 text-ink-3" />
                   </span>
@@ -2068,7 +2312,7 @@ export function ChatClient({
                 </div>
               );
             }),
-    [messages, signalsByIndex, artifacts, latestAssistantIndex, streaming, buildRun, execution,
+    [messages, signalsByIndex, artifacts, latestAssistantIndex, streaming, buildRun, execution, settledKey,
       exportPickerKey, mode, compact, speakingId, agentFiles, agentProjectId, lastUserMessage, t, router],
   );
 
@@ -2172,11 +2416,12 @@ export function ChatClient({
             {renderedHistory}
 
             {streaming && !streamCommitted ? (
-              <div className="msg-in flex gap-3.5">
+              <div className="msg-in flex justify-start gap-3.5">
                 <span className="mt-0.5 hidden shrink-0 sm:block" aria-hidden="true">
                   <MatrixMark className="h-5 w-5 text-ink-3" />
                 </span>
-                <div className="min-w-0 flex-1 border-l border-border pl-4">
+                {/* Same box as a committed assistant message, so nothing shifts when the stream completes. */}
+                <div className="min-w-0 max-w-[96%] flex-1 sm:max-w-none">
                   {imageRun ? (
                     <ArtifactCard
                       state={beginArtifact(requestArtifact(emptyArtifactState(), { type: "IMAGE", title: "Matrix image" }))}
@@ -2193,12 +2438,7 @@ export function ChatClient({
                       tier={activeTier}
                     />
                   )}
-                  {streamedText ? (
-                    <div className="ai-reply">
-                      <Markdown text={streamedText} streaming />
-                      <span className="ml-0.5 inline-block h-3.5 w-px animate-pulse bg-ink align-middle" aria-hidden="true" />
-                    </div>
-                  ) : null}
+                  <StreamingReply store={streamStore} />
                   {buildRun ? (
                     <BuildStatusCard run={buildRun} cancelling={cancellingBuild} onCancel={() => { void cancelBuildRun(); }} />
                   ) : buildPending ? (
@@ -2243,7 +2483,19 @@ export function ChatClient({
       </div>
 
       <div className="mx-auto mb-2 flex max-w-2xl flex-wrap items-center justify-end gap-2 text-[11px] text-ink-3">{modelPreference.model_id ? <button type="button" className="rounded-md border border-border px-2 py-1" onClick={() => { void rpc("model_preference_set", { mode: preferenceMode, provider_id: "", model_id: "" }).then(() => setModelPreferences((current) => ({ ...current, [preferenceMode]: { provider_id: "", model_id: "" } }))).catch(() => setNotice("Could not reset model preference.")); }}>Return to {preferenceMode === "agent" ? "Agent auto" : "OSS 120B"}</button> : null}<label htmlFor="stream-reveal">Response display</label><select id="stream-reveal" aria-label="Response display mode" className="rounded-md border border-border bg-surface px-2 py-1 text-ink" value={revealMode} onChange={(event) => { const next = event.target.value as RevealMode; setRevealMode(next); revealModeRef.current = next; void rpc("settings_update", { stream_reveal_mode: next }).catch(() => setNotice("Display preference could not be saved.")); }}><option value="adaptive">Adaptive typing</option><option value="word">Word by word</option><option value="natural">Natural stream</option><option value="reduced">Reduced motion</option></select></div>
-      {transcribing ? <p className="mx-auto max-w-2xl py-2 text-xs text-ink-2" role="status">Uploading privately and transcribing your voice message…</p> : null}
+      {transcribing ? <VoiceProcessing onCancel={() => transcribeAbortRef.current?.abort()} /> : null}
+      {voiceReview && !recording && !transcribing ? (
+        <VoiceReviewBar
+          review={voiceReview}
+          language={voiceLang}
+          onLanguage={setVoiceLang}
+          canRetranscribe={Boolean(draftAudio) && draftAudio!.blob.size <= 24 * 1024 * 1024}
+          busy={streaming}
+          onRetranscribe={retranscribeVoice}
+          onRecordMore={() => void toggleVoiceRecording()}
+          onDiscard={() => { setInput(""); clearVoiceReview({ deleteAsset: true }); if (textareaRef.current) textareaRef.current.style.height = "auto"; }}
+        />
+      ) : null}
       {notice ? <p className="mt-2 shrink-0 text-[13px] text-ink-2">{notice}</p> : null}
 
       <div className="shrink-0 pt-3">
@@ -2272,7 +2524,7 @@ export function ChatClient({
           ) : null}
         </div>
 
-        {draftAudio && !transcribing ? <div className="mx-auto mb-2 flex max-w-2xl flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2"><audio controls src={draftAudio.url} aria-label="Voice recording ready to retry" className="h-9 min-w-0 flex-1" />{draftAudio.blob.size <= 24 * 1024 * 1024 ? <button type="button" className="rounded-lg bg-accent px-3 py-2 text-sm text-white" onClick={() => void uploadAndTranscribeVoice(draftAudio, voiceAsset?.id)}>Retry sending</button> : null}<button type="button" className="rounded-lg border border-border px-3 py-2 text-sm" onClick={() => { discardDraftAudio(); if (voiceAsset) void deleteVoiceAsset(voiceAsset.id); }}>Discard</button></div> : null}
+        {draftAudio && !transcribing && !voiceReview && !recording ? <div className="mx-auto mb-2 flex max-w-2xl flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2"><audio controls src={draftAudio.url} aria-label="Voice recording ready to retry" className="h-9 min-w-0 flex-1" />{draftAudio.blob.size <= 24 * 1024 * 1024 ? <button type="button" className="rounded-lg bg-accent px-3 py-2 text-sm text-white" onClick={() => void uploadAndTranscribeVoice(draftAudio, voiceAsset?.id)}>Retry transcription</button> : null}<button type="button" className="rounded-lg border border-border px-3 py-2 text-sm" onClick={() => { discardDraftAudio(); if (voiceAsset) void deleteVoiceAsset(voiceAsset.id); }}>Discard</button></div> : null}
         {pendingImage || uploadingImage ? (
           <div className="mx-auto mb-2 flex max-w-2xl items-center justify-between gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2">
             {uploadingImage ? (
@@ -2337,14 +2589,27 @@ export function ChatClient({
             className="sr-only"
             onChange={(e) => void handleFile(e.target.files?.[0])}
           />
-          {recording ? <div className="flex min-h-24 w-full min-w-0 flex-col justify-center gap-2" role="group" aria-label="Voice recording composer">
-            <div className="flex min-w-0 items-center gap-2"><span className="h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-danger" aria-hidden="true" /><span className="shrink-0 font-mono text-sm text-danger">{recordingPaused ? "Paused" : "Recording"} · {Math.floor(recordingSeconds / 60)}:{String(recordingSeconds % 60).padStart(2, "0")}</span><canvas ref={waveformCanvasRef} height={40} aria-label="Live microphone waveform" role="img" className="h-10 min-w-0 flex-1" /></div>
-            <div className="flex flex-wrap items-center justify-between gap-2"><button type="button" onClick={cancelVoiceRecording} className="min-h-11 rounded-lg border border-border px-3 text-sm text-ink-2">Cancel</button><div className="flex items-center gap-2"><button type="button" onClick={pauseVoiceRecording} className="min-h-11 rounded-lg border border-border px-3 text-sm">{recordingPaused ? "Resume" : "Pause"}</button><button type="button" onClick={() => void toggleVoiceRecording()} className="flex min-h-11 items-center gap-2 rounded-lg bg-danger px-4 text-sm font-semibold text-white" aria-label="Stop and send voice message"><Square size={16} fill="currentColor" />Stop &amp; Send</button></div></div>
-          </div> : <Textarea
+          {recording ? <VoiceRecordingPanel
+            paused={recordingPaused}
+            seconds={recordingSeconds}
+            canvasRef={waveformCanvasRef}
+            liveTranscript={liveTranscript}
+            engineNote={voiceEngineNote}
+            hasWaveform={voiceHasWaveform}
+            canPause={voiceHasWaveform}
+            language={voiceLang}
+            onLanguage={setVoiceLang}
+            onCancel={cancelVoiceRecording}
+            onPause={pauseVoiceRecording}
+            onStop={() => void toggleVoiceRecording()}
+          /> : <Textarea
             ref={textareaRef}
             value={input}
+            dir="auto"
             onChange={(e) => {
               setInput(e.target.value);
+              // Once the text is cleared there is no transcript left to review.
+              if (!e.target.value.trim() && voiceReview) clearVoiceReview({ deleteAsset: true });
               requestAnimationFrame(autosize);
             }}
             onPaste={(e) => {
@@ -2374,7 +2639,8 @@ export function ChatClient({
             {/* Lightweight capability switches — clicking one activates the
                 capability, it never invokes it on its own. */}
             <div className="flex min-w-0 items-center gap-0.5">
-              {mode !== "code" && mode !== "agent" ? <button type="button" onClick={() => void toggleVoiceRecording()} disabled={streaming || transcribing || Boolean(draftAudio)} aria-label="Record a voice message" title="Record a voice message" className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] text-ink-3 transition-colors duration-150 hover:bg-surface-2 hover:text-ink"><Mic size={16} strokeWidth={1.7} /></button> : null}
+              {/* Voice input is part of the composer in every mode, including Agent. */}
+              <button type="button" onClick={() => void toggleVoiceRecording()} disabled={streaming || transcribing} aria-label={voiceReview ? "Record more voice input" : "Voice input"} title={`Voice input · ${voiceLanguage(voiceLang).label}`} className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors duration-150 hover:bg-surface-2 hover:text-ink disabled:opacity-50", voiceReview ? "bg-accent-soft text-accent" : "text-ink-3")}><Mic size={16} strokeWidth={1.7} /></button>
               <button type="button" onClick={() => fileRef.current?.click()} disabled={streaming} aria-label="Attach a file" title="Attach a file" className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] text-ink-3 transition-colors duration-150 hover:bg-surface-2 hover:text-ink disabled:opacity-40">
                 <Paperclip size={16} strokeWidth={1.7} />
               </button>

@@ -9,6 +9,20 @@ const NEW = /\b(?:create|build|start|make|scaffold|develop)\b[\s\S]{0,70}\b(?:ne
 const CREATION_TARGET = /\b(?:website|web\s?site|site|app|application|project|portfolio|dashboard|store|shop|blog|game|landing\s+page)\b/i;
 const FRESH_ARTIFACT = /\b(?:create|build|start|make|scaffold|develop)\s+(?:me\s+)?(?:a|an)\s+(?:\w+\s+){0,3}(?:website|web\s?site|site|app|application|project|portfolio|dashboard|store|shop|blog|game)\b/i;
 
+/** A request that starts by asking for something to be made is a creation
+ * request even when it names no "website/app" noun ("build a calculator"). */
+const CREATE_START = /^\s*(?:please\s+|can you\s+|could you\s+|i (?:want|need)(?: you)? to\s+)?(?:create|build|generate|make\s+(?:me\s+)?(?:a|an)\b|design\s+(?:me\s+)?(?:a|an)\b|develop|scaffold|write\s+(?:me\s+)?(?:a|an)\b|code\s+(?:me\s+)?(?:a|an)\b)|^\s*(?:একটি|একটা)\b|(?:তৈরি|বানাও|বানিয়ে)/i;
+/** Titles made only of generic words would "match" almost any prompt. */
+const GENERIC_TITLE = /^(?:(?:my|new|the|a|an|untitled|matrix|test|demo|simple|first)\s+)*(?:website|web\s?site|site|app|application|project|portfolio|dashboard|store|shop|blog|game|landing\s+page|page|home)$/i;
+
+function updatedMillis(value: unknown): number {
+  if (value instanceof Date) return value.getTime();
+  if (value && typeof value === "object" && typeof (value as { toMillis?: () => number }).toMillis === "function") return (value as { toMillis: () => number }).toMillis();
+  if (typeof value === "number") return value;
+  if (typeof value === "string") { const t = Date.parse(value); return Number.isFinite(t) ? t : 0; }
+  return 0;
+}
+
 export function wantsNewProject(prompt: string): boolean {
   return NEW.test(prompt);
 }
@@ -66,18 +80,41 @@ export async function resolveProjectContext(
   const referenced = mine.filter((doc) => {
     const title = typeof doc.data().title === "string" ? doc.data().title.trim() : "";
     const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return (title.length >= 4 && new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?:$|[^\\p{L}\\p{N}])`, "iu").test(prompt)) ||
+    return (title.length >= 4 && !GENERIC_TITLE.test(title) && new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?:$|[^\\p{L}\\p{N}])`, "iu").test(prompt)) ||
       new RegExp(`\\bproject(?:\\s+id)?\\s*[:#]?\\s*${doc.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(prompt);
   });
   const candidates = referenced.length ? referenced : legacyIds.length > 1 && EDIT_START.test(prompt)
     ? mine.filter((doc) => legacyIds.includes(doc.id)) : [];
   if (candidates.length === 1) return select(candidates[0].id, "reference");
   if (candidates.length > 1) {
+    // Resolve what can be resolved before interrupting the user:
+    //  • "Acme Store Admin" also contains the title "Acme Store" — the most
+    //    specific (longest) matching title is the one that was named;
+    //  • several projects created from THIS chat with no binding (legacy
+    //    data) — the user is continuing the latest one.
+    if (referenced.length) {
+      const byLength = [...candidates].sort((a, b) => String(b.data().title ?? "").trim().length - String(a.data().title ?? "").trim().length);
+      const longest = String(byLength[0].data().title ?? "").trim();
+      const second = String(byLength[1].data().title ?? "").trim();
+      if (longest.length > second.length && longest.toLowerCase().includes(second.toLowerCase())) return select(byLength[0].id, "reference");
+    } else {
+      const byRecency = [...candidates].sort((a, b) => updatedMillis(b.data().updated_at) - updatedMillis(a.data().updated_at));
+      if (updatedMillis(byRecency[0].data().updated_at) > updatedMillis(byRecency[1].data().updated_at)) return select(byRecency[0].id, "legacy-chat");
+    }
     const names = candidates.slice(0, 5).map((doc) => `${String(doc.data().title ?? "Untitled project").slice(0, 45)} (${doc.id})`);
     throw new RpcError("PROJECT_AMBIGUOUS", 409, `More than one of your projects matches: ${names.join(", ")}${candidates.length > 5 ? `, and ${candidates.length - 5} more` : ""}. Select one of your projects below and retry.`);
   }
-  if (EDIT_START.test(prompt) || (EDIT.test(prompt) && !FRESH_ARTIFACT.test(prompt)) || (!CREATION_TARGET.test(prompt) && !input.hasAttachments)) {
-    throw new RpcError("PROJECT_CONTEXT_MISSING", 409, "No project is associated with this chat. Open the project in Workspace or choose it by name before editing.");
+  const isEdit = EDIT_START.test(prompt) || (EDIT.test(prompt) && !FRESH_ARTIFACT.test(prompt));
+  // An edit with nothing bound, for a user who owns exactly one project, can
+  // only mean that project. Asking them to pick from a list of one is noise.
+  if (isEdit && mine.length === 1) return select(mine[0].id, "reference");
+  // "Build it" / "create that" point at something that already exists; they
+  // are not a description of a new project.
+  const pronounOnly = /^\s*(?:please\s+)?(?:create|build|generate|make|develop|deploy|publish|ship)\s+(?:it|this|that|them|these|those)\b[\s.!?]*$/i.test(prompt);
+  if (isEdit || pronounOnly || (!CREATION_TARGET.test(prompt) && !CREATE_START.test(prompt) && !input.hasAttachments)) {
+    throw new RpcError("PROJECT_CONTEXT_MISSING", 409, mine.length
+      ? "No project is associated with this chat. Open the project in Workspace or choose it by name before editing."
+      : "You have no projects yet. Describe what to create and MATRIX will make a new one.");
   }
   return { projectId: null, mode: "create", source: "new", forceNew: false };
 }

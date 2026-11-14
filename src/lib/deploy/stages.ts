@@ -94,6 +94,28 @@ export type BuildActions = {
   fix?: boolean;
 };
 
+export type RunModelInfo = {
+  provider: string;
+  model: string;
+  /** True when this is not the first route that was tried. */
+  fallback: boolean;
+  /** "Provider model: reason" for each route that failed before this one. */
+  failed: string[];
+  /** The user's explicit selection, when one was made. */
+  requested?: string | null;
+};
+
+export type RunDesignInfo = {
+  direction: string;
+  mode: "light" | "dark";
+  primary: string;
+  background: string;
+  heading: string;
+  source: "heuristic" | "model-refined";
+  /** For edits: which aspects of the design this run set out to change. */
+  changed?: string[];
+};
+
 export type BuildRun = {
   id: string;
   projectId: string | null;
@@ -117,6 +139,10 @@ export type BuildRun = {
   deployment: DeploymentRef | null;
   /** Same-origin path of the in-app sandboxed preview, when one is ready. */
   previewUrl: string | null;
+  /** The model that ACTUALLY produced the files, and every route that failed first. */
+  model?: RunModelInfo | null;
+  /** Summary of the design specification the files were generated from. */
+  design?: RunDesignInfo | null;
   error: { code: string; message: string } | null;
   logs: BuildLogLine[];
   startedAt: number;
@@ -467,6 +493,11 @@ export type BuildRunSnapshot = {
   attempts: number;
   error_code: string | null;
   preview_url?: string | null;
+  /** Model that actually produced the files (absent on runs before this field). */
+  model?: string;
+  provider?: string;
+  model_fallback?: boolean;
+  design_direction?: string;
 };
 
 export function toRunSnapshot(run: BuildRun): BuildRunSnapshot {
@@ -486,6 +517,8 @@ export function toRunSnapshot(run: BuildRun): BuildRunSnapshot {
     attempts: run.attempts,
     error_code: run.error?.code ?? null,
     preview_url: run.previewUrl ?? null,
+    ...(run.model ? { model: run.model.model, provider: run.model.provider, model_fallback: run.model.fallback } : {}),
+    ...(run.design ? { design_direction: run.design.direction } : {}),
   };
 }
 
@@ -526,6 +559,7 @@ export function runFromSnapshot(snapshot: Partial<BuildRunSnapshot> & { run_id: 
     maxAttempts: 2,
     fileCount: snapshot.file_count ?? 0,
     previewUrl: snapshot.preview_url ?? null,
+    model: snapshot.model && snapshot.provider ? { provider: snapshot.provider, model: snapshot.model, fallback: snapshot.model_fallback === true, failed: [] } : null,
     deployment:
       snapshot.deployment_status && snapshot.deployment_status !== "none"
         ? {

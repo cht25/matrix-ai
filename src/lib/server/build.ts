@@ -22,8 +22,14 @@ import { nowTs } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
 import { RpcError } from "@/lib/server/errors";
 import type { AIMessage } from "@/lib/ai/groq";
-import { completeWithFallback } from "@/lib/ai/executor";
-import { createAIRoutesFromDb, resolveSelectedAIRoute, type AIRouteTarget } from "@/lib/ai/config";
+import { completeWithFallback, type CompletedAIResponse } from "@/lib/ai/executor";
+import { resolveExecutionRoutes, type AIRouteTarget } from "@/lib/ai/config";
+import { describeRoutes } from "@/lib/ai/model-routing";
+import {
+  classifyDesignRevision, createDesignSpec, designFingerprint, designPlanPrompt, formatDesignSpecForPrompt, isWebsiteRequest,
+  mergeModelDesignSpec, parseStoredDesignSpec, reviseDesignSpec, serializeDesignSpec, type DesignRevision, type SiteDesignSpec,
+} from "@/lib/design/site-spec";
+import { designQualityCheck, significantDesignIssues } from "@/lib/deploy/design-quality";
 import { AGENT_SYSTEM_PROMPT } from "@/lib/ai/prompts";
 import { agentGenerationIncomplete, formatProjectFilesForContext, parseAgentResponse, shouldWithholdProjectFile } from "@/lib/ai/agent";
 import { classifyAgentOutput, transitionAgentExecution, type AgentExecutionState, type PendingAgentTask } from "@/lib/ai/agent-execution";
@@ -41,7 +47,7 @@ import {
   toRunSnapshot,
   type BuildActions, type BuildEnvironment, type BuildLogLine, type BuildRun, type BuildStageId,
 } from "@/lib/deploy/stages";
-import { blockingIssues, buildFixPrompt, formatIssues } from "@/lib/deploy/validate";
+import { blockingIssues, buildFixPrompt, formatIssues, type BuildReport } from "@/lib/deploy/validate";
 import type { DeploymentProvider } from "@/lib/deploy/provider";
 import { toFirestoreRun, runFromFirestore } from "@/lib/deploy/run-store";
 
@@ -86,6 +92,35 @@ export function requiresNonStaticRuntime(prompt: string): boolean {
 }
 
 const MAX_FIX_ATTEMPTS = 2;
+/** The build route may run for 300 s; leave room to validate, publish and persist. */
+const AI_BUDGET_MS = 235_000;
+
+/** Append the design-quality verdict to the provider's build report. */
+function withDesignQuality(report: BuildReport, files: ProjectFile[], spec: SiteDesignSpec | null): BuildReport {
+  const quality = designQualityCheck(files, {
+    expectedPages: spec?.pages ?? [],
+    requirePages: spec?.userConstraints.some((line) => /separate pages/i.test(line)) === true,
+  });
+  const checks = [...report.checks.filter((check) => check.id !== "design"), quality];
+  const errors = checks.reduce((sum, check) => sum + check.issues.filter((issue) => issue.severity === "error").length, 0);
+  const warnings = checks.reduce((sum, check) => sum + check.issues.filter((issue) => issue.severity === "warning").length, 0);
+  const blocking = checks.some((check) => check.status === "failed");
+  return {
+    checks, blocking, errors, warnings,
+    summary: blocking
+      ? `${errors} problem${errors === 1 ? "" : "s"} must be fixed before publishing.`
+      : `All supported checks passed${warnings ? ` with ${warnings} warning${warnings === 1 ? "" : "s"}` : ""}.`,
+  };
+}
+
+function sameContent(a: string, b: string): boolean {
+  return a.replace(/\r\n/g, "\n").trimEnd() === b.replace(/\r\n/g, "\n").trimEnd();
+}
+
+/** Full current source for a repair/polish request (bounded). */
+function sourceContext(files: ProjectFile[], prompt: string): string {
+  return formatProjectFilesForContext(files, prompt, { maxTotalChars: 160_000 }).text;
+}
 const MAX_IMAGE_ASSETS = 4;
 
 function hashPrompt(prompt: string): string {
@@ -102,6 +137,8 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
   let executionState: AgentExecutionState = "PLANNING";
   let resolvedProjectId: string | null = input.projectId ?? null;
   const done = (run: BuildRun): BuildPipelineResult => ({ run, reply, projectId: resolvedProjectId });
+  const aiDeadline = Date.now() + AI_BUDGET_MS;
+  let designSpec: SiteDesignSpec | null = null;
   let run = createBuildRun({
     id: runId,
     projectId: input.projectId ?? null,
@@ -270,21 +307,94 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     } else {
       await begin("generate", input.actions.fix === true ? "Agent is repairing the project files." : "Agent is writing the project files.");
       const assets = input.imageRequests?.length ? await generateImageAssets(d, user, projectId, input.imageRequests, note, emit) : [];
-      let routes: AIRouteTarget[] = [];
-      try {
-        routes = input.selectedModel?.modelId
-          ? [await resolveSelectedAIRoute(d, input.selectedModel.providerId, input.selectedModel.modelId)]
-          : await createAIRoutesFromDb(d, true);
-      } catch (error) {
-        return await abort("AI_MODEL_NOT_AVAILABLE", `The selected coding model could not be initialized (${error instanceof Error ? error.message.slice(0, 120) : "unavailable"}). Choose a verified model in Models or reset to GLM-5-Turbo.`, "generate");
-      }
+      // The user's selection (when healthy) leads; the automatic Agent chain
+      // (GLM → Gemini → GPT OSS 120B → others) follows as recorded fallbacks.
+      const resolved = await resolveExecutionRoutes(d, { mode: "agent", selected: input.selectedModel ?? null });
+      const routes: AIRouteTarget[] = resolved.routes;
+      const requestedModel = input.selectedModel?.modelId ? input.selectedModel.modelId : null;
+      if (resolved.selectionError) note("generate", "warn", `Selected model not used: ${resolved.selectionError}. Continuing with the automatic Agent model.`);
       if (!routes.length) {
         return await abort(
           "AI_NOT_CONFIGURED",
-          "No AI provider is configured on this deployment, so MATRIX cannot generate project files. Existing project files can still be validated and published.",
+          "No Agent-capable AI provider is configured or reachable on this deployment (checked GLM, Gemini, GPT OSS and managed providers), so MATRIX cannot generate project files. Add a provider key in Admin → AI providers or the server environment. Existing project files can still be validated and published.",
           "generate",
         );
       }
+      note("generate", "info", `Agent model order: ${describeRoutes(routes).slice(0, 5).map((route) => `${route.provider} ${route.model}${route.catalog === "missing" ? " (not in catalogue)" : ""}`).join(" → ")}.`);
+      const failedSoFar: string[] = [];
+      const useModel = (completion: CompletedAIResponse): void => {
+        for (const failed of completion.attempts) {
+          const line = `${failed.provider} ${failed.model}: ${failed.type}${failed.status ? ` ${failed.status}` : ""}`;
+          if (!failedSoFar.includes(line)) {
+            failedSoFar.push(line);
+            note("generate", "warn", `Model fallback — ${line}. Switched to ${completion.target.provider} ${completion.target.model}.`);
+          }
+        }
+        run = { ...run, model: { provider: completion.target.provider, model: completion.target.model, fallback: failedSoFar.length > 0 || (requestedModel !== null && completion.target.model !== requestedModel), failed: failedSoFar.slice(0, 8), requested: requestedModel } };
+      };
+
+      // ------------------------------------------------ design specification --
+      // Decide what the site should look like BEFORE any code is written. The
+      // specification is derived from the user's words, varied per project,
+      // refined by the model as art director, and then handed to the coding
+      // model as a binding brief. For edits it describes only what changes.
+      const websiteRun = !workspaceOnly && isWebsiteRequest(input.prompt, before.map((file) => file.path));
+      const storedSpec = parseStoredDesignSpec(projectRecord.design_spec);
+      const originalBrief = typeof projectRecord.design_brief === "string" ? projectRecord.design_brief : "";
+      let revision: DesignRevision = { scopes: ["none"], restyle: false };
+      let changedAspects: string[] = [];
+      const fingerprintBefore = before.length ? designFingerprint(before) : null;
+      if (websiteRun && input.actions.fix !== true) {
+        if (!before.length) {
+          designSpec = createDesignSpec(input.prompt, { seed: projectId, title: String(projectRecord.title ?? plan.title) });
+          changedAspects = ["all"];
+        } else {
+          revision = classifyDesignRevision(input.prompt);
+          if (!(revision.scopes.length === 1 && revision.scopes[0] === "none")) {
+            const revised = reviseDesignSpec(storedSpec, input.prompt, { seed: `${projectId}:${sourceRevision}`, originalBrief, title: String(projectRecord.title ?? plan.title) });
+            designSpec = revised.spec;
+            // A project created before specifications were stored has no
+            // baseline to diff against: only the requested aspects change.
+            changedAspects = storedSpec ? revised.changed : revision.scopes.map((scope) => scope === "full-redesign" ? "direction, palette, typography, layout, navigation" : scope === "mobile" ? "responsive" : scope);
+          } else if (storedSpec) {
+            designSpec = storedSpec;
+          }
+        }
+        const refine = designSpec && (!before.length || revision.restyle || revision.scopes.includes("navigation") || revision.scopes.includes("hero") || revision.scopes.includes("layout"));
+        if (designSpec && refine) {
+          note("generate", "info", `Design plan: ${designSpec.direction.name} · ${designSpec.palette.mode} · primary ${designSpec.palette.primary} · ${designSpec.typography.heading.split(",")[0].replace(/'/g, "")}.`);
+          await emit("generate");
+          try {
+            const planned = await completeWithFallback(routes, {
+              messages: [{ role: "user", content: designPlanPrompt(`${originalBrief ? `${originalBrief}\n\nRevision request: ` : ""}${input.prompt}`, designSpec, fingerprintBefore) }],
+              temperature: 0.8, maxTokens: 1400, deadlineAt: Math.min(aiDeadline, Date.now() + 45_000),
+              requestId: input.requestId ? `${input.requestId}-design` : undefined,
+            });
+            useModel(planned);
+            const merged = mergeModelDesignSpec(designSpec, planned.response.content ?? "", input.prompt);
+            designSpec = merged.spec;
+            if (merged.applied.length) note("generate", "info", `Design refined by ${planned.target.provider} ${planned.target.model}: ${merged.applied.join(", ")}.`);
+            for (const line of merged.rejected) note("generate", "info", `Design plan adjusted: ${line}.`);
+          } catch (error) {
+            // The deterministic specification is already complete; a failed
+            // refinement must not stop the build.
+            note("generate", "warn", `Design refinement skipped (${error instanceof Error ? error.message.slice(0, 80) : "provider error"}); using the planned specification.`);
+          }
+        }
+        if (designSpec) {
+          run = { ...run, design: { direction: designSpec.direction.name, mode: designSpec.palette.mode, primary: designSpec.palette.primary, background: designSpec.palette.background, heading: designSpec.typography.heading.split(",")[0].replace(/'/g, ""), source: designSpec.source, changed: before.length ? changedAspects : [] } };
+          await emit("generate");
+        }
+      }
+      const isEdit = before.length > 0;
+      const designBrief = designSpec && (!isEdit || changedAspects.length)
+        ? formatDesignSpecForPrompt(designSpec, { edit: isEdit, changed: changedAspects })
+        : "";
+      const editInstruction = !isEdit ? "" : revision.scopes.includes("full-redesign")
+        ? `REDESIGN of the existing project. Existing files: ${before.map((file) => file.path).join(", ")}. Rebuild the look of the site to the DESIGN SPECIFICATION: new layout, palette, typography and navigation, visibly different from the current design. KEEP the site's real content, brand, pages, links, forms and working JavaScript behaviour. Return every file you change, complete (normally every HTML page and the stylesheet). Keep the same file names so existing links and the deployment keep working.`
+        : changedAspects.length
+          ? `DESIGN REVISION of the existing project. Existing files: ${before.map((file) => file.path).join(", ")}. Change these aspects, everywhere they are defined, so the difference is clearly visible: ${changedAspects.join(", ")}. Leave the rest of the design, the content and the behaviour as they are. Return ONLY the files you change, complete.`
+          : `EDIT of the existing project. Existing files: ${before.map((file) => file.path).join(", ")}. Make exactly the requested change in the real files shown. Return ONLY the files you change, complete; do not recreate or restyle unrelated files.`;
       const messages: AIMessage[] = [
         { role: "system", content: AGENT_SYSTEM_PROMPT },
         {
@@ -301,17 +411,19 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
               ].filter(Boolean).join("\n")
             : [
                 "MATRIX build pipeline: emit complete, publishable files only.",
-                `Project title: ${String(projectRecord.title ?? plan.title)}. ${before.length ? "Preserve the existing root index.html unless the requested change requires editing it." : "Entry page must be index.html at the project root."}`,
-                before.length ? `EDIT MODE. Existing project files: ${before.map((file) => file.path).join(", ")}. Return ONLY changed files, complete. Do not recreate unrelated files, redesign the site, or claim an unchanged file was modified.` : "CREATE MODE. This is a new project.",
+                `Project title: ${String(projectRecord.title ?? plan.title)}. ${isEdit ? "The entry page stays index.html at the project root." : "Entry page must be index.html at the project root."}`,
+                isEdit ? editInstruction : "CREATE MODE. This is a new project: design it for this brief from scratch.",
+                isEdit ? "Never return a file whose content is identical to the saved file, and never say a file changed unless you return its new content. The pipeline compares your files with the saved ones and reports only real differences." : "",
                 input.attachments?.length
                   ? `The user attached these files as the source of truth: ${input.attachments.map((item) => item.path).join(", ")}. Keep their behaviour; do not invent contents for them.`
                   : "",
                 assets.length
                   ? `Generated image assets already exist in the project and MUST be referenced with relative paths: ${assets.map((asset) => `${asset.path} (${asset.width}x${asset.height})`).join(", ")}.`
-                  : "Do not reference local binary images that do not exist. Use inline SVG or CSS art.",
-                "Static hosting only: plain HTML, CSS and JavaScript. No bundler, no npm install, no server code.",
+                  : "Do not reference local binary images that do not exist. Use inline SVG, CSS, or real remote photos as the specification describes.",
+                "Static hosting only: HTML, CSS and browser JavaScript. Nothing may need npm install, a bundler or server code. CDN-loaded libraries (including the Tailwind Play CDN) are allowed.",
               ].filter(Boolean).join("\n"),
         },
+        ...(designBrief ? [{ role: "system" as const, content: designBrief }] : []),
         ...(existingProjectContext ? [{ role: "user" as const, content: existingProjectContext }] : []),
         {
           role: "user",
@@ -321,15 +433,19 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
           ].join(""),
         },
       ];
+      // Creative work needs variety: at 0.2 every model returned its single
+      // most-probable page. Precise edits and repairs stay low.
+      const generationTemperature = workspaceOnly || input.actions.fix === true ? 0.2 : !isEdit ? 0.75 : changedAspects.length ? 0.6 : 0.2;
       let raw = "";
       let calls: NonNullable<Awaited<ReturnType<typeof completeWithFallback>>["response"]["toolCalls"]> = [];
       try {
-        const completion = await completeWithFallback(routes, { messages, temperature: 0.2, maxTokens: 16384, requestId: input.requestId ?? undefined });
+        const completion = await completeWithFallback(routes, { messages, temperature: generationTemperature, maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline, requestId: input.requestId ?? undefined });
+        useModel(completion);
         raw = completion.response.content ?? "";
         calls = completion.response.toolCalls ?? [];
       } catch (error) {
         const detail = error instanceof Error ? error.message : "provider error";
-        return await abort("AI_PROVIDER_FAILED", `MATRIX could not reach the coding provider (${detail.slice(0, 120)}), so no files were written.`, "generate");
+        return await abort("AI_PROVIDER_FAILED", `Every configured Agent model failed (${routes.length} tried: ${describeRoutes(routes).slice(0, 4).map((route) => `${route.provider} ${route.model}`).join(", ")}). Last error: ${detail.slice(0, 160)}. No files were written.`, "generate");
       }
       if (agentGenerationIncomplete(raw)) {
         note("generate", "warn", "The provider response ended mid-file; requesting one completion before saving.");
@@ -343,8 +459,11 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
             ],
             temperature: 0.1,
             maxTokens: 16384,
+            aggregateStream: true,
+            deadlineAt: aiDeadline,
             requestId: input.requestId ? `${input.requestId}-continue` : undefined,
           });
+          useModel(continuation);
           const continued = continuation.response.content ?? "";
           const continuedFiles = classifyAgentOutput(continued, continuation.response.toolCalls ?? []).files;
           raw = continuedFiles.length ? continued : `${raw}\n${continued}`;
@@ -372,8 +491,9 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         try {
           const retry = await completeWithFallback(routes, {
             messages: [...messages, { role: "assistant", content: raw }, { role: "user", content: "The task is ready for implementation. Return actual complete project files (MATRIX_FILE blocks or filename-tagged code fences), not a summary of the work. If an essential detail is missing, ask one specific question instead." }],
-            temperature: 0.1, maxTokens: 16384, requestId: input.requestId ? `${input.requestId}-files` : undefined,
+            temperature: 0.1, maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline, requestId: input.requestId ? `${input.requestId}-files` : undefined,
           });
+          useModel(retry);
           const candidate = classifyAgentOutput(retry.response.content ?? "", retry.response.toolCalls ?? []);
           if (candidate.files.length || candidate.state === "CLARIFICATION_REQUIRED") parsed = candidate;
         } catch (error) {
@@ -407,9 +527,47 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       if (withheldOverwrite) {
         return await abort("AI_OUTPUT_WITHHELD_FILE", "The requested change targets an existing file withheld from the provider for safety or size. MATRIX saved no generated files; attach a safe, complete copy or remove the secret from that file first.", "generate");
       }
+      // ---------------------------------------------- real-change check --
+      // An edit is only an edit if saved content differs. Files returned
+      // byte-identical are dropped, and a design revision must touch the
+      // files that define the design — otherwise nothing is reported as done.
+      const savedByPath = new Map(before.map((file) => [file.path, file.content]));
+      const realChanges = (candidate: typeof parsed.files) => candidate.filter((file) => !savedByPath.has(file.path) || !sameContent(savedByPath.get(file.path) ?? "", file.content));
+      const designTouched = (candidate: typeof parsed.files) => candidate.some((file) => /\.(?:html?|css|jsx?|tsx?|vue|svelte)$/i.test(file.path));
+      let effective = isEdit ? realChanges(parsed.files) : parsed.files;
+      const wantsDesignChange = isEdit && changedAspects.length > 0 && changedAspects.some((aspect) => aspect !== "pages");
+      if (isEdit && (!effective.length || (wantsDesignChange && !designTouched(effective)))) {
+        note("generate", "warn", effective.length ? "The returned files do not change the site's design; requesting the actual design change once more." : "The returned files are identical to the saved project; requesting the actual change once more.");
+        await emit("generate");
+        try {
+          const retry = await completeWithFallback(routes, {
+            messages: [...messages, { role: "assistant", content: raw.slice(0, 6000) }, { role: "user", content: `Your files did not change the saved project${wantsDesignChange ? "'s design" : ""}. Apply the request to the real files now: "${input.prompt.slice(0, 600)}". Return the complete new content of every file that must change${wantsDesignChange ? " (the HTML pages and stylesheet that define the look)" : ""} as MATRIX_FILE blocks. The result must differ from the saved content.` }],
+            temperature: Math.max(0.5, generationTemperature), maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline,
+            requestId: input.requestId ? `${input.requestId}-change` : undefined,
+          });
+          useModel(retry);
+          const candidate = classifyAgentOutput(retry.response.content ?? "", retry.response.toolCalls ?? []);
+          const candidateChanges = realChanges(candidate.files);
+          if (candidateChanges.length && (!wantsDesignChange || designTouched(candidateChanges))) {
+            parsed = candidate;
+            reply = candidate.reply || reply;
+            effective = candidateChanges;
+          }
+        } catch (error) {
+          note("generate", "warn", `Change retry failed (${error instanceof Error ? error.message.slice(0, 80) : "provider error"}).`);
+        }
+      }
+      if (isEdit && !effective.length) {
+        reply = "";
+        return await abort("NO_CHANGES_MADE", "The model returned files identical to the saved project, so nothing was changed and no change is reported. Describe the change more specifically or try another model.", "generate");
+      }
+      if (wantsDesignChange && !designTouched(effective)) {
+        reply = "";
+        return await abort("DESIGN_UNCHANGED", "The requested design change was not produced: none of the returned files alter the pages or styles. The project was left exactly as it was.", "generate");
+      }
       const applied = await applyProjectFiles(d, user, {
         project_id: projectId,
-        files: parsed.files as ProjectFile[],
+        files: effective as ProjectFile[],
         expected_revision: sourceRevision,
         source: "agent",
         title: before.length ? undefined : plan.title.slice(0, 80),
@@ -420,7 +578,28 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       if (input.conversationId && !input.isTemporary) await bindConversationProject(d, user, input.conversationId, projectId);
       const changes = summarizeChanges(before, files);
       run = setChanges(run, changes, files.length, now());
-      await finish("generate", `Wrote ${applied.count} file${applied.count === 1 ? "" : "s"} · ${files.length} in the project.`);
+      if (designSpec && (!isEdit || changedAspects.length)) {
+        // The specification is part of the project, so later revisions start
+        // from what was actually built. Same document, same project ID.
+        try {
+          await d.collection("projects").doc(projectId).set({
+            design_spec: serializeDesignSpec(designSpec),
+            ...(originalBrief ? {} : { design_brief: input.prompt.slice(0, 2000) }),
+          }, { merge: true });
+        } catch { /* the files are saved; the stored brief is an optimisation */ }
+      }
+      if (wantsDesignChange && fingerprintBefore) {
+        const after = designFingerprint(files);
+        const coloursChanged = after.colors.slice(0, 5).join() !== fingerprintBefore.colors.slice(0, 5).join();
+        const fontsChanged = after.fonts.join() !== fingerprintBefore.fonts.join();
+        note("generate", "info", `Design diff — colours ${coloursChanged ? "changed" : "unchanged"}, fonts ${fontsChanged ? "changed" : "unchanged"}, ${changes.filter((change) => change.kind === "modified").length} file(s) modified, ${changes.filter((change) => change.kind === "created").length} created.`);
+      }
+      // What the user is told changed comes from the stored diff, not from
+      // the model's own account of its work.
+      const changedList = changes.slice(0, 8).map((change) => `${change.path} (${change.kind})`).join(", ");
+      const modelLine = run.model ? `Model: ${run.model.provider} ${run.model.model}${run.model.fallback ? ` (fallback${run.model.failed.length ? ` after ${run.model.failed[0]}` : ""})` : ""}.` : "";
+      reply = [reply.trim(), `Files changed: ${changedList || "none"}${changes.length > 8 ? ` +${changes.length - 8} more` : ""}. ${modelLine}`.trim()].filter(Boolean).join("\n\n");
+      await finish("generate", `Wrote ${applied.count} file${applied.count === 1 ? "" : "s"} · ${files.length} in the project${run.model ? ` · ${run.model.provider} ${run.model.model}` : ""}.`);
     }
 
     if (!files.length) return await abort("NO_FILES", `Project ${projectId} has no files to build (0 files). Generate or upload source files before building.`, "build");
@@ -440,7 +619,12 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
 
     // ------------------------------------------- dependencies/build/validate --
     await begin("install", "Checking declared dependencies.");
-    let built = await provider.build(projectId, files);
+    const specForChecks = designSpec ?? parseStoredDesignSpec(projectRecord.design_spec);
+    const buildProject = async (candidate: ProjectFile[]) => {
+      const result = await provider.build(projectId, candidate);
+      return { ...result, report: withDesignQuality(result.report, candidate, specForChecks) };
+    };
+    let built = await buildProject(files);
     const dependencyCheck = built.report.checks.find((check) => check.id === "dependencies");
     if (dependencyCheck?.status === "failed") {
       run = failStage(run, "install", now(), dependencyCheck.message);
@@ -479,23 +663,18 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       const issueText = formatIssues(blockingIssues(built.report), 6);
       note("validate", "warn", `Build attempt ${attempt} failed — asking the Agent to fix it.`);
       await emit("validate");
-      let routes: AIRouteTarget[] = [];
-      try {
-        routes = input.selectedModel?.modelId
-          ? [await resolveSelectedAIRoute(d, input.selectedModel.providerId, input.selectedModel.modelId)]
-          : await createAIRoutesFromDb(d, true);
-      } catch {
-        routes = [];
-      }
+      const routes = (await resolveExecutionRoutes(d, { mode: "agent", selected: input.selectedModel ?? null })).routes;
       if (!routes.length) break;
+      // The repair model needs the real source: with only an error list it
+      // rewrote files from memory and lost the design.
       const fixMessages: AIMessage[] = [
         { role: "system", content: AGENT_SYSTEM_PROMPT },
-        { role: "user", content: buildFixPrompt(built.report, files.length) },
-        { role: "assistant", content: reply || "(previous build)" },
-        { role: "user", content: `Return only the corrected files. Problems:\n${issueText}` },
+        { role: "user", content: sourceContext(files, issueText) },
+        { role: "user", content: `${buildFixPrompt(built.report, files.length)}\n\nReturn only the corrected files, complete. Problems:\n${issueText}` },
       ];
       try {
-        const fix = await completeWithFallback(routes, { messages: fixMessages, temperature: 0.1, maxTokens: 16384, requestId: input.requestId ?? undefined });
+        const fix = await completeWithFallback(routes, { messages: fixMessages, temperature: 0.1, maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline + 20_000, requestId: input.requestId ?? undefined });
+        if (fix.attempts.length) note("validate", "warn", `Repair model fallback: ${fix.attempts.map((failed) => `${failed.provider} ${failed.model} (${failed.type})`).join(", ")} → ${fix.target.provider} ${fix.target.model}.`);
         const fixed = parseAgentResponse(fix.response.content ?? "", { allowUnlabelledFences: true, allowRawHtmlDocument: true });
         if (fixed.files.length) {
           const fixedResult = await applyProjectFiles(d, user, { project_id: projectId, files: fixed.files as ProjectFile[], source: "agent", expected_revision: sourceRevision });
@@ -511,9 +690,55 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       } catch {
         break;
       }
-      built = await provider.build(projectId, files);
+      built = await buildProject(files);
       run = setValidation(run, built.report.checks, now());
       await emit("validate");
+    }
+
+    // ------------------------------------------------ design polish pass --
+    // A build can pass while the page is still poor on a phone. When this run
+    // generated the files and the design review found significant problems,
+    // ask for ONE targeted correction, test the result in memory, and keep it
+    // only if it is strictly better. Never loops, never blocks publishing.
+    const designCheck = built.report.checks.find((check) => check.id === "design");
+    const designProblems = designCheck ? significantDesignIssues(designCheck) : [];
+    if (!built.report.blocking && needsGeneration && designProblems.length && Date.now() < aiDeadline - 60_000) {
+      note("validate", "info", `Design review found ${designProblems.length} issue${designProblems.length === 1 ? "" : "s"}; requesting one improvement pass.`);
+      await emit("validate");
+      try {
+        const routes = (await resolveExecutionRoutes(d, { mode: "agent", selected: input.selectedModel ?? null })).routes;
+        const polish = routes.length ? await completeWithFallback(routes, {
+          messages: [
+            { role: "system", content: AGENT_SYSTEM_PROMPT },
+            { role: "user", content: sourceContext(files, "") },
+            { role: "user", content: `A design review of this project found the problems below. Fix them in the real files and return ONLY the files you change, complete, as MATRIX_FILE blocks. Keep the existing design, content and behaviour otherwise.\n\n${formatIssues(designProblems, 10)}` },
+          ],
+          temperature: 0.2, maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline, requestId: input.requestId ? `${input.requestId}-polish` : undefined,
+        }) : null;
+        const polished = polish ? parseAgentResponse(polish.response.content ?? "", { allowUnlabelledFences: true, allowRawHtmlDocument: true }).files : [];
+        const safe = polished.filter((file) => !shouldWithholdProjectFile(file.path, file.content, "utf8") && files.some((existing) => existing.path === file.path));
+        if (safe.length) {
+          const byPath = new Map(safe.map((file) => [file.path, file.content]));
+          const candidate = files.map((file) => byPath.has(file.path) ? { ...file, content: byPath.get(file.path) as string } : file);
+          const trial = await buildProject(candidate);
+          const trialCheck = trial.report.checks.find((check) => check.id === "design");
+          const remaining = trialCheck ? significantDesignIssues(trialCheck).length : 0;
+          if (!trial.report.blocking && remaining < designProblems.length) {
+            const polishResult = await applyProjectFiles(d, user, { project_id: projectId, files: safe as ProjectFile[], source: "agent", expected_revision: sourceRevision });
+            sourceRevision = polishResult.revision;
+            files = await loadProjectFiles(d, projectId);
+            built = await buildProject(files);
+            run = setChanges(run, summarizeChanges(before, files), files.length, now());
+            run = setValidation(run, built.report.checks, now());
+            note("validate", "success", `Design improvements applied: ${designProblems.length - remaining} of ${designProblems.length} issue${designProblems.length === 1 ? "" : "s"} resolved.`);
+          } else {
+            note("validate", "info", "The improvement pass did not make the design measurably better, so the files were left unchanged.");
+          }
+          await emit("validate");
+        }
+      } catch (error) {
+        note("validate", "info", `Design improvement pass skipped (${error instanceof Error ? error.message.slice(0, 80) : "provider error"}).`);
+      }
     }
 
     if (built.report.blocking) {
@@ -645,6 +870,7 @@ async function persistBuildMessage(
         mode: input.chatMode ?? "agent",
         execution_state: executionState,
         project_id: run.projectId,
+        ...(run.model ? { model: run.model.model, provider: run.model.provider, fallback: run.model.fallback } : {}),
         ...(run.status === "awaiting_input" ? { agent_task: {
           originalRequest: input.taskContext?.originalRequest ?? input.prompt,
           clarifications: input.taskContext?.clarifications ?? [],

@@ -72,6 +72,12 @@ export function toFirestoreRun(run: BuildRun): Json {
     maxAttempts: run.maxAttempts,
     fileCount: run.fileCount,
     previewUrl: run.previewUrl ?? null,
+    model: run.model
+      ? { provider: run.model.provider.slice(0, 60), model: run.model.model.slice(0, 120), fallback: run.model.fallback === true, failed: run.model.failed.slice(0, 8).map((line) => line.slice(0, 200)), requested: run.model.requested ?? null }
+      : null,
+    design: run.design
+      ? { direction: run.design.direction.slice(0, 80), mode: run.design.mode, primary: run.design.primary, background: run.design.background, heading: run.design.heading.slice(0, 80), source: run.design.source, changed: (run.design.changed ?? []).slice(0, 12) }
+      : null,
     deployment: run.deployment
       ? {
           id: run.deployment.id,
@@ -191,6 +197,8 @@ export function runFromFirestore(raw: unknown, now: number): BuildRun | null {
     maxAttempts: num(data.maxAttempts, 2),
     fileCount: num(data.fileCount),
     previewUrl: nullableStr(data.previewUrl),
+    model: readModel(data.model),
+    design: readDesign(data.design),
     deployment:
       deploymentRaw && str(deploymentRaw.id)
         ? {
@@ -221,13 +229,35 @@ export function runFromFirestore(raw: unknown, now: number): BuildRun | null {
   };
 }
 
+function readModel(value: unknown): BuildRun["model"] {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Json;
+  if (!str(raw.model) || !str(raw.provider)) return null;
+  return {
+    provider: str(raw.provider), model: str(raw.model), fallback: raw.fallback === true,
+    failed: Array.isArray(raw.failed) ? raw.failed.filter((line): line is string => typeof line === "string").slice(0, 8) : [],
+    requested: nullableStr(raw.requested),
+  };
+}
+
+function readDesign(value: unknown): BuildRun["design"] {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Json;
+  if (!str(raw.direction)) return null;
+  return {
+    direction: str(raw.direction), mode: raw.mode === "dark" ? "dark" : "light", primary: str(raw.primary), background: str(raw.background),
+    heading: str(raw.heading), source: raw.source === "model-refined" ? "model-refined" : "heuristic",
+    changed: Array.isArray(raw.changed) ? raw.changed.filter((item): item is string => typeof item === "string").slice(0, 12) : [],
+  };
+}
+
 function readValidation(value: unknown): BuildCheck[] | null {
   if (!value || typeof value !== "object") return null;
   const checks = (value as Json).checks;
   if (!Array.isArray(checks)) return null;
   return (checks as Json[]).map(
     (check): BuildCheck => ({
-      id: (["dependencies", "syntax", "build", "routes", "assets"].includes(String(check.id)) ? check.id : "build") as BuildCheck["id"],
+      id: (["dependencies", "syntax", "build", "routes", "assets", "design"].includes(String(check.id)) ? check.id : "build") as BuildCheck["id"],
       label: str(check.label, "Check"),
       status: (["passed", "failed", "skipped"].includes(String(check.status)) ? check.status : "skipped") as BuildCheck["status"],
       message: str(check.message),

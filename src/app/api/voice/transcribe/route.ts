@@ -9,6 +9,7 @@ import { AIProviderError, logProviderFailure, providerPublicCode, providerErrorF
 import { deletePrivateAudio, downloadPrivateAudio, uploadPrivateAudio } from "@/lib/server/cloudinary";
 import { mutationCsrfResponse } from "@/lib/server/request-security";
 import { cleanupStaleVoiceDrafts } from "@/lib/server/voice-cleanup";
+import { normalizeDetectedLanguage, whisperLanguageHint } from "@/lib/voice-input";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,12 +44,16 @@ async function transcribeViaOpenAICompatible(opts: {
   bytes: Buffer;
   filename: string;
   mimeType: string;
+  /** ISO-639-1 hint; empty = let the model detect the language. */
+  language?: string;
   signal?: AbortSignal;
 }): Promise<{ transcript: string; model: string; provider: string; usage: Record<string, unknown> }> {
   const fd = new FormData();
   fd.append("file", new Blob([new Uint8Array(opts.bytes)], { type: opts.mimeType }), opts.filename);
   fd.append("model", opts.model);
-  // No language hint: Whisper detects the spoken language, including code-switching.
+  // Without a hint Whisper detects the spoken language (including
+  // code-switching). A hint is sent only when the user chose a language.
+  if (opts.language) fd.append("language", opts.language);
   fd.append("response_format", "verbose_json");
   const res = await fetch(`${opts.baseUrl.replace(/\/+$/, "")}/audio/transcriptions`, {
     method: "POST",
@@ -65,7 +70,7 @@ async function transcribeViaOpenAICompatible(opts: {
   if (!transcript) {
     throw new AIProviderError({ provider: opts.providerLabel, model: opts.model, type: "empty_response", detail: "Empty transcription result" });
   }
-  return { transcript, model: opts.model, provider: opts.providerLabel, usage: { detected_language: data.language ?? null } };
+  return { transcript, model: opts.model, provider: opts.providerLabel, usage: { detected_language: normalizeDetectedLanguage(data.language) ?? (opts.language || null) } };
 }
 
 export async function POST(req: NextRequest) {
@@ -79,11 +84,21 @@ export async function POST(req: NextRequest) {
   const geminiKey = keyPresent(process.env.GEMINI_API_KEY);
   const geminiAudioModel = process.env.GEMINI_AUDIO_MODEL?.trim() ?? "";
 
-  const hasProvider = Boolean(groqKey || openaiKey || (geminiKey && geminiAudioModel));
+  // A Gemini key alone is enough: without GEMINI_AUDIO_MODEL the audio model
+  // is taken from the key's live catalogue at call time.
+  const hasProvider = Boolean(groqKey || openaiKey || geminiKey);
   if (!hasProvider) return NextResponse.json({ error: "VOICE_TRANSCRIPTION_NOT_CONFIGURED" }, { status: 503 });
-  if (!isCloudinaryConfigured()) return NextResponse.json({ error: "VOICE_STORAGE_NOT_CONFIGURED" }, { status: 503 });
 
   const form = await req.formData().catch(() => null);
+  const languageHint = whisperLanguageHint(typeof form?.get("language") === "string" ? String(form.get("language")) : "");
+  // Dictation (composer voice input) only needs the words. The recording is
+  // kept as a private, playable voice message when storage is configured and
+  // the client asked for it; otherwise it is transcribed and discarded.
+  // Previously a deployment without Cloudinary could not use voice at all.
+  const wantsStorage = String(form?.get("store") ?? "1") !== "0";
+  const storageReady = isCloudinaryConfigured();
+  const persist = wantsStorage && storageReady;
+  if (typeof form?.get("audio_asset_id") === "string" && !storageReady) return NextResponse.json({ error: "VOICE_STORAGE_NOT_CONFIGURED" }, { status: 503 });
   const d = adminDb();
   await cleanupStaleVoiceDrafts(d).catch(() => {});
   const retryId = typeof form?.get("audio_asset_id") === "string" ? String(form.get("audio_asset_id")) : "";
@@ -92,7 +107,7 @@ export async function POST(req: NextRequest) {
   let mimeType: string;
   let bytes: Buffer;
   let filename: string;
-  let audioRef: ReturnType<ReturnType<ReturnType<typeof adminDb>["collection"]>["doc"]>;
+  let audioRef: ReturnType<ReturnType<ReturnType<typeof adminDb>["collection"]>["doc"]> | null = null;
   if (retryId) {
     if (!/^[a-f0-9-]{36}$/i.test(retryId)) return NextResponse.json({ error: "AUDIO_NOT_FOUND" }, { status: 404 });
     id = retryId;
@@ -114,10 +129,10 @@ export async function POST(req: NextRequest) {
     bytes = Buffer.from(await file.arrayBuffer());
     filename = file.name || "voice.webm";
     id = randomUUID();
-    audioRef = d.collection("chat_audio_assets").doc(id);
+    if (persist) audioRef = d.collection("chat_audio_assets").doc(id);
   }
   if (!matchesAudioContainer(bytes, mimeType)) return NextResponse.json({ error: "AUDIO_CONTENT_INVALID" }, { status: 415 });
-  if (!retryId) {
+  if (!retryId && persist && audioRef) {
     let stored: Awaited<ReturnType<typeof uploadPrivateAudio>>;
     try {
       stored = await uploadPrivateAudio(user.uid, bytes, filename);
@@ -146,42 +161,50 @@ export async function POST(req: NextRequest) {
   let usedModel = "whisper-large-v3-turbo";
 
   try {
-    let out: { transcript: string; model: string; provider: string; usage: Record<string, unknown> };
+    // Every configured speech provider is tried in order. One provider being
+    // rate-limited or rejecting a container must not fail voice input while
+    // another configured provider can transcribe the same audio.
+    type Transcription = { transcript: string; model: string; provider: string; usage: Record<string, unknown> };
+    const attempts: Array<{ model: string; run: () => Promise<Transcription> }> = [];
     if (groqKey) {
-      usedModel = process.env.GROQ_AUDIO_MODEL?.trim() || "whisper-large-v3-turbo";
-      out = await transcribeViaOpenAICompatible({
-        baseUrl: "https://api.groq.com/openai/v1",
-        apiKey: groqKey,
-        providerLabel: "Groq",
-        model: usedModel,
-        bytes,
-        filename,
-        mimeType,
-        signal: req.signal,
-      });
-    } else if (openaiKey) {
-      usedModel = process.env.OPENAI_AUDIO_MODEL?.trim() || "whisper-1";
-      out = await transcribeViaOpenAICompatible({
-        baseUrl: process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1",
-        apiKey: openaiKey,
-        providerLabel: "OpenAI",
-        model: usedModel,
-        bytes,
-        filename,
-        mimeType,
-        signal: req.signal,
-      });
-    } else {
-      usedModel = geminiAudioModel;
-      const provider = new GeminiProvider(geminiKey);
-      const response = await provider.transcribeAudio({
-        model: usedModel,
-        mimeType,
-        base64: bytes.toString("base64"),
-        signal: req.signal,
-      });
-      out = { transcript: response.content, model: response.model, provider: "Gemini", usage: response.usage };
+      const model = process.env.GROQ_AUDIO_MODEL?.trim() || "whisper-large-v3-turbo";
+      attempts.push({ model, run: () => transcribeViaOpenAICompatible({ baseUrl: "https://api.groq.com/openai/v1", apiKey: groqKey, providerLabel: "Groq", model, bytes, filename, mimeType, language: languageHint, signal: req.signal }) });
     }
+    if (openaiKey) {
+      const model = process.env.OPENAI_AUDIO_MODEL?.trim() || "whisper-1";
+      attempts.push({ model, run: () => transcribeViaOpenAICompatible({ baseUrl: process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1", apiKey: openaiKey, providerLabel: "OpenAI", model, bytes, filename, mimeType, language: languageHint, signal: req.signal }) });
+    }
+    if (geminiKey) {
+      attempts.push({ model: geminiAudioModel || "gemini (catalogue)", run: async () => {
+        const provider = new GeminiProvider(geminiKey);
+        let model = geminiAudioModel;
+        if (!model) {
+          // Audio understanding is a Flash-family capability; take the newest
+          // listed stable Flash model rather than assuming an identifier.
+          const listed = (await provider.listModels()).map((entry) => entry.id)
+            .filter((id) => /^gemini-[\d.]+-flash(?:-lite)?(?:-\d+)?$/.test(id) || /^gemini-flash-latest$/.test(id));
+          model = listed.sort((a, b) => (parseFloat(b.replace(/^gemini-/, "")) || 0) - (parseFloat(a.replace(/^gemini-/, "")) || 0) || a.length - b.length)[0] ?? "";
+          if (!model) throw new AIProviderError({ provider: "Gemini", model: "catalog", type: "invalid_request", detail: "No audio-capable Gemini model is listed for this key." });
+        }
+        usedModel = model;
+        const response = await provider.transcribeAudio({ model, mimeType, base64: bytes.toString("base64"), ...(languageHint ? { language: languageHint } : {}), signal: req.signal });
+        return { transcript: response.content, model: response.model, provider: "Gemini", usage: { ...response.usage, detected_language: languageHint || null } };
+      } });
+    }
+    let out: Transcription | null = null;
+    let lastError: unknown = null;
+    for (const attempt of attempts) {
+      usedModel = attempt.model;
+      try {
+        out = await attempt.run();
+        break;
+      } catch (error) {
+        lastError = error;
+        if (req.signal.aborted) throw error;
+        logProviderFailure(error);
+      }
+    }
+    if (!out) throw lastError ?? new Error("VOICE_TRANSCRIPTION_FAILED");
 
     await d.collection("ai_usage_logs").add({
       user_id: user.uid,
@@ -194,19 +217,21 @@ export async function POST(req: NextRequest) {
     }).catch(() => {});
 
     const language = typeof out.usage.detected_language === "string" ? out.usage.detected_language : null;
-    await audioRef.set({ transcript: out.transcript, detected_language: language, transcription_status: "complete", transcribed_at: nowTs() }, { merge: true });
+    if (audioRef) await audioRef.set({ transcript: out.transcript, detected_language: language, transcription_status: "complete", transcribed_at: nowTs() }, { merge: true });
     return NextResponse.json({
       transcript: out.transcript,
-      audio_asset_id: id,
-      playback_url: `/api/voice/audio/${id}`,
+      audio_asset_id: audioRef ? id : null,
+      playback_url: audioRef ? `/api/voice/audio/${id}` : null,
+      stored: Boolean(audioRef),
       provider: out.provider,
       model: out.model,
       usage: out.usage,
-      detected_language: typeof out.usage.detected_language === "string" ? out.usage.detected_language : null,
+      detected_language: language,
+      requested_language: languageHint || "auto",
     }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     logProviderFailure(error);
-    await audioRef.set({ transcription_status: "failed" }, { merge: true }).catch(() => {});
+    if (audioRef) await audioRef.set({ transcription_status: "failed" }, { merge: true }).catch(() => {});
     await d.collection("ai_usage_logs").add({
       user_id: user.uid,
       model: usedModel,
@@ -217,7 +242,7 @@ export async function POST(req: NextRequest) {
       created_at: nowTs(),
     }).catch(() => {});
     return NextResponse.json(
-      { error: providerPublicCode(error), audio_asset_id: id, playback_url: `/api/voice/audio/${id}` },
+      { error: providerPublicCode(error), audio_asset_id: audioRef ? id : null, playback_url: audioRef ? `/api/voice/audio/${id}` : null },
       { status: providerStatus(error), headers: { "Cache-Control": "private, no-store" } },
     );
   }

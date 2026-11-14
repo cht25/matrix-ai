@@ -52,6 +52,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+/** Sanitized, user-safe description of the LAST provider failure after every
+ * configured route was tried. Never includes request content or credentials. */
+function providerDiagnostic(error: unknown, routesTried: number): { diagnostic?: { provider: string; model: string; type: string; status: number | null; detail: string; routes_tried: number } } {
+  if (!(error instanceof AIProviderError)) return {};
+  return { diagnostic: { provider: error.provider, model: error.model, type: error.type, status: error.status, detail: error.detail.slice(0, 180), routes_tried: routesTried } };
+}
+
 // High ceilings so MATRIX does not invent a product quota. Real provider
 // 429s still surface as AI_PROVIDER_RATE_LIMITED.
 const RATE_LIMITS: Record<string, { perMinute: number; perDay: number }> = {
@@ -626,14 +633,26 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const preference = preferenceForMode(savedSelection?.data(), useAgentPolicy ? "agent" : "chat");
   const modelId = typeof body.model_id === "string" && body.model_id.trim() ? body.model_id.trim() : preference.model_id.trim();
   const providerId = typeof body.model_id === "string" && body.model_id.trim() ? String(body.provider_id ?? "") : preference.provider_id;
+  let selectionNotice: string | null = null;
   if (modelId) {
+    // The user's choice leads the chain and is used whenever it answers. If it
+    // fails — or cannot be initialized at all — execution continues on the
+    // automatic chain and the switch is reported, rather than failing the
+    // request while another configured model is healthy.
     try {
-      // An explicit choice must not fall through to an unrelated provider.
       const selected = await resolveSelectedAIRoute(d, providerId, modelId);
-      targets = [selected];
+      if (useAgentPolicy && mode === "agent" && selected.client.supportsToolCalls !== true) {
+        selectionNotice = `${selected.provider} ${selected.model} does not support Agent tool calling; using the automatic Agent model instead.`;
+      } else {
+        const sameRoute = (t: AIRouteTarget) => t.model === selected.model && (t.providerId ?? t.provider) === (selected.providerId ?? selected.provider);
+        targets = [selected, ...targets.filter((t) => !sameRoute(t))];
+      }
     } catch (error) {
       logProviderFailure(error, requestId);
-      return json({ error: "AI_MODEL_NOT_AVAILABLE", detail: error instanceof Error ? error.message : "Select a verified model from the catalog." }, 400, requestId);
+      if (!targets.length) {
+        return json({ error: "AI_MODEL_NOT_AVAILABLE", detail: error instanceof Error ? error.message : "Select a verified model from the catalog." }, 400, requestId);
+      }
+      selectionNotice = `The selected model (${modelId}) could not be initialized: ${error instanceof Error ? error.message.slice(0, 140) : "unavailable"}. Using ${targets[0].provider} ${targets[0].model} instead.`;
     }
   }
   const automaticAlternative = !modelId && (useAgentPolicy
@@ -748,6 +767,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
             at: Date.now(),
             durationMs: Math.max(1, Date.now() - started),
           });
+          if (selectionNotice) upsertStep({ id: "selection", label: "Selected model unavailable", detail: selectionNotice, status: "done", at: Date.now() });
           if (rag || safeAttachments.length || chatImageDataUrl) {
             upsertStep({
               id: "context",
@@ -800,7 +820,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
                 }
               },
             },
-            (target, fallback) => {
+            (target, fallback, failed) => {
               activeTarget = target;
               if (fallback) {
                 usedFallback = true;
@@ -808,6 +828,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
                 upsertStep({
                   id: "fallback",
                   label: `Switched to fallback · ${target.provider} (${target.model})`,
+                  ...(failed ? { detail: `${failed.provider} ${failed.model} failed: ${failed.type}${failed.status ? ` ${failed.status}` : ""}` } : {}),
                   status: "done",
                   at: Date.now(),
                 });
@@ -957,6 +978,10 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
       at: started,
       durationMs: Math.max(1, callStarted - started),
     });
+    if (selectionNotice) nonStreamSteps.push({ id: "selection", label: "Selected model unavailable", detail: selectionNotice, status: "done", at: Date.now() });
+    for (const failed of result.attempts) {
+      nonStreamSteps.push({ id: `fallback-${failed.provider}-${failed.model}`.slice(0, 80), label: `Skipped ${failed.provider} (${failed.model})`, detail: `${failed.type}${failed.status ? ` ${failed.status}` : ""} — continued on ${activeTarget.provider} ${activeTarget.model}`, status: "done", at: Date.now() });
+    }
     if (sawReasoning) {
       nonStreamSteps.push({
         id: "reasoning",
@@ -1030,7 +1055,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   } catch (error) {
     logProviderFailure(error, requestId);
     await logUsage(d, user.uid, activeTarget?.model ?? selectedModel, "chat", {}, Date.now() - started, "error", requestId);
-    return json({ error: providerPublicCode(error), conversation_id: convId }, providerStatus(error), requestId);
+    return json({ error: providerPublicCode(error), conversation_id: convId, ...providerDiagnostic(error, targets.length) }, providerStatus(error), requestId);
   }
 
   // Never persist or render the model's chain-of-thought. Providers already

@@ -28,7 +28,8 @@ export type BuildIssue = {
   severity: "error" | "warning";
 };
 
-export type BuildCheckId = "dependencies" | "syntax" | "build" | "routes" | "assets";
+/** `design` is produced by design-quality.ts and appended by the build pipeline. */
+export type BuildCheckId = "dependencies" | "syntax" | "build" | "routes" | "assets" | "design";
 
 export type BuildCheck = {
   id: BuildCheckId;
@@ -53,6 +54,7 @@ export const BUILD_CHECK_LABELS: Record<BuildCheckId, string> = {
   build: "Build",
   routes: "Routes",
   assets: "Assets",
+  design: "Design quality",
 };
 
 /** The bundling outcome from the pipeline (`buildPublishedFiles`). */
@@ -664,12 +666,12 @@ export function formatIssues(issues: BuildIssue[], limit = 12): string {
 export function buildFixPrompt(report: BuildReport, projectFiles: number): string {
   const issues = blockingIssues(report);
   return [
-    `The MATRIX build validator rejected this project (${projectFiles} files). Fix every problem listed below and return the COMPLETE corrected files using the MATRIX_FILE protocol. Change nothing unrelated to these problems.`,
+    `The MATRIX build validator rejected this project (${projectFiles} files). Fix every problem listed below and return the COMPLETE corrected files using the MATRIX_FILE protocol. Change nothing unrelated to these problems, and keep the existing visual design.`,
     ``,
     `PROBLEMS:`,
     formatIssues(issues) || "Unknown validation failure.",
     issues.length > 12 ? `\n(+${issues.length - 12} more problems of the same kind)` : "",
     ``,
-    `Rules: keep the entry page index.html, reference local files with simple relative paths, do not add binary files, and do not use any framework that needs a bundler.`,
+    `Rules: keep the entry page index.html, reference local files with simple relative paths, do not add binary files, and do not add anything that needs an install or build step (CDN-loaded libraries such as the Tailwind Play CDN are fine).`,
   ].join("\n");
 }
