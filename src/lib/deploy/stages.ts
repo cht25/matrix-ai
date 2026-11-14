@@ -621,7 +621,7 @@ export function runFromSnapshot(snapshot: Partial<BuildRunSnapshot> & { run_id: 
     changes: [],
     validation: null,
     attempts: snapshot.attempts ?? 0,
-    maxAttempts: 2,
+    maxAttempts: 4,
     fileCount: snapshot.file_count ?? 0,
     previewUrl: snapshot.preview_url ?? null,
     model: snapshot.model && snapshot.provider ? { provider: snapshot.provider, model: snapshot.model } : null,

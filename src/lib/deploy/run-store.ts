@@ -205,7 +205,7 @@ export function runFromFirestore(raw: unknown, now: number): BuildRun | null {
       : [],
     validation: readValidation(data.validation),
     attempts: num(data.attempts),
-    maxAttempts: num(data.maxAttempts, 2),
+    maxAttempts: num(data.maxAttempts, 4),
     fileCount: num(data.fileCount),
     previewUrl: nullableStr(data.previewUrl),
     model: readModel(data.model),
