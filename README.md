@@ -4,15 +4,14 @@
 
 MATRIX AI is a production-ready, multilingual workspace that combines a broadly useful assistant with
 cyber-safety tools, learning, and a dedicated software Agent. General Chat helps with writing, study,
-planning, research, technology and safe digital life. Obvious coding requests are routed to the
-**server-configured AI provider and model**. Explicit Agent mode adds text/code attachments,
+planning, research, technology and safe digital life. Normal Chat defaults to configured
+**OSS 120B**; Agent has an independent, capability-ranked GLM-first coding policy. Explicit Agent mode adds text/code attachments,
 reviewable file artifacts, a sandboxed static live preview, and encrypted GitHub OAuth with
 review-before-push atomic commits. Existing screenshot scanning, scam reporting, courses, certificates,
 security dashboard and RBAC administration remain available.
 
 The platform uses **Firebase (Auth + Firestore)**, **Cloudinary** for private images, and an
-**admin-configurable OpenAI-compatible provider** (endpoint, model and API key) for all AI work, with
-**Groq / OpenRouter environment fallbacks**. Provider keys and GitHub OAuth tokens never reach
+**independent Chat and Agent provider policies** with user-selectable models and guarded Agent fallback. Provider keys and GitHub OAuth tokens never reach
 the browser or an AI prompt.
 
 > Previously branded "THAMJJ13.TOP Cyber Safety AI" — rebranded to **MATRIX AI** (developer: THAMJJ13.TOP).
@@ -56,7 +55,7 @@ the browser or an AI prompt.
 | Storage | **Cloudinary** (free tier) — server-signed uploads, private (authenticated) assets only |
 | Authorization | Firestore **security rules** + a server-side RPC layer (`src/lib/server/rpc.ts`) that ports every Postgres `SECURITY DEFINER` function |
 | Backend/API | Next.js route handlers (Node runtime, Admin SDK) |
-| AI | **Admin-configurable OpenAI-compatible endpoint/model/API key** (Admin → AI usage) for chat, Agent/coding and screenshot analysis — with a separate **Chat model** and **Agent/coding model** field (each independently testable). Groq (general/vision) and OpenRouter Nemotron (`nvidia/nemotron-3-ultra-550b-a55b:free`; override with `OPENROUTER_CODING_MODEL`) remain as environment fallbacks. All traffic is behind `/api/ai` |
+| AI | **Separate policies**: Normal Chat defaults to configured OSS 120B (Groq or dedicated compatible provider), never GLM automatically; Agent ranks configured tool-capable GLM and other provider models by estimated capability, live catalogue IDs where supported, recent result/latency and bounded fallbacks. Explicit per-mode model preferences are preserved; `/api/ai` reports the actual provider/model. Whisper/OpenAI/Gemini speech-to-text is separate from both model policies. |
 | i18n | English + Bangla dictionaries (architecture ready for more) |
 | Tests | Vitest (AI pipeline, PII, classification, file validation, age rules, env config) |
 
@@ -242,8 +241,12 @@ Whichever you choose, remember to:
 | `NEXT_PUBLIC_APP_URL` | client + server | canonical URL for links/emails (not used as a redirect target). Must be a host that is actually attached to the Render service |
 | `FIREBASE_CLIENT_EMAIL` | server only | Admin SDK service account |
 | `FIREBASE_PRIVATE_KEY` | server only | Admin SDK private key |
-| `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | server only | Private image storage (screenshots, ID docs) |
-| `GROQ_API_KEY` | server only | General chat + vision environment fallback → Groq |
+| `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | server only | Private image and authenticated voice storage |
+| `GROQ_API_KEY` or `GPT_OSS_API_KEY` | server only | Normal Chat OSS 120B and optional Agent fallback; `GROQ_API_KEY` also enables Whisper multilingual STT |
+| `GROQ_AUDIO_MODEL` | server only | Optional STT model (`whisper-large-v3-turbo` by default; `whisper-large-v3` for accuracy-sensitive multilingual recordings) |
+| `ZAI_API_KEY` or `GLM_API_KEY` | server only | Agent GLM account; `/models` discovery where supported, real model execution checks |
+| `OPENAI_API_KEY` / `OPENAI_AUDIO_MODEL` | server only | Optional alternative AI/STT provider (`whisper-1` default for STT) |
+| `GEMINI_API_KEY` / `GEMINI_AUDIO_MODEL` | server only | Optional explicitly configured audio transcription alternative |
 | `OPENROUTER_API_KEY` | server only | Coding auto-routing + Agent environment fallback → OpenRouter |
 | `OPENROUTER_CODING_MODEL` | server only | Optional coding-model override; defaults to `nvidia/nemotron-3-ultra-550b-a55b:free` |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | server only | GitHub OAuth App for Agent-mode repository access |
@@ -281,11 +284,24 @@ Auth → Rate limit (ai_usage_logs: 20/min · 300/day chat; 5/min · 50/day scan
      → Broad task/coding detection + cyber-safety classification
      → Prompt construction (system + rolling summary + last 8 messages + safe memories)
      → RAG retrieval (document_chunks + scam articles + lessons + reporting resources)
-     → Admin-configured OpenAI-compatible provider, else Groq (general/vision)
-       or OpenRouter Nemotron (coding/Agent)
+     → Chat: OSS 120B; other non-GLM providers on eligible failure.
+       Agent: rank discovered/configured tool-capable models by coding, reasoning,
+       latency and observed availability; GLM first when suitable. Never fall
+       through on bad credentials, permissions, billing, or malformed requests.
      → streaming or structured Agent artifacts + output validation + PII-leak filter
      → Store allowed response → usage/safety logs
 ```
+
+Voice messages use browser MediaRecorder and an AnalyserNode-backed Canvas in the existing
+composer. Stop uploads an authenticated private Cloudinary recording, transcribes it with
+configured Whisper/OpenAI/Gemini speech-to-text (never with GLM text generation), and
+sends its transcript to the selected Chat model in the same conversation. Firestore
+`chat_audio_assets` stores duration, real waveform samples, detected language,
+transcription status, and atomic conversation/message linkage; retry uses the stored
+asset without duplicating uploads. New-format unattached drafts older than a day are
+cleaned opportunistically. The recording cap is ten minutes / 24 MB; longer inputs
+must be split by the user (arbitrary byte slicing would corrupt compressed audio).
+Actual language accuracy and mobile device codec support require live-provider/device tests.
 
 `POST { action: "health", mode?: "agent" }` is unauthenticated and performs a real reachability check for the selected provider. `/api/health` reports general and coding AI separately.
 
@@ -383,7 +399,9 @@ middleware) activates on the user's next sign-in/token refresh.
 Firestore `system_settings/ai_provider` and take effect on the next request —
 no code deploy or restart. Only a masked key status (last four characters) is
 returned to the browser. If nothing is saved, or the provider is disabled, the
-existing `GROQ_API_KEY` / `OPENROUTER_API_KEY` environment fallbacks are used.
+Chat defaults to configured OSS 120B; Agent selects the best eligible configured
+tool-capable model, with automatic fallback on verified model/provider outages.
+Model preferences are stored separately per mode under `user_security_settings`.
 
 ## Testing
 

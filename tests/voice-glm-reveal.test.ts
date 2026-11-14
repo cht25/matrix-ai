@@ -37,14 +37,11 @@ describe("authoritative Z.AI routing", () => {
   it("uses exact default for Chat and Agent, never silently uses configured OSS", async () => {
     vi.stubEnv("GLM_API_KEY", ""); vi.stubEnv("ZAI_API_KEY", "zai-test-key");
     vi.stubEnv("GROQ_API_KEY", "gsk-test-key"); vi.stubEnv("GLM_MODEL", ""); vi.stubEnv("GLM_CODING_MODEL", "");
-    for (const coding of [false, true]) {
-      const targets = await createAIRoutesFromDb(null, coding);
-      expect(targets).toHaveLength(1);
-      expect(targets[0]).toMatchObject({ provider: "GLM", model: "glm-5-turbo" });
-    }
+    expect((await createAIRoutesFromDb(null, false))[0]).toMatchObject({ provider: "Groq", model: "openai/gpt-oss-120b" });
+    expect((await createAIRoutesFromDb(null, true))[0]).toMatchObject({ provider: "GLM", model: "glm-5-turbo" });
     vi.stubEnv("ZAI_API_KEY", "");
-    expect(await createAIRoutesFromDb(null, false)).toHaveLength(0);
-    expect(await createAIRoutesFromDb(null, true)).toHaveLength(0);
+    expect((await createAIRoutesFromDb(null, false))[0].provider).toBe("Groq");
+    expect((await createAIRoutesFromDb(null, true))[0].provider).toBe("Groq");
   });
 
   it("posts Bearer-authorized GLM-5-Turbo with real streaming deltas and tool calls", async () => {

@@ -75,11 +75,11 @@ describe("Pillar 1 — GLM High-Load + gpt-oss-120b Low-Load Tiered Routing", ()
     const highTargets = await createAIRoutesFromDb(null, true, false, "high");
     expect(highTargets[0].provider).toBe("GLM");
     expect(highTargets[0].model).toBe("glm-5-turbo");
-    expect(highTargets).toHaveLength(1);
+    expect(highTargets.some((t) => t.provider !== "GLM")).toBe(true);
 
     const lowTargets = await createAIRoutesFromDb(null, false, false, "low");
-    expect(lowTargets[0].model).toBe("glm-4.7");
-    expect(lowTargets).toHaveLength(1);
+    expect(lowTargets[0].model).toBe("openai/gpt-oss-120b");
+    expect(lowTargets.every((t) => t.provider !== "GLM")).toBe(true);
     // Gemini is never auto-injected into default routes.
     expect(lowTargets.some((t) => t.provider === "Gemini")).toBe(false);
 

@@ -70,6 +70,7 @@ function isReasoningModel(model: string): boolean {
 }
 
 export class GroqProvider implements AIProvider {
+  readonly supportsToolCalls = true;
   private apiKey: string;
   private baseUrl = "https://api.groq.com/openai/v1";
 
@@ -94,6 +95,10 @@ export class GroqProvider implements AIProvider {
       body.max_completion_tokens = maxTokens;
       body.reasoning_format = "hidden";
       body.reasoning_effort = req.imageDataUrl || req.model.includes("qwen") ? "none" : "low";
+    }
+    if (req.tools?.length && !stream) {
+      body.tools = req.tools;
+      body.tool_choice = "auto";
     }
     if (req.imageDataUrl) {
       const last = req.messages[req.messages.length - 1];
@@ -163,7 +168,7 @@ export class GroqProvider implements AIProvider {
     }
 
     let data: {
-      choices?: { message?: { content?: string | null }; finish_reason?: string }[];
+      choices?: { message?: { content?: string | null; tool_calls?: AIProviderToolCall[] }; finish_reason?: string }[];
       model?: string;
       usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     };
@@ -175,6 +180,8 @@ export class GroqProvider implements AIProvider {
 
     return {
       content: assistantContentOnly(data.choices?.[0]?.message),
+      toolCalls: (data.choices?.[0]?.message?.tool_calls ?? []).slice(0, 20).filter((call) =>
+        typeof call?.id === "string" && typeof call?.function?.name === "string" && typeof call?.function?.arguments === "string"),
       model: data.model ?? req.model,
       finishReason: data.choices?.[0]?.finish_reason,
       usage: {

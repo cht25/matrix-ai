@@ -91,10 +91,9 @@ describe("admin-managed AI provider registry", () => {
 
     expect((await getManagedProviderRoutes(db, "chat")).map((route) => route.model)).toEqual(["chat-model"]);
     expect((await getManagedProviderRoutes(db, "agent")).map((route) => route.model)).toEqual(["agent-model"]);
-    // Managed accounts remain explicitly selectable, not implicit GLM substitutes.
-    expect(await createAIRoutesFromDb(db, false)).toHaveLength(0);
-    expect(await createAIRoutesFromDb(db, true)).toHaveLength(0);
-    expect((await createAIRoutesFromDb(db, false, true))[0]).toMatchObject({ providerId: savedProvider.id, model: "chat-model" });
+    // Explicitly enabled managed accounts are eligible mode-specific routes.
+    expect((await createAIRoutesFromDb(db, false))[0]).toMatchObject({ providerId: savedProvider.id, model: "chat-model" });
+    expect((await createAIRoutesFromDb(db, true))[0]).toMatchObject({ providerId: savedProvider.id, model: "agent-model" });
     expect((await getManagedProviderRoutes(db, "vision"))).toHaveLength(0);
     const publicProviders = await getManagedProvidersPublic(db);
     expect(publicProviders[0]).not.toHaveProperty("api_key_encrypted");

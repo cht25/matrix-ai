@@ -1,3 +1,4 @@
+import { preferenceForMode } from "@/lib/ai/model-preferences";
 import { cancelAgentTask } from "@/lib/server/agent-tasks";
 import { classifyAgentOutput, requestsClarificationFirst, type PendingAgentTask } from "@/lib/ai/agent-execution";
 // =============================================================================
@@ -490,10 +491,14 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   }
   const convRef = d.collection("conversations").doc(convId);
   const audioAssetId = typeof body.audio_asset_id === "string" ? body.audio_asset_id.trim() : "";
+  let voiceMetadata: { audio_asset_id: string; audio_duration_ms: number; audio_waveform: number[]; audio_language: string | null } | null = null;
   if (audioAssetId) {
     if (!/^[a-f0-9-]{36}$/i.test(audioAssetId)) return json({ error: "AUDIO_NOT_FOUND" }, 404, requestId);
     const audioAsset = await d.collection("chat_audio_assets").doc(audioAssetId).get().catch(() => null);
     if (!audioAsset || !audioAsset.exists || audioAsset.data()?.user_id !== user.uid) return json({ error: "AUDIO_NOT_FOUND" }, 404, requestId);
+    const saved = audioAsset.data()!;
+    if (saved.transcription_status !== "complete" || !saved.transcript || saved.transcript.trim() !== message) return json({ error: "AUDIO_TRANSCRIPT_MISMATCH" }, 409, requestId);
+    voiceMetadata = { audio_asset_id: audioAssetId, audio_duration_ms: Number(saved.duration_ms ?? 0), audio_waveform: Array.isArray(saved.waveform) ? saved.waveform.slice(0, 64) : [], audio_language: saved.detected_language ?? null };
   }
   const imageStoragePath = typeof body.image_storage_path === "string" ? body.image_storage_path.trim() : "";
   let chatImageDataUrl: string | undefined;
@@ -528,19 +533,27 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const redaction = redactPII(message);
   if (!reuseUser) {
     try {
-      await convRef.collection("messages").add({
-        role: "user",
-        content: message,
+      const messageData = {
+        role: "user", content: message,
         metadata: {
-          pii_redacted: !redaction.safe,
-          detected: redaction.detected.map((x) => x.type),
-          mode,
-          attachment_names: attachments.map((file) => file.name),
-          ...(audioAssetId ? { audio_asset_id: audioAssetId } : {}),
+          pii_redacted: !redaction.safe, detected: redaction.detected.map((x) => x.type),
+          mode, attachment_names: attachments.map((file) => file.name),
+          ...(voiceMetadata ?? {}),
         },
         created_at: nowTs(),
-      });
+      };
+      if (audioAssetId) {
+        const ref = convRef.collection("messages").doc();
+        const assetRef = d.collection("chat_audio_assets").doc(audioAssetId);
+        await d.runTransaction(async (tx) => {
+          const snap = await tx.get(assetRef);
+          if (snap.data()?.user_id !== user.uid || snap.data()?.conversation_id || snap.data()?.transcript !== message) throw new Error("AUDIO_ALREADY_SENT");
+          tx.create(ref, messageData);
+          tx.update(assetRef, { conversation_id: convId, message_id: ref.id });
+        });
+      } else await convRef.collection("messages").add(messageData);
     } catch (error) {
+      if (audioAssetId) return json({ error: "AUDIO_MESSAGE_NOT_SAVED", conversation_id: convId }, 409, requestId);
       // The user's message reached the gateway; a storage hiccup must not
       // stop the assistant from answering. Flag the degradation in the reply.
       logGatewayFailure("persist_user_message", { requestId, conversationId: convId }, error);
@@ -600,20 +613,20 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   }
   const codingDetected = route.coding || mode === "agent" || isCodingRequest(message, attachments);
   const preferFallback = body.prefer_fallback === true;
-  let targets = await createAIRoutesFromDb(d, codingDetected, preferFallback, route.tier);
+  const useAgentPolicy = mode === "agent" || mode === "code";
+  let targets = await createAIRoutesFromDb(d, useAgentPolicy, preferFallback, route.tier);
   if (chatImageDataUrl) {
-    const visionTargets = await createScanRoutesFromDb(d);
+    const visionTargets = (await createScanRoutesFromDb(d)).filter((target) => useAgentPolicy || target.provider !== "GLM");
     if (visionTargets.length) {
       const seen = new Set(visionTargets.map((t) => `${t.provider}:${t.model}`));
       targets = [...visionTargets, ...targets.filter((t) => !seen.has(`${t.provider}:${t.model}`))];
     }
   }
   const savedSelection = await d.collection("user_security_settings").doc(user.uid).get().catch(() => null);
-  const modelId = typeof body.model_id === "string" && body.model_id.trim()
-    ? body.model_id.trim() : String(savedSelection?.data()?.ai_model_id ?? "").trim();
-  const providerId = typeof body.model_id === "string" && body.model_id.trim()
-    ? String(body.provider_id ?? "") : String(savedSelection?.data()?.ai_provider_id ?? "");
-  if (modelId && !preferFallback) {
+  const preference = preferenceForMode(savedSelection?.data(), useAgentPolicy ? "agent" : "chat");
+  const modelId = typeof body.model_id === "string" && body.model_id.trim() ? body.model_id.trim() : preference.model_id.trim();
+  const providerId = typeof body.model_id === "string" && body.model_id.trim() ? String(body.provider_id ?? "") : preference.provider_id;
+  if (modelId) {
     try {
       // An explicit choice must not fall through to an unrelated provider.
       const selected = await resolveSelectedAIRoute(d, providerId, modelId);
@@ -623,10 +636,13 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
       return json({ error: "AI_MODEL_NOT_AVAILABLE", detail: error instanceof Error ? error.message : "Select a verified model from the catalog." }, 400, requestId);
     }
   }
-  const selectedModel = targets[0]?.model ?? (codingDetected ? AI_CONFIG.coding.model : AI_CONFIG.general.model);
+  const automaticAlternative = !modelId && (useAgentPolicy
+    ? targets[0]?.provider !== "GLM" && targets.some((candidate) => candidate.provider === "GLM")
+    : !/gpt-oss-120b/i.test(targets[0]?.model ?? "") && targets.some((candidate) => /gpt-oss-120b/i.test(candidate.model)));
+  const selectedModel = targets[0]?.model ?? (useAgentPolicy ? AI_CONFIG.coding.model : AI_CONFIG.general.model);
   if (!targets.length) {
     await logUsage(d, user.uid, "none", "chat", {}, Date.now() - started, "error", requestId);
-    return json({ error: codingDetected ? "CODING_MODEL_NOT_CONFIGURED" : "AI_GATEWAY_NOT_CONFIGURED", conversation_id: convId }, 503, requestId);
+    return json({ error: useAgentPolicy ? "CODING_MODEL_NOT_CONFIGURED" : "AI_GATEWAY_NOT_CONFIGURED", conversation_id: convId }, 503, requestId);
   }
 
   // Context: summary + recent messages + safe memory + RAG.
@@ -721,6 +737,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
             provider: activeTarget.provider,
             tier: route.tier,
             coding_detected: codingDetected,
+            fallback: automaticAlternative,
             stream_status: "connecting",
           });
           upsertStep({
@@ -858,7 +875,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
             tier: route.tier,
             steps: recordedSteps,
             duration_ms: Math.max(1, Date.now() - started),
-            fallback: usedFallback,
+            fallback: usedFallback || automaticAlternative,
             coding_detected: codingDetected,
             files: streamedFiles,
             project_id: projectId,
@@ -1062,7 +1079,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     tier: route.tier,
     steps: nonStreamSteps,
     duration_ms: Math.max(1, Date.now() - started),
-    fallback: targets.length > 1 && (targets.indexOf(activeTarget) > 0 || (preferFallback && targets.indexOf(activeTarget) < targets.length - 1)),
+    fallback: automaticAlternative || (targets.length > 1 && (targets.indexOf(activeTarget) > 0 || (preferFallback && targets.indexOf(activeTarget) < targets.length - 1))),
     coding_detected: codingDetected,
     usage,
     analytics: computeAnalytics({

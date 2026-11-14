@@ -39,6 +39,7 @@ import { classifyGatewayResponse, classifyRequestException, failureCopy, withReq
 import { useI18n } from "@/lib/i18n/client";
 import { useIsCompact } from "@/lib/client/use-media-query";
 import { useChatScroll } from "@/lib/use-chat-scroll";
+import { VoiceMessage } from "@/components/voice-message";
 import { revealReceived, type RevealMode } from "@/lib/stream-reveal";
 import { restoredPrependTop } from "@/lib/chat-scroll";
 import { cn } from "@/lib/utils";
@@ -190,17 +191,18 @@ export function ChatClient({
   const [lane, setLane] = useState<ModelLane>("auto");
   const [revealMode, setRevealMode] = useState<RevealMode>("adaptive");
   const revealModeRef = useRef<RevealMode>("adaptive");
-  const [modelPreference, setModelPreference] = useState<{ provider_id: string; model_id: string }>({ provider_id: "", model_id: "" });
+  const [modelPreferences, setModelPreferences] = useState<{ chat: { provider_id: string; model_id: string }; agent: { provider_id: string; model_id: string } }>({ chat: { provider_id: "", model_id: "" }, agent: { provider_id: "", model_id: "" } });
+  const preferenceMode = mode === "agent" || mode === "code" ? "agent" : "chat";
+  const modelPreference = modelPreferences[preferenceMode];
   useEffect(() => {
-    if (isTemporary) return;
     let active = true;
     void fetch("/api/models", { credentials: "same-origin", cache: "no-store" }).then(async (response) => {
       if (!response.ok) return null;
-      return response.json() as Promise<{ preference?: { provider_id: string; model_id: string }; reveal_mode?: RevealMode }>;
-    }).then((data) => { if (active && data?.preference) setModelPreference(data.preference);
+      return response.json() as Promise<{ preference?: { provider_id: string; model_id: string }; preferences?: typeof modelPreferences; reveal_mode?: RevealMode }>;
+    }).then((data) => { if (active && data?.preferences) setModelPreferences(data.preferences);
       if (active && data?.reveal_mode && ["adaptive", "word", "natural", "reduced"].includes(data.reveal_mode)) { setRevealMode(data.reveal_mode); revealModeRef.current = data.reveal_mode; } }).catch(() => {});
     return () => { active = false; };
-  }, [isTemporary]);
+  }, []);
   const [strategy, setStrategy] = useState<ResponseStrategy>("balanced");
   const [studyLevel, setStudyLevel] = useState<StudyLevel>("college");
   const [explainStyle, setExplainStyle] = useState<ExplainStyle>("simple");
@@ -263,13 +265,16 @@ export function ChatClient({
   const [recording, setRecording] = useState(false);
   const [recordingPaused, setRecordingPaused] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const [waveLevel, setWaveLevel] = useState(0);
-  const [draftAudio, setDraftAudio] = useState<{ blob: Blob; url: string; filename: string } | null>(null);
+  const waveformCanvasRef = useRef<HTMLCanvasElement>(null);
+  const waveformSamplesRef = useRef<number[]>([]);
+  const [draftAudio, setDraftAudio] = useState<{ blob: Blob; url: string; filename: string; durationMs: number; waveform: number[] } | null>(null);
   const discardRecordingRef = useRef(false);
   const recordingClockRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recordingElapsedRef = useRef(0);
   const audioContextRef = useRef<AudioContext | null>(null);
   const visualFrameRef = useRef<number | null>(null);
   const [transcribing, setTranscribing] = useState(false);
+  const voiceUploadRef = useRef(false);
   const [voiceAsset, setVoiceAsset] = useState<{ id: string; playbackUrl: string } | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -319,6 +324,7 @@ export function ChatClient({
   useEffect(() => { autoSpeakRef.current = autoSpeak; }, [autoSpeak]);
 
   useEffect(() => () => {
+    discardRecordingRef.current = true;
     try { recorderRef.current?.stop(); } catch { /* recorder already stopped */ }
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
@@ -714,28 +720,41 @@ export function ChatClient({
     }
   }
 
-  async function uploadAndTranscribeVoice(blob: Blob, filename: string) {
-    if (!blob.size) { setNotice("No audio was captured. Try recording again."); return; }
+  async function uploadAndTranscribeVoice(draft: NonNullable<typeof draftAudio>, retryId?: string) {
+    if (!draft.blob.size || voiceUploadRef.current) return;
+    if (draft.blob.size > 24 * 1024 * 1024) {
+      setDraftAudio(draft);
+      setNotice("This recording exceeds the speech provider's 24 MB limit. Make a shorter recording; the local copy is still playable below.");
+      return;
+    }
+    voiceUploadRef.current = true;
     setTranscribing(true);
     setNotice(null);
     try {
       const form = new FormData();
-      form.append("audio", blob, filename);
+      if (retryId) form.append("audio_asset_id", retryId);
+      else {
+        form.append("audio", draft.blob, draft.filename);
+        form.append("duration_ms", String(draft.durationMs));
+        form.append("waveform", draft.waveform.join(","));
+      }
       const response = await fetch("/api/voice/transcribe", { method: "POST", credentials: "same-origin", body: form });
-      const data = await response.json().catch(() => ({})) as { transcript?: string; audio_asset_id?: string; playback_url?: string; error?: string };
+      const data = await response.json().catch(() => ({})) as { transcript?: string; audio_asset_id?: string; playback_url?: string; detected_language?: string; error?: string };
       if (data.audio_asset_id && data.playback_url) setVoiceAsset({ id: data.audio_asset_id, playbackUrl: data.playback_url });
-      if (!response.ok || !data.transcript?.trim()) {
-        setNotice(data.audio_asset_id
-          ? `The recording is safely stored and playable, but transcription did not complete (${data.error ?? "TRANSCRIPTION_FAILED"}).`
-          : `Voice recording failed (${data.error ?? response.status}). Check microphone, AI voice transcription and private storage configuration.`);
+      if (!response.ok || !data.transcript?.trim() || !data.audio_asset_id) {
+        setDraftAudio(draft); // recorded bytes survive upload and STT failures
+        setNotice(`Voice could not be sent (${data.error ?? response.status}). Retry below; your recording is safe.`);
         return;
       }
-      setInput((current) => [current.trim(), data.transcript!.trim()].filter(Boolean).join(current.trim() ? "\n" : ""));
-      setNotice("Transcript ready. Review it, then send when you are ready.");
-      requestAnimationFrame(autosize);
+      await send(undefined, data.transcript.trim(), { id: data.audio_asset_id, durationMs: draft.durationMs, waveform: draft.waveform, language: data.detected_language ?? null });
+      URL.revokeObjectURL(draft.url);
+      setDraftAudio(null);
+      setNotice(null);
     } catch (error) {
-      setNotice(error instanceof Error ? `Voice upload failed: ${error.message}` : "Voice upload failed. Try again.");
+      setDraftAudio(draft);
+      setNotice(error instanceof Error ? `Voice upload failed: ${error.message}. Retry below.` : "Voice upload failed. Retry below.");
     } finally {
+      voiceUploadRef.current = false;
       setTranscribing(false);
     }
   }
@@ -777,9 +796,11 @@ export function ChatClient({
       discardRecordingRef.current = false;
       recorderRef.current = recorder;
       setRecordingSeconds(0);
+      recordingElapsedRef.current = 0;
+      waveformSamplesRef.current = [];
       setRecordingPaused(false);
       recordingClockRef.current = setInterval(() => {
-        if (recorder.state === "recording") setRecordingSeconds((n) => n + 1);
+        if (recorder.state === "recording") { recordingElapsedRef.current += 1; setRecordingSeconds(recordingElapsedRef.current); }
       }, 1000);
       // Web Audio visualization is optional: capture stays usable on browsers
       // that deny AudioContext or do not support an analyser.
@@ -789,12 +810,33 @@ export function ChatClient({
         const analyser = context.createAnalyser();
         analyser.fftSize = 256;
         context.createMediaStreamSource(stream).connect(analyser);
-        const samples = new Uint8Array(analyser.frequencyBinCount);
+        void context.resume().catch(() => {});
+        const samples = new Uint8Array(analyser.fftSize);
         let lastDraw = 0;
         const draw = (time: number) => {
-          if (time - lastDraw >= 100) {
-            analyser.getByteFrequencyData(samples);
-            setWaveLevel(Math.min(1, samples.reduce((total, n) => total + n, 0) / (samples.length * 110)));
+          if (time - lastDraw >= 90 && recorder.state === "recording") {
+            analyser.getByteTimeDomainData(samples);
+            const rms = Math.sqrt(samples.reduce((sum, n) => sum + ((n - 128) / 128) ** 2, 0) / samples.length);
+            const level = Math.max(2, Math.min(100, Math.round(rms * 270)));
+            const values = waveformSamplesRef.current;
+            values.push(level);
+            if (values.length > 60) values.shift();
+            const canvas = waveformCanvasRef.current;
+            const ctx = canvas?.getContext("2d");
+            if (canvas && ctx) {
+              const scale = window.devicePixelRatio || 1;
+              const w = canvas.clientWidth * scale;
+              const h = canvas.clientHeight * scale;
+              if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+              ctx.clearRect(0, 0, w, h);
+              ctx.fillStyle = "#ef7474";
+              const count = 48;
+              for (let i = 0; i < count; i++) {
+                const sample = values[values.length - count + i] ?? 2;
+                const height = Math.max(3 * scale, h * sample / 110);
+                ctx.fillRect(i * w / count + scale, (h - height) / 2, Math.max(scale, w / count - 2 * scale), height);
+              }
+            }
             lastDraw = time;
           }
           visualFrameRef.current = requestAnimationFrame(draw);
@@ -815,7 +857,6 @@ export function ChatClient({
         if (visualFrameRef.current !== null) cancelAnimationFrame(visualFrameRef.current);
         void audioContextRef.current?.close();
         audioContextRef.current = null;
-        setWaveLevel(0);
         recordingTimeoutRef.current = null;
         stream.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
@@ -823,17 +864,21 @@ export function ChatClient({
         const extension = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : type.includes("wav") ? "wav" : "webm";
         if (!discardRecordingRef.current) {
           const blob = new Blob(audioChunksRef.current, { type });
-          if (blob.size) setDraftAudio({ blob, url: URL.createObjectURL(blob), filename: `voice-${Date.now()}.${extension}` });
+          if (blob.size) {
+            const draft = { blob, url: URL.createObjectURL(blob), filename: `voice-${Date.now()}.${extension}`,
+              durationMs: recordingElapsedRef.current * 1000, waveform: [...waveformSamplesRef.current] };
+            void uploadAndTranscribeVoice(draft);
+          }
           else setNotice("No audio was captured. Try again.");
         }
         audioChunksRef.current = [];
       };
       recorder.start(1000);
       setRecording(true);
-      setNotice("Recording locally. Stop to preview, then transcribe when ready.");
+      setNotice(null);
       recordingTimeoutRef.current = setTimeout(() => {
         if (recorder.state !== "inactive") recorder.stop();
-      }, 90_000);
+      }, 600_000);
     } catch (error) {
       setRecording(false);
       setNotice(error instanceof Error ? `Microphone permission failed: ${error.message}` : "Microphone permission failed.");
@@ -1260,11 +1305,11 @@ export function ChatClient({
     }
   }
 
-  async function send(e?: { preventDefault(): void }, messageOverride?: string) {
+  async function send(e?: { preventDefault(): void }, messageOverride?: string, voice?: { id: string; durationMs: number; waveform: number[]; language: string | null }) {
     e?.preventDefault();
     const pending = messageOverride ? [] : attachments;
     const attachedImage = messageOverride ? null : pendingImage;
-    const audioAssetId = messageOverride ? null : voiceAsset?.id ?? null;
+    const audioAssetId = voice?.id ?? null;
     let message =
       (messageOverride ?? input).trim() ||
       (attachedImage ? "Analyse this attached image clearly and thoroughly." : pending.length ? "Review these attached files and help me with them." : "");
@@ -1275,7 +1320,7 @@ export function ChatClient({
       if (webSearch) message = `Use up-to-date public knowledge where it helps.\n\n${message}`;
       if (codeHint) message = `Answer with complete, runnable code when it helps.\n\n${message}`;
     }
-    setInput("");
+    if (!voice) setInput("");
     lastAttachmentsRef.current = pending;
     lastImagePathRef.current = attachedImage?.storagePath ?? null;
     setAttachments([]);
@@ -1303,6 +1348,7 @@ export function ChatClient({
       created_at: new Date().toISOString(),
       metadata: {
         mode,
+        ...(voice ? { audio_asset_id: voice.id, audio_duration_ms: voice.durationMs, audio_waveform: voice.waveform, audio_language: voice.language } : {}),
         attachment_names: allAttachmentNames,
         ...(audioAssetId ? { audio_asset_id: audioAssetId } : {}),
         intent: intent.intent,
@@ -1465,7 +1511,7 @@ export function ChatClient({
         {
           prompt: message,
           taskContext,
-          selectedModel: modelPreference.model_id ? { providerId: modelPreference.provider_id, modelId: modelPreference.model_id } : null,
+          selectedModel: modelPreferences.agent.model_id ? { providerId: modelPreferences.agent.provider_id, modelId: modelPreferences.agent.model_id } : null,
           visibleMessage,
           projectId: selectedForThisRequest,
           workspaceProjectId: agentProjectId,
@@ -1908,7 +1954,10 @@ export function ChatClient({
     return { primary: build(plan.primary), overflow: build(plan.overflow) };
   };
 
-  const routingLabel = lastProvider || lastModel ? [lastProvider, lastModel].filter(Boolean).join(" · ") : null;
+  const modeReply = [...messages].reverse().find((item) => item.role === "assistant" && (preferenceMode === "agent" ? item.metadata?.mode === "agent" || item.metadata?.mode === "code" : item.metadata?.mode !== "agent" && item.metadata?.mode !== "code"));
+  const currentProvider = streaming ? activeProvider : modeReply?.metadata?.provider;
+  const currentModel = streaming ? activeModel : modeReply?.metadata?.model;
+  const routingLabel = currentProvider || currentModel ? [currentProvider, currentModel].filter(Boolean).join(" · ") : null;
   const latestAssistantIndex = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === "assistant") return i;
     return -1;
@@ -1926,8 +1975,9 @@ export function ChatClient({
                   <div key={key} className="msg-in flex justify-end gap-3.5">
                     <div className="min-w-0 max-w-[88%] sm:max-w-[75%]">
                       <div className="rounded-[16px] border border-border bg-surface-2 px-4 py-2.5 text-[14.5px] leading-relaxed text-ink">
-                        <p className="whitespace-pre-wrap break-words">{message.content}</p>
-                        {message.metadata?.audio_asset_id ? <div className="mt-2 flex items-center gap-1.5"><audio controls preload="none" className="h-9 min-w-0 max-w-full" src={`/api/voice/audio/${encodeURIComponent(message.metadata.audio_asset_id)}`} aria-label="Recorded voice message" /><button type="button" onClick={() => void deleteVoiceAsset(message.metadata!.audio_asset_id!)} className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-surface hover:text-danger" aria-label="Delete private voice recording"><Trash2 size={13} /></button></div> : null}
+                        {message.metadata?.audio_asset_id
+                          ? <VoiceMessage id={message.metadata.audio_asset_id} transcript={message.content} durationMs={message.metadata.audio_duration_ms} waveform={message.metadata.audio_waveform} language={message.metadata.audio_language} onDelete={() => void deleteVoiceAsset(message.metadata!.audio_asset_id!)} />
+                          : <p className="whitespace-pre-wrap break-words">{message.content}</p>}
                         {message.metadata?.attachment_names?.length ? (
                           <div className="mt-2 flex flex-wrap gap-1.5 border-t border-border pt-2">
                             {message.metadata.attachment_names.map((name) => (
@@ -2037,7 +2087,7 @@ export function ChatClient({
           onToggleAutoSpeak={toggleAutoSpeak}
           demoMode={demoMode}
           onToggleDemo={() => setDemoMode((value) => !value)}
-          routingLabel={modelPreference.model_id ? `${modelPreference.provider_id} · ${modelPreference.model_id}` : routingLabel}
+          routingLabel={modelPreference.model_id ? `${modelPreference.provider_id} · ${modelPreference.model_id}` : routingLabel ?? (preferenceMode === "agent" ? "Agent · best eligible model" : "Chat · OSS 120B")}
           workspaceCount={mode === "agent" ? agentFiles.length : 0}
           onOpenWorkspace={() => setWorkspaceOpen(true)}
           autoSpeakLabels={{ on: t("chat.autoSpeakOn"), off: t("chat.autoSpeakOff") }}
@@ -2192,8 +2242,8 @@ export function ChatClient({
       ) : null}
       </div>
 
-      <div className="mx-auto mb-2 flex max-w-2xl flex-wrap items-center justify-end gap-2 text-[11px] text-ink-3">{modelPreference.model_id ? <button type="button" className="rounded-md border border-border px-2 py-1" onClick={() => { void rpc("model_preference_set", { provider_id: "", model_id: "" }).then(() => setModelPreference({ provider_id: "", model_id: "" })).catch(() => setNotice("Could not reset model preference.")); }}>Return to GLM-5-Turbo</button> : null}<label htmlFor="stream-reveal">Response display</label><select id="stream-reveal" aria-label="Response display mode" className="rounded-md border border-border bg-surface px-2 py-1 text-ink" value={revealMode} onChange={(event) => { const next = event.target.value as RevealMode; setRevealMode(next); revealModeRef.current = next; void rpc("settings_update", { stream_reveal_mode: next }).catch(() => setNotice("Display preference could not be saved.")); }}><option value="adaptive">Adaptive typing</option><option value="word">Word by word</option><option value="natural">Natural stream</option><option value="reduced">Reduced motion</option></select></div>
-      {recording ? <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-[13px] text-danger" role="status"><span>{recordingPaused ? "Paused" : "Recording"} · {Math.floor(recordingSeconds / 60)}:{String(recordingSeconds % 60).padStart(2, "0")}</span><div aria-label="Live microphone level" className="flex h-6 items-center gap-0.5">{Array.from({ length: 14 }, (_, i) => <span key={i} className="w-0.5 rounded-full bg-danger transition-[height] duration-100" style={{ height: `${4 + Math.max(0, waveLevel * 20 * (0.35 + Math.sin(i * 1.7) ** 2))}px` }} />)}</div><button type="button" onClick={pauseVoiceRecording} className="rounded-md border px-2 py-1">{recordingPaused ? "Resume" : "Pause"}</button><button type="button" onClick={cancelVoiceRecording} className="rounded-md border px-2 py-1">Cancel</button></div> : transcribing ? <p className="mt-2 shrink-0 text-[13px] text-ink-2">Uploading your private recording and transcribing it…</p> : null}
+      <div className="mx-auto mb-2 flex max-w-2xl flex-wrap items-center justify-end gap-2 text-[11px] text-ink-3">{modelPreference.model_id ? <button type="button" className="rounded-md border border-border px-2 py-1" onClick={() => { void rpc("model_preference_set", { mode: preferenceMode, provider_id: "", model_id: "" }).then(() => setModelPreferences((current) => ({ ...current, [preferenceMode]: { provider_id: "", model_id: "" } }))).catch(() => setNotice("Could not reset model preference.")); }}>Return to {preferenceMode === "agent" ? "Agent auto" : "OSS 120B"}</button> : null}<label htmlFor="stream-reveal">Response display</label><select id="stream-reveal" aria-label="Response display mode" className="rounded-md border border-border bg-surface px-2 py-1 text-ink" value={revealMode} onChange={(event) => { const next = event.target.value as RevealMode; setRevealMode(next); revealModeRef.current = next; void rpc("settings_update", { stream_reveal_mode: next }).catch(() => setNotice("Display preference could not be saved.")); }}><option value="adaptive">Adaptive typing</option><option value="word">Word by word</option><option value="natural">Natural stream</option><option value="reduced">Reduced motion</option></select></div>
+      {transcribing ? <p className="mx-auto max-w-2xl py-2 text-xs text-ink-2" role="status">Uploading privately and transcribing your voice message…</p> : null}
       {notice ? <p className="mt-2 shrink-0 text-[13px] text-ink-2">{notice}</p> : null}
 
       <div className="shrink-0 pt-3">
@@ -2222,8 +2272,7 @@ export function ChatClient({
           ) : null}
         </div>
 
-        {draftAudio ? <div className="mx-auto mb-2 flex max-w-2xl flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2"><audio controls src={draftAudio.url} aria-label="Preview voice recording" className="h-9 min-w-0 flex-1" /><button type="button" className="btn-secondary" onClick={() => { const pending = draftAudio; discardDraftAudio(); void uploadAndTranscribeVoice(pending.blob, pending.filename); }}>Transcribe</button><button type="button" className="btn-secondary" onClick={() => void toggleVoiceRecording()}>Re-record</button><button type="button" className="btn-secondary" onClick={discardDraftAudio}>Discard</button></div> : null}
-        {voiceAsset ? <div className="mx-auto mb-2 flex max-w-2xl items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2"><audio controls preload="none" className="h-9 min-w-0 flex-1" src={voiceAsset.playbackUrl} aria-label="Recorded voice draft" /><button type="button" onClick={() => void deleteVoiceAsset(voiceAsset.id)} className="grid h-8 w-8 place-items-center rounded-md text-ink-3 hover:bg-surface-2" aria-label="Delete private voice recording"><Trash2 size={14} /></button></div> : null}
+        {draftAudio && !transcribing ? <div className="mx-auto mb-2 flex max-w-2xl flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2"><audio controls src={draftAudio.url} aria-label="Voice recording ready to retry" className="h-9 min-w-0 flex-1" />{draftAudio.blob.size <= 24 * 1024 * 1024 ? <button type="button" className="rounded-lg bg-accent px-3 py-2 text-sm text-white" onClick={() => void uploadAndTranscribeVoice(draftAudio, voiceAsset?.id)}>Retry sending</button> : null}<button type="button" className="rounded-lg border border-border px-3 py-2 text-sm" onClick={() => { discardDraftAudio(); if (voiceAsset) void deleteVoiceAsset(voiceAsset.id); }}>Discard</button></div> : null}
         {pendingImage || uploadingImage ? (
           <div className="mx-auto mb-2 flex max-w-2xl items-center justify-between gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2">
             {uploadingImage ? (
@@ -2273,7 +2322,7 @@ export function ChatClient({
           </div>
         ) : null}
 
-        <form onSubmit={(e) => void send(e)} className="composer-shell mx-auto max-w-2xl p-3">
+        <form onSubmit={(e) => { if (recording) e.preventDefault(); else void send(e); }} className="composer-shell mx-auto max-w-2xl p-3">
           <input
             ref={fileRef}
             type="file"
@@ -2288,7 +2337,10 @@ export function ChatClient({
             className="sr-only"
             onChange={(e) => void handleFile(e.target.files?.[0])}
           />
-          <Textarea
+          {recording ? <div className="flex min-h-24 w-full min-w-0 flex-col justify-center gap-2" role="group" aria-label="Voice recording composer">
+            <div className="flex min-w-0 items-center gap-2"><span className="h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-danger" aria-hidden="true" /><span className="shrink-0 font-mono text-sm text-danger">{recordingPaused ? "Paused" : "Recording"} · {Math.floor(recordingSeconds / 60)}:{String(recordingSeconds % 60).padStart(2, "0")}</span><canvas ref={waveformCanvasRef} height={40} aria-label="Live microphone waveform" role="img" className="h-10 min-w-0 flex-1" /></div>
+            <div className="flex flex-wrap items-center justify-between gap-2"><button type="button" onClick={cancelVoiceRecording} className="min-h-11 rounded-lg border border-border px-3 text-sm text-ink-2">Cancel</button><div className="flex items-center gap-2"><button type="button" onClick={pauseVoiceRecording} className="min-h-11 rounded-lg border border-border px-3 text-sm">{recordingPaused ? "Resume" : "Pause"}</button><button type="button" onClick={() => void toggleVoiceRecording()} className="flex min-h-11 items-center gap-2 rounded-lg bg-danger px-4 text-sm font-semibold text-white" aria-label="Stop and send voice message"><Square size={16} fill="currentColor" />Stop &amp; Send</button></div></div>
+          </div> : <Textarea
             ref={textareaRef}
             value={input}
             onChange={(e) => {
@@ -2317,11 +2369,12 @@ export function ChatClient({
             disabled={streaming}
             className="max-h-36 min-h-11 w-full !border-0 !bg-transparent !px-1 !py-1.5 !shadow-none focus:!shadow-none focus:!outline-none focus:!ring-0"
           />
-          <div className="mt-2 flex items-center justify-between gap-2">
+          }
+          {!recording ? <div className="mt-2 flex items-center justify-between gap-2">
             {/* Lightweight capability switches — clicking one activates the
                 capability, it never invokes it on its own. */}
             <div className="flex min-w-0 items-center gap-0.5">
-              {mode !== "code" && mode !== "agent" ? <button type="button" onClick={() => void toggleVoiceRecording()} disabled={streaming || transcribing} aria-label={recording ? "Stop and preview voice recording" : transcribing ? "Transcribing voice recording" : "Record a voice message"} title={recording ? "Stop recording" : transcribing ? "Transcribing…" : "Record a voice message"} className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors duration-150", recording ? "bg-danger text-white" : "text-ink-3 hover:bg-surface-2 hover:text-ink")}><Mic size={16} strokeWidth={1.7} /></button> : null}
+              {mode !== "code" && mode !== "agent" ? <button type="button" onClick={() => void toggleVoiceRecording()} disabled={streaming || transcribing || Boolean(draftAudio)} aria-label="Record a voice message" title="Record a voice message" className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] text-ink-3 transition-colors duration-150 hover:bg-surface-2 hover:text-ink"><Mic size={16} strokeWidth={1.7} /></button> : null}
               <button type="button" onClick={() => fileRef.current?.click()} disabled={streaming} aria-label="Attach a file" title="Attach a file" className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] text-ink-3 transition-colors duration-150 hover:bg-surface-2 hover:text-ink disabled:opacity-40">
                 <Paperclip size={16} strokeWidth={1.7} />
               </button>
@@ -2369,7 +2422,7 @@ export function ChatClient({
                 <Send size={16} strokeWidth={1.8} />
               </button>
             )}
-          </div>
+          </div> : null}
         </form>
 
         <p className="mx-auto mt-2 max-w-2xl px-1 pb-1 text-[11px] text-ink-3">

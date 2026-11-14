@@ -33,7 +33,7 @@ const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retr
   },
   "not-configured": {
     title: "AI service not configured",
-    detail: "The default GLM-5-Turbo service needs a ZAI_API_KEY or GLM_API_KEY on the server. Ask the administrator to configure it; no other model will be substituted automatically.",
+    detail: "No eligible configured model is currently available for this mode. Chat needs a configured OSS 120B provider; Agent needs a tool-capable coding provider. Ask the administrator to check provider credentials and availability.",
     retryable: true,
   },
   network: {

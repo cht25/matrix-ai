@@ -120,12 +120,7 @@ export class GLMProvider implements AIProvider {
     try {
       const live = await fetchModelCatalog({ baseUrl: this.baseUrl, apiKey: this.apiKey });
       if (live.models.length > 0) {
-        const ids = new Set(live.models.map((m) => m.id));
-        const merged = [...live.models];
-        for (const known of GLM_KNOWN_MODELS) {
-          if (!ids.has(known.id)) merged.push(known);
-        }
-        return merged;
+        return live.models; // Live catalogue: do not invent absent model IDs.
       }
     } catch (error) {
       if (error instanceof AIProviderError && error.type === "authentication") {

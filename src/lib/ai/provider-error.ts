@@ -97,11 +97,10 @@ export class AIProviderError extends Error {
     this.type = type;
     this.detail = sanitizeProviderDetail(opts.detail);
     this.requestId = opts.requestId;
-    this.retryable = opts.retryable ?? ["rate_limit", "billing", "provider_unavailable", "timeout", "network", "empty_response"].includes(type);
-    // Authentication is a configuration problem; switching providers would
-    // hide the operator credential error. Rate limits, billing, capacity,
-    // model errors, timeouts and network failures can safely use the configured fallback.
-    this.fallbackEligible = opts.fallbackEligible ?? (type !== "authentication");
+    this.retryable = opts.retryable ?? ["rate_limit", "provider_unavailable", "timeout", "network", "empty_response"].includes(type);
+    // 400 malformed requests, authorization, and billing are not model outages.
+    // 404 means an unavailable model/endpoint; try another eligible model.
+    this.fallbackEligible = opts.fallbackEligible ?? (type !== "authentication" && type !== "billing" && (type !== "invalid_request" || opts.status === 404));
   }
 }
 
@@ -122,6 +121,9 @@ export function providerErrorFromResponse(
     type,
     detail: parsed.detail,
     requestId: requestHeader ?? undefined,
+    fallbackEligible: type === "invalid_request"
+      ? response.status === 404 || (response.status === 400 && /(?:model.{0,50}(?:not found|not available|does not exist|unsupported|invalid)|(?:unknown|invalid) model)/i.test(parsed.detail))
+      : type !== "authentication" && type !== "billing",
   });
 }
 
