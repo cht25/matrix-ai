@@ -608,13 +608,19 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
       targets = [...visionTargets, ...targets.filter((t) => !seen.has(`${t.provider}:${t.model}`))];
     }
   }
-  if (typeof body.model_id === "string" && body.model_id.trim()) {
+  const savedSelection = await d.collection("user_security_settings").doc(user.uid).get().catch(() => null);
+  const modelId = typeof body.model_id === "string" && body.model_id.trim()
+    ? body.model_id.trim() : String(savedSelection?.data()?.ai_model_id ?? "").trim();
+  const providerId = typeof body.model_id === "string" && body.model_id.trim()
+    ? String(body.provider_id ?? "") : String(savedSelection?.data()?.ai_provider_id ?? "");
+  if (modelId && !preferFallback) {
     try {
-      const selected = await resolveSelectedAIRoute(d, String(body.provider_id ?? ""), body.model_id.trim());
-      targets = [selected, ...targets.filter((target) => !(target.providerId === selected.providerId && target.model === selected.model))];
+      // An explicit choice must not fall through to an unrelated provider.
+      const selected = await resolveSelectedAIRoute(d, providerId, modelId);
+      targets = [selected];
     } catch (error) {
       logProviderFailure(error, requestId);
-      return json({ error: "AI_MODEL_NOT_AVAILABLE", detail: error instanceof Error ? error.message : "Select a model from the verified catalog." }, 400, requestId);
+      return json({ error: "AI_MODEL_NOT_AVAILABLE", detail: error instanceof Error ? error.message : "Select a verified model from the catalog." }, 400, requestId);
     }
   }
   const selectedModel = targets[0]?.model ?? (codingDetected ? AI_CONFIG.coding.model : AI_CONFIG.general.model);

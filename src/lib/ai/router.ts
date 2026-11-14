@@ -19,7 +19,7 @@ const WEB_DEV_OR_HIGH_LOAD_RE =
 /**
  * Classifies whether a request belongs on the high-end GLM tier (coding, web
  * development, architecture, deep reasoning, attachments, or heavy multi-part
- * workloads) vs. the fast `openai/gpt-oss-120b` low-load tier.
+ * workloads) vs. a lightweight response strategy; both use the same GLM default.
  */
 export function isHighLoadRequest(message: string, attachments: TextAttachment[] = []): boolean {
   if (attachments.length > 0) return true;
@@ -56,7 +56,7 @@ export function decideRoute(opts: {
     if (coding) {
       return { mode, lane: "coding", tier: "high", coding: true, vision: false, image: false, reason: "GLM coding override" };
     }
-    return { mode, lane: "fast", tier: "low", coding: false, vision: false, image: false, reason: "gpt-oss-120b low-load fast lane" };
+    return { mode, lane: "fast", tier: "low", coding: false, vision: false, image: false, reason: "GLM-5-Turbo fast response strategy" };
   }
   if (lane === "reasoning" || strategy === "quality" || mode === "study" || mode === "research" || mode === "orchestrator") {
     return {
@@ -79,7 +79,7 @@ export function decideRoute(opts: {
       coding,
       vision: false,
       image: false,
-      reason: highLoad ? "GLM high-load / web-dev tier" : "gpt-oss-120b balanced low-load tier",
+      reason: highLoad ? "GLM high-load / web-dev tier" : "GLM-5-Turbo balanced response strategy",
     };
   }
   // auto
@@ -99,7 +99,7 @@ export function decideRoute(opts: {
         ? "Auto: GLM multimodal vision"
         : highLoad
           ? "Auto: GLM high-load system"
-          : "Auto: gpt-oss-120b low-load fast tier",
+          : "Auto: GLM-5-Turbo",
   };
 }
 

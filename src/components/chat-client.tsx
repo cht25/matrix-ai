@@ -39,6 +39,7 @@ import { classifyGatewayResponse, classifyRequestException, failureCopy, withReq
 import { useI18n } from "@/lib/i18n/client";
 import { useIsCompact } from "@/lib/client/use-media-query";
 import { useChatScroll } from "@/lib/use-chat-scroll";
+import { revealReceived, type RevealMode } from "@/lib/stream-reveal";
 import { restoredPrependTop } from "@/lib/chat-scroll";
 import { cn } from "@/lib/utils";
 import type { AgentFile, TextAttachment } from "@/lib/ai/agent";
@@ -187,14 +188,17 @@ export function ChatClient({
 
   // --- capability selection (secondary; lives in the top bar / settings) ---
   const [lane, setLane] = useState<ModelLane>("auto");
+  const [revealMode, setRevealMode] = useState<RevealMode>("adaptive");
+  const revealModeRef = useRef<RevealMode>("adaptive");
   const [modelPreference, setModelPreference] = useState<{ provider_id: string; model_id: string }>({ provider_id: "", model_id: "" });
   useEffect(() => {
     if (isTemporary) return;
     let active = true;
     void fetch("/api/models", { credentials: "same-origin", cache: "no-store" }).then(async (response) => {
       if (!response.ok) return null;
-      return response.json() as Promise<{ preference?: { provider_id: string; model_id: string } }>;
-    }).then((data) => { if (active && data?.preference) setModelPreference(data.preference); }).catch(() => {});
+      return response.json() as Promise<{ preference?: { provider_id: string; model_id: string }; reveal_mode?: RevealMode }>;
+    }).then((data) => { if (active && data?.preference) setModelPreference(data.preference);
+      if (active && data?.reveal_mode && ["adaptive", "word", "natural", "reduced"].includes(data.reveal_mode)) { setRevealMode(data.reveal_mode); revealModeRef.current = data.reveal_mode; } }).catch(() => {});
     return () => { active = false; };
   }, [isTemporary]);
   const [strategy, setStrategy] = useState<ResponseStrategy>("balanced");
@@ -257,6 +261,14 @@ export function ChatClient({
   const [autoSpeak, setAutoSpeak] = useState(true);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
+  const [recordingPaused, setRecordingPaused] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [waveLevel, setWaveLevel] = useState(0);
+  const [draftAudio, setDraftAudio] = useState<{ blob: Blob; url: string; filename: string } | null>(null);
+  const discardRecordingRef = useRef(false);
+  const recordingClockRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const visualFrameRef = useRef<number | null>(null);
   const [transcribing, setTranscribing] = useState(false);
   const [voiceAsset, setVoiceAsset] = useState<{ id: string; playbackUrl: string } | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -310,6 +322,9 @@ export function ChatClient({
     try { recorderRef.current?.stop(); } catch { /* recorder already stopped */ }
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
+    if (recordingClockRef.current) clearInterval(recordingClockRef.current);
+    if (visualFrameRef.current !== null) cancelAnimationFrame(visualFrameRef.current);
+    void audioContextRef.current?.close();
     generatedAudioRef.current?.pause();
     if (generatedAudioUrlRef.current) URL.revokeObjectURL(generatedAudioUrlRef.current);
   }, []);
@@ -706,7 +721,6 @@ export function ChatClient({
     try {
       const form = new FormData();
       form.append("audio", blob, filename);
-      form.append("language", localeRef.current === "bn" ? "bn-BD" : "en-US");
       const response = await fetch("/api/voice/transcribe", { method: "POST", credentials: "same-origin", body: form });
       const data = await response.json().catch(() => ({})) as { transcript?: string; audio_asset_id?: string; playback_url?: string; error?: string };
       if (data.audio_asset_id && data.playback_url) setVoiceAsset({ id: data.audio_asset_id, playbackUrl: data.playback_url });
@@ -726,46 +740,99 @@ export function ChatClient({
     }
   }
 
+  function discardDraftAudio() {
+    setDraftAudio((current) => { if (current) URL.revokeObjectURL(current.url); return null; });
+  }
+
+  function cancelVoiceRecording() {
+    discardRecordingRef.current = true;
+    const active = recorderRef.current;
+    if (active && active.state !== "inactive") active.stop();
+    discardDraftAudio();
+    setNotice("Recording discarded. Nothing was uploaded.");
+  }
+
+  function pauseVoiceRecording() {
+    const active = recorderRef.current;
+    if (!active) return;
+    if (active.state === "recording") { active.pause(); setRecordingPaused(true); }
+    else if (active.state === "paused") { active.resume(); setRecordingPaused(false); }
+  }
+
   async function toggleVoiceRecording() {
     const active = recorderRef.current;
-    if (active?.state === "recording") {
-      active.stop();
-      return;
-    }
+    if (active && active.state !== "inactive") { active.stop(); return; }
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      setNotice("Voice recording is unsupported by this browser or device.");
-      return;
+      setNotice("Voice recording is unsupported by this browser or device."); return;
     }
     try {
+      discardDraftAudio();
+      if (voiceAsset) await deleteVoiceAsset(voiceAsset.id);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaStreamRef.current = stream;
       const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"]
         .find((candidate) => MediaRecorder.isTypeSupported(candidate));
       const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       audioChunksRef.current = [];
+      discardRecordingRef.current = false;
       recorderRef.current = recorder;
+      setRecordingSeconds(0);
+      setRecordingPaused(false);
+      recordingClockRef.current = setInterval(() => {
+        if (recorder.state === "recording") setRecordingSeconds((n) => n + 1);
+      }, 1000);
+      // Web Audio visualization is optional: capture stays usable on browsers
+      // that deny AudioContext or do not support an analyser.
+      try {
+        const context = new AudioContext();
+        audioContextRef.current = context;
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 256;
+        context.createMediaStreamSource(stream).connect(analyser);
+        const samples = new Uint8Array(analyser.frequencyBinCount);
+        let lastDraw = 0;
+        const draw = (time: number) => {
+          if (time - lastDraw >= 100) {
+            analyser.getByteFrequencyData(samples);
+            setWaveLevel(Math.min(1, samples.reduce((total, n) => total + n, 0) / (samples.length * 110)));
+            lastDraw = time;
+          }
+          visualFrameRef.current = requestAnimationFrame(draw);
+        };
+        draw(performance.now());
+      } catch { /* duration and recording remain available */ }
       recorder.ondataavailable = (event) => { if (event.data.size) audioChunksRef.current.push(event.data); };
       recorder.onerror = () => {
-        setRecording(false);
+        discardRecordingRef.current = true;
         setNotice("The browser could not record audio. Check microphone permission and try again.");
-        stream.getTracks().forEach((track) => track.stop());
+        if (recorder.state !== "inactive") recorder.stop();
       };
       recorder.onstop = () => {
         setRecording(false);
+        setRecordingPaused(false);
         if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
+        if (recordingClockRef.current) clearInterval(recordingClockRef.current);
+        if (visualFrameRef.current !== null) cancelAnimationFrame(visualFrameRef.current);
+        void audioContextRef.current?.close();
+        audioContextRef.current = null;
+        setWaveLevel(0);
         recordingTimeoutRef.current = null;
         stream.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
         const type = recorder.mimeType || "audio/webm";
         const extension = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : type.includes("wav") ? "wav" : "webm";
-        void uploadAndTranscribeVoice(new Blob(audioChunksRef.current, { type }), `voice-${Date.now()}.${extension}`);
+        if (!discardRecordingRef.current) {
+          const blob = new Blob(audioChunksRef.current, { type });
+          if (blob.size) setDraftAudio({ blob, url: URL.createObjectURL(blob), filename: `voice-${Date.now()}.${extension}` });
+          else setNotice("No audio was captured. Try again.");
+        }
         audioChunksRef.current = [];
       };
       recorder.start(1000);
       setRecording(true);
-      setNotice("Microphone is active. Your recording is uploaded privately when you stop.");
+      setNotice("Recording locally. Stop to preview, then transcribe when ready.");
       recordingTimeoutRef.current = setTimeout(() => {
-        if (recorder.state === "recording") recorder.stop();
+        if (recorder.state !== "inactive") recorder.stop();
       }, 90_000);
     } catch (error) {
       setRecording(false);
@@ -854,11 +921,14 @@ export function ChatClient({
     const requestId = crypto.randomUUID();
     let collected = "";
     let paintFrame: number | null = null;
+    let visible = "";
     const queuePaint = () => {
       if (paintFrame !== null) return;
       paintFrame = requestAnimationFrame(() => {
         paintFrame = null;
-        setStreamedText(collected);
+        visible = revealReceived(collected, visible, revealModeRef.current);
+        setStreamedText(visible);
+        if (visible.length < collected.length) queuePaint();
       });
     };
     const cancelPaint = () => {
@@ -871,6 +941,7 @@ export function ChatClient({
 
     const commit = (text: string) => {
       cancelPaint();
+      visible = text;
       setStreamCommitted(true);
       if (text.trim()) reportSuccessfulAiResponse();
       if (opts.taskContext) {
@@ -1394,6 +1465,7 @@ export function ChatClient({
         {
           prompt: message,
           taskContext,
+          selectedModel: modelPreference.model_id ? { providerId: modelPreference.provider_id, modelId: modelPreference.model_id } : null,
           visibleMessage,
           projectId: selectedForThisRequest,
           workspaceProjectId: agentProjectId,
@@ -2120,7 +2192,8 @@ export function ChatClient({
       ) : null}
       </div>
 
-      {recording ? <p className="mt-2 shrink-0 text-[13px] text-danger">Recording… tap the microphone to stop.</p> : transcribing ? <p className="mt-2 shrink-0 text-[13px] text-ink-2">Uploading your private recording and transcribing it…</p> : null}
+      <div className="mx-auto mb-2 flex max-w-2xl flex-wrap items-center justify-end gap-2 text-[11px] text-ink-3">{modelPreference.model_id ? <button type="button" className="rounded-md border border-border px-2 py-1" onClick={() => { void rpc("model_preference_set", { provider_id: "", model_id: "" }).then(() => setModelPreference({ provider_id: "", model_id: "" })).catch(() => setNotice("Could not reset model preference.")); }}>Return to GLM-5-Turbo</button> : null}<label htmlFor="stream-reveal">Response display</label><select id="stream-reveal" aria-label="Response display mode" className="rounded-md border border-border bg-surface px-2 py-1 text-ink" value={revealMode} onChange={(event) => { const next = event.target.value as RevealMode; setRevealMode(next); revealModeRef.current = next; void rpc("settings_update", { stream_reveal_mode: next }).catch(() => setNotice("Display preference could not be saved.")); }}><option value="adaptive">Adaptive typing</option><option value="word">Word by word</option><option value="natural">Natural stream</option><option value="reduced">Reduced motion</option></select></div>
+      {recording ? <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-[13px] text-danger" role="status"><span>{recordingPaused ? "Paused" : "Recording"} · {Math.floor(recordingSeconds / 60)}:{String(recordingSeconds % 60).padStart(2, "0")}</span><div aria-label="Live microphone level" className="flex h-6 items-center gap-0.5">{Array.from({ length: 14 }, (_, i) => <span key={i} className="w-0.5 rounded-full bg-danger transition-[height] duration-100" style={{ height: `${4 + Math.max(0, waveLevel * 20 * (0.35 + Math.sin(i * 1.7) ** 2))}px` }} />)}</div><button type="button" onClick={pauseVoiceRecording} className="rounded-md border px-2 py-1">{recordingPaused ? "Resume" : "Pause"}</button><button type="button" onClick={cancelVoiceRecording} className="rounded-md border px-2 py-1">Cancel</button></div> : transcribing ? <p className="mt-2 shrink-0 text-[13px] text-ink-2">Uploading your private recording and transcribing it…</p> : null}
       {notice ? <p className="mt-2 shrink-0 text-[13px] text-ink-2">{notice}</p> : null}
 
       <div className="shrink-0 pt-3">
@@ -2149,6 +2222,7 @@ export function ChatClient({
           ) : null}
         </div>
 
+        {draftAudio ? <div className="mx-auto mb-2 flex max-w-2xl flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2"><audio controls src={draftAudio.url} aria-label="Preview voice recording" className="h-9 min-w-0 flex-1" /><button type="button" className="btn-secondary" onClick={() => { const pending = draftAudio; discardDraftAudio(); void uploadAndTranscribeVoice(pending.blob, pending.filename); }}>Transcribe</button><button type="button" className="btn-secondary" onClick={() => void toggleVoiceRecording()}>Re-record</button><button type="button" className="btn-secondary" onClick={discardDraftAudio}>Discard</button></div> : null}
         {voiceAsset ? <div className="mx-auto mb-2 flex max-w-2xl items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2"><audio controls preload="none" className="h-9 min-w-0 flex-1" src={voiceAsset.playbackUrl} aria-label="Recorded voice draft" /><button type="button" onClick={() => void deleteVoiceAsset(voiceAsset.id)} className="grid h-8 w-8 place-items-center rounded-md text-ink-3 hover:bg-surface-2" aria-label="Delete private voice recording"><Trash2 size={14} /></button></div> : null}
         {pendingImage || uploadingImage ? (
           <div className="mx-auto mb-2 flex max-w-2xl items-center justify-between gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2">
@@ -2247,7 +2321,7 @@ export function ChatClient({
             {/* Lightweight capability switches — clicking one activates the
                 capability, it never invokes it on its own. */}
             <div className="flex min-w-0 items-center gap-0.5">
-              {mode !== "code" && mode !== "agent" ? <button type="button" onClick={() => void toggleVoiceRecording()} disabled={streaming || transcribing} aria-label={recording ? "Stop voice recording" : transcribing ? "Transcribing voice recording" : "Record a voice message"} title={recording ? "Stop recording" : transcribing ? "Transcribing…" : "Record a voice message"} className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors duration-150", recording ? "bg-danger text-white" : "text-ink-3 hover:bg-surface-2 hover:text-ink")}><Mic size={16} strokeWidth={1.7} /></button> : null}
+              {mode !== "code" && mode !== "agent" ? <button type="button" onClick={() => void toggleVoiceRecording()} disabled={streaming || transcribing} aria-label={recording ? "Stop and preview voice recording" : transcribing ? "Transcribing voice recording" : "Record a voice message"} title={recording ? "Stop recording" : transcribing ? "Transcribing…" : "Record a voice message"} className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors duration-150", recording ? "bg-danger text-white" : "text-ink-3 hover:bg-surface-2 hover:text-ink")}><Mic size={16} strokeWidth={1.7} /></button> : null}
               <button type="button" onClick={() => fileRef.current?.click()} disabled={streaming} aria-label="Attach a file" title="Attach a file" className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] text-ink-3 transition-colors duration-150 hover:bg-surface-2 hover:text-ink disabled:opacity-40">
                 <Paperclip size={16} strokeWidth={1.7} />
               </button>

@@ -23,5 +23,5 @@ export async function GET() {
     }
   }));
   const settings = await adminDb().collection("user_security_settings").doc(user.uid).get();
-  return NextResponse.json({ providers, preference: { provider_id: settings.data()?.ai_provider_id ?? "", model_id: settings.data()?.ai_model_id ?? "" } }, { headers: { "Cache-Control": "private, no-store" } });
+  return NextResponse.json({ providers, preference: { provider_id: settings.data()?.ai_provider_id ?? "", model_id: settings.data()?.ai_model_id ?? "" }, reveal_mode: settings.data()?.stream_reveal_mode ?? "adaptive" }, { headers: { "Cache-Control": "private, no-store" } });
 }

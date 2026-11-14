@@ -33,7 +33,7 @@ const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retr
   },
   "not-configured": {
     title: "AI service not configured",
-    detail: "The AI service is not configured on the server yet. The site administrator needs to finish the backend setup — this is not a problem on your side.",
+    detail: "The default GLM-5-Turbo service needs a ZAI_API_KEY or GLM_API_KEY on the server. Ask the administrator to configure it; no other model will be substituted automatically.",
     retryable: true,
   },
   network: {
@@ -106,6 +106,7 @@ export function failureCopy(kind: ApiFailureKind): ApiFailure {
 
 const CODE_TO_KIND: Record<string, ApiFailureKind> = {
   AI_GATEWAY_NOT_CONFIGURED: "not-configured",
+  AI_MODEL_NOT_AVAILABLE: "provider-invalid-request",
   VISION_NOT_CONFIGURED: "not-configured",
   CODING_MODEL_NOT_CONFIGURED: "not-configured",
   CHAT_STORAGE_UNAVAILABLE: "storage",

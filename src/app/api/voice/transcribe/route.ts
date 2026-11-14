@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { adminDb, nowTs } from "@/lib/firebase/admin";
 import { getSessionUser } from "@/lib/firebase/session";
 import { isCloudinaryConfigured } from "@/lib/env";
-import { resolveGlmBaseUrl } from "@/lib/ai/glm";
 import { GeminiProvider } from "@/lib/ai/gemini";
+import { matchesAudioContainer } from "@/lib/ai/audio";
 import { AIProviderError, logProviderFailure, providerPublicCode, providerErrorFromResponse } from "@/lib/ai/provider-error";
 import { deletePrivateAudio, uploadPrivateAudio } from "@/lib/server/cloudinary";
 import { mutationCsrfResponse } from "@/lib/server/request-security";
@@ -37,20 +37,18 @@ function keyPresent(v: string | undefined): string {
 async function transcribeViaOpenAICompatible(opts: {
   baseUrl: string;
   apiKey: string;
-  providerLabel: "Groq" | "GLM" | "OpenAI";
+  providerLabel: "Groq" | "OpenAI";
   model: string;
   bytes: Buffer;
   filename: string;
   mimeType: string;
-  language?: string;
   signal?: AbortSignal;
 }): Promise<{ transcript: string; model: string; provider: string; usage: Record<string, unknown> }> {
   const fd = new FormData();
   fd.append("file", new Blob([new Uint8Array(opts.bytes)], { type: opts.mimeType }), opts.filename);
   fd.append("model", opts.model);
-  if (opts.language && /^[a-z]{2}(?:-[A-Z]{2})?$/i.test(opts.language)) {
-    fd.append("language", opts.language.slice(0, 2).toLowerCase());
-  }
+  // No language hint: Whisper detects the spoken language, including code-switching.
+  fd.append("response_format", "verbose_json");
   const res = await fetch(`${opts.baseUrl.replace(/\/+$/, "")}/audio/transcriptions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${opts.apiKey}` },
@@ -61,12 +59,12 @@ async function transcribeViaOpenAICompatible(opts: {
     const detail = await res.text().catch(() => "");
     throw providerErrorFromResponse(opts.providerLabel, opts.model, res, detail);
   }
-  const data = (await res.json()) as { text?: string };
+  const data = (await res.json()) as { text?: string; language?: string };
   const transcript = typeof data.text === "string" ? data.text.trim() : "";
   if (!transcript) {
     throw new AIProviderError({ provider: opts.providerLabel, model: opts.model, type: "empty_response", detail: "Empty transcription result" });
   }
-  return { transcript, model: opts.model, provider: opts.providerLabel, usage: {} };
+  return { transcript, model: opts.model, provider: opts.providerLabel, usage: { detected_language: data.language ?? null } };
 }
 
 export async function POST(req: NextRequest) {
@@ -76,12 +74,11 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
 
   const groqKey = keyPresent(process.env.GROQ_API_KEY);
-  const glmKey = keyPresent(process.env.GLM_API_KEY);
   const openaiKey = keyPresent(process.env.OPENAI_API_KEY);
   const geminiKey = keyPresent(process.env.GEMINI_API_KEY);
   const geminiAudioModel = process.env.GEMINI_AUDIO_MODEL?.trim() ?? "";
 
-  const hasProvider = Boolean(groqKey || glmKey || openaiKey || (geminiKey && geminiAudioModel));
+  const hasProvider = Boolean(groqKey || openaiKey || (geminiKey && geminiAudioModel));
   if (!hasProvider) return NextResponse.json({ error: "VOICE_TRANSCRIPTION_NOT_CONFIGURED" }, { status: 503 });
   if (!isCloudinaryConfigured()) return NextResponse.json({ error: "VOICE_STORAGE_NOT_CONFIGURED" }, { status: 503 });
 
@@ -93,6 +90,7 @@ export async function POST(req: NextRequest) {
   if (!file.size || file.size > MAX_AUDIO_BYTES) return NextResponse.json({ error: "AUDIO_SIZE_INVALID", max_bytes: MAX_AUDIO_BYTES }, { status: 413 });
 
   const bytes = Buffer.from(await file.arrayBuffer());
+  if (!matchesAudioContainer(bytes, mimeType)) return NextResponse.json({ error: "AUDIO_CONTENT_INVALID" }, { status: 415 });
   let stored: Awaited<ReturnType<typeof uploadPrivateAudio>>;
   try {
     stored = await uploadPrivateAudio(user.uid, bytes, file.name || "voice-recording");
@@ -123,7 +121,6 @@ export async function POST(req: NextRequest) {
   }
 
   const startedAt = Date.now();
-  const language = typeof form?.get("language") === "string" ? String(form.get("language")) : undefined;
   const filename = file.name || "voice.webm";
   let usedModel = "whisper-large-v3-turbo";
 
@@ -139,20 +136,6 @@ export async function POST(req: NextRequest) {
         bytes,
         filename,
         mimeType,
-        language,
-        signal: req.signal,
-      });
-    } else if (glmKey) {
-      usedModel = process.env.GLM_AUDIO_MODEL?.trim() || "glm-asr";
-      out = await transcribeViaOpenAICompatible({
-        baseUrl: resolveGlmBaseUrl(),
-        apiKey: glmKey,
-        providerLabel: "GLM",
-        model: usedModel,
-        bytes,
-        filename,
-        mimeType,
-        language,
         signal: req.signal,
       });
     } else if (openaiKey) {
@@ -165,7 +148,6 @@ export async function POST(req: NextRequest) {
         bytes,
         filename,
         mimeType,
-        language,
         signal: req.signal,
       });
     } else {
@@ -175,7 +157,6 @@ export async function POST(req: NextRequest) {
         model: usedModel,
         mimeType,
         base64: bytes.toString("base64"),
-        language,
         signal: req.signal,
       });
       out = { transcript: response.content, model: response.model, provider: "Gemini", usage: response.usage };
@@ -198,6 +179,7 @@ export async function POST(req: NextRequest) {
       provider: out.provider,
       model: out.model,
       usage: out.usage,
+      detected_language: typeof out.usage.detected_language === "string" ? out.usage.detected_language : null,
     }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     logProviderFailure(error);
