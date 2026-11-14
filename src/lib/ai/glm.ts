@@ -3,7 +3,7 @@
 //
 // GLM is MATRIX AI's primary engine for coding, web development, Agent/build
 // orchestration, multimodal vision, and complex/high-load reasoning tasks,
-// paired with `openai/gpt-oss-120b` for fast low-load requests.
+// with no implicit provider substitution when credentials are absent.
 //
 // Uses GLM's native OpenAI-compatible v4 protocol (`/api/paas/v4/chat/completions`)
 // with server-side secret isolation, native tool calling, multimodal image_url
@@ -25,11 +25,12 @@ import { normalizeCompatibleBaseUrl } from "@/lib/ai/openai";
 export const GLM_API_BASE_URL = "https://open.bigmodel.cn/api/paas/v4";
 export const GLM_INTL_API_BASE_URL = "https://api.z.ai/api/paas/v4";
 
-export const GLM_DEFAULT_MODEL = "glm-4.7";
-export const GLM_DEFAULT_CODING_MODEL = "glm-4.7";
+export const GLM_DEFAULT_MODEL = "glm-5-turbo";
+export const GLM_DEFAULT_CODING_MODEL = GLM_DEFAULT_MODEL;
 export const GLM_DEFAULT_VISION_MODEL = "glm-4.6v";
 
 export const GLM_KNOWN_MODELS: ReadonlyArray<CatalogModel> = [
+  { id: "glm-5-turbo", label: "GLM-5-Turbo (Default Chat & Agent)" },
   { id: "glm-4.7", label: "GLM-4.7 (Flagship Coding & High-Load)" },
   { id: "glm-4.6", label: "GLM-4.6 (High-End Reasoning & Web Dev)" },
   { id: "glm-4.6v", label: "GLM-4.6V (Multimodal Vision)" },

@@ -50,8 +50,8 @@ export function ModelsClient() {
     <Alert>Catalog verification is not a guarantee of billing entitlement or vision capability. The provider validates access again when you send a request. API keys never leave the server.</Alert>
     {error ? <Alert tone="danger">{error}</Alert> : null}
     <Card className="flex flex-wrap items-center justify-between gap-3">
-      <div><p className="text-sm font-medium">Current preference</p><p className="mt-1 break-all font-mono text-xs text-ink-2">{data?.preference.model_id ? `${data.preference.provider_id} / ${data.preference.model_id}` : "Automatic routing"}</p></div>
-      <div className="flex gap-2"><Button variant="secondary" disabled={Boolean(saving)} onClick={() => void automatic()}>Use automatic</Button><Link href="/chat" className="btn-primary">Open chat</Link></div>
+      <div><p className="text-sm font-medium">Current preference</p><p className="mt-1 break-all font-mono text-xs text-ink-2">{data?.preference.model_id ? `${data.preference.provider_id} / ${data.preference.model_id}` : "Automatic · GLM-5-Turbo"}</p></div>
+      <div className="flex gap-2"><Button variant="secondary" disabled={Boolean(saving)} onClick={() => void automatic()}>Return to GLM-5-Turbo</Button><Link href="/chat" className="btn-primary">Open chat</Link></div>
     </Card>
     <div className="relative"><Search size={16} className="absolute left-3 top-3.5 text-ink-3" /><Input className="pl-10" aria-label="Search models" placeholder="Search provider or model ID…" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
     {loading && !data ? <Card><p className="text-sm text-ink-2">Verifying provider catalogs…</p></Card> : data?.providers.length === 0 ? <EmptyState icon={<Cpu />} title="No providers configured" body="Configure an existing provider in Admin → AI configuration, or add server credentials using the environment inventory." /> : null}

@@ -23,7 +23,7 @@ import type { SessionUser } from "@/lib/firebase/session";
 import { RpcError } from "@/lib/server/errors";
 import type { AIMessage } from "@/lib/ai/groq";
 import { completeWithFallback } from "@/lib/ai/executor";
-import { createAIRoutesFromDb, type AIRouteTarget } from "@/lib/ai/config";
+import { createAIRoutesFromDb, resolveSelectedAIRoute, type AIRouteTarget } from "@/lib/ai/config";
 import { AGENT_SYSTEM_PROMPT } from "@/lib/ai/prompts";
 import { agentGenerationIncomplete, formatProjectFilesForContext, parseAgentResponse, shouldWithholdProjectFile } from "@/lib/ai/agent";
 import { classifyAgentOutput, transitionAgentExecution, type AgentExecutionState, type PendingAgentTask } from "@/lib/ai/agent-execution";
@@ -73,6 +73,7 @@ export type BuildPipelineInput = {
   /** Code-mode file generation persists source but deliberately skips build claims. */
   workspaceOnly?: boolean;
   chatMode?: "code" | "agent";
+  selectedModel?: { providerId: string; modelId: string } | null;
   onEvent?: (event: { run: BuildRun; stage?: BuildStageId; copy?: ReturnType<typeof buildRunCopy> }) => void;
 };
 
@@ -271,9 +272,11 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       const assets = input.imageRequests?.length ? await generateImageAssets(d, user, projectId, input.imageRequests, note, emit) : [];
       let routes: AIRouteTarget[] = [];
       try {
-        routes = await createAIRoutesFromDb(d, true);
-      } catch {
-        routes = [];
+        routes = input.selectedModel?.modelId
+          ? [await resolveSelectedAIRoute(d, input.selectedModel.providerId, input.selectedModel.modelId)]
+          : await createAIRoutesFromDb(d, true);
+      } catch (error) {
+        return await abort("AI_MODEL_NOT_AVAILABLE", `The selected coding model could not be initialized (${error instanceof Error ? error.message.slice(0, 120) : "unavailable"}). Choose a verified model in Models or reset to GLM-5-Turbo.`, "generate");
       }
       if (!routes.length) {
         return await abort(
@@ -478,7 +481,9 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       await emit("validate");
       let routes: AIRouteTarget[] = [];
       try {
-        routes = await createAIRoutesFromDb(d, true);
+        routes = input.selectedModel?.modelId
+          ? [await resolveSelectedAIRoute(d, input.selectedModel.providerId, input.selectedModel.modelId)]
+          : await createAIRoutesFromDb(d, true);
       } catch {
         routes = [];
       }

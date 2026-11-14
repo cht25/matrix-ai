@@ -25,11 +25,12 @@ describe("GLM primary main model, unverified managed providers, and Cloudinary s
 
     const highRoutes = await createAIRoutesFromDb(null, true, false, "high");
     expect(highRoutes[0].provider).toBe("GLM");
-    expect(highRoutes[0].model).toBe("glm-4.7");
+    expect(highRoutes[0].model).toBe("glm-5-turbo");
 
     const lowRoutes = await createAIRoutesFromDb(null, false, false, "low");
-    expect(lowRoutes[0].provider).toBe("Groq");
-    expect(lowRoutes[0].model).toBe("openai/gpt-oss-120b");
+    expect(lowRoutes[0].provider).toBe("GLM");
+    expect(lowRoutes[0].model).toBe("glm-4.7");
+    expect(lowRoutes).toHaveLength(1);
     expect(lowRoutes.some((r) => r.provider === "Gemini")).toBe(false);
   });
 

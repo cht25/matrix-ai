@@ -166,6 +166,10 @@ export async function POST(req: NextRequest) {
   }
 
   const d = adminDb();
+  const preferences = await d.collection("user_security_settings").doc(user.uid).get().catch(() => null);
+  const chosenModel = typeof body.model_id === "string" && body.model_id.trim() ? body.model_id.trim() : String(preferences?.data()?.ai_model_id ?? "").trim();
+  const chosenProvider = typeof body.model_id === "string" && body.model_id.trim() ? String(body.provider_id ?? "") : String(preferences?.data()?.ai_provider_id ?? "");
+  const selectedModel = chosenModel ? { providerId: chosenProvider, modelId: chosenModel } : null;
   const runId = crypto.randomUUID().replace(/-/g, "").slice(0, 24);
   const wantsStream = (req.headers.get("accept") ?? "").includes("text/event-stream");
   const isTemporary = body.is_temporary === true;
@@ -240,6 +244,7 @@ export async function POST(req: NextRequest) {
       taskId,
       prompt,
       taskContext,
+      selectedModel,
       actions,
       workspaceOnly,
       chatMode,
@@ -281,6 +286,7 @@ export async function POST(req: NextRequest) {
           taskId,
           prompt,
           taskContext,
+          selectedModel,
           actions,
           workspaceOnly,
           chatMode,

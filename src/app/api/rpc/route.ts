@@ -760,6 +760,7 @@ const ACTIONS: Record<string, Handler> = {
 
   settings_update: async (d, u, b) => {
     const patch: Record<string, unknown> = { updated_at: nowTs() };
+    if (b.stream_reveal_mode !== undefined) patch.stream_reveal_mode = z.enum(["adaptive", "word", "natural", "reduced"]).parse(b.stream_reveal_mode);
     for (const key of ["memory_enabled", "chat_history_enabled", "notifications_email", "notifications_push", "notifications_security_alerts"]) {
       if (typeof b[key] === "boolean") patch[key] = b[key];
     }

@@ -1,20 +1,5 @@
-// =============================================================================
-// Server-side AI routing — Tiered GLM + `openai/gpt-oss-120b` Architecture.
-//
-// TIERED ROUTE ORDER
-//   • High-load, Coding, Web Development, Agent/Build, Orchestrator, Vision:
-//       1. GLM (`glm-4.7` / `glm-4.6v` or admin-configured primary model)
-//       2. Admin-managed provider accounts
-//       3. `openai/gpt-oss-120b` & secondary environment fallbacks
-//
-//   • Low-load, Fast Everyday Chat & Lightweight Tasks:
-//       1. `openai/gpt-oss-120b` (`GROQ_API_KEY` / `GPT_OSS_API_KEY`) — or custom
-//          admin non-GLM main model when explicitly overridden in Firestore
-//       2. GLM (`glm-4.7`) & admin-managed provider accounts as automatic fallbacks
-//
-// Explicit model selection from the model picker (`resolveSelectedAIRoute`) and
-// all admin-managed providers continue working across every protocol.
-// =============================================================================
+// Server-side AI routes: GLM-5-Turbo is the Chat and Agent default.
+// User/Admin-selected alternatives remain explicit; no automatic OSS substitution.
 
 import "server-only";
 
@@ -46,9 +31,9 @@ export type AIRouteTarget = {
  */
 export const AI_CONFIG = {
   general: {
-    provider: "Groq" as const,
-    model: GPT_OSS_DEFAULT_MODEL,
-    fallback: GLM_DEFAULT_MODEL,
+    provider: "GLM" as const,
+    model: GLM_DEFAULT_MODEL,
+    fallback: "",
   },
   coding: {
     provider: "GLM" as const,
@@ -107,12 +92,12 @@ export function logAIConfiguration(): void {
   if (globalState[CONFIG_LOGGED]) return;
   globalState[CONFIG_LOGGED] = true;
   console.info("[MATRIX] AI configuration", {
-    architecture: "GLM (high-load / coding / web-dev / vision) + openai/gpt-oss-120b (low-load fast)",
+    architecture: "GLM-5-Turbo primary for Chat and Agent; alternative models only by explicit selection",
     glm: keyConfigured(process.env.ZAI_API_KEY) || keyConfigured(process.env.GLM_API_KEY) ? "configured" : "missing",
     glmModel: process.env.GLM_MODEL?.trim() || AI_CONFIG.coding.model,
     lowTaskEngine: keyConfigured(process.env.GROQ_API_KEY) || keyConfigured(process.env.GPT_OSS_API_KEY) ? "configured" : "missing",
     lowTaskModel: MODELS.chat || GPT_OSS_DEFAULT_MODEL,
-    fallback: "tiered GLM ↔ gpt-oss-120b → managed providers → configured environment providers",
+    fallback: "off by default; explicit alternative model selection or Try another model only",
   });
 }
 
@@ -127,55 +112,27 @@ function isLowTierTarget(target: AIRouteTarget): boolean {
 export function createAIRoutes(
   coding: boolean,
   preferFallback = false,
-  tier: WorkloadTier = coding ? "high" : "low",
+  _tier: WorkloadTier = "high",
 ): AIRouteTarget[] {
-  const effectiveTier: WorkloadTier = coding ? "high" : tier;
-  const envTargets: AIRouteTarget[] = environmentProviders()
-    .filter((entry) => {
-      // Gemini and OpenRouter are never implicit defaults; they are used only
-      // when explicitly selected by provider/model ID or saved in Admin.
-      if (entry.id === "openrouter" || entry.id === "gemini") return false;
-      return coding ? Boolean(entry.codingModel) : Boolean(entry.defaultModel);
-    })
-    .map((entry) => {
-      const targetModel = coding ? entry.codingModel : entry.defaultModel;
-      const client = entry.id === "glm"
-        ? new FallbackSafeProvider(entry.client)
-        : new CatalogValidatedProvider(entry.client);
-      return {
-        provider: entry.name as AIProviderName,
-        providerId: entry.id,
-        model: targetModel,
-        client,
-        tier: entry.id === "glm" ? "high" : (entry.id === "groq" || entry.id === "gpt-oss" ? "low" : effectiveTier),
-      };
-    });
-
-  const ordered = [...envTargets].sort((a, b) => {
-    if (effectiveTier === "high") {
-      const highRank = (t: AIRouteTarget) => (t.provider === "GLM" ? 0 : isLowTierTarget(t) ? 1 : 2);
-      return highRank(a) - highRank(b);
-    }
-    const lowRank = (t: AIRouteTarget) => (isLowTierTarget(t) ? 0 : t.provider === "GLM" ? 1 : 2);
-    return lowRank(a) - lowRank(b);
-  });
-
-  return preferFallback ? [...ordered].reverse() : ordered;
+  const providers = environmentProviders();
+  const glm = providers.find((entry) => entry.id === "glm");
+  const primary = glm ? [{ provider: "GLM" as const, providerId: glm.id,
+    model: coding ? glm.codingModel : glm.defaultModel, client: glm.client, tier: "high" as const }] : [];
+  // Other configured providers remain selectable. They are never implicit
+  // substitutes for an absent or failing GLM; only an explicit retry requests
+  // an alternative, and the gateway surfaces the actual provider in its reply.
+  if (!preferFallback) return primary;
+  const alternatives: AIRouteTarget[] = providers.filter((entry) => entry.id !== "glm" && (coding ? entry.codingModel : entry.defaultModel))
+    .map((entry) => ({ provider: entry.name as AIProviderName, providerId: entry.id,
+      model: coding ? entry.codingModel : entry.defaultModel, client: entry.client, tier: "low" as const }));
+  return [...alternatives, ...primary];
 }
 
 export function aiProviderConfigured(coding: boolean): boolean {
   return createAIRoutes(coding).length > 0;
 }
 
-/**
- * Build the route order for a request:
- *   • Coding / web-dev / high-load (`coding || tier === "high"`):
- *       GLM (or admin main/agent model) → managed providers → `gpt-oss-120b` fallback
- *   • Low-load (`!coding && tier === "low"`):
- *       - Custom non-GLM admin DB override leads when explicitly saved in Firestore.
- *       - Otherwise `openai/gpt-oss-120b` leads when configured, with GLM & managed
- *         providers standing by as automatic fallbacks!
- */
+/** Resolve one authoritative automatic primary. Other providers require an explicit choice. */
 export async function createAIRoutesFromDb(
   d: Db | null,
   coding: boolean,
@@ -215,55 +172,21 @@ export async function createAIRoutesFromDb(
     client: new FallbackSafeProvider(target.client),
   }));
 
-  if (!runtimeRoute) {
-    // No main-model record resolved: for low-load tasks keep low-tier env target
-    // ahead of fallback pools unless managed chat providers were explicitly configured
-    // without an environment low-tier engine.
-    const lowEnvLead = effectiveTier === "low" ? envTargets.find(isLowTierTarget) : undefined;
-    if (lowEnvLead && managedRouteTargets.length === 0) {
-      return preferFallback ? [...envTargets].reverse() : envTargets;
-    }
-    const configured = [...managedRouteTargets, ...envTargets];
-    return preferFallback ? [...envTargets, ...managedRouteTargets] : configured;
+  const main = runtimeRoute
+    ? (coding && runtimeConfig?.agent_model ? createRuntimeAgentRoute(runtimeConfig) ?? runtimeRoute : runtimeRoute)
+    : null;
+  const primary: AIRouteTarget | null = main
+    ? { ...main, providerId: `main-${main.kind}`, tier: "high" }
+    : envTargets.find((target) => target.providerId === "glm") ?? null;
+  const explicitAdminOverride = runtimeConfig?.source === "database";
+  if (!preferFallback) {
+    // A persisted Admin primary is intentional; absent that, no Groq/OSS or
+    // managed account may silently replace a missing GLM configuration.
+    return primary && (primary.provider === "GLM" || explicitAdminOverride) ? [primary] : [];
   }
-
-  const effectiveRoute = coding && runtimeConfig?.agent_model
-    ? (createRuntimeAgentRoute(runtimeConfig) ?? runtimeRoute)
-    : runtimeRoute;
-
-  const mainTarget: AIRouteTarget = {
-    ...effectiveRoute,
-    providerId: `main-${effectiveRoute.kind}`,
-    client: new FallbackSafeProvider(effectiveRoute.client),
-    tier: "high",
-  };
-
-  const dedupe = (list: AIRouteTarget[]) => {
-    const seen = new Set<string>();
-    return list.filter((item) => {
-      const key = `${item.provider}:${item.model}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-  };
-
-  // Low-load tier offload to `openai/gpt-oss-120b` whenever the main model is GLM
-  // (either from environment or database) and a low-tier `gpt-oss-120b` target is ready.
-  const lowTierTarget = effectiveTier === "low" ? envTargets.find(isLowTierTarget) : undefined;
-  const customNonGlmDbOverride = runtimeConfig?.source === "database" && runtimeConfig.kind !== "glm";
-
-  if (effectiveTier === "low" && lowTierTarget && !customNonGlmDbOverride) {
-    const configuredLowModel = runtimeConfig?.low_task_model?.trim();
-    const primaryLow: AIRouteTarget = configuredLowModel && configuredLowModel !== lowTierTarget.model
-      ? { ...lowTierTarget, model: configuredLowModel, tier: "low" }
-      : { ...lowTierTarget, tier: "low" };
-    const orderedLow = dedupe([primaryLow, mainTarget, ...managedRouteTargets, ...envTargets]);
-    return preferFallback ? [...orderedLow].reverse() : orderedLow;
-  }
-
-  const orderedHigh = dedupe([mainTarget, ...managedRouteTargets, ...envTargets]);
-  return preferFallback ? [...orderedHigh].reverse() : orderedHigh;
+  const alternatives = [...managedRouteTargets, ...createAIRoutes(coding, true, effectiveTier), ...envTargets]
+    .filter((target) => !primary || `${target.provider}:${target.model}` !== `${primary.provider}:${primary.model}`);
+  return [...alternatives, ...(primary ? [primary] : [])];
 }
 
 /**
