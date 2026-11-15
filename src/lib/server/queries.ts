@@ -7,6 +7,7 @@ import { Db } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
 import { isAdmin, listAdminPermissionCodes, securityScore } from "@/lib/server/rpc";
 import { ascDoc, descDoc } from "@/lib/server/sort";
+import { isChatMode, type ChatMode } from "@/lib/ai/modes";
 
 // IMPORTANT: queries in this module deliberately use equality-only Firestore
 // filters; ordering / null-filtering / limiting happen in memory (see
@@ -117,7 +118,9 @@ export async function getConversation(d: Db, uid: string, id: string, limit = CH
       id: conv.id,
       title: conv.data()!.title ?? "New conversation",
       is_temporary: conv.data()!.is_temporary ?? false,
-      mode: conv.data()!.mode === "agent" ? "agent" as const : "general" as const,
+      // The stored mode only restores the selector after a reload; it never
+      // grants execution authority (each request states its own mode).
+      mode: (isChatMode(conv.data()!.mode) ? conv.data()!.mode : "general") as ChatMode,
       active_project_id: typeof conv.data()!.active_project_id === "string" ? conv.data()!.active_project_id as string : null,
     },
     hasMore,

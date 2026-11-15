@@ -41,7 +41,7 @@
   --ease-slow: 240ms cubic-bezier(0.2, 0.8, 0.3, 1);
 
   /* --- layout metrics ---------------------------------------------------- */
-  --app-header: 3.5rem;
+  --app-header: 3rem;
   --app-bottom-nav: 3.75rem;
   --sidebar-width: 264px;
   --sidebar-width-collapsed: 68px;

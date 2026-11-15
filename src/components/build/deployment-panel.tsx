@@ -20,6 +20,7 @@ import type { DeployEnvironmentId } from "@/lib/deploy/provider";
 import type { BuildRun } from "@/lib/deploy/stages";
 import { absoluteUrl, formatBytes, relativeTime, shortUrl } from "@/lib/deploy/format";
 import { rpc, RpcCallError } from "@/lib/client/api";
+import { useDialogs } from "@/components/dialogs";
 import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
 import { BuildChecks, DeploymentLogsDisclosure, LogList, type LogRow } from "@/components/build/build-progress";
 import { CopyLinkButton, OpenLiveSiteButton } from "@/components/build/deploy-card";
@@ -270,9 +271,10 @@ export function DeploymentHistory({
   const [logs, setLogs] = useState<Record<string, LogRow[]>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const dialogs = useDialogs();
 
   async function rollback(row: DeploymentRow) {
-    if (!confirm(`Deploy v${row.version} again? The live site will serve those files.`)) return;
+    if (!(await dialogs.confirm({ title: `Deploy v${row.version} again?`, body: "The live site will serve the files from that version. Newer versions stay in the history.", confirmLabel: "Deploy this version", tone: "primary" }))) return;
     setBusyId(row.id);
     setError(null);
     try {
@@ -302,6 +304,7 @@ export function DeploymentHistory({
 
   return (
     <section className="rounded-xl border border-border bg-surface">
+      {dialogs.element}
       <header className="flex items-center gap-2 border-b border-border px-3.5 py-2.5">
         <History size={14} className="text-accent" />
         <p className="eyebrow flex-1 text-ink-3">Deployments</p>

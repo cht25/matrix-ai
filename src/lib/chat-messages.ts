@@ -64,6 +64,34 @@ export type MessageMetadata = {
     environment: string;
     files: number;
   };
+  /**
+   * Earlier answers this reply replaced (Regenerate / Edit & resend), oldest
+   * first. The message's own `content` is always the current answer.
+   */
+  versions?: ReplyVersion[];
+  /** Set when the user corrected a message after sending it. */
+  edited_at?: string;
+  original_content?: string;
+  edit_count?: number;
+
+  // --- this browser session only (never stored) ----------------------------
+  /** Object URL of a recording that has not been (or cannot be) stored. */
+  local_audio_url?: string;
+  /** A voice message that is still uploading, or that could not be sent. */
+  voice_status?: "processing" | "failed";
+  voice_error?: string;
+  /** The request never reached the conversation; the bubble offers Retry. */
+  send_failed?: boolean;
+  /** The reply stopped early (Stop, timeout or a dropped connection). */
+  interrupted?: boolean;
+};
+
+export type ReplyVersion = {
+  content: string;
+  created_at: string;
+  model?: string;
+  provider?: string;
+  duration_ms?: number;
 };
 
 export type ChatMessage = {
@@ -113,6 +141,56 @@ export function latestProjectId(list: ChatMessage[]): string | null {
     if (typeof pid === "string" && pid) return pid;
   }
   return null;
+}
+
+/** Index of the newest message with this role, or -1. */
+export function lastIndexOfRole(list: ChatMessage[], role: ChatMessage["role"]): number {
+  for (let i = list.length - 1; i >= 0; i--) if (list[i].role === role) return i;
+  return -1;
+}
+
+/** Every answer a reply has had, oldest first; the last entry is the current one. */
+export function replyVersions(message: ChatMessage): ReplyVersion[] {
+  const earlier = Array.isArray(message.metadata?.versions)
+    ? message.metadata!.versions!.filter((version) => version && typeof version.content === "string")
+    : [];
+  return [
+    ...earlier,
+    {
+      content: message.content,
+      created_at: message.created_at ?? "",
+      model: message.metadata?.model,
+      provider: message.metadata?.provider,
+      duration_ms: message.metadata?.duration_ms,
+    },
+  ];
+}
+
+/**
+ * Versions to keep on a reply that a regenerated answer is about to replace,
+ * mirroring the server (lib/server/chat-messages.ts) so the switcher is right
+ * immediately — the server's own list replaces it when the reply is stored.
+ */
+export function versionsAfterReplace(previous: ChatMessage | undefined, max = 5): ReplyVersion[] {
+  if (!previous || previous.role !== "assistant") return [];
+  const all = replyVersions(previous).filter((version) => version.content.trim());
+  return all.slice(-(max - 1));
+}
+
+/** Patch the message that belongs to a turn (by its stable turn id). */
+export function patchTurnMessage(
+  list: ChatMessage[],
+  role: ChatMessage["role"],
+  turnId: string,
+  patch: (message: ChatMessage) => ChatMessage,
+): ChatMessage[] {
+  let changed = false;
+  const next = list.map((message) => {
+    if (message.role !== role || message.metadata?.turn_id !== turnId) return message;
+    changed = true;
+    return patch(message);
+  });
+  return changed ? next : list;
 }
 
 /** The user message that prompted the assistant message at `index`. */

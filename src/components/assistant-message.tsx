@@ -12,7 +12,8 @@
 // here is painted and then hidden with CSS.
 // =============================================================================
 
-import { MonitorPlay } from "lucide-react";
+import { memo, useEffect, useState } from "react";
+import { ChevronLeft, ChevronRight, MonitorPlay, RotateCcw } from "lucide-react";
 import { Markdown } from "@/components/markdown";
 import { ResponseActions, type ChatAction } from "@/components/response-actions";
 import { ArtifactCard, ExportFormatRow, FormatChoice } from "@/components/artifact-panel";
@@ -24,7 +25,7 @@ import type { BuildRun } from "@/lib/deploy/stages";
 import { ThemeGallery } from "@/components/theme-gallery";
 import { isArtifactVisible, type ArtifactState, type ExecutionState } from "@/lib/ai/artifacts";
 import type { ContentSignals, ExportFormat, IntentResult, ResponseKind } from "@/lib/ai/intent";
-import type { ChatMessage } from "@/lib/chat-messages";
+import { replyVersions, type ChatMessage } from "@/lib/chat-messages";
 
 export type AssistantMessageProps = {
   message: ChatMessage;
@@ -53,15 +54,48 @@ export type AssistantMessageProps = {
   onCopyArtifact: () => void;
   onOpenWorkspace: () => void;
   artifactActions: { canOpen: boolean; provider: string | null };
+  /** Re-ask for a reply that stopped early. Only offered on the latest turn. */
+  onRetryInterrupted?: () => void;
+  /** Copy the answer that is currently displayed (it may be an earlier version). */
+  onCopyVersion?: (text: string) => void;
 };
 
-export function AssistantMessage(props: AssistantMessageProps) {
+/**
+ * ‹ 2 / 3 › — the answers a regenerated reply has had. Nothing is lost when
+ * Regenerate replaces an answer: earlier ones stay one tap away.
+ */
+function VersionSwitcher({ index, total, onChange }: { index: number; total: number; onChange: (next: number) => void }) {
+  return (
+    <span className="inline-flex items-center text-ink-3" role="group" aria-label="Answer versions">
+      <button type="button" onClick={() => onChange(index - 1)} disabled={index <= 0} aria-label="Show the earlier answer" title="Earlier answer" className="msg-action !px-0">
+        <ChevronLeft size={15} aria-hidden="true" />
+      </button>
+      <span className="min-w-9 text-center font-mono text-[11px] tabular-nums text-ink-2" aria-live="polite" aria-label={`Answer ${index + 1} of ${total}`}>
+        {index + 1} / {total}
+      </span>
+      <button type="button" onClick={() => onChange(index + 1)} disabled={index >= total - 1} aria-label="Show the later answer" title="Later answer" className="msg-action !px-0">
+        <ChevronRight size={15} aria-hidden="true" />
+      </button>
+    </span>
+  );
+}
+
+export const AssistantMessage = memo(function AssistantMessage(props: AssistantMessageProps) {
   const {
     message, isLatest, streaming, kind, signals, intent, artifact, execution, liveBuildRun, onRetryBuild, timeLabel, actions,
     exportFormats, exportPickerOpen, onCloseExportPicker, onPickFormat,
     onGenerateArtifact, onDismissArtifact, onOpenArtifact, onSaveArtifact, onCopyArtifact,
-    onOpenWorkspace, artifactActions,
+    onOpenWorkspace, artifactActions, onRetryInterrupted, onCopyVersion,
   } = props;
+
+  const versions = replyVersions(message);
+  const total = versions.length;
+  // null = the current answer. A new answer always returns the view to it.
+  const [picked, setPicked] = useState<number | null>(null);
+  useEffect(() => { setPicked(null); }, [total, message.content]);
+  const shown = picked === null ? total - 1 : Math.max(0, Math.min(total - 1, picked));
+  const viewingEarlier = shown < total - 1;
+  const text = viewingEarlier ? versions[shown].content : message.content;
 
   const files = message.metadata?.artifacts ?? [];
   const showArtifact = isArtifactVisible(artifact);
@@ -71,8 +105,8 @@ export function AssistantMessage(props: AssistantMessageProps) {
   const showExecution = isLatest && !streaming && execution !== null && execution.status !== "idle";
 
   return (
-    <div className="border-l border-border pl-4">
-      {message.metadata?.steps?.length ? (
+    <div className="min-w-0">
+      {message.metadata?.steps?.length && !viewingEarlier ? (
         <CompactStepsPill
           steps={message.metadata.steps}
           durationMs={message.metadata.duration_ms}
@@ -80,8 +114,26 @@ export function AssistantMessage(props: AssistantMessageProps) {
           model={message.metadata.model}
         />
       ) : null}
-      <Markdown text={message.content} />
+      {viewingEarlier ? (
+        <p className="mb-2 inline-flex items-center gap-2 rounded-lg bg-surface-2 px-2.5 py-1 text-[12px] text-ink-2">
+          Earlier answer
+          <button type="button" onClick={() => setPicked(null)} className="font-medium text-accent hover:underline">Show current</button>
+        </p>
+      ) : null}
+      <Markdown text={text} />
 
+      {message.metadata?.interrupted && !viewingEarlier ? (
+        <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-3" role="status">
+          This answer stopped early.
+          {isLatest && onRetryInterrupted ? (
+            <button type="button" onClick={onRetryInterrupted} disabled={streaming} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-border px-2.5 font-medium text-ink hover:bg-surface-2 disabled:opacity-50">
+              <RotateCcw size={13} aria-hidden="true" /> Try again
+            </button>
+          ) : null}
+        </p>
+      ) : null}
+
+      {viewingEarlier ? null : (<>
       {message.metadata?.image_data_url ? (
         // Generated image. `w-full` + `object-contain` keeps it inside the
         // viewport on mobile — it can never overflow horizontally.
@@ -166,12 +218,17 @@ export function AssistantMessage(props: AssistantMessageProps) {
       {exportPickerOpen && exportFormats.length ? (
         <ExportFormatRow formats={exportFormats} onPick={onPickFormat} onClose={onCloseExportPicker} />
       ) : null}
+      </>)}
 
-      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-        {timeLabel ? <span className="px-0.5 font-mono text-[10px] text-ink-3">{timeLabel}</span> : null}
-        <ResponseActions primary={actions.primary} overflow={actions.overflow} />
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+        {total > 1 ? <VersionSwitcher index={shown} total={total} onChange={(next) => setPicked(next >= total - 1 ? null : Math.max(0, next))} /> : null}
+        {viewingEarlier ? (
+          <button type="button" onClick={() => onCopyVersion?.(text)} className="msg-action">Copy this version</button>
+        ) : (
+          <ResponseActions primary={actions.primary} overflow={actions.overflow} quiet={!isLatest} menuLabel="More response actions" />
+        )}
+        {timeLabel ? <span className="px-1 font-mono text-[10.5px] text-ink-3">{timeLabel}</span> : null}
       </div>
-
     </div>
   );
-}
+});

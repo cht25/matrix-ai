@@ -16,6 +16,7 @@ import * as imageConfig from "@/lib/ai/image/config";
 import * as providerAccounts from "@/lib/ai/accounts";
 import * as appUpdates from "@/lib/server/app-updates";
 import { getConversationHistoryPage } from "@/lib/server/queries";
+import * as chatMessages from "@/lib/server/chat-messages";
 import * as projects from "@/lib/server/projects";
 import * as deploy from "@/lib/server/deploy";
 import * as design from "@/lib/server/design";
@@ -57,6 +58,9 @@ function fail(code: string, status: number) {
 }
 
 type Handler = (d: ReturnType<typeof adminDb>, user: SessionUser, body: Record<string, unknown>) => Promise<unknown>;
+
+/** Modes a conversation can be restored in — mirrors ChatMode in lib/ai/modes. */
+const CONVERSATION_MODES = ["general", "study", "code", "health", "research", "creative", "agent", "image", "orchestrator"] as const;
 
 const str = (v: unknown, fallback = "") => (typeof v === "string" ? v : fallback);
 const bool = (v: unknown, fallback = false) => (typeof v === "boolean" ? v : fallback);
@@ -686,9 +690,25 @@ const ACTIONS: Record<string, Handler> = {
     if (typeof b.title === "string") patch.title = b.title.trim().slice(0, 120) || "Untitled";
     if (bool(b.archive)) patch.archived_at = nowTs();
     if (bool(b.delete)) patch.deleted_at = nowTs();
+    // Switching Chat <-> Agent keeps the SAME conversation; remembering the
+    // choice only restores the selector after a reload. It grants nothing:
+    // every request still states its own mode and is authorised on its own.
+    if (b.mode !== undefined) patch.mode = z.enum(CONVERSATION_MODES).parse(b.mode);
     await ref.set(patch, { merge: true });
     return true;
   },
+
+  // One message, chosen by its owner. Regenerated answers are versioned by the
+  // AI gateway itself; these two cover Delete and Edit & resend.
+  conversation_message_delete: (d, u, b) =>
+    chatMessages.deleteConversationMessage(d, u.uid, z.string().min(1).max(128).parse(b.conversation_id), z.string().min(1).max(128).parse(b.message_id)),
+  conversation_message_edit: (d, u, b) =>
+    chatMessages.editUserMessage(
+      d, u.uid,
+      z.string().min(1).max(128).parse(b.conversation_id),
+      z.string().min(1).max(128).parse(b.message_id),
+      z.string().min(1).max(chatMessages.MAX_MESSAGE_CHARS).parse(b.content),
+    ),
 
   conversation_messages: async (d, u, b) => {
     const id = z.string().min(1).parse(b.conversation_id);

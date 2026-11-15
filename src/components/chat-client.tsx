@@ -11,6 +11,10 @@
 // are real capabilities, but each one is mounted only when the user's intent
 // (or the content of the reply) makes it relevant.
 //
+// Chat and Agent are ONE surface: the same toolbar, message rows, composer,
+// voice messages, attachments, streaming and message actions. Switching
+// between them — or between models — never leaves the conversation.
+//
 // Fakes-free contract: every assistant message comes from the real gateway.
 // Any failure renders "Server problem" with a [Retry] — never a canned reply,
 // never an endless loader, and never a simulated reasoning trace.
@@ -19,33 +23,34 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
-  BrainCircuit, Code2, Download, ExternalLink, FileSearch, Globe, GraduationCap, Image as ImageIcon, Mic,
-  Lock, MonitorPlay, Paperclip, Play, RefreshCcw, Send, ShieldAlert, Sparkles, Square, Trash2,
-  WandSparkles, X, Zap,
+  ArrowDown, BookOpen, Braces, BrainCircuit, Code2, Copy, Download, ExternalLink, FileDown, FileSearch, Flag, GraduationCap,
+  Image as ImageIcon, Layers, Lightbulb, Lock, MonitorPlay, Pencil, Play, RefreshCcw, RotateCcw, Share2, ShieldAlert, Sparkles,
+  Trash2, Volume2, VolumeX, WandSparkles, X, Zap,
 } from "lucide-react";
-import { AutoSpeakToggle } from "@/components/chat-speech-controls";
 import {
   primeSpeech, readAutoSpeakPreference, speakMarkdown, speechTextFromMarkdown, stopSpeech, writeAutoSpeakPreference,
 } from "@/lib/chat-speech";
 import { firebaseBrowserConfigured, waitForAuthUser } from "@/lib/firebase/client";
-import { rpc, uploadOwnedFile } from "@/lib/client/api";
+import { rpc } from "@/lib/client/api";
 import { notifyWorkDone } from "@/lib/client/work-notifications";
-import { Button, Textarea } from "@/components/ui";
-import { ModelPicker } from "@/components/model-picker";
-import { Markdown } from "@/components/markdown";
+import { loadModelPool } from "@/components/model-picker";
 import { MatrixMark, MatrixWordmark } from "@/components/logo";
 import { useToast } from "@/components/toast";
 import { ServerProblem } from "@/components/server-problem";
-import { MATRIX_MODEL_LABEL } from "@/lib/ai/model";
+import { ConfirmModal } from "@/components/modal";
 import { classifyGatewayResponse, classifyRequestException, failureCopy, withRequestReference, type ApiFailure } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n/client";
 import { useIsCompact } from "@/lib/client/use-media-query";
 import { useChatScroll } from "@/lib/use-chat-scroll";
-import { VoiceMessage } from "@/components/voice-message";
 import { StreamingReply } from "@/components/streaming-reply";
 import { createStreamStore } from "@/lib/stream-store";
-import { VoiceProcessing, VoiceRecordingPanel, VoiceReviewBar, type VoiceReview } from "@/components/voice-composer";
-import { VOICE_LANGUAGE_STORAGE_KEY, chooseVoiceEngine, mergeTranscript, voiceErrorMessage, voiceLanguage } from "@/lib/voice-input";
+import { ChatComposer } from "@/components/chat-composer";
+import { UserMessage } from "@/components/user-message";
+import type { ChatAction } from "@/components/response-actions";
+import { MAX_AUDIO_BYTES, MIN_RECORDING_MS, useVoiceRecorder, type VoiceCapture, type VoiceClip } from "@/lib/client/use-voice-recorder";
+import { useKeyboardInset } from "@/lib/client/use-keyboard-inset";
+import { copyText, shareText } from "@/lib/client/share";
+import { VOICE_LANGUAGE_STORAGE_KEY, formatClock, mergeTranscript, voiceErrorMessage, voiceLanguage } from "@/lib/voice-input";
 import { revealReceived, type RevealMode } from "@/lib/stream-reveal";
 import { restoredPrependTop } from "@/lib/chat-scroll";
 import { cn } from "@/lib/utils";
@@ -62,8 +67,11 @@ import {
   type ArtifactState, type ExecutionState,
 } from "@/lib/ai/artifacts";
 import { buildArtifact, extractJson, type BuiltArtifact } from "@/lib/export/response-export";
-import { intentForMessage, latestArtifacts, latestProjectId, lastUserContent, messageKey, type ChatMessage, type MessageMetadata, type WorkingStep } from "@/lib/chat-messages";
-import { ChatTopBar } from "@/components/chat-topbar";
+import {
+  intentForMessage, lastIndexOfRole, latestArtifacts, latestProjectId, messageKey, patchTurnMessage, promptFor, versionsAfterReplace,
+  type ChatMessage, type MessageMetadata, type ReplyVersion, type WorkingStep,
+} from "@/lib/chat-messages";
+import { ChatTopBar, type ToolbarStatus } from "@/components/chat-topbar";
 import { AssistantMessage } from "@/components/assistant-message";
 import { AgentWorkspace } from "@/components/agent-workspace";
 import { ArtifactCard } from "@/components/artifact-panel";
@@ -84,11 +92,51 @@ export type { ChatMessage, MessageMetadata };
 
 type PendingAttachment = TextAttachment & { size: number };
 
+/** A turn whose user bubble is already in the conversation. */
+type TurnOptions = {
+  /** A voice message: the recording is already shown and has been transcribed. */
+  voice?: { turnId: string; assetId: string | null; attachments: PendingAttachment[] };
+  /** Edit & resend, or sending again a message that never reached the server. */
+  resend?: { turnId: string; stored: boolean; replaceReply: boolean; attachments: PendingAttachment[] };
+};
+
+const MAX_ATTACHMENTS = 8;
+const MAX_ATTACHMENT_BYTES = 1024 * 1024;
+const TEXT_FILE = /(?:^|\.)(?:txt|md|mdx|json|jsonc|js|jsx|mjs|cjs|ts|tsx|py|html?|css|scss|sass|less|vue|svelte|sql|graphql|ya?ml|toml|xml|env|sh|bash|go|rs|java|kt|php|rb|swift|dart|c|h|cc|cpp|cs|csv|log)$/i;
+const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
+/** Unsent composer text, kept per conversation for this tab. */
+const DRAFT_PREFIX = "matrix.chat.draft:";
+
+function timeLabelOf(iso: string | undefined): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 const CONNECT_TIMEOUT_MS = 25_000;
 const STREAM_IDLE_TIMEOUT_MS = 45_000;
 
 /** Formats a browser can open inline; the rest are download-only. */
 const OPENABLE: ExportFormat[] = ["pdf", "markdown", "txt", "json", "csv"];
+
+/** One icon per action, so the row reads the same on every message. */
+const ACTION_ICON: Partial<Record<ResponseActionId, ReactNode>> = {
+  copy: <Copy size={14} strokeWidth={1.8} />,
+  regenerate: <RefreshCcw size={14} strokeWidth={1.8} />,
+  listen: <Volume2 size={14} strokeWidth={1.8} />,
+  copyCode: <Code2 size={14} strokeWidth={1.8} />,
+  run: <Play size={14} strokeWidth={1.8} />,
+  explain: <Lightbulb size={14} strokeWidth={1.8} />,
+  save: <Download size={14} strokeWidth={1.8} />,
+  editPrompt: <Pencil size={14} strokeWidth={1.8} />,
+  sources: <BookOpen size={14} strokeWidth={1.8} />,
+  export: <FileDown size={14} strokeWidth={1.8} />,
+  open: <ExternalLink size={14} strokeWidth={1.8} />,
+  copyJson: <Braces size={14} strokeWidth={1.8} />,
+  flashcards: <Layers size={14} strokeWidth={1.8} />,
+  workspace: <MonitorPlay size={14} strokeWidth={1.8} />,
+  report: <Flag size={14} strokeWidth={1.8} />,
+};
 
 const SUGGESTIONS = [
   { icon: <Sparkles size={16} strokeWidth={1.6} />, label: "Plan or brainstorm", desc: "Turn an idea into steps", prompt: "Help me turn an idea into a clear step-by-step plan." },
@@ -122,17 +170,18 @@ async function parseErrorCode(res: Response): Promise<string | null> {
   }
 }
 
-async function parseGatewayError(res: Response): Promise<{ code: string | null; conversationId: string | null; requestId: string | null }> {
+async function parseGatewayError(res: Response): Promise<{ code: string | null; conversationId: string | null; requestId: string | null; userMessageId: string | null }> {
   try {
-    const data = (await res.json()) as { error?: unknown; conversation_id?: unknown };
+    const data = (await res.json()) as { error?: unknown; conversation_id?: unknown; user_message_id?: unknown };
     return {
       code: typeof data.error === "string" ? data.error : null,
       conversationId: typeof data.conversation_id === "string" ? data.conversation_id : null,
       requestId: res.headers.get("X-MATRIX-Request-ID"),
+      userMessageId: typeof data.user_message_id === "string" ? data.user_message_id : null,
     };
   } catch {
     // Non-JSON error body (proxy/host interstitial) — still surface the id.
-    return { code: null, conversationId: null, requestId: res.headers.get("X-MATRIX-Request-ID") };
+    return { code: null, conversationId: null, requestId: res.headers.get("X-MATRIX-Request-ID"), userMessageId: null };
   }
 }
 
@@ -158,6 +207,7 @@ export function ChatClient({
   /** True when the conversation has messages older than `initialMessages`. */
   initialHasMore = false,
   initialProjectId = null,
+  initialTitle = "",
   onConversationCreated,
 }: {
   initialMessages: ChatMessage[];
@@ -166,6 +216,8 @@ export function ChatClient({
   initialMode?: ChatMode;
   initialHasMore?: boolean;
   initialProjectId?: string | null;
+  /** Title of a saved conversation, shown in the toolbar and its settings. */
+  initialTitle?: string;
   onConversationCreated?: (id: string) => void;
 }) {
   const router = useRouter();
@@ -185,26 +237,42 @@ export function ChatClient({
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [input, setInput] = useState("");
   const [convId, setConvId] = useState<string | null>(initialConvId);
-  const [lastUserMessage, setLastUserMessage] = useState<string | null>(lastUserContent(initialMessages));
-  const [keyboardInset, setKeyboardInset] = useState(0);
+  const [title, setTitle] = useState(initialTitle);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [pendingImage, setPendingImage] = useState<{ name: string; storagePath: string; previewUrl: string; size: number } | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<ApiFailure | null>(null);
+  /** A problem with what is being prepared in the composer (a rejected file, …). */
+  const [composerError, setComposerError] = useState<string | null>(null);
+
+  // --- message actions ------------------------------------------------------
+  /** Key of the user message whose inline editor is open. */
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  /** The message waiting for the delete confirmation. */
+  const [deleteTarget, setDeleteTarget] = useState<{ key: string; role: "user" | "assistant" } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  /** The reply being regenerated: hidden while its replacement streams in. */
+  const [hiddenKey, setHiddenKey] = useState<string | null>(null);
+  /** The last turn sent from this screen — what Retry needs to avoid duplicates. */
+  const lastTurnRef = useRef<{ turnId: string; stored: boolean; audioAssetId: string | null } | null>(null);
+  /** The chat style to return to when leaving Agent. */
+  const lastChatStyleRef = useRef<ChatMode>(initialMode !== "agent" && !isTemporary ? initialMode : "general");
 
   // --- capability selection (secondary; lives in the top bar / settings) ---
-  const [lane, setLane] = useState<ModelLane>("auto");
+  // Model choice lives in the Models selector (saved per account); the lane
+  // stays automatic so routing follows that pool.
+  const lane: ModelLane = "auto";
   const [revealMode, setRevealMode] = useState<RevealMode>("adaptive");
   const revealModeRef = useRef<RevealMode>("adaptive");
-  const preferenceMode = mode === "agent" || mode === "code" ? "agent" : "chat";
   useEffect(() => {
     let active = true;
-    void fetch("/api/models", { credentials: "same-origin", cache: "no-store" }).then(async (response) => {
-      if (!response.ok) return null;
-      return response.json() as Promise<{ reveal_mode?: RevealMode }>;
-    }).then((data) => {
-      if (active && data?.reveal_mode && ["adaptive", "word", "natural", "reduced"].includes(data.reveal_mode)) { setRevealMode(data.reveal_mode); revealModeRef.current = data.reveal_mode; } }).catch(() => {});
+    // Shared with the Models selector: one request serves both.
+    void loadModelPool().then((data) => {
+      const saved = data?.reveal_mode as RevealMode | undefined;
+      if (active && saved && ["adaptive", "word", "natural", "reduced"].includes(saved)) { setRevealMode(saved); revealModeRef.current = saved; }
+    });
     return () => { active = false; };
   }, []);
   const [strategy, setStrategy] = useState<ResponseStrategy>("balanced");
@@ -267,40 +335,33 @@ export function ChatClient({
     return null;
   });
 
-  // --- speech -------------------------------------------------------------
+  // --- speech: MATRIX reading an answer aloud --------------------------------
   const [autoSpeak, setAutoSpeak] = useState(true);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
-  const [recording, setRecording] = useState(false);
-  const [recordingPaused, setRecordingPaused] = useState(false);
-  const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const waveformCanvasRef = useRef<HTMLCanvasElement>(null);
-  const waveformSamplesRef = useRef<number[]>([]);
-  const [draftAudio, setDraftAudio] = useState<{ blob: Blob; url: string; filename: string; durationMs: number; waveform: number[] } | null>(null);
-  const discardRecordingRef = useRef(false);
-  const recordingClockRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const recordingElapsedRef = useRef(0);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const visualFrameRef = useRef<number | null>(null);
-  const [transcribing, setTranscribing] = useState(false);
-  const voiceUploadRef = useRef(false);
-  const [voiceAsset, setVoiceAsset] = useState<{ id: string; playbackUrl: string } | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const recordingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // --- voice input (dictation into the composer, every mode incl. Agent) ----
+
+  // --- voice messages: a recording sent as audio (see "Voice messages") -------
   const [voiceLang, setVoiceLangState] = useState("auto");
   const voiceLangRef = useRef("auto");
-  const [voiceReview, setVoiceReview] = useState<VoiceReview | null>(null);
-  const [liveTranscript, setLiveTranscript] = useState("");
-  const [voiceEngineNote, setVoiceEngineNote] = useState("");
-  const [voiceHasWaveform, setVoiceHasWaveform] = useState(true);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the Web Speech API has no lib.dom typings
-  const recognitionRef = useRef<any>(null);
-  const liveFinalRef = useRef("");
-  const liveInterimRef = useRef("");
-  const recognitionWantedRef = useRef(false);
+  /** A voice message is uploading / being transcribed before it is sent. */
+  const [voiceSending, setVoiceSending] = useState(false);
+  const voiceAbortRef = useRef<AbortController | null>(null);
+  /** "Transcribe" is turning a recording into composer text (nothing is sent). */
+  const [transcribing, setTranscribing] = useState(false);
   const transcribeAbortRef = useRef<AbortController | null>(null);
+  /** A dictation that could not be transcribed, kept so it can be tried again. */
+  const [dictationRetry, setDictationRetry] = useState<{ clip: VoiceClip; message: string } | null>(null);
+  /** This session's recordings by turn id: local playback, retry, attachments. */
+  const voiceDraftsRef = useRef<Map<string, { clip: VoiceClip; attachments: PendingAttachment[]; assetId: string | null }>>(new Map());
+  const recorder = useVoiceRecorder({
+    language: voiceLang,
+    // The recording ended by itself. Nothing is sent without the user: it is
+    // kept in the conversation, ready to send or discard.
+    onAutoStop: (capture, reason) => handleVoiceCapture(capture, "hold", reason === "limit"
+      ? "Recording stopped at the 10-minute limit."
+      : "The microphone was disconnected before you finished."),
+  });
+  /** Anything in flight: the composer's primary button becomes Stop. */
+  const busy = streaming || voiceSending;
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(VOICE_LANGUAGE_STORAGE_KEY);
@@ -318,7 +379,6 @@ export function ChatClient({
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const scrollContentRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const imageRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const convIdRef = useRef<string | null>(initialConvId);
   /** Latest committed conversation, read while a request is in flight. */
@@ -351,19 +411,40 @@ export function ChatClient({
   useEffect(() => { autoSpeakRef.current = autoSpeak; }, [autoSpeak]);
 
   useEffect(() => () => {
-    discardRecordingRef.current = true;
-    try { recorderRef.current?.stop(); } catch { /* recorder already stopped */ }
-    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
-    if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
-    if (recordingClockRef.current) clearInterval(recordingClockRef.current);
-    if (visualFrameRef.current !== null) cancelAnimationFrame(visualFrameRef.current);
-    void audioContextRef.current?.close();
+    // The recorder releases the microphone itself (use-voice-recorder).
     generatedAudioRef.current?.pause();
     if (generatedAudioUrlRef.current) URL.revokeObjectURL(generatedAudioUrlRef.current);
+    voiceAbortRef.current?.abort();
+    transcribeAbortRef.current?.abort();
+    for (const draft of voiceDraftsRef.current.values()) URL.revokeObjectURL(draft.clip.url);
+    voiceDraftsRef.current.clear();
   }, []);
   useEffect(() => { localeRef.current = locale; }, [locale]);
 
-  const chatScroll = useChatScroll(scrollAreaRef, scrollContentRef, `${messages.length}:${buildRun?.updatedAt ?? 0}:${liveSteps.length}:${streamCommitted}`);
+  // The composer sits on the keyboard; the bottom navigation steps aside.
+  useKeyboardInset();
+
+  // An unsent draft survives a refresh (per conversation, this tab only).
+  const draftKey = `${DRAFT_PREFIX}${isTemporary ? "temporary" : convId ?? "new"}`;
+  useEffect(() => {
+    try {
+      const saved = window.sessionStorage.getItem(draftKey);
+      if (saved) setInput((current) => current || saved);
+    } catch { /* storage unavailable: nothing to restore */ }
+    // Restored once, when the conversation opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      try {
+        if (input.trim()) window.sessionStorage.setItem(draftKey, input.slice(0, 12_000));
+        else window.sessionStorage.removeItem(draftKey);
+      } catch { /* storage unavailable */ }
+    }, 250);
+    return () => window.clearTimeout(handle);
+  }, [input, draftKey]);
+
+  const chatScroll = useChatScroll(scrollAreaRef, scrollContentRef, `${messages.length}:${buildRun?.updatedAt ?? 0}:${liveSteps.length}:${streamCommitted}:${editingKey ?? ""}`);
 
   /** Fetch the previous page of messages and prepend it, keeping the reading
       position stable. */
@@ -406,23 +487,6 @@ export function ChatClient({
     stopGeneratedSpeech();
   }, []);
 
-  // Keep the composer above the iOS/Android keyboard.
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const sync = () => {
-      const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-      setKeyboardInset(inset > 40 ? inset : 0);
-    };
-    vv.addEventListener("resize", sync);
-    vv.addEventListener("scroll", sync);
-    sync();
-    return () => {
-      vv.removeEventListener("resize", sync);
-      vv.removeEventListener("scroll", sync);
-    };
-  }, []);
-
   // Restore an explicitly requested artifact for the latest exchange after a
   // reload. Only the last turn — history never grows artifact panels.
   useEffect(() => {
@@ -455,36 +519,40 @@ export function ChatClient({
     [messages],
   );
 
-  function autosize() {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 144)}px`;
-  }
-
   function rememberConv(id: string | null) {
     if (!id || convIdRef.current === id) return;
     convIdRef.current = id;
     setConvId(id);
+    // The server titles a new conversation from its first message; mirror it.
+    setTitle((current) => current || (messagesRef.current.find((item) => item.role === "user")?.content ?? "").replace(/\s+/g, " ").slice(0, 60));
     onConversationCreated?.(id);
   }
 
+  /**
+   * Chat ⇄ Agent (and the chat styles) switch INSIDE the conversation: same
+   * id, same history, same draft and attachments. Only how the next message
+   * is handled changes — nothing is reloaded and nothing is lost.
+   */
   function switchMode(next: ChatMode) {
-    if (next === mode || isTemporary || streaming) return;
+    if (next === mode || isTemporary || streaming || voiceSending || recorder.state !== "idle") return;
     stopSpeech();
     stopGeneratedSpeech();
     setSpeakingId(null);
-    if (convIdRef.current || messages.length > 0) {
-      router.push(`/chat?mode=${next}&new=${Date.now()}`);
-      return;
-    }
+    if (next !== "agent") lastChatStyleRef.current = next;
     setMode(next);
-    setAttachments([]);
+    setModeHint(null);
     setFailure(null);
     setNotice(null);
-    setExecution(emptyExecution());
-    setArtifacts({});
-    router.replace(`/chat?mode=${next}`);
+    setExportPickerKey(null);
+    const id = convIdRef.current;
+    if (id) {
+      // Remembered so a reload reopens this conversation in the same mode.
+      void rpc("conversation_update", { id, mode: next }).catch(() => {});
+    } else if (!isTemporary && typeof window !== "undefined" && window.location.pathname === "/chat") {
+      // A new chat keeps its mode in the address bar WITHOUT a navigation —
+      // navigating would remount this screen and drop what is being written.
+      window.history.replaceState(null, "", `/chat?mode=${next}`);
+    }
   }
 
   function clearIdleTimer() {
@@ -611,7 +679,7 @@ export function ChatClient({
 
   function commitPartial(
     text: string,
-    opts: { replaceLastAssistant?: boolean; turnId?: string; intent?: IntentResult } = {},
+    opts: { replaceLastAssistant?: boolean; turnId?: string; intent?: IntentResult; id?: string | null; versions?: ReplyVersion[] } = {},
     metadata: MessageMetadata = {},
   ) {
     const reply = text.trim();
@@ -632,25 +700,42 @@ export function ChatClient({
     }
     const key = `t:${opts.turnId ?? crypto.randomUUID()}`;
     setMessages((current) => {
-      const base = opts.replaceLastAssistant && current[current.length - 1]?.role === "assistant" ? current.slice(0, -1) : current;
+      const tail = current[current.length - 1];
+      // Regenerate / Edit & resend: the new answer takes the place of the old
+      // one (same stored message), and the old one is kept as a version.
+      const replaced = opts.replaceLastAssistant && tail?.role === "assistant" ? tail : undefined;
+      const base = replaced ? current.slice(0, -1) : current;
       const last = base[base.length - 1];
-      if (last?.role === "assistant" && last.content === reply) {
+      if (!replaced && last?.role === "assistant" && last.content === reply) {
         // Identical reply (a retry that produced the same text): keep one
         // message but stamp this turn's metadata so its key still matches the
         // artifact/execution state built for it.
-        return [...base.slice(0, -1), { ...last, metadata: { ...last.metadata, ...metadata } }];
+        return [...base.slice(0, -1), { ...last, id: opts.id ?? last.id, metadata: { ...last.metadata, ...metadata } }];
       }
-      return [...base, { role: "assistant", content: reply, created_at: new Date().toISOString(), metadata }];
+      const versions = opts.versions?.length ? opts.versions : versionsAfterReplace(replaced);
+      return [...base, {
+        id: opts.id ?? replaced?.id,
+        role: "assistant" as const,
+        content: reply,
+        created_at: new Date().toISOString(),
+        metadata: versions.length ? { ...metadata, versions } : metadata,
+      }];
     });
     return key;
   }
 
+  /** The composer's Stop button: whatever is in flight ends cleanly. */
   function stop() {
     clearIdleTimer();
+    // A voice message that is still uploading: cancel it and keep the recording.
+    if (voiceAbortRef.current) { voiceAbortRef.current.abort(); return; }
+    const building = Boolean(buildControllerRef.current);
     abortRef.current?.abort(new DOMException("Stopped by user.", "AbortError"));
     buildControllerRef.current?.abort(new DOMException("Stopped by user.", "AbortError"));
     setStreaming(false);
-    setNotice("Stopped. The build keeps running on the server if it was already publishing — refresh the project to see its real state.");
+    // A streamed answer keeps what already arrived (see streamMessage). A build
+    // cannot be un-started from here, and saying otherwise would be untrue.
+    if (building) setNotice("Stopped watching this build. If it was already publishing it keeps running on the server — open the project to see its real state.");
   }
 
   function toggleAutoSpeak() {
@@ -732,380 +817,198 @@ export function ChatClient({
     setSpeakingId(ok ? "auto" : null);
   }
 
-  async function deleteVoiceAsset(id: string) {
-    try {
-      const response = await fetch(`/api/voice/audio/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "same-origin" });
-      if (!response.ok) throw new Error("The private recording could not be deleted from storage.");
-      setVoiceAsset((current) => current?.id === id ? null : current);
-      setMessages((current) => current.map((message) => {
-        if (message.metadata?.audio_asset_id !== id) return message;
-        return { ...message, metadata: { ...message.metadata, audio_asset_id: undefined } };
-      }));
-      setNotice("Private voice recording deleted. The transcript remains in the chat.");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Voice deletion failed. Try again.");
-    }
-  }
+  // -------------------------------------------------------------------------
+  // Voice messages
+  //
+  //   mic → recording (live waveform, timer) → [Stop] → the recording appears
+  //   in the conversation as a voice message and is sent. No extra Send click.
+  //
+  // [Transcribe] is a separate action: it turns the recording into editable
+  // text in the composer and sends nothing. MATRIX reading an answer aloud
+  // (listenTo above) is speech synthesis and unrelated to both.
+  // -------------------------------------------------------------------------
 
   function setVoiceLang(code: string) {
     const next = voiceLanguage(code).code;
     voiceLangRef.current = next;
     setVoiceLangState(next);
     try { window.localStorage.setItem(VOICE_LANGUAGE_STORAGE_KEY, next); } catch { /* not persisted */ }
-    // Changing language mid-recording restarts live recognition in the new
-    // language; the audio recording itself continues untouched.
-    if (recognitionRef.current && recognitionWantedRef.current) {
-      stopRecognition();
-      if (next !== "auto") startRecognition(next);
-      else setVoiceEngineNote("Auto-detect: the recording is transcribed when you stop.");
-    }
-  }
-
-  /** Start the browser's speech recogniser. Returns false when unavailable. */
-  function startRecognition(lang: string): boolean {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- vendor-prefixed constructor
-    const Ctor = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
-    if (!Ctor) return false;
-    try {
-      const recognition = new Ctor();
-      recognition.lang = lang;
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.maxAlternatives = 1;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SpeechRecognitionEvent
-      recognition.onresult = (event: any) => {
-        let interim = "";
-        for (let i = event.resultIndex; i < event.results.length; i += 1) {
-          const result = event.results[i];
-          const text = String(result[0]?.transcript ?? "");
-          if (result.isFinal) liveFinalRef.current = mergeTranscript(liveFinalRef.current, text);
-          else interim += text;
-        }
-        liveInterimRef.current = interim.trim();
-        setLiveTranscript(mergeTranscript(liveFinalRef.current, interim));
-      };
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SpeechRecognitionErrorEvent
-      recognition.onerror = (event: any) => {
-        const code = String(event?.error ?? "");
-        // "no-speech"/"aborted" are routine; the recogniser restarts in onend.
-        if (code === "not-allowed" || code === "service-not-allowed" || code === "language-not-supported" || code === "network") {
-          recognitionWantedRef.current = false;
-          // The recording (when there is one) is still transcribed by the server.
-          setVoiceEngineNote(recorderRef.current ? "Live transcription is unavailable here; the recording is transcribed when you stop." : voiceErrorMessage(code));
-          if (!recorderRef.current) { setRecording(false); setNotice(voiceErrorMessage(code)); if (recordingClockRef.current) clearInterval(recordingClockRef.current); }
-        }
-      };
-      recognition.onend = () => {
-        // Browsers end recognition after a pause; keep listening until Stop.
-        if (recognitionWantedRef.current && recognitionRef.current === recognition) {
-          try { recognition.start(); } catch { /* already restarting */ }
-        }
-      };
-      recognitionRef.current = recognition;
-      recognitionWantedRef.current = true;
-      recognition.start();
-      return true;
-    } catch {
-      recognitionRef.current = null;
-      recognitionWantedRef.current = false;
-      return false;
-    }
-  }
-
-  function stopRecognition() {
-    recognitionWantedRef.current = false;
-    const recognition = recognitionRef.current;
-    recognitionRef.current = null;
-    if (recognition) { try { recognition.stop(); } catch { /* not running */ } }
   }
 
   /** Put recognised words into the composer as ordinary, editable text. */
-  function placeTranscript(text: string, review: VoiceReview) {
+  function placeTranscript(text: string) {
     setInput((current) => mergeTranscript(current, text));
-    setVoiceReview(review);
     setNotice(null);
     requestAnimationFrame(() => {
-      autosize();
       const field = textareaRef.current;
       if (field) { field.focus(); const end = field.value.length; try { field.setSelectionRange(end, end); } catch { /* unsupported input type */ } }
     });
   }
 
+  type TranscriptResult =
+    | { ok: true; transcript: string; assetId: string | null; language: string | null }
+    | { ok: false; message: string; assetId: string | null; aborted: boolean };
+
   /**
-   * Server transcription of a recording. The transcript is placed in the
-   * composer for review — it is never sent automatically.
+   * Send a recording to the speech service (Whisper; the language is detected
+   * unless one was chosen). `store` keeps the original audio with the account
+   * so the voice message can be played back later.
    */
-  async function uploadAndTranscribeVoice(draft: NonNullable<typeof draftAudio>, retryId?: string) {
-    if (!draft.blob.size || voiceUploadRef.current) return;
-    if (draft.blob.size > 24 * 1024 * 1024) {
-      setDraftAudio(draft);
-      setNotice("This recording exceeds the speech provider's 24 MB limit. Make a shorter recording; the local copy is still playable below.");
-      return;
-    }
-    voiceUploadRef.current = true;
-    setTranscribing(true);
-    setNotice(null);
-    const controller = new AbortController();
-    transcribeAbortRef.current = controller;
-    // Agent/Code turns and temporary chats send text only, so their audio is
-    // transcribed and discarded. Ordinary chats keep a private, playable copy
-    // when the deployment has storage configured.
-    const keepRecording = mode !== "agent" && mode !== "code" && !isTemporary;
+  async function requestTranscript(clip: VoiceClip, options: { store: boolean; signal: AbortSignal; retryAssetId?: string | null }): Promise<TranscriptResult> {
     try {
       const form = new FormData();
-      if (retryId) form.append("audio_asset_id", retryId);
+      if (options.retryAssetId) form.append("audio_asset_id", options.retryAssetId);
       else {
-        form.append("audio", draft.blob, draft.filename);
-        form.append("duration_ms", String(draft.durationMs));
-        form.append("waveform", draft.waveform.join(","));
+        form.append("audio", clip.blob, clip.filename);
+        form.append("duration_ms", String(clip.durationMs));
+        form.append("waveform", clip.waveform.join(","));
       }
       form.append("language", voiceLangRef.current);
-      form.append("store", keepRecording ? "1" : "0");
-      const response = await fetch("/api/voice/transcribe", { method: "POST", credentials: "same-origin", body: form, signal: controller.signal });
-      const data = await response.json().catch(() => ({})) as { transcript?: string; audio_asset_id?: string | null; playback_url?: string | null; detected_language?: string | null; error?: string };
-      if (data.audio_asset_id && data.playback_url) setVoiceAsset({ id: data.audio_asset_id, playbackUrl: data.playback_url });
+      form.append("store", options.store ? "1" : "0");
+      const response = await fetch("/api/voice/transcribe", { method: "POST", credentials: "same-origin", body: form, signal: options.signal });
+      const data = await response.json().catch(() => ({})) as { transcript?: string; audio_asset_id?: string | null; detected_language?: string | null; error?: string };
+      const assetId = typeof data.audio_asset_id === "string" && data.audio_asset_id ? data.audio_asset_id : null;
       const transcript = data.transcript?.trim() ?? "";
       if (!response.ok || !transcript) {
-        // Server could not transcribe: fall back to whatever the browser heard.
-        const heard = mergeTranscript(liveFinalRef.current, liveInterimRef.current).trim();
-        if (heard) {
-          placeTranscript(heard, { source: "browser", language: voiceLangRef.current === "auto" ? null : voiceLangRef.current, durationMs: draft.durationMs });
-          setDraftAudio(draft);
-          return;
-        }
-        setDraftAudio(draft); // recorded bytes survive upload and STT failures
-        setNotice(voiceErrorMessage(response.ok ? "EMPTY_TRANSCRIPT" : String(data.error ?? response.status)));
-        return;
+        return { ok: false, message: voiceErrorMessage(response.ok ? "EMPTY_TRANSCRIPT" : String(data.error ?? response.status)), assetId, aborted: false };
       }
-      placeTranscript(transcript, {
-        source: "server", language: data.detected_language ?? null, durationMs: draft.durationMs,
-        asset: data.audio_asset_id ? { id: data.audio_asset_id, durationMs: draft.durationMs, waveform: draft.waveform, language: data.detected_language ?? null } : null,
-      });
-      // Keep the local recording so it can be transcribed again in another language.
-      setDraftAudio(draft);
+      return { ok: true, transcript, assetId, language: data.detected_language ?? null };
     } catch (error) {
-      setDraftAudio(draft);
-      if (!(error instanceof Error && error.name === "AbortError")) {
-        setNotice(error instanceof Error ? `Voice transcription failed: ${error.message}. Your recording is kept — retry below.` : voiceErrorMessage("unknown"));
-      }
-    } finally {
-      if (transcribeAbortRef.current === controller) transcribeAbortRef.current = null;
-      voiceUploadRef.current = false;
-      setTranscribing(false);
+      const aborted = error instanceof Error && error.name === "AbortError";
+      return {
+        ok: false, assetId: null, aborted,
+        message: aborted ? "Sending was cancelled." : navigator.onLine === false ? "You are offline. Reconnect and try again." : "The recording could not be uploaded. Check your connection and try again.",
+      };
     }
   }
 
-  /** Recording finished: use the browser's transcript when it has one, else the server. */
-  function finishVoiceCapture(draft: NonNullable<typeof draftAudio> | null, durationMs: number) {
-    stopRecognition();
-    const heard = mergeTranscript(liveFinalRef.current, liveInterimRef.current).trim();
-    setLiveTranscript("");
-    if (heard) {
-      placeTranscript(heard, { source: "browser", language: voiceLangRef.current === "auto" ? null : voiceLangRef.current, durationMs });
-      if (draft) setDraftAudio(draft);
+  async function startVoice() {
+    if (recorder.state !== "idle" || transcribing || busy) return;
+    // MATRIX must not record its own voice.
+    stopSpeech();
+    stopGeneratedSpeech();
+    setSpeakingId(null);
+    setNotice(null);
+    setComposerError(null);
+    const started = await recorder.start();
+    if (!started.ok) setComposerError(started.message);
+  }
+
+  /** Stop → send as a voice message. Transcribe → words into the composer. */
+  async function finishVoice(intent: "send" | "transcribe") {
+    handleVoiceCapture(await recorder.stop(), intent);
+  }
+
+  function cancelVoice() {
+    recorder.cancel();
+    setNotice("Recording discarded. Nothing was sent.");
+  }
+
+  function handleVoiceCapture(capture: VoiceCapture | null, intent: "send" | "transcribe" | "hold", holdReason?: string) {
+    if (!capture) { setComposerError("No audio was captured. Check the microphone and try again."); return; }
+    // A browser without a recorder can only give words: they go to the composer.
+    if (capture.kind === "transcript") { placeTranscript(capture.text); return; }
+    const clip = capture.clip;
+    if (clip.durationMs < MIN_RECORDING_MS) { URL.revokeObjectURL(clip.url); setComposerError("That recording was too short. Record a little longer."); return; }
+    if (clip.blob.size > MAX_AUDIO_BYTES) { URL.revokeObjectURL(clip.url); setComposerError("That recording is too large to send. Record a shorter message."); return; }
+    if (intent === "transcribe") { void transcribeToComposer(clip); return; }
+
+    // The recording joins the conversation at once — playable immediately —
+    // together with whatever was attached in the composer.
+    const turnId = crypto.randomUUID();
+    const pending = attachments;
+    voiceDraftsRef.current.set(turnId, { clip, attachments: pending, assetId: null });
+    setAttachments([]);
+    setMessages((current) => [...current, {
+      role: "user",
+      content: "",
+      created_at: new Date().toISOString(),
+      metadata: {
+        mode,
+        turn_id: turnId,
+        audio_duration_ms: clip.durationMs,
+        audio_waveform: clip.waveform,
+        local_audio_url: clip.url,
+        attachment_names: pending.map((file) => file.name),
+        ...(intent === "hold"
+          ? { voice_status: "failed" as const, voice_error: holdReason ?? "The recording stopped early." }
+          : { voice_status: "processing" as const }),
+      },
+    }]);
+    chatScroll.follow();
+    if (intent === "send") void sendVoiceMessage(turnId);
+  }
+
+  function patchVoice(turnId: string, content: string | null, metadata: Partial<MessageMetadata>) {
+    setMessages((current) => patchTurnMessage(current, "user", turnId, (message) => ({
+      ...message, content: content ?? message.content, metadata: { ...message.metadata, ...metadata },
+    })));
+  }
+
+  /** Upload + transcribe a recorded voice message, then send it. Also "Try again". */
+  async function sendVoiceMessage(turnId: string) {
+    const draft = voiceDraftsRef.current.get(turnId);
+    if (!draft || voiceAbortRef.current || requestInFlightRef.current) return;
+    const controller = new AbortController();
+    voiceAbortRef.current = controller;
+    setVoiceSending(true);
+    setFailure(null);
+    patchVoice(turnId, null, { voice_status: "processing", voice_error: undefined });
+    // Temporary chats keep nothing, so their audio is transcribed and dropped.
+    const result = await requestTranscript(draft.clip, { store: !isTemporary, signal: controller.signal, retryAssetId: draft.assetId });
+    voiceAbortRef.current = null;
+    setVoiceSending(false);
+
+    let transcript = "";
+    let assetId: string | null = null;
+    let language: string | null = null;
+    if (result.ok) {
+      transcript = result.transcript; assetId = result.assetId; language = result.language;
+    } else if (!result.aborted && draft.clip.heard) {
+      // The speech service failed, but the browser heard the words itself.
+      transcript = draft.clip.heard;
+    } else {
+      if (result.assetId) draft.assetId = result.assetId;
+      patchVoice(turnId, null, { voice_status: "failed", voice_error: result.message });
       return;
     }
-    if (draft) { void uploadAndTranscribeVoice(draft); return; }
-    setNotice(voiceErrorMessage("no-speech"));
-  }
-
-  function discardDraftAudio() {
-    setDraftAudio((current) => { if (current) URL.revokeObjectURL(current.url); return null; });
-  }
-
-  /** Drop the transcript review state (the text itself is handled by the caller). */
-  function clearVoiceReview(options: { deleteAsset?: boolean } = {}) {
-    const assetId = voiceReview?.asset?.id ?? voiceAsset?.id ?? null;
-    setVoiceReview(null);
-    discardDraftAudio();
-    liveFinalRef.current = "";
-    liveInterimRef.current = "";
-    if (options.deleteAsset && assetId) void deleteVoiceAsset(assetId);
-  }
-
-  function retranscribeVoice() {
-    if (!draftAudio || transcribing) return;
-    // Replace the previous transcript rather than appending a second copy.
-    setInput("");
-    const previous = voiceReview?.asset?.id ?? null;
-    setVoiceReview(null);
-    liveFinalRef.current = "";
-    liveInterimRef.current = "";
-    if (previous) void deleteVoiceAsset(previous);
-    void uploadAndTranscribeVoice(draftAudio);
-  }
-
-  function cancelVoiceRecording() {
-    discardRecordingRef.current = true;
-    stopRecognition();
-    liveFinalRef.current = "";
-    liveInterimRef.current = "";
-    setLiveTranscript("");
-    const active = recorderRef.current;
-    if (active && active.state !== "inactive") active.stop();
-    else {
-      if (recordingClockRef.current) clearInterval(recordingClockRef.current);
-      setRecording(false);
-      setRecordingPaused(false);
-    }
-    setNotice("Recording discarded. Nothing was uploaded.");
-  }
-
-  function pauseVoiceRecording() {
-    const active = recorderRef.current;
-    if (!active) return;
-    if (active.state === "recording") {
-      active.pause(); setRecordingPaused(true);
-      if (recognitionRef.current) { recognitionWantedRef.current = false; try { recognitionRef.current.stop(); } catch { /* idle */ } }
-    } else if (active.state === "paused") {
-      active.resume(); setRecordingPaused(false);
-      if (recognitionRef.current) { recognitionWantedRef.current = true; try { recognitionRef.current.start(); } catch { /* already listening */ } }
-    }
-  }
-
-  async function toggleVoiceRecording() {
-    const active = recorderRef.current;
-    if (active && active.state !== "inactive") { active.stop(); return; }
-    // Recognition-only capture (no recorder on this browser) is stopped here.
-    if (recording && !active) {
-      if (recordingClockRef.current) clearInterval(recordingClockRef.current);
-      setRecording(false);
-      setRecordingPaused(false);
-      finishVoiceCapture(null, recordingElapsedRef.current * 1000);
-      return;
-    }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- vendor-prefixed constructor
-    const hasRecognition = Boolean((window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition);
-    const hasRecorder = Boolean(navigator.mediaDevices?.getUserMedia) && typeof MediaRecorder !== "undefined";
-    const plan = chooseVoiceEngine(voiceLangRef.current, {
-      speechRecognition: hasRecognition, mediaRecorder: hasRecorder,
-      mobile: /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent), online: navigator.onLine !== false,
+    draft.assetId = assetId;
+    patchVoice(turnId, transcript, {
+      voice_status: undefined, voice_error: undefined, audio_language: language,
+      ...(assetId ? { audio_asset_id: assetId } : {}),
     });
-    if (!plan.engine) { setNotice("Voice input is unsupported by this browser or device."); return; }
-    liveFinalRef.current = "";
-    liveInterimRef.current = "";
-    setLiveTranscript("");
-    setVoiceEngineNote(plan.reason);
-    if (!hasRecorder) {
-      // Old WebViews: speech recognition only (no waveform, no server fallback).
-      const lang = voiceLangRef.current === "auto" ? (navigator.language || "en-US") : voiceLangRef.current;
-      if (!startRecognition(lang)) { setNotice("Voice input is unsupported by this browser or device."); return; }
-      setVoiceHasWaveform(false);
-      setRecordingSeconds(0);
-      recordingElapsedRef.current = 0;
-      recordingClockRef.current = setInterval(() => { recordingElapsedRef.current += 1; setRecordingSeconds(recordingElapsedRef.current); }, 1000);
-      setRecording(true);
-      setNotice(null);
-      return;
+    // The transcript is the request; the recording stays attached to it.
+    await send(undefined, transcript, { voice: { turnId, assetId, attachments: draft.attachments } });
+  }
+
+  function discardVoice(turnId: string) {
+    const draft = voiceDraftsRef.current.get(turnId);
+    if (draft) {
+      URL.revokeObjectURL(draft.clip.url);
+      // Files that were waiting with the recording go back to the composer.
+      if (draft.attachments.length) setAttachments((current) => (current.length ? current : draft.attachments));
+      if (draft.assetId) void fetch(`/api/voice/audio/${encodeURIComponent(draft.assetId)}`, { method: "DELETE", credentials: "same-origin" }).catch(() => {});
+      voiceDraftsRef.current.delete(turnId);
     }
-    try {
-      setVoiceHasWaveform(true);
-      // A new recording appends to the transcript already in the composer;
-      // only the previous local audio is dropped.
-      discardDraftAudio();
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-      if (plan.live) startRecognition(voiceLangRef.current);
-      mediaStreamRef.current = stream;
-      const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"]
-        .find((candidate) => MediaRecorder.isTypeSupported(candidate));
-      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-      audioChunksRef.current = [];
-      discardRecordingRef.current = false;
-      recorderRef.current = recorder;
-      setRecordingSeconds(0);
-      recordingElapsedRef.current = 0;
-      waveformSamplesRef.current = [];
-      setRecordingPaused(false);
-      recordingClockRef.current = setInterval(() => {
-        if (recorder.state === "recording") { recordingElapsedRef.current += 1; setRecordingSeconds(recordingElapsedRef.current); }
-      }, 1000);
-      // Web Audio visualization is optional: capture stays usable on browsers
-      // that deny AudioContext or do not support an analyser.
-      try {
-        const context = new AudioContext();
-        audioContextRef.current = context;
-        const analyser = context.createAnalyser();
-        analyser.fftSize = 256;
-        context.createMediaStreamSource(stream).connect(analyser);
-        void context.resume().catch(() => {});
-        const samples = new Uint8Array(analyser.fftSize);
-        let lastDraw = 0;
-        const draw = (time: number) => {
-          if (time - lastDraw >= 90 && recorder.state === "recording") {
-            analyser.getByteTimeDomainData(samples);
-            const rms = Math.sqrt(samples.reduce((sum, n) => sum + ((n - 128) / 128) ** 2, 0) / samples.length);
-            const level = Math.max(2, Math.min(100, Math.round(rms * 270)));
-            const values = waveformSamplesRef.current;
-            values.push(level);
-            if (values.length > 60) values.shift();
-            const canvas = waveformCanvasRef.current;
-            const ctx = canvas?.getContext("2d");
-            if (canvas && ctx) {
-              const scale = window.devicePixelRatio || 1;
-              const w = canvas.clientWidth * scale;
-              const h = canvas.clientHeight * scale;
-              if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
-              ctx.clearRect(0, 0, w, h);
-              ctx.fillStyle = "#ef7474";
-              const count = 48;
-              for (let i = 0; i < count; i++) {
-                const sample = values[values.length - count + i] ?? 2;
-                const height = Math.max(3 * scale, h * sample / 110);
-                ctx.fillRect(i * w / count + scale, (h - height) / 2, Math.max(scale, w / count - 2 * scale), height);
-              }
-            }
-            lastDraw = time;
-          }
-          visualFrameRef.current = requestAnimationFrame(draw);
-        };
-        draw(performance.now());
-      } catch { /* duration and recording remain available */ }
-      recorder.ondataavailable = (event) => { if (event.data.size) audioChunksRef.current.push(event.data); };
-      recorder.onerror = () => {
-        discardRecordingRef.current = true;
-        setNotice("The browser could not record audio. Check microphone permission and try again.");
-        if (recorder.state !== "inactive") recorder.stop();
-      };
-      recorder.onstop = () => {
-        setRecording(false);
-        setRecordingPaused(false);
-        if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
-        if (recordingClockRef.current) clearInterval(recordingClockRef.current);
-        if (visualFrameRef.current !== null) cancelAnimationFrame(visualFrameRef.current);
-        void audioContextRef.current?.close();
-        audioContextRef.current = null;
-        recordingTimeoutRef.current = null;
-        stream.getTracks().forEach((track) => track.stop());
-        mediaStreamRef.current = null;
-        const type = recorder.mimeType || "audio/webm";
-        const extension = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : type.includes("wav") ? "wav" : "webm";
-        recorderRef.current = null;
-        if (!discardRecordingRef.current) {
-          const blob = new Blob(audioChunksRef.current, { type });
-          const durationMs = recordingElapsedRef.current * 1000;
-          const draft = blob.size ? { blob, url: URL.createObjectURL(blob), filename: `voice-${Date.now()}.${extension}`,
-            durationMs, waveform: [...waveformSamplesRef.current] } : null;
-          // The transcript goes to the composer for review; nothing is sent yet.
-          if (draft || liveFinalRef.current || liveInterimRef.current) finishVoiceCapture(draft, durationMs);
-          else { stopRecognition(); setNotice("No audio was captured. Try again."); }
-        } else {
-          stopRecognition();
-        }
-        audioChunksRef.current = [];
-      };
-      recorder.start(1000);
-      setRecording(true);
-      setNotice(null);
-      recordingTimeoutRef.current = setTimeout(() => {
-        if (recorder.state !== "inactive") recorder.stop();
-      }, 600_000);
-    } catch (error) {
-      setRecording(false);
-      stopRecognition();
-      setNotice(voiceErrorMessage(error instanceof Error ? error.name : "unknown"));
-      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
-      mediaStreamRef.current = null;
-    }
+    setMessages((current) => current.filter((message) => !(message.role === "user" && message.metadata?.turn_id === turnId)));
+  }
+
+  /** The separate Transcribe action: words into the composer, nothing sent. */
+  async function transcribeToComposer(clip: VoiceClip) {
+    if (transcribing) return;
+    const controller = new AbortController();
+    transcribeAbortRef.current = controller;
+    setTranscribing(true);
+    setDictationRetry(null);
+    setComposerError(null);
+    const result = await requestTranscript(clip, { store: false, signal: controller.signal });
+    transcribeAbortRef.current = null;
+    setTranscribing(false);
+    if (result.ok) { placeTranscript(result.transcript); URL.revokeObjectURL(clip.url); return; }
+    if (!result.aborted && clip.heard) { placeTranscript(clip.heard); URL.revokeObjectURL(clip.url); return; }
+    if (result.aborted) { URL.revokeObjectURL(clip.url); setNotice("Transcription cancelled."); return; }
+    // Nothing is lost: the recording waits here until it is retried or discarded.
+    setDictationRetry({ clip, message: result.message });
   }
 
   async function streamMessage(
@@ -1149,7 +1052,6 @@ export function ChatClient({
     setLiveSteps([]);
     setActiveProvider(null);
     setActiveTier(null);
-    setLastUserMessage(message);
     if (isImage) imagePromptRef.current = message;
     const startedAt = Date.now();
     setActiveStartedAt(startedAt);
@@ -1160,6 +1062,11 @@ export function ChatClient({
     if (replaceLastAssistant) {
       builtRef.current.clear();
       setArtifacts({});
+      // The answer being replaced steps aside while the new one streams in; it
+      // comes back untouched if nothing arrives.
+      const shown = messagesRef.current;
+      const tail = shown.length - 1;
+      if (tail >= 0 && shown[tail].role === "assistant") setHiddenKey(messageKey(shown[tail], tail));
     }
     setExecution(
       trackExecution
@@ -1175,6 +1082,7 @@ export function ChatClient({
       setFailure({ ...failureCopy("not-configured"), detail: "The MATRIX backend is not configured on this deployment yet, so chat cannot start." });
       setStreaming(false);
       setStreamedText(null);
+      setHiddenKey(null);
       requestInFlightRef.current = false;
       return;
     }
@@ -1203,6 +1111,24 @@ export function ChatClient({
     let committed = false;
     let committedKey: string | null = null;
     const streamMetadata: MessageMetadata = {};
+    // Server ids make a just-sent turn editable, deletable and retryable
+    // without a reload; versions come back when an answer was replaced.
+    let replyId: string | null = null;
+    let replyVersions: ReplyVersion[] | undefined;
+    let userStored = opts.reuseUser === true || opts.regenerate === true;
+    let storedUserId: string | null = null;
+    const noteStored = (userMessageId?: unknown) => {
+      userStored = true;
+      if (lastTurnRef.current?.turnId === turnId) lastTurnRef.current.stored = true;
+      if (typeof userMessageId !== "string" || !userMessageId || storedUserId === userMessageId) return;
+      storedUserId = userMessageId;
+      setMessages((current) => patchTurnMessage(current, "user", turnId, (item) => ({ ...item, id: userMessageId, metadata: { ...item.metadata, send_failed: undefined } })));
+    };
+    /** The request never reached the conversation: the bubble says so. */
+    const noteUnsent = () => {
+      if (userStored) return;
+      setMessages((current) => patchTurnMessage(current, "user", turnId, (item) => ({ ...item, metadata: { ...item.metadata, send_failed: true } })));
+    };
 
     const commit = (text: string) => {
       cancelPaint();
@@ -1215,7 +1141,7 @@ export function ChatClient({
         streamMetadata.agent_task = task;
         agentTaskRef.current = state === "CLARIFICATION_REQUIRED" ? task : null;
       }
-      const key = commitPartial(text, { replaceLastAssistant, turnId, intent }, streamMetadata);
+      const key = commitPartial(text, { replaceLastAssistant, turnId, intent, id: replyId, versions: replyVersions }, streamMetadata);
       if (key) { committedKey = key; setSettledKey(key); }
       committed = true;
       // An artifact the user explicitly asked for is built once the reply lands.
@@ -1262,6 +1188,8 @@ export function ChatClient({
         clearIdleTimer();
         const gatewayError = await parseGatewayError(res);
         if (gatewayError.conversationId) rememberConv(gatewayError.conversationId);
+        if (gatewayError.userMessageId) noteStored(gatewayError.userMessageId);
+        else noteUnsent();
         setFailure(withRequestReference(classifyGatewayResponse(res.status, gatewayError.code), gatewayError.requestId));
         if (trackExecution) setExecution((current) => finishExecution(advanceExecution(current, { event: { at: Date.now(), type: "error", message: "Request failed" } }), "failed"));
         return;
@@ -1287,7 +1215,13 @@ export function ChatClient({
           image?: { data_url?: string };
           analytics?: PipelineAnalytics;
           tasks?: Array<{ id: string; title: string; error?: string; image_data_url?: string }>;
+          message_id?: string;
+          user_message_id?: string;
+          versions?: ReplyVersion[];
         };
+        noteStored(data.user_message_id);
+        if (typeof data.message_id === "string") replyId = data.message_id;
+        if (Array.isArray(data.versions)) replyVersions = data.versions;
         if (trackExecution && data.analytics) setExecution((current) => advanceExecution(current, { analytics: data.analytics! }));
         if (data.tasks) {
           setGraphNodes(data.tasks.map((task) => ({ id: task.id, title: task.title, status: task.error ? "failed" : "completed" })));
@@ -1369,9 +1303,15 @@ export function ChatClient({
         files?: AgentFile[];
         project_id?: string | null;
         analytics?: PipelineAnalytics;
+        message_id?: string;
+        user_message_id?: string;
+        versions?: ReplyVersion[];
       };
 
       const handleEvent = (data: StreamEvent) => {
+        if (data.user_message_id) noteStored(data.user_message_id);
+        if (typeof data.message_id === "string") replyId = data.message_id;
+        if (Array.isArray(data.versions)) replyVersions = data.versions;
         if (data.stream_status) setStreamStatus((old) => old === data.stream_status ? old : data.stream_status!);
         if (data.tier) {
           streamMetadata.tier = data.tier;
@@ -1423,6 +1363,7 @@ export function ChatClient({
         }
         if (data.error) streamError = data.error;
         if (data.done) {
+          noteStored();
           commit(collected);
           maybeAutoSpeak(collected);
           if (data.storage_degraded) setNotice("The assistant replied, but the chat could not be saved to storage right now.");
@@ -1458,6 +1399,9 @@ export function ChatClient({
       }
       clearIdleTimer();
 
+      // The stream ended without its final event: what arrived is kept and
+      // marked, so the row offers "Try again" instead of looking complete.
+      if (!committed && collected.trim() && streamError) streamMetadata.interrupted = true;
       if (!committed && collected.trim()) {
         commit(collected);
         maybeAutoSpeak(collected);
@@ -1493,7 +1437,11 @@ export function ChatClient({
       clearIdleTimer();
       const userStopped = err instanceof DOMException && err.name === "AbortError";
       if (collected.trim() && !committed) {
+        // Stop, a timeout or a dropped connection: keep what already arrived.
+        streamMetadata.interrupted = true;
         commit(collected);
+      } else if (!committed) {
+        noteUnsent();
       }
       if (userStopped) {
         setNotice(collected.trim() ? "Generation stopped." : "Generation stopped. Your message is safe.");
@@ -1512,52 +1460,50 @@ export function ChatClient({
       setStreaming(false);
       setStreamedText(null);
       setActiveStartedAt(null);
+      setHiddenKey(null);
       abortRef.current = null;
       requestInFlightRef.current = false;
       setStreamStatus(null);
     }
   }
 
-  async function send(e?: { preventDefault(): void }, messageOverride?: string, voice?: { id: string; durationMs: number; waveform: number[]; language: string | null }) {
+  async function send(e?: { preventDefault(): void }, messageOverride?: string, turn: TurnOptions = {}) {
     e?.preventDefault();
-    const pending = messageOverride ? [] : attachments;
-    const attachedImage = messageOverride ? null : pendingImage;
-    // A reviewed voice transcript in an ordinary chat is sent as a voice
-    // message (edited text + the private recording). Agent/Code turns, and
-    // turns with attachments, send the transcript as normal text.
-    if (!voice && !messageOverride && voiceReview?.asset && !pending.length && !attachedImage && mode !== "agent" && mode !== "code" && input.trim()) {
-      voice = voiceReview.asset;
-    }
-    const hadVoiceReview = Boolean(voiceReview);
-    const unusedVoiceAssetId = !voice ? voiceReview?.asset?.id ?? null : null;
-    const audioAssetId = voice?.id ?? null;
+    // A voice message, an edited message or a retry already has its bubble.
+    const existing = turn.voice ?? turn.resend ?? null;
+    const fromComposer = !messageOverride && !existing;
+    const pending = existing ? existing.attachments : fromComposer ? attachments : [];
+    const attachedImage = fromComposer ? pendingImage : null;
+    const audioAssetId = turn.voice?.assetId ?? null;
+    // Edit & resend / Retry: the prompt is already stored — never store it twice —
+    // and the answer under it is replaced in place rather than duplicated.
+    const reuseUser = turn.resend?.stored === true;
+    const replaceReply = turn.resend?.replaceReply === true;
+    const flow = { reuseUser, regenerate: replaceReply && reuseUser, replaceLastAssistant: replaceReply };
+    const buildFlow = { reuseUser, audioAssetId };
     let message =
       (messageOverride ?? input).trim() ||
       (attachedImage ? "Analyse this attached image clearly and thoroughly." : pending.length ? "Review these attached files and help me with them." : "");
-    if (!message || streaming || uploadingImage || requestInFlightRef.current) return;
+    // One request at a time: a fast Enter + click can never send twice.
+    if (!message || streaming || uploadingImage || requestInFlightRef.current || recorder.state !== "idle") return;
     // Composer capabilities are opt-in hints, never automatic invocations.
     const rawMessage = message;
-    if (!messageOverride) {
+    if (fromComposer) {
       if (webSearch) message = `Use up-to-date public knowledge where it helps.\n\n${message}`;
       if (codeHint) message = `Answer with complete, runnable code when it helps.\n\n${message}`;
+      // What was written now lives in the conversation: the bubble keeps the
+      // text and its files, and Retry / Edit resend them if the request fails.
+      setInput("");
+      setAttachments([]);
+      if (attachedImage) {
+        URL.revokeObjectURL(attachedImage.previewUrl);
+        setPendingImage(null);
+      }
     }
-    if (!voice || hadVoiceReview) setInput("");
-    if (hadVoiceReview) {
-      setVoiceReview(null);
-      discardDraftAudio();
-      liveFinalRef.current = "";
-      liveInterimRef.current = "";
-      if (unusedVoiceAssetId) void deleteVoiceAsset(unusedVoiceAssetId);
-    }
+    setComposerError(null);
+    setEditingKey(null);
     lastAttachmentsRef.current = pending;
     lastImagePathRef.current = attachedImage?.storagePath ?? null;
-    setAttachments([]);
-    if (attachedImage) {
-      URL.revokeObjectURL(attachedImage.previewUrl);
-      setPendingImage(null);
-    }
-    setVoiceAsset(null);
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
 
     // --- intent detection happens on the user's own words -----------------
     const intent = detectIntent(rawMessage, {
@@ -1565,25 +1511,32 @@ export function ChatClient({
       codeCapability: codeHint || mode === "code",
       agentMode: mode === "agent",
     });
-    const turnId = crypto.randomUUID();
-    const allAttachmentNames = [
-      ...(attachedImage ? [attachedImage.name] : []),
-      ...pending.map((file) => file.name),
-    ];
-    setMessages((current) => [...current, {
-      role: "user",
-      content: message,
-      created_at: new Date().toISOString(),
-      metadata: {
-        mode,
-        ...(voice ? { audio_asset_id: voice.id, audio_duration_ms: voice.durationMs, audio_waveform: voice.waveform, audio_language: voice.language } : {}),
-        attachment_names: allAttachmentNames,
-        ...(audioAssetId ? { audio_asset_id: audioAssetId } : {}),
-        intent: intent.intent,
-        artifact_type: intent.artifact,
-        turn_id: turnId,
-      },
-    }]);
+    const turnId = existing?.turnId ?? crypto.randomUUID();
+    lastTurnRef.current = { turnId, stored: reuseUser, audioAssetId };
+    if (existing) {
+      setMessages((current) => patchTurnMessage(current, "user", turnId, (item) => ({
+        ...item, metadata: { ...item.metadata, mode, intent: intent.intent, artifact_type: intent.artifact, send_failed: undefined },
+      })));
+    } else {
+      const allAttachmentNames = [
+        ...(attachedImage ? [attachedImage.name] : []),
+        ...pending.map((file) => file.name),
+      ];
+      setMessages((current) => [...current, {
+        role: "user",
+        content: message,
+        created_at: new Date().toISOString(),
+        metadata: {
+          mode,
+          attachment_names: allAttachmentNames,
+          intent: intent.intent,
+          artifact_type: intent.artifact,
+          turn_id: turnId,
+        },
+      }]);
+    }
+    // Sending is a deliberate act: the conversation follows the new turn.
+    chatScroll.follow();
     const hinted = suggestMode(rawMessage, mode);
     if (hinted && hinted !== effectiveMode(intent, mode)) setModeHint(hinted);
     if (mode === "orchestrator") setGraphNodes(planOrchestrator(rawMessage).map((task) => ({ id: task.id, title: task.title, status: "running" as const })));
@@ -1622,7 +1575,7 @@ export function ChatClient({
         };
         // Carry the original requirements into generation; never replace the
         // user's visible answer with the synthetic build prompt in chat history.
-        await runBuildTurn(resumedTaskPrompt(updated, rawMessage), detectBuildIntent(updated.originalRequest, { mode: "agent", agentMode: true, projectFileCount: agentFiles.length || (agentProjectId ? 1 : 0) }), turnId, pending, false, updated, rawMessage);
+        await runBuildTurn(resumedTaskPrompt(updated, rawMessage), detectBuildIntent(updated.originalRequest, { mode: "agent", agentMode: true, projectFileCount: agentFiles.length || (agentProjectId ? 1 : 0) }), turnId, pending, false, updated, rawMessage, buildFlow);
         return;
       }
       // An uncertain answer remains pending. A different conversational
@@ -1634,12 +1587,12 @@ export function ChatClient({
           answer: rawMessage,
         }].slice(-10) };
       if (context.state === "CONVERSATION") agentTaskRef.current = null;
-      await streamMessage(message, { attachments: pending, imageStoragePath: attachedImage?.storagePath ?? null, intent, turnId, audioAssetId, taskContext: context });
+      await streamMessage(message, { attachments: pending, imageStoragePath: attachedImage?.storagePath ?? null, intent, turnId, audioAssetId, ...flow, taskContext: context });
       return;
     }
     if (mode === "agent" && requestsClarificationFirst(rawMessage)) {
       const task: PendingAgentTask = { originalRequest: rawMessage, clarifications: [], state: "CLARIFICATION_REQUIRED", projectId: agentProjectId };
-      await streamMessage(message, { attachments: pending, imageStoragePath: attachedImage?.storagePath ?? null, intent, turnId, audioAssetId, taskContext: task });
+      await streamMessage(message, { attachments: pending, imageStoragePath: attachedImage?.storagePath ?? null, intent, turnId, audioAssetId, ...flow, taskContext: task });
       return;
     }
     const buildIntent = detectBuildIntent(rawMessage, {
@@ -1651,20 +1604,20 @@ export function ChatClient({
     });
     if (buildIntent.needsClarification) {
       setNotice(buildIntent.clarification ?? "Describe what to build and I will create, validate and (if you ask) publish it.");
-      await streamMessage(message, { attachments: pending, imageStoragePath: attachedImage?.storagePath ?? null, intent, turnId, audioAssetId,
+      await streamMessage(message, { attachments: pending, imageStoragePath: attachedImage?.storagePath ?? null, intent, turnId, audioAssetId, ...flow,
         taskContext: mode === "agent" ? { originalRequest: rawMessage, clarifications: [], state: "CLARIFICATION_REQUIRED", projectId: agentProjectId } : null });
       return;
     }
     const codeWorkspaceRequest = mode === "code" && shouldCreateCodeWorkspace(rawMessage, pending);
     if (codeWorkspaceRequest && !buildIntent.publish && !buildIntent.preview) {
-      await runBuildTurn(message, { ...buildIntent, build: true, publish: false, preview: false, fix: false }, turnId, pending, true);
+      await runBuildTurn(message, { ...buildIntent, build: true, publish: false, preview: false, fix: false }, turnId, pending, true, null, undefined, buildFlow);
       return;
     }
     if (mayExecuteAgent(mode, buildIntent) && shouldRunBuildPipeline(buildIntent)) {
-      await runBuildTurn(message, buildIntent, turnId, pending, false);
+      await runBuildTurn(message, buildIntent, turnId, pending, false, null, undefined, buildFlow);
       return;
     }
-    await streamMessage(message, { attachments: pending, imageStoragePath: attachedImage?.storagePath ?? null, intent, turnId, audioAssetId });
+    await streamMessage(message, { attachments: pending, imageStoragePath: attachedImage?.storagePath ?? null, intent, turnId, audioAssetId, ...flow });
   }
 
   /**
@@ -1690,6 +1643,7 @@ export function ChatClient({
     workspaceOnly = false,
     taskContext: PendingAgentTask | null = null,
     visibleMessage?: string,
+    flow: { reuseUser?: boolean; audioAssetId?: string | null } = {},
   ) {
     if (requestInFlightRef.current) return;
     requestInFlightRef.current = true;
@@ -1751,6 +1705,10 @@ export function ChatClient({
           // Attachments go to the pipeline as files, not as pasted text: they
           // become project records the validator and preview can actually read.
           attachments: attachmentFiles.length ? attachmentFiles : undefined,
+          // Retry / Edit & resend: the prompt is already in this thread.
+          reuseUser: flow.reuseUser === true && Boolean(convIdRef.current),
+          // A voice message keeps its recording in Agent exactly as in Chat.
+          audioAssetId: flow.audioAssetId ?? null,
         },
         {
           signal: controller.signal,
@@ -1771,7 +1729,9 @@ export function ChatClient({
         },
       );
     } catch (err) {
-      buildError = err instanceof BuildRunError
+      buildError = controller.signal.aborted
+        ? { code: "", message: "Stopped before the build finished." }
+        : err instanceof BuildRunError
         ? { code: err.code, message: err.code === "PROJECT_CONTEXT_MISSING" ? "This Chat is unavailable. Open a Chat you own and retry." : err.code === "PROJECT_STORAGE_UNAVAILABLE" ? "Project storage is unavailable. No build started; retry after Firestore is restored." : `Build service rejected the request (${err.code}).` }
         : { code: "BUILD_UNREACHABLE", message: "MATRIX could not reach the build service. Your message is safe — try again." };
       if (!(err instanceof Error && (err.name === "AbortError" || err instanceof BuildRunError))) console.error("[MATRIX] build stream failed", err);
@@ -1860,6 +1820,8 @@ export function ChatClient({
       },
     );
 
+    if (lastTurnRef.current?.turnId === turnId && (run || settled.conversationId)) lastTurnRef.current.stored = true;
+    if (controller.signal.aborted && !run) return;
     if (run?.status === "failed" || buildError) {
       const detail = run?.error?.message ?? buildError?.message ?? "The build stopped before publishing.";
       if (run?.error?.code === "PROJECT_AMBIGUOUS" || run?.error?.code === "PROJECT_CONTEXT_MISSING") {
@@ -1899,9 +1861,10 @@ export function ChatClient({
     setFailure(null);
     const task = lastBuildTaskRef.current;
     if (task) {
-      void runBuildTurn(prompt, detectBuildIntent(task.originalRequest, { mode: "agent", agentMode: true, projectFileCount: agentFiles.length || (agentProjectId ? 1 : 0) }), crypto.randomUUID(), lastAttachmentsRef.current, false, task, lastBuildVisibleRef.current ?? undefined);
+      void runBuildTurn(prompt, detectBuildIntent(task.originalRequest, { mode: "agent", agentMode: true, projectFileCount: agentFiles.length || (agentProjectId ? 1 : 0) }), crypto.randomUUID(), lastAttachmentsRef.current, false, task, lastBuildVisibleRef.current ?? undefined, { reuseUser: true });
     } else {
-      void send(undefined, prompt);
+      // The same request again: the prompt already in the thread is reused.
+      void retry();
     }
   }
 
@@ -1924,32 +1887,187 @@ export function ChatClient({
     }));
   }
 
+  /**
+   * Regenerate: the original prompt is asked again in the SAME conversation
+   * with the conversation's current strategy and models. The new answer takes
+   * the place of the old one, which is kept as an earlier version — never a
+   * second copy of the turn.
+   */
   function regenerate() {
-    if (!lastUserMessage || streaming) return;
-    void streamMessage(lastUserMessage, {
-      replaceLastAssistant: true,
-      regenerate: true,
-      reuseUser: true,
+    const list = messagesRef.current;
+    const replyIndex = lastIndexOfRole(list, "assistant");
+    if (replyIndex < 0 || busy) return;
+    const prompt = promptFor(list, replyIndex);
+    if (!prompt) return;
+    const isTail = replyIndex === list.length - 1;
+    const saved = Boolean(convIdRef.current);
+    void streamMessage(prompt.content, {
+      replaceLastAssistant: isTail,
+      regenerate: isTail && saved,
+      reuseUser: saved,
       attachments: lastAttachmentsRef.current,
       imageStoragePath: lastImagePathRef.current,
     });
   }
 
-  function retry() {
-    if (!lastUserMessage || streaming) return;
-    setFailure(null);
-    const hasUser = messages.some((message) => message.role === "user" && message.content === lastUserMessage);
-    if (!hasUser) {
-      const msg = lastUserMessage;
-      setMessages((current) => [...current, { role: "user", content: msg, created_at: new Date().toISOString() }]);
+  /**
+   * Did the last message reach the conversation? After a dropped connection
+   * the browser cannot know, so the server is asked before anything is sent
+   * twice. If the answer finished while disconnected, it is simply shown.
+   */
+  async function recoverLastTurn(index: number): Promise<"answered" | "stored" | "unknown"> {
+    const id = convIdRef.current;
+    const local = messagesRef.current[index];
+    if (!id || !local) return "unknown";
+    try {
+      const page = await rpc<{ hasMore: boolean; messages: ChatMessage[] }>("conversation_messages_page", {
+        id, before: new Date(Date.now() + 60_000).toISOString(), limit: 10,
+      });
+      const stored = page.messages;
+      const at = lastIndexOfRole(stored, "user");
+      if (at < 0) return "unknown";
+      const storedUser = stored[at];
+      const same = local.id ? storedUser.id === local.id : storedUser.content === local.content;
+      // An earlier message with the same words is not this one.
+      const known = !local.id && messagesRef.current.some((item, i) => i !== index && item.id === storedUser.id);
+      if (!same || known) return "unknown";
+      const replies = stored.slice(at + 1).filter((item) => item.role === "assistant");
+      setMessages((current) => {
+        if (!current[index]) return current;
+        const mine = { ...current[index], id: storedUser.id, metadata: { ...current[index].metadata, send_failed: undefined } };
+        return replies.length ? [...current.slice(0, index), mine, ...replies] : [...current.slice(0, index), mine, ...current.slice(index + 1)];
+      });
+      return replies.length ? "answered" : "stored";
+    } catch {
+      return "unknown";
     }
-    void streamMessage(lastUserMessage, {
-      reuseUser: Boolean(convIdRef.current),
-      attachments: lastAttachmentsRef.current,
-      imageStoragePath: lastImagePathRef.current,
-    });
   }
 
+  /** Retry a failed response: same conversation, same prompt, no duplicates. */
+  async function retry() {
+    const list = messagesRef.current;
+    const index = lastIndexOfRole(list, "user");
+    if (index < 0 || busy || requestInFlightRef.current) return;
+    setFailure(null);
+    const target = list[index];
+    const last = lastTurnRef.current;
+    const hasReply = list.slice(index + 1).some((item) => item.role === "assistant");
+    let stored = Boolean(target.id) || (last !== null && last.turnId === target.metadata?.turn_id && last.stored);
+    if (!stored || !hasReply) {
+      const outcome = await recoverLastTurn(index);
+      if (outcome === "answered") { setNotice("The answer finished while you were disconnected — here it is."); return; }
+      if (outcome === "stored") stored = true;
+    }
+    const turnId = target.metadata?.turn_id ?? crypto.randomUUID();
+    if (!target.metadata?.turn_id) {
+      setMessages((current) => current.map((item, i) => (i === index ? { ...item, metadata: { ...item.metadata, turn_id: turnId } } : item)));
+    }
+    const draft = voiceDraftsRef.current.get(turnId);
+    if (!stored && draft?.assetId) {
+      // A voice message that never reached the thread: its recording goes with it.
+      void send(undefined, target.content, { voice: { turnId, assetId: draft.assetId, attachments: draft.attachments } });
+      return;
+    }
+    const files = last?.turnId === turnId ? lastAttachmentsRef.current : draft?.attachments ?? [];
+    void send(undefined, target.content, { resend: { turnId, stored: stored && Boolean(convIdRef.current), replaceReply: hasReply, attachments: files } });
+  }
+
+  /**
+   * Save an edited user message. For the latest turn this is Edit & resend:
+   * the text is corrected in place and asked again, replacing the answer under
+   * it. For an older voice message it only corrects the transcript.
+   */
+  async function submitEdit(key: string, text: string) {
+    const list = messagesRef.current;
+    const index = list.findIndex((item, i) => messageKey(item, i) === key);
+    const target = list[index];
+    const next = text.trim();
+    if (!target || target.role !== "user" || !next || savingEdit) return;
+    const conversationId = convIdRef.current;
+    const stored = Boolean(conversationId && target.id);
+    if (stored) {
+      setSavingEdit(true);
+      try {
+        await rpc("conversation_message_edit", { conversation_id: conversationId, message_id: target.id, content: next });
+      } catch {
+        setSavingEdit(false);
+        setNotice("The edit could not be saved, so nothing was changed. Try again.");
+        return;
+      }
+      setSavingEdit(false);
+    }
+    const changed = next !== target.content;
+    const turnId = target.metadata?.turn_id ?? crypto.randomUUID();
+    const resend = index === lastIndexOfRole(list, "user") && !busy;
+    const hasReply = list.slice(index + 1).some((item) => item.role === "assistant");
+    setEditingKey(null);
+    setMessages((current) => current.map((item, i) => (i === index ? {
+      ...item,
+      content: next,
+      metadata: {
+        ...item.metadata,
+        turn_id: turnId,
+        ...(changed ? { edited_at: new Date().toISOString(), original_content: item.metadata?.original_content ?? item.content } : {}),
+      },
+    } : item)));
+    if (!resend) return;
+    const files = lastTurnRef.current?.turnId === turnId ? lastAttachmentsRef.current : voiceDraftsRef.current.get(turnId)?.attachments ?? [];
+    await send(undefined, next, { resend: { turnId, stored, replaceReply: hasReply, attachments: files } });
+  }
+
+  /** Delete one message — from the conversation's storage, then from the screen. */
+  async function confirmDeleteMessage() {
+    const targetKey = deleteTarget?.key;
+    if (!targetKey || deleting) return;
+    const list = messagesRef.current;
+    const target = list.find((item, i) => messageKey(item, i) === targetKey);
+    if (!target) { setDeleteTarget(null); return; }
+    setDeleting(true);
+    try {
+      if (convIdRef.current && target.id) {
+        await rpc("conversation_message_delete", { conversation_id: convIdRef.current, message_id: target.id });
+      }
+      const turnId = target.role === "user" ? target.metadata?.turn_id : undefined;
+      const draft = turnId ? voiceDraftsRef.current.get(turnId) : undefined;
+      if (draft && turnId) { URL.revokeObjectURL(draft.clip.url); voiceDraftsRef.current.delete(turnId); }
+      if (editingKey === targetKey) setEditingKey(null);
+      setMessages((current) => current.filter((item) => item !== target));
+      toast("Message deleted");
+    } catch {
+      setNotice("The message could not be deleted. Try again.");
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
+    }
+  }
+
+  async function shareMessage(text: string) {
+    const outcome = await shareText(text, title || "MATRIX");
+    if (outcome === "copied") toast("Copied — paste it anywhere to share");
+    else if (outcome === "failed") toast("Sharing isn't available in this browser");
+  }
+
+  function changeRevealMode(next: RevealMode) {
+    setRevealMode(next);
+    revealModeRef.current = next;
+    void rpc("settings_update", { stream_reveal_mode: next }).catch(() => setNotice("Display preference could not be saved."));
+  }
+
+  async function exportConversation() {
+    const id = convIdRef.current;
+    if (!id) return;
+    try {
+      const rows = await rpc<{ role: string; content: string; created_at: string }[]>("conversation_messages", { conversation_id: id });
+      const url = URL.createObjectURL(new Blob([JSON.stringify({ conversation_id: id, exported_at: new Date().toISOString(), messages: rows }, null, 2)], { type: "application/json" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `matrix-chat-${id.slice(0, 8)}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setNotice("The conversation could not be exported. Try again.");
+    }
+  }
 
   /** Follow-up prompt used by contextual actions (Explain, Sources, …). */
   function askFollowUp(prompt: string) {
@@ -1957,42 +2075,42 @@ export function ChatClient({
     void send(undefined, prompt);
   }
 
-  async function handleFile(file: File | undefined | null) {
-    if (!file || streaming) return;
+  /** Add files to the message being written: several at once, each removable. */
+  async function handleFiles(files: File[]) {
+    if (!files.length) return;
     setFailure(null);
-    if (fileRef.current) fileRef.current.value = "";
-    if (imageRef.current) imageRef.current.value = "";
-    const okTypes = ["image/png", "image/jpeg", "image/webp"];
-    if (!okTypes.includes(file.type)) {
-      const allowedName = /(?:^|\.)(?:txt|md|mdx|json|jsonc|js|jsx|mjs|cjs|ts|tsx|py|html?|css|scss|sass|less|vue|svelte|sql|graphql|ya?ml|toml|xml|env|sh|bash|go|rs|java|kt|php|rb|swift|dart|c|h|cc|cpp|cs)$/i.test(file.name) || /^(?:Dockerfile|Makefile)$/i.test(file.name);
-      if (!allowedName) {
-        setFailure({ ...failureCopy("invalid-request"), title: "Unsupported file", detail: "Attach an image, text document, or common source-code file. Archives and executable files are not accepted.", retryable: false });
-        return;
+    setComposerError(null);
+    const have = new Set(attachments.map((item) => item.name));
+    const accepted: PendingAttachment[] = [];
+    const problems: string[] = [];
+    for (const file of files) {
+      if (IMAGE_TYPES.includes(file.type) || file.type.startsWith("image/")) {
+        // The models MATRIX runs read text only; nothing is uploaded.
+        problems.push(`${file.name}: images can't be read yet — describe it or paste the text it contains.`);
+        continue;
       }
-      if (file.size > 1024 * 1024) {
-        setFailure({ ...failureCopy("invalid-request"), title: "File too large", detail: "Text and code files must be 1 MB or smaller. Attach only the relevant files.", retryable: false });
-        return;
+      if (!TEXT_FILE.test(file.name) && !/^(?:Dockerfile|Makefile)$/i.test(file.name)) {
+        problems.push(`${file.name}: unsupported type. Attach text, documents or source code.`);
+        continue;
       }
-      if (attachments.length >= 8) {
-        setFailure({ ...failureCopy("invalid-request"), title: "Attachment limit reached", detail: "You can attach up to 8 text or code files in one message.", retryable: false });
-        return;
-      }
+      if (file.size > MAX_ATTACHMENT_BYTES) { problems.push(`${file.name}: larger than 1 MB.`); continue; }
+      if (!have.has(file.name) && have.size >= MAX_ATTACHMENTS) { problems.push(`Up to ${MAX_ATTACHMENTS} files fit in one message.`); break; }
       try {
-        const content = await file.text();
-        setAttachments((current) => [...current.filter((item) => item.name !== file.name), { name: file.name, type: file.type, content, size: file.size }]);
-        setNotice(`${file.name} is ready. Add an instruction, then send.`);
+        accepted.push({ name: file.name, type: file.type, content: await file.text(), size: file.size });
+        have.add(file.name);
       } catch {
-        setFailure({ ...failureCopy("invalid-request"), title: "File could not be read", detail: "Choose a plain-text or source-code file and try again.", retryable: false });
+        problems.push(`${file.name}: could not be read.`);
       }
-      return;
     }
-    // MATRIX runs only GPT OSS 120B, a text model. Images cannot be read, so
-    // nothing is uploaded and the limitation is stated plainly.
-    setFailure(failureCopy("vision-unsupported"));
+    if (accepted.length) {
+      const names = new Set(accepted.map((file) => file.name));
+      setAttachments((current) => [...current.filter((item) => !names.has(item.name)), ...accepted].slice(0, MAX_ATTACHMENTS));
+    }
+    if (problems.length) setComposerError(Array.from(new Set(problems)).slice(0, 3).join(" "));
   }
 
   function copyMessage(text: string) {
-    navigator.clipboard?.writeText(text).then(() => toast("Copied to clipboard")).catch(() => {});
+    void copyText(text).then((ok) => toast(ok ? "Copied to clipboard" : "Copy isn't available in this browser"));
   }
 
   // -------------------------------------------------------------------------
@@ -2003,6 +2121,10 @@ export function ChatClient({
     const key = messageKey(message, index);
     const title = firstHeading(message.content, "MATRIX response");
     const canRun = Boolean(agentFiles.length || agentProjectId);
+    const isLatest = index === latestAssistantIndex;
+    // A reply that records real execution (a build, a deployment, a pending
+    // task) is history, not a draft: it is never regenerated over.
+    const executionRecord = Boolean(message.metadata?.build || message.metadata?.deployment || message.metadata?.agent_task);
     const handlers: Partial<Record<ResponseActionId, () => void>> = {
       copy: () => copyMessage(message.content),
       regenerate: () => regenerate(),
@@ -2017,10 +2139,9 @@ export function ChatClient({
         else if (artifact.format) void downloadBuilt(key, message.content, title, artifact.format);
       },
       editPrompt: () => {
-        const prompt = imagePromptRef.current ?? lastUserMessage ?? "";
+        const prompt = imagePromptRef.current ?? promptFor(messagesRef.current, index)?.content ?? "";
         setInput(prompt);
         textareaRef.current?.focus();
-        requestAnimationFrame(autosize);
       },
       sources: () => askFollowUp("List the sources and evidence behind that answer, and mark anything you could not verify."),
       export: () => setExportPickerKey((current) => (current === key ? null : key)),
@@ -2031,24 +2152,25 @@ export function ChatClient({
       report: () => router.push("/report"),
       flashcards: () => askFollowUp("Turn the answer above into 8 flashcards in this format:\nQ: ...\nA: ..."),
     };
+    const speaking = speakingId === key || (speakingId === "auto" && isLatest);
     const labels: Record<ResponseActionId, { label: string; icon?: ReactNode }> = {
       copy: { label: "Copy" },
-      regenerate: { label: "Regenerate", icon: <RefreshCcw size={11} strokeWidth={1.8} /> },
-      listen: { label: speakingId === key || speakingId === "auto" ? t("chat.stopSpeech") : t("chat.listen") },
+      regenerate: { label: "Regenerate" },
+      listen: { label: speaking ? t("chat.stopSpeech") : t("chat.listen"), icon: speaking ? <VolumeX size={14} strokeWidth={1.8} /> : undefined },
       more: { label: "More" },
       copyCode: { label: "Copy code" },
-      run: { label: "Run", icon: <Play size={11} strokeWidth={1.8} /> },
+      run: { label: "Run" },
       explain: { label: "Explain" },
-      save: { label: "Save", icon: <Download size={11} strokeWidth={1.8} /> },
+      save: { label: "Save" },
       editPrompt: { label: "Edit prompt" },
       sources: { label: "Sources" },
       export: { label: "Export" },
-      open: { label: "Open", icon: <ExternalLink size={11} strokeWidth={1.8} /> },
+      open: { label: "Open" },
       copyJson: { label: "Copy JSON" },
       activity: { label: "Activity" },
       performance: { label: "Performance" },
       flashcards: { label: "Make flashcards" },
-      workspace: { label: "Open workspace", icon: <MonitorPlay size={11} strokeWidth={1.8} /> },
+      workspace: { label: "Open workspace" },
       report: { label: "Report a problem" },
     };
 
@@ -2067,286 +2189,346 @@ export function ChatClient({
       compact,
     });
 
-    const build = (ids: ResponseActionId[]) =>
-      ids
-        .filter((id) => id !== "more" && id !== "activity" && id !== "performance")
-        .map((id) => ({
-          id: `${key}-${id}`,
-          label: labels[id].label,
-          icon: labels[id].icon,
-          onClick: handlers[id] ?? (() => {}),
-          disabled: id === "regenerate" ? streaming : false,
-        }));
+    // Only the newest answer can be replaced in place, so only it offers Regenerate.
+    const offered = (id: ResponseActionId) =>
+      id !== "more" && id !== "activity" && id !== "performance" && (id !== "regenerate" || (isLatest && !executionRecord));
+    const build = (ids: ResponseActionId[]): ChatAction[] =>
+      ids.filter(offered).map((id) => ({
+        id: `${key}-${id}`,
+        label: labels[id].label,
+        icon: labels[id].icon ?? ACTION_ICON[id],
+        onClick: handlers[id] ?? (() => {}),
+        disabled: id === "regenerate" ? busy : false,
+        active: id === "listen" ? speaking : undefined,
+      }));
 
-    return { primary: build(plan.primary), overflow: build(plan.overflow) };
+    // Every reply can be shared and deleted — from More, never crowding the row.
+    const overflow: ChatAction[] = [
+      ...build(plan.overflow),
+      { id: `${key}-share`, label: "Share", icon: <Share2 size={14} strokeWidth={1.8} />, onClick: () => void shareMessage(message.content), separated: true },
+      { id: `${key}-delete`, label: "Delete message", icon: <Trash2 size={14} strokeWidth={1.8} />, onClick: () => setDeleteTarget({ key, role: "assistant" }), danger: true, disabled: busy },
+    ];
+    return { primary: build(plan.primary), overflow };
   };
 
-  const modeReply = [...messages].reverse().find((item) => item.role === "assistant" && (preferenceMode === "agent" ? item.metadata?.mode === "agent" || item.metadata?.mode === "code" : item.metadata?.mode !== "agent" && item.metadata?.mode !== "code"));
-  const currentProvider = streaming ? activeProvider : modeReply?.metadata?.provider;
-  const currentModel = streaming ? activeModel : modeReply?.metadata?.model;
-  const routingLabel = currentProvider || currentModel ? [currentProvider, currentModel].filter(Boolean).join(" · ") : null;
-  const latestAssistantIndex = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === "assistant") return i;
-    return -1;
-  }, [messages]);
+  /** Actions on the user's own message: Copy · Edit · More (Share, Delete). */
+  const userActions = (index: number, message: ChatMessage, key: string): { primary: ChatAction[]; overflow: ChatAction[] } => {
+    const hasText = Boolean(message.content.trim());
+    const primary: ChatAction[] = [
+      { id: `${key}-copy`, label: "Copy", icon: <Copy size={14} strokeWidth={1.8} />, onClick: () => copyMessage(message.content), disabled: !hasText },
+    ];
+    // Edit & resend re-asks the question, so it belongs to the latest turn.
+    if (index === latestUserIndex) {
+      primary.push({ id: `${key}-edit`, label: "Edit", title: "Edit and resend", icon: <Pencil size={14} strokeWidth={1.8} />, onClick: () => setEditingKey(key), disabled: busy });
+    }
+    return {
+      primary,
+      overflow: [
+        { id: `${key}-share`, label: "Share", icon: <Share2 size={14} strokeWidth={1.8} />, onClick: () => void shareMessage(message.content), disabled: !hasText },
+        { id: `${key}-delete`, label: "Delete message", icon: <Trash2 size={14} strokeWidth={1.8} />, onClick: () => setDeleteTarget({ key, role: "user" }), danger: true, separated: true, disabled: busy },
+      ],
+    };
+  };
+
+  const latestAssistantIndex = useMemo(() => lastIndexOfRole(messages, "assistant"), [messages]);
+  const latestUserIndex = useMemo(() => lastIndexOfRole(messages, "user"), [messages]);
   const latestSignals = latestAssistantIndex >= 0 ? signalsByIndex[latestAssistantIndex] : null;
   const imageRun = streaming && runIntent.intent === "IMAGE_GENERATION";
 
-  // Token frames update only the active reply. Completed conversation rows are
-  // reused until their own content, actions or metadata actually change.
-  const renderedHistory = useMemo(
-    () => messages.map((message, index) => {
-              const key = messageKey(message, index);
-              if (message.role === "user") {
-                return (
-                  <div key={key} className="msg-in flex justify-end gap-3.5">
-                    <div className="min-w-0 max-w-[88%] sm:max-w-[75%]">
-                      <div className="rounded-[16px] border border-border bg-surface-2 px-4 py-2.5 text-[14.5px] leading-relaxed text-ink">
-                        {message.metadata?.audio_asset_id
-                          ? <VoiceMessage id={message.metadata.audio_asset_id} transcript={message.content} durationMs={message.metadata.audio_duration_ms} waveform={message.metadata.audio_waveform} language={message.metadata.audio_language} onDelete={() => void deleteVoiceAsset(message.metadata!.audio_asset_id!)} />
-                          : <p className="whitespace-pre-wrap break-words">{message.content}</p>}
-                        {message.metadata?.attachment_names?.length ? (
-                          <div className="mt-2 flex flex-wrap gap-1.5 border-t border-border pt-2">
-                            {message.metadata.attachment_names.map((name) => (
-                              <span key={name} className="inline-flex items-center gap-1 rounded border border-border bg-surface px-2 py-1 font-mono text-[10px] text-ink-2">
-                                <Code2 size={10} aria-hidden="true" />{name}
-                              </span>
-                            ))}
-                          </div>
-                        ) : null}
-                      </div>
-                      <div className="mt-1.5 flex justify-end px-0.5">
-                        <span className="font-mono text-[10px] text-ink-3">
-                          {message.created_at ? new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              }
+  /** One conversation row. Chat and Agent render every message through this. */
+  const renderRow = (message: ChatMessage, index: number): ReactNode => {
+    const key = messageKey(message, index);
+    // The answer being regenerated steps aside for its replacement.
+    if (key === hiddenKey) return null;
 
-              const signals = signalsByIndex[index] ?? analyzeContent(message.content);
-              const intent = intentForMessage(messages, index);
-              const artifact = artifacts[key] ?? fromSnapshot(message.metadata?.artifact);
-              const isLatest = index === latestAssistantIndex;
-              const kind = classifyResponseKind({
-                intent: intent.intent,
-                mode: (message.metadata?.mode ?? mode) as ChatMode,
-                signals,
-                artifactType: artifact.requested ? artifact.type : intent.artifact,
+    if (message.role === "user") {
+      const turn = message.metadata?.turn_id;
+      const isVoice = Boolean(message.metadata?.audio_asset_id || message.metadata?.local_audio_url);
+      const hasDraft = Boolean(turn && voiceDraftsRef.current.has(turn));
+      return (
+        <UserMessage
+          key={key}
+          message={message}
+          timeLabel={timeLabelOf(message.created_at)}
+          actions={userActions(index, message, key)}
+          editing={editingKey === key}
+          editMode={index === latestUserIndex ? "resend" : "transcript"}
+          saving={savingEdit}
+          onSubmitEdit={(text) => void submitEdit(key, text)}
+          onCancelEdit={() => setEditingKey(null)}
+          onEditTranscript={isVoice ? () => setEditingKey(key) : undefined}
+          onRetryVoice={hasDraft && turn ? () => void sendVoiceMessage(turn) : undefined}
+          onDiscardVoice={hasDraft && turn ? () => discardVoice(turn) : undefined}
+          animate={key !== settledKey}
+        />
+      );
+    }
+
+    const signals = signalsByIndex[index] ?? analyzeContent(message.content);
+    const intent = intentForMessage(messages, index);
+    const artifact = artifacts[key] ?? fromSnapshot(message.metadata?.artifact);
+    const isLatest = index === latestAssistantIndex;
+    const kind = classifyResponseKind({
+      intent: intent.intent,
+      mode: (message.metadata?.mode ?? mode) as ChatMode,
+      signals,
+      artifactType: artifact.requested ? artifact.type : intent.artifact,
+    });
+    const format = artifact.format;
+    const actions = actionRegistry(index, message, signals, intent, artifact);
+
+    return (
+      <div key={key} className={cn(key !== settledKey && "msg-in", "msg-row flex justify-start gap-3")} data-role="assistant">
+        <span className="mt-1 hidden shrink-0 sm:block" aria-hidden="true">
+          <MatrixMark className="h-5 w-5 text-ink-3" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <AssistantMessage
+            message={message}
+            isLatest={isLatest}
+            streaming={busy}
+            kind={kind}
+            signals={signals}
+            intent={intent}
+            artifact={artifact}
+            execution={isLatest ? execution : null}
+            liveBuildRun={isLatest ? buildRun : null}
+            onRetryBuild={retryBuild}
+            timeLabel={timeLabelOf(message.created_at)}
+            actions={actions}
+            exportFormats={availableExportFormats(signals, intent.suppressExport ? [] : intent.formats)}
+            exportPickerOpen={exportPickerKey === key && !intent.suppressExport}
+            onCloseExportPicker={() => setExportPickerKey(null)}
+            onPickFormat={(next) => {
+              setExportPickerKey(null);
+              void buildArtifactFor(key, next, message.content, firstHeading(message.content, "MATRIX response"));
+            }}
+            onGenerateArtifact={() => format && void buildArtifactFor(key, format, message.content, firstHeading(message.content, "MATRIX response"))}
+            onDismissArtifact={() => {
+              builtRef.current.delete(key);
+              setArtifacts((current) => {
+                const next = { ...current };
+                delete next[key];
+                return next;
               });
-              const format = artifact.format;
-              const actions = actionRegistry(index, message, signals, intent, artifact);
+            }}
+            onOpenArtifact={() => format && void openBuilt(key, message.content, firstHeading(message.content, "MATRIX response"), format)}
+            onSaveArtifact={() => {
+              if (message.metadata?.image_data_url) saveDataUrl(message.metadata.image_data_url, `matrix-image-${key.slice(-6)}.png`);
+              else if (format) void downloadBuilt(key, message.content, firstHeading(message.content, "MATRIX response"), format);
+            }}
+            onCopyArtifact={() => copyMessage(extractJson(message.content) ?? message.content)}
+            onOpenWorkspace={() => {
+              if (message.metadata?.artifacts?.length) {
+                setAgentFiles(message.metadata.artifacts);
+                setAgentProjectId(message.metadata.project_id ?? null);
+              }
+              setWorkspaceOpen(true);
+            }}
+            artifactActions={{
+              canOpen: Boolean(format && OPENABLE.includes(format)),
+              provider: kind === "image" ? (message.metadata?.provider ?? "together") : null,
+            }}
+            onRetryInterrupted={isLatest ? regenerate : undefined}
+            onCopyVersion={copyMessage}
+          />
+        </div>
+      </div>
+    );
+  };
 
-              return (
-                <div key={key} className={cn(key !== settledKey && "msg-in", "flex justify-start gap-3.5")}>
-                  <span className="mt-0.5 hidden shrink-0 sm:block" aria-hidden="true">
-                    <MatrixMark className="h-5 w-5 text-ink-3" />
-                  </span>
-                  <div className="min-w-0 max-w-[96%] flex-1 sm:max-w-none">
-                    <AssistantMessage
-                      message={message}
-                      isLatest={isLatest}
-                      streaming={streaming}
-                      kind={kind}
-                      signals={signals}
-                      intent={intent}
-                      artifact={artifact}
-                      execution={isLatest ? execution : null}
-                      liveBuildRun={isLatest ? buildRun : null}
-                      onRetryBuild={retryBuild}
-                      timeLabel={message.created_at ? new Date(message.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
-                      actions={actions}
-                      exportFormats={availableExportFormats(signals, intent.suppressExport ? [] : intent.formats)}
-                      exportPickerOpen={exportPickerKey === key && !intent.suppressExport}
-                      onCloseExportPicker={() => setExportPickerKey(null)}
-                      onPickFormat={(next) => {
-                        setExportPickerKey(null);
-                        void buildArtifactFor(key, next, message.content, firstHeading(message.content, "MATRIX response"));
-                      }}
-                      onGenerateArtifact={() => format && void buildArtifactFor(key, format, message.content, firstHeading(message.content, "MATRIX response"))}
-                      onDismissArtifact={() => {
-                        builtRef.current.delete(key);
-                        setArtifacts((current) => {
-                          const next = { ...current };
-                          delete next[key];
-                          return next;
-                        });
-                      }}
-                      onOpenArtifact={() => format && void openBuilt(key, message.content, firstHeading(message.content, "MATRIX response"), format)}
-                      onSaveArtifact={() => {
-                        if (message.metadata?.image_data_url) saveDataUrl(message.metadata.image_data_url, `matrix-image-${key.slice(-6)}.png`);
-                        else if (format) void downloadBuilt(key, message.content, firstHeading(message.content, "MATRIX response"), format);
-                      }}
-                      onCopyArtifact={() => copyMessage(extractJson(message.content) ?? message.content)}
-                      onOpenWorkspace={() => {
-                        if (message.metadata?.artifacts?.length) {
-                          setAgentFiles(message.metadata.artifacts);
-                          setAgentProjectId(message.metadata.project_id ?? null);
-                        }
-                        setWorkspaceOpen(true);
-                      }}
-                      artifactActions={{
-                        canOpen: Boolean(format && OPENABLE.includes(format)),
-                        provider: kind === "image" ? (message.metadata?.provider ?? "together") : null,
-                      }}
-                    />
-                  </div>
-                </div>
-              );
-            }),
-    [messages, signalsByIndex, artifacts, latestAssistantIndex, streaming, buildRun, execution, settledKey,
-      exportPickerKey, mode, compact, speakingId, agentFiles, agentProjectId, lastUserMessage, t, router],
+  // Token frames update only the live reply (lib/stream-store). Settled rows
+  // are reused until their own content, actions or metadata change — and the
+  // newest reply, the only row that follows build/execution updates, renders
+  // on its own so those updates never touch the rest of the conversation.
+  const settledRows = useMemo(
+    () => messages.map((message, index) => (index === latestAssistantIndex ? null : renderRow(message, index))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [messages, signalsByIndex, artifacts, latestAssistantIndex, latestUserIndex, busy, settledKey, hiddenKey, editingKey, savingEdit,
+      exportPickerKey, mode, compact, speakingId, agentFiles, agentProjectId, t, router],
   );
+  const latestRow = latestAssistantIndex >= 0 ? renderRow(messages[latestAssistantIndex], latestAssistantIndex) : null;
+  const renderedHistory = settledRows.map((row, index) => (index === latestAssistantIndex ? latestRow : row));
+
+  const toolbarStatus: ToolbarStatus = recorder.state !== "idle" ? "recording" : busy ? "working" : "idle";
+  const emptyConversation = messages.length === 0 && !streaming;
+  const conversationActions = convId && !isTemporary ? {
+    title: title || "Untitled conversation",
+    onRename: async (next: string) => {
+      try {
+        await rpc("conversation_update", { id: convId, title: next });
+        setTitle(next);
+        router.refresh();
+      } catch {
+        setNotice("The conversation could not be renamed. Try again.");
+      }
+    },
+    onExport: () => void exportConversation(),
+    onArchive: () => {
+      void rpc("conversation_update", { id: convId, archive: true })
+        .then(() => { router.push("/chat"); router.refresh(); })
+        .catch(() => setNotice("The conversation could not be archived. Try again."));
+    },
+    onDelete: async () => {
+      try {
+        await rpc("conversation_update", { id: convId, delete: true });
+        router.push("/chat");
+        router.refresh();
+      } catch {
+        setNotice("The conversation could not be deleted. Try again.");
+      }
+    },
+  } : null;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col" style={keyboardInset ? { paddingBottom: keyboardInset } : undefined}>
-      {!isTemporary ? (
-        <ChatTopBar
-          mode={mode}
-          onModeChange={switchMode}
-          lane={lane}
-          onLaneChange={setLane}
-          strategy={strategy}
-          onStrategyChange={setStrategy}
-          streaming={streaming}
-          autoSpeak={autoSpeak}
-          onToggleAutoSpeak={toggleAutoSpeak}
-          demoMode={demoMode}
-          onToggleDemo={() => setDemoMode((value) => !value)}
-          routingLabel={MATRIX_MODEL_LABEL}
-          workspaceCount={mode === "agent" ? agentFiles.length : 0}
-          onOpenWorkspace={() => setWorkspaceOpen(true)}
-          autoSpeakLabels={{ on: t("chat.autoSpeakOn"), off: t("chat.autoSpeakOff") }}
-        />
-      ) : (
-        <div className="mb-3 flex shrink-0 items-center justify-between gap-3 border-b border-border pb-3 text-[13px] text-ink-2">
-          <p><span className="eyebrow">Temporary</span> — {t("chat.tempNotice").replace(/^Temporary Chat — /, "")}</p>
-          <AutoSpeakToggle on={autoSpeak} onToggle={toggleAutoSpeak} onLabel={t("chat.autoSpeakOn")} offLabel={t("chat.autoSpeakOff")} />
-        </div>
-      )}
+    <div className="flex min-h-0 flex-1 flex-col">
+      <ChatTopBar
+        mode={mode}
+        // "Chat" returns to the chat style that was in use before Agent.
+        onModeChange={(next) => switchMode(next === "general" && mode === "agent" ? lastChatStyleRef.current : next)}
+        strategy={strategy}
+        onStrategyChange={setStrategy}
+        revealMode={revealMode}
+        onRevealModeChange={changeRevealMode}
+        voiceLang={voiceLang}
+        onVoiceLangChange={setVoiceLang}
+        status={toolbarStatus}
+        locked={isTemporary}
+        autoSpeak={autoSpeak}
+        onToggleAutoSpeak={toggleAutoSpeak}
+        demoMode={demoMode}
+        onToggleDemo={() => setDemoMode((value) => !value)}
+        workspaceCount={mode === "agent" ? agentFiles.length : 0}
+        onOpenWorkspace={() => setWorkspaceOpen(true)}
+        autoSpeakLabels={{ on: t("chat.autoSpeakOn"), off: t("chat.autoSpeakOff") }}
+        conversation={conversationActions}
+      />
 
       <div className="relative min-h-0 flex-1">
-      <div ref={scrollAreaRef} onScroll={chatScroll.onScroll} onWheel={chatScroll.onWheel}
-        onTouchStart={chatScroll.onTouchStart} onTouchMove={chatScroll.onTouchMove}
-        onKeyDown={chatScroll.onKeyDown} onPointerDown={chatScroll.onPointerDown} onPointerUp={chatScroll.onPointerUp}
-        className="chat-viewport h-full overflow-y-auto overscroll-contain px-0.5 py-2 sm:px-2" tabIndex={0}>
-        <div ref={scrollContentRef} className="space-y-7">
-        {hasMoreHistory && messages.length > 0 ? (
-          <div className="flex justify-center pb-1">
-            <button
-              type="button"
-              onClick={() => void loadOlderMessages()}
-              disabled={loadingHistory}
-              className="chip"
-              aria-busy={loadingHistory}
-            >
-              {loadingHistory ? "Loading earlier messages…" : "Load earlier messages"}
-            </button>
-          </div>
-        ) : null}
-        {messages.length === 0 && !streaming ? (
-          <div className="flex flex-col items-center px-1 py-6 text-center sm:py-8">
-            <div className="mb-5">
-              <span className="mb-3 inline-block" aria-hidden="true">
-                <MatrixWordmark className="h-10 w-40 sm:h-12 sm:w-48" />
-              </span>
-              <h1 className="text-[22px] font-semibold tracking-tight text-ink sm:text-[28px]">
-                {mode === "agent" ? "What should we build?" : locale === "bn" ? "আজ কীভাবে সাহায্য করতে পারি?" : "How can I help today?"}
-              </h1>
-              <p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-ink-2 sm:text-sm">
-                {mode === "agent"
-                  ? "Describe the product or fix, then attach any existing project files. Review before preview or push."
-                  : locale === "bn"
-                    ? "লেখা, শেখা, পরিকল্পনা, গবেষণা, কোডিং ও নিরাপদ ডিজিটাল সহায়তা।"
-                    : "Ask about writing, learning, planning, research, coding, or safe digital help."}
-              </p>
-            </div>
-            {mode !== "agent" ? (
-              <div className="mb-5 hidden w-full max-w-2xl grid-cols-2 gap-2 sm:grid lg:grid-cols-4">
-                {FEATURES.map((feature) => (
-                  <div key={feature.title} className="rounded-[16px] border border-border bg-surface px-3 py-3 text-left">
-                    <span className="text-accent">{feature.icon}</span>
-                    <p className="mt-2 text-[13px] font-medium text-ink">{feature.title}</p>
-                    <p className="mt-0.5 text-[11px] text-ink-3">{feature.desc}</p>
-                  </div>
-                ))}
+        <div ref={scrollAreaRef} onScroll={chatScroll.onScroll} onWheel={chatScroll.onWheel}
+          onTouchStart={chatScroll.onTouchStart} onTouchMove={chatScroll.onTouchMove}
+          onKeyDown={chatScroll.onKeyDown} onPointerDown={chatScroll.onPointerDown} onPointerUp={chatScroll.onPointerUp}
+          className="chat-viewport h-full overflow-y-auto px-0.5 pb-2 pt-4 sm:px-2" tabIndex={0} aria-label="Conversation">
+          <div ref={scrollContentRef} className="mx-auto w-full max-w-3xl space-y-6">
+            {hasMoreHistory && messages.length > 0 ? (
+              <div className="flex justify-center pb-1">
+                <button
+                  type="button"
+                  onClick={() => void loadOlderMessages()}
+                  disabled={loadingHistory}
+                  className="chip"
+                  aria-busy={loadingHistory}
+                >
+                  {loadingHistory ? "Loading earlier messages…" : "Load earlier messages"}
+                </button>
               </div>
             ) : null}
-            <div className="no-scrollbar grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
-              {suggestions.map((suggestion) => (
-                <button
-                  key={suggestion.label}
-                  type="button"
-                  onClick={() => {
-                    if ("href" in suggestion && suggestion.href) router.push(suggestion.href);
-                    else if ("action" in suggestion && suggestion.action === "attach") fileRef.current?.click();
-                    else if (suggestion.prompt) void send(undefined, suggestion.prompt);
-                  }}
-                  className="suggest-card"
-                >
-                  <span className="mt-0.5 text-accent" aria-hidden="true">{suggestion.icon}</span>
-                  <span className="min-w-0">
-                    <span className="block text-[13px] font-medium text-ink">{suggestion.label}</span>
-                    {"desc" in suggestion && suggestion.desc ? <span className="mt-0.5 block text-[11px] text-ink-3">{suggestion.desc}</span> : null}
+            {emptyConversation ? (
+              <div className="flex flex-col items-center px-1 py-4 text-center sm:py-8">
+                <div className="mb-5">
+                  <span className="mb-3 inline-block" aria-hidden="true">
+                    <MatrixWordmark className="h-9 w-36 sm:h-12 sm:w-48" />
                   </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <>
-            {renderedHistory}
-
-            {streaming && !streamCommitted ? (
-              <div className="msg-in flex justify-start gap-3.5">
-                <span className="mt-0.5 hidden shrink-0 sm:block" aria-hidden="true">
-                  <MatrixMark className="h-5 w-5 text-ink-3" />
-                </span>
-                {/* Same box as a committed assistant message, so nothing shifts when the stream completes. */}
-                <div className="min-w-0 max-w-[96%] flex-1 sm:max-w-none">
-                  {imageRun ? (
-                    <ArtifactCard
-                      state={beginArtifact(requestArtifact(emptyArtifactState(), { type: "IMAGE", title: "Matrix image" }))}
-                      provider="together"
-                    />
-                  ) : null}
-                  {buildRun ? null : (
-                    <ResponseProgress
-                      mode={runMode}
-                      streamStatus={streamStatus}
-                      steps={liveSteps}
-                      provider={activeProvider}
-                      model={activeModel}
-                      tier={activeTier}
-                    />
-                  )}
-                  <StreamingReply store={streamStore} />
-                  {buildRun ? (
-                    <BuildStatusCard run={buildRun} cancelling={cancellingBuild} onCancel={() => { void cancelBuildRun(); }} />
-                  ) : buildPending ? (
-                    <div className="sandbox-card fade-in rounded-xl border border-border bg-surface p-3.5">
-                      <p className="flex items-center gap-2 text-[12.5px] font-medium text-ink">
-                        <span className="pulse-dot h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />
-                        Starting build
-                      </p>
-                      <p className="mt-1 text-[11.5px] text-ink-3">Accepting the run and reading the project…</p>
-                    </div>
-                  ) : null}
-
+                  <h1 className="text-[22px] font-semibold tracking-tight text-ink sm:text-[28px]">
+                    {isTemporary ? "Temporary chat" : mode === "agent" ? "What should we build?" : locale === "bn" ? "আজ কীভাবে সাহায্য করতে পারি?" : "How can I help today?"}
+                  </h1>
+                  <p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-ink-2 sm:text-sm">
+                    {isTemporary
+                      ? "Nothing here enters your history, memory, summaries or search — and it is deleted after 24 hours."
+                      : mode === "agent"
+                        ? "Describe the product or fix, then attach any existing project files. Review before preview or push."
+                        : locale === "bn"
+                          ? "লেখা, শেখা, পরিকল্পনা, গবেষণা, কোডিং ও নিরাপদ ডিজিটাল সহায়তা।"
+                          : "Ask about writing, learning, planning, research, coding, or safe digital help."}
+                  </p>
+                </div>
+                {mode !== "agent" && !isTemporary ? (
+                  <div className="mb-5 hidden w-full max-w-2xl grid-cols-2 gap-2 sm:grid lg:grid-cols-4">
+                    {FEATURES.map((feature) => (
+                      <div key={feature.title} className="rounded-[16px] border border-border bg-surface px-3 py-3 text-left">
+                        <span className="text-accent">{feature.icon}</span>
+                        <p className="mt-2 text-[13px] font-medium text-ink">{feature.title}</p>
+                        <p className="mt-0.5 text-[11px] text-ink-3">{feature.desc}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
+                  {suggestions.map((suggestion) => (
+                    <button
+                      key={suggestion.label}
+                      type="button"
+                      onClick={() => {
+                        // Agent is a mode of this conversation, not another page.
+                        if ("href" in suggestion && suggestion.href) { if (isTemporary) router.push(suggestion.href); else switchMode("agent"); }
+                        else if ("action" in suggestion && suggestion.action === "attach") fileRef.current?.click();
+                        else if (suggestion.prompt) void send(undefined, suggestion.prompt);
+                      }}
+                      className="suggest-card"
+                    >
+                      <span className="mt-0.5 text-accent" aria-hidden="true">{suggestion.icon}</span>
+                      <span className="min-w-0">
+                        <span className="block text-[13px] font-medium text-ink">{suggestion.label}</span>
+                        {"desc" in suggestion && suggestion.desc ? <span className="mt-0.5 block text-[11px] text-ink-3">{suggestion.desc}</span> : null}
+                      </span>
+                    </button>
+                  ))}
                 </div>
               </div>
-            ) : null}
+            ) : (
+              <>
+                {renderedHistory}
+
+                {streaming && !streamCommitted ? (
+                  <div className="msg-in msg-row flex justify-start gap-3" data-role="assistant">
+                    <span className="mt-1 hidden shrink-0 sm:block" aria-hidden="true">
+                      <MatrixMark className="h-5 w-5 text-ink-3" />
+                    </span>
+                    {/* Same box as a committed assistant message, so nothing shifts when the stream completes. */}
+                    <div className="min-w-0 flex-1">
+                      {imageRun ? (
+                        <ArtifactCard
+                          state={beginArtifact(requestArtifact(emptyArtifactState(), { type: "IMAGE", title: "Matrix image" }))}
+                          provider="together"
+                        />
+                      ) : null}
+                      {buildRun ? null : (
+                        <ResponseProgress
+                          mode={runMode}
+                          streamStatus={streamStatus}
+                          steps={liveSteps}
+                          provider={activeProvider}
+                          model={activeModel}
+                          tier={activeTier}
+                        />
+                      )}
+                      <StreamingReply store={streamStore} />
+                      {buildRun ? (
+                        <BuildStatusCard run={buildRun} cancelling={cancellingBuild} onCancel={() => { void cancelBuildRun(); }} />
+                      ) : buildPending ? (
+                        <div className="sandbox-card fade-in rounded-xl border border-border bg-surface p-3.5">
+                          <p className="flex items-center gap-2 text-[12.5px] font-medium text-ink">
+                            <span className="pulse-dot h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />
+                            Starting build
+                          </p>
+                          <p className="mt-1 text-[11.5px] text-ink-3">Accepting the run and reading the project…</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            )}
 
             {failure ? (
-              <ServerProblem failure={failure} onRetry={buildRun?.status === "failed" ? retryBuild : retry} onDismiss={() => setFailure(null)} />
+              <ServerProblem failure={failure} onRetry={buildRun?.status === "failed" ? retryBuild : () => void retry()} onDismiss={() => setFailure(null)} />
             ) : null}
             {projectChoices.length ? (
               <div className="rounded-xl border border-border bg-surface p-4" role="group" aria-label="Choose project to edit">
                 <p className="mb-2 text-sm font-medium text-ink">Which project should MATRIX edit?</p>
                 <div className="flex flex-wrap gap-2">
                   {projectChoices.map((choice) => (
-                    <button key={choice.id} type="button" className="rounded-lg border border-border px-3 py-2 text-sm text-ink hover:bg-surface-2"
+                    <button key={choice.id} type="button" className="min-h-11 rounded-lg border border-border px-3 text-sm text-ink hover:bg-surface-2"
                       onClick={() => { explicitAgentProjectIdRef.current = choice.id; setAgentProjectId(choice.id); setProjectChoices([]); setNotice(`Selected ${choice.title}. Press Retry to run your previous request on this project, or write a new instruction.`); }}>
                       {choice.title} · {choice.id.slice(0, 8)}
                     </button>
@@ -2354,39 +2536,50 @@ export function ChatClient({
                 </div>
               </div>
             ) : null}
-          </>
-        )}
+          </div>
         </div>
-      </div>
-      {chatScroll.newBelow ? (
-        <button type="button" onClick={chatScroll.follow}
-          className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-ink shadow-md"
-          aria-label="Scroll to new content">New content below ↓</button>
-      ) : null}
+        {chatScroll.newBelow ? (
+          <button type="button" onClick={chatScroll.follow}
+            className="absolute bottom-3 left-1/2 z-10 inline-flex min-h-9 -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-surface px-3.5 text-xs font-medium text-ink shadow-[var(--shadow-pop)]"
+            aria-label="Scroll to new content">New content below <ArrowDown size={13} aria-hidden="true" /></button>
+        ) : null}
       </div>
 
-      <div className="mx-auto mb-2 flex max-w-2xl flex-wrap items-center justify-end gap-2 text-[11px] text-ink-3"><label htmlFor="stream-reveal">Response display</label><select id="stream-reveal" aria-label="Response display mode" className="rounded-md border border-border bg-surface px-2 py-1 text-ink" value={revealMode} onChange={(event) => { const next = event.target.value as RevealMode; setRevealMode(next); revealModeRef.current = next; void rpc("settings_update", { stream_reveal_mode: next }).catch(() => setNotice("Display preference could not be saved.")); }}><option value="adaptive">Adaptive typing</option><option value="word">Word by word</option><option value="natural">Natural stream</option><option value="reduced">Reduced motion</option></select></div>
-      {transcribing ? <VoiceProcessing onCancel={() => transcribeAbortRef.current?.abort()} /> : null}
-      {voiceReview && !recording && !transcribing ? (
-        <VoiceReviewBar
-          review={voiceReview}
-          language={voiceLang}
-          onLanguage={setVoiceLang}
-          canRetranscribe={Boolean(draftAudio) && draftAudio!.blob.size <= 24 * 1024 * 1024}
-          busy={streaming}
-          onRetranscribe={retranscribeVoice}
-          onRecordMore={() => void toggleVoiceRecording()}
-          onDiscard={() => { setInput(""); clearVoiceReview({ deleteAsset: true }); if (textareaRef.current) textareaRef.current.style.height = "auto"; }}
-        />
-      ) : null}
-      {notice ? <p className="mt-2 shrink-0 text-[13px] text-ink-2">{notice}</p> : null}
-
-      <div className="shrink-0 pt-3">
-        <div className="mx-auto max-w-2xl">
+      <div className="shrink-0 pb-2 pt-2 lg:pb-3">
+        <div className="mx-auto w-full max-w-3xl">
+          {notice ? (
+            <p className="mb-2 flex items-start justify-between gap-2 rounded-xl bg-surface-2 px-3 py-2 text-[13px] leading-relaxed text-ink-2" role="status">
+              <span className="min-w-0">{notice}</span>
+              <button type="button" onClick={() => setNotice(null)} aria-label="Dismiss" className="-mr-1 grid h-6 w-6 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-surface hover:text-ink">
+                <X size={14} aria-hidden="true" />
+              </button>
+            </p>
+          ) : null}
+          {composerError ? (
+            <p className="mb-2 flex items-start justify-between gap-2 rounded-xl border border-danger/30 bg-danger-soft px-3 py-2 text-[13px] leading-relaxed text-danger" role="alert">
+              <span className="min-w-0">{composerError}</span>
+              <button type="button" onClick={() => setComposerError(null)} aria-label="Dismiss" className="-mr-1 grid h-6 w-6 shrink-0 place-items-center rounded-md hover:bg-surface">
+                <X size={14} aria-hidden="true" />
+              </button>
+            </p>
+          ) : null}
+          {dictationRetry ? (
+            <div className="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2" role="alert">
+              <p className="min-w-0 flex-1 text-[13px] leading-relaxed text-ink-2">
+                {dictationRetry.message} <span className="text-ink-3">({formatClock(dictationRetry.clip.durationMs / 1000)} recorded)</span>
+              </p>
+              <button type="button" onClick={() => void transcribeToComposer(dictationRetry.clip)} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-border px-2.5 text-[12.5px] font-medium text-ink hover:bg-surface-2">
+                <RotateCcw size={13} aria-hidden="true" /> Try again
+              </button>
+              <button type="button" onClick={() => { URL.revokeObjectURL(dictationRetry.clip.url); setDictationRetry(null); }} className="min-h-9 rounded-lg px-2.5 text-[12.5px] font-medium text-ink-2 hover:bg-surface-2 hover:text-danger">
+                Discard
+              </button>
+            </div>
+          ) : null}
           <ModeQuickActions
             mode={mode}
             signals={latestSignals}
-            hasConversation={latestAssistantIndex >= 0 && !streaming}
+            hasConversation={latestAssistantIndex >= 0 && !busy}
             hasArtifacts={agentFiles.length > 0}
             onPrompt={(text) => void send(undefined, text)}
             onOpenWorkspace={() => setWorkspaceOpen(true)}
@@ -2398,7 +2591,7 @@ export function ChatClient({
           />
           {graphNodes.length > 0 && (demoMode || mode === "orchestrator") ? <LiveTaskGraph nodes={graphNodes} /> : null}
           {modeHint ? (
-            <p className="mb-2 text-[12px] text-ink-2">
+            <p className="mb-2 text-[12.5px] text-ink-2">
               This may fit {modeHint} mode.{" "}
               <button type="button" className="font-semibold text-accent" onClick={() => { const next = modeHint; setModeHint(null); switchMode(next); }}>
                 Continue in {modeHint}
@@ -2407,175 +2600,57 @@ export function ChatClient({
           ) : null}
         </div>
 
-        {draftAudio && !transcribing && !voiceReview && !recording ? <div className="mx-auto mb-2 flex max-w-2xl flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2"><audio controls src={draftAudio.url} aria-label="Voice recording ready to retry" className="h-9 min-w-0 flex-1" />{draftAudio.blob.size <= 24 * 1024 * 1024 ? <button type="button" className="rounded-lg bg-accent px-3 py-2 text-sm text-white" onClick={() => void uploadAndTranscribeVoice(draftAudio, voiceAsset?.id)}>Retry transcription</button> : null}<button type="button" className="rounded-lg border border-border px-3 py-2 text-sm" onClick={() => { discardDraftAudio(); if (voiceAsset) void deleteVoiceAsset(voiceAsset.id); }}>Discard</button></div> : null}
-        {pendingImage || uploadingImage ? (
-          <div className="mx-auto mb-2 flex max-w-2xl items-center justify-between gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2">
-            {uploadingImage ? (
-              <span className="text-xs text-ink-2">Uploading image privately to Cloudinary…</span>
-            ) : pendingImage ? (
-              <>
-                <span className="flex min-w-0 items-center gap-2.5">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={pendingImage.previewUrl} alt={pendingImage.name} className="h-10 w-10 shrink-0 rounded-md border border-border object-cover" />
-                  <span className="min-w-0">
-                    <span className="block truncate text-xs font-medium text-ink">{pendingImage.name}</span>
-                    <span className="block text-[11px] text-ink-3">{Math.max(1, Math.round(pendingImage.size / 1024))} KB · Cloudinary private · ask anything or press Send</span>
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    URL.revokeObjectURL(pendingImage.previewUrl);
-                    setPendingImage(null);
-                  }}
-                  className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-surface hover:text-danger"
-                  aria-label="Remove attached image"
-                >
-                  <X size={13} />
-                </button>
-              </>
-            ) : null}
-          </div>
-        ) : null}
-        {attachments.length ? (
-          <div className="mx-auto mb-2 flex max-w-2xl flex-wrap gap-1.5" aria-label="Attached files">
-            {attachments.map((file) => (
-              <span key={file.name} className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border bg-surface-2 py-1 pl-2.5 pr-1 text-[11px] text-ink-2">
-                <Code2 size={11} className="shrink-0" aria-hidden="true" />
-                <span className="truncate font-mono">{file.name}</span>
-                <span className="text-ink-3">{Math.max(1, Math.round(file.size / 1024))} KB</span>
-                <button
-                  type="button"
-                  onClick={() => setAttachments((current) => current.filter((item) => item.name !== file.name))}
-                  className="grid h-7 w-7 shrink-0 place-items-center rounded-md hover:bg-surface hover:text-danger"
-                  aria-label={`Remove ${file.name}`}
-                >
-                  <X size={11} />
-                </button>
-              </span>
-            ))}
-          </div>
-        ) : null}
+        <ChatComposer
+          value={input}
+          onChange={(value) => { setInput(value); if (composerError) setComposerError(null); }}
+          placeholder={modeMeta(mode).placeholder}
+          textareaRef={textareaRef}
+          fileInputRef={fileRef}
+          sendLabel={t("chat.send")}
+          attachments={attachments}
+          onRemoveAttachment={(name) => setAttachments((current) => current.filter((item) => item.name !== name))}
+          image={pendingImage}
+          uploadingImage={uploadingImage}
+          onRemoveImage={() => { if (pendingImage) URL.revokeObjectURL(pendingImage.previewUrl); setPendingImage(null); }}
+          onFiles={(files) => void handleFiles(files)}
+          busy={busy}
+          onSend={() => void send()}
+          onStop={stop}
+          recorderState={recorder.state}
+          recorderElapsedMs={recorder.elapsedMs}
+          recorderHasWaveform={recorder.hasWaveform}
+          recorderCanvasRef={recorder.canvasRef}
+          voiceLanguage={voiceLang}
+          onVoiceLanguage={setVoiceLang}
+          onStartVoice={() => void startVoice()}
+          onCancelVoice={cancelVoice}
+          onPauseVoice={() => (recorder.state === "paused" ? recorder.resume() : recorder.pause())}
+          onStopVoice={() => void finishVoice("send")}
+          onTranscribeVoice={() => void finishVoice("transcribe")}
+          transcribing={transcribing}
+          onCancelTranscribe={() => transcribeAbortRef.current?.abort()}
+          webSearch={webSearch}
+          onToggleWebSearch={() => setWebSearch((value) => !value)}
+          codeFocus={codeHint}
+          onToggleCodeFocus={() => setCodeHint((value) => !value)}
+        />
 
-        <form onSubmit={(e) => { if (recording) e.preventDefault(); else void send(e); }} className="composer-shell mx-auto max-w-2xl p-3">
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".txt,.md,.mdx,.json,.jsonc,.js,.jsx,.mjs,.cjs,.ts,.tsx,.py,.html,.htm,.css,.scss,.sass,.less,.vue,.svelte,.sql,.graphql,.yaml,.yml,.toml,.xml,.env,.sh,.bash,.go,.rs,.java,.kt,.php,.rb,.swift,.dart,.c,.h,.cc,.cpp,.cs,Dockerfile,Makefile"
-            className="sr-only"
-            onChange={(e) => void handleFile(e.target.files?.[0])}
-          />
-          <input
-            ref={imageRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            className="sr-only"
-            onChange={(e) => void handleFile(e.target.files?.[0])}
-          />
-          {recording ? <VoiceRecordingPanel
-            paused={recordingPaused}
-            seconds={recordingSeconds}
-            canvasRef={waveformCanvasRef}
-            liveTranscript={liveTranscript}
-            engineNote={voiceEngineNote}
-            hasWaveform={voiceHasWaveform}
-            canPause={voiceHasWaveform}
-            language={voiceLang}
-            onLanguage={setVoiceLang}
-            onCancel={cancelVoiceRecording}
-            onPause={pauseVoiceRecording}
-            onStop={() => void toggleVoiceRecording()}
-          /> : <Textarea
-            ref={textareaRef}
-            value={input}
-            dir="auto"
-            onChange={(e) => {
-              setInput(e.target.value);
-              // Once the text is cleared there is no transcript left to review.
-              if (!e.target.value.trim() && voiceReview) clearVoiceReview({ deleteAsset: true });
-              requestAnimationFrame(autosize);
-            }}
-            onPaste={(e) => {
-              const item = Array.from(e.clipboardData?.items ?? []).find((entry) => entry.type.startsWith("image/"));
-              if (item) {
-                const file = item.getAsFile();
-                if (file) {
-                  e.preventDefault();
-                  void handleFile(file);
-                }
-              }
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send(e);
-              }
-            }}
-            placeholder={modeMeta(mode).placeholder}
-            rows={1}
-            aria-label="Message MATRIX"
-            disabled={streaming}
-            className="max-h-36 min-h-11 w-full !border-0 !bg-transparent !px-1 !py-1.5 !shadow-none focus:!shadow-none focus:!outline-none focus:!ring-0"
-          />
-          }
-          {!recording ? <div className="mt-2 flex items-center justify-between gap-2">
-            {/* Lightweight capability switches — clicking one activates the
-                capability, it never invokes it on its own. */}
-            <div className="flex min-w-0 items-center gap-0.5">
-              {/* Voice input is part of the composer in every mode, including Agent. */}
-              <button type="button" onClick={() => void toggleVoiceRecording()} disabled={streaming || transcribing} aria-label={voiceReview ? "Record more voice input" : "Voice input"} title={`Voice input · ${voiceLanguage(voiceLang).label}`} className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors duration-150 hover:bg-surface-2 hover:text-ink disabled:opacity-50", voiceReview ? "bg-accent-soft text-accent" : "text-ink-3")}><Mic size={16} strokeWidth={1.7} /></button>
-              <button type="button" onClick={() => fileRef.current?.click()} disabled={streaming} aria-label="Attach a file" title="Attach a file" className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] text-ink-3 transition-colors duration-150 hover:bg-surface-2 hover:text-ink disabled:opacity-40">
-                <Paperclip size={16} strokeWidth={1.7} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setWebSearch((value) => !value)}
-                aria-pressed={webSearch}
-                aria-label="Use web knowledge"
-                title="Use up-to-date web knowledge in the next answer"
-                className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors duration-150", webSearch ? "bg-accent-soft text-accent" : "text-ink-3 hover:bg-surface-2 hover:text-ink")}
-              >
-                <Globe size={16} strokeWidth={1.7} />
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (mode === "code") setCodeHint((value) => !value);
-                  else switchMode("code");
-                }}
-                aria-pressed={mode === "code" || codeHint}
-                aria-label="Code mode"
-                title={mode === "code" ? "Ask for complete, runnable code" : "Switch to Code mode"}
-                className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors duration-150", mode === "code" || codeHint ? "bg-accent-soft text-accent" : "text-ink-3 hover:bg-surface-2 hover:text-ink")}
-              >
-                <Code2 size={16} strokeWidth={1.7} />
-              </button>
-              <ModelPicker />
-            </div>
-            {streaming ? (
-              <Button type="button" variant="ghost" onClick={stop} className="h-11 shrink-0 !px-3" aria-label="Stop generating">
-                <Square size={14} strokeWidth={1.8} /> Stop
-              </Button>
-            ) : (
-              <button
-                type="submit"
-                disabled={!input.trim() && attachments.length === 0}
-                aria-label={t("chat.send")}
-                className={cn(
-                  "grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors duration-150 ease-out",
-                  input.trim() || attachments.length > 0 ? "bg-accent text-white hover:bg-accent-hover" : "bg-surface-2 text-ink-3",
-                )}
-              >
-                <Send size={16} strokeWidth={1.8} />
-              </button>
-            )}
-          </div> : null}
-        </form>
-
-        <p className="mx-auto mt-2 max-w-2xl px-1 pb-1 text-[11px] text-ink-3">
+        <p className="composer-note mx-auto mt-1.5 hidden max-w-3xl px-1 text-center text-[11px] text-ink-3 sm:block">
           {mode === "agent" ? "Review files before preview or push" : "MATRIX may make mistakes · verify important information"}
         </p>
       </div>
+
+      <ConfirmModal
+        open={deleteTarget !== null}
+        onClose={() => { if (!deleting) setDeleteTarget(null); }}
+        onConfirm={() => void confirmDeleteMessage()}
+        title="Delete this message?"
+        body={deleteTarget?.role === "assistant"
+          ? "This answer is removed from the conversation. This can't be undone."
+          : "Your message is removed from the conversation, including its voice recording if it has one. This can't be undone."}
+        confirmLabel="Delete"
+        busy={deleting}
+      />
 
       {publishPopup ? (
         <DeploySuccessPopup

@@ -38,6 +38,7 @@ import { formatAttachmentContext, isCodingRequest, safeAgentPath, type AgentFile
 import type { WorkingStep } from "@/lib/chat-messages";
 import { detectBuildIntent, shouldRunBuildPipeline } from "@/lib/ai/build-intent";
 import { requestChatMode } from "@/lib/ai/execution-policy";
+import { isReplaceableReply, nextReplyVersions, type ReplyVersion } from "@/lib/server/chat-messages";
 import { computeAnalytics } from "@/lib/ai/pipeline";
 import { generateImage, imageErrorCode } from "@/lib/ai/image/generate";
 import { isImageGenerationConfigured } from "@/lib/ai/image/config";
@@ -282,13 +283,20 @@ async function finalizeChat(d: Db, opts: {
   tier?: "high" | "low";
   steps?: WorkingStep[];
   taskContext?: PendingAgentTask | null;
-}) {
+  /**
+   * Regenerate: the assistant message this answer replaces. The document keeps
+   * its id and position; the answer it held becomes a stored version.
+   */
+  replace?: { id: string; data: Record<string, unknown> } | null;
+}): Promise<{ messageId: string | null; versions: ReplyVersion[] }> {
   const {
     provider, providerName, user, conversationId, isTemporary, message, redactedMessage, reply,
     history, redaction, started, model, mode, codingDetected, files = [], projectId = null, requestId, usage, usageStatus,
-    tier, steps, taskContext,
+    tier, steps, taskContext, replace = null,
   } = opts;
   const convRef = d.collection("conversations").doc(conversationId);
+  let messageId: string | null = null;
+  let versions: ReplyVersion[] = [];
 
   // Firestore has a 1 MiB document limit. If files are large, keep a compact version in message metadata
   // since the complete files are already safely stored in the project files collection.
@@ -299,23 +307,32 @@ async function finalizeChat(d: Db, opts: {
   }));
 
   try {
-    await convRef.collection("messages").add({
-      role: "assistant",
-      content: reply,
-      metadata: {
-        mode,
-        model,
-        ...(providerName ? { provider: providerName } : {}),
-        coding_detected: codingDetected,
-        duration_ms: Math.max(1, Date.now() - started),
-        ...(tier ? { tier } : {}),
-        ...(steps?.length ? { steps: steps.slice(0, 12) } : {}),
-        ...(safeArtifacts.length ? { artifacts: safeArtifacts } : {}),
-        ...(projectId ? { project_id: projectId } : {}),
-        ...(taskContext ? { agent_task: { ...taskContext, state: taskContext.state === "CONVERSATION" ? "CONVERSATION" : classifyAgentOutput(reply).state }, execution_state: taskContext.state === "CONVERSATION" ? "CONVERSATION" : classifyAgentOutput(reply).state } : {}),
-      },
-      created_at: nowTs(),
-    });
+    const metadata = {
+      mode,
+      model,
+      ...(providerName ? { provider: providerName } : {}),
+      coding_detected: codingDetected,
+      duration_ms: Math.max(1, Date.now() - started),
+      ...(tier ? { tier } : {}),
+      ...(steps?.length ? { steps: steps.slice(0, 12) } : {}),
+      ...(safeArtifacts.length ? { artifacts: safeArtifacts } : {}),
+      ...(projectId ? { project_id: projectId } : {}),
+      ...(taskContext ? { agent_task: { ...taskContext, state: taskContext.state === "CONVERSATION" ? "CONVERSATION" : classifyAgentOutput(reply).state }, execution_state: taskContext.state === "CONVERSATION" ? "CONVERSATION" : classifyAgentOutput(reply).state } : {}),
+    };
+    if (replace) {
+      // Regenerate rewrites the SAME document: one prompt keeps one answer
+      // after a reload, and the earlier answers stay readable as versions.
+      versions = nextReplyVersions(replace.data);
+      await convRef.collection("messages").doc(replace.id).update({
+        content: reply,
+        metadata: { ...metadata, ...(versions.length ? { versions } : {}) },
+        updated_at: nowTs(),
+      });
+      messageId = replace.id;
+    } else {
+      const added = await convRef.collection("messages").add({ role: "assistant", content: reply, metadata, created_at: nowTs() });
+      messageId = added.id;
+    }
     await convRef.set({ updated_at: nowTs(), mode }, { merge: true });
   } catch (err) {
     logGatewayFailure("persist_assistant_message", { requestId, conversationId }, err);
@@ -382,6 +399,7 @@ async function finalizeChat(d: Db, opts: {
   }
 
   await logUsage(d, user.uid, model, "chat", usage ?? {}, Date.now() - started, usageStatus ?? "ok", requestId);
+  return { messageId, versions };
 }
 
 function normaliseTextAttachments(value: unknown): TextAttachment[] {
@@ -532,6 +550,9 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
 
   // --- store original privately; only redacted text reaches AI providers ------
   const redaction = redactPII(message);
+  // Returned to the browser so a message that was just sent can be edited,
+  // deleted or retried without reloading the conversation first.
+  let userMessageId: string | null = null;
   if (!reuseUser) {
     try {
       const messageData = {
@@ -552,7 +573,8 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
           tx.create(ref, messageData);
           tx.update(assetRef, { conversation_id: convId, message_id: ref.id });
         });
-      } else await convRef.collection("messages").add(messageData);
+        userMessageId = ref.id;
+      } else userMessageId = (await convRef.collection("messages").add(messageData)).id;
     } catch (error) {
       if (audioAssetId) return json({ error: "AUDIO_MESSAGE_NOT_SAVED", conversation_id: convId }, 409, requestId);
       // The user's message reached the gateway; a storage hiccup must not
@@ -607,7 +629,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   }
   const agentExecutionRequired = mode === "agent" && (shouldRunBuildPipeline(detectBuildIntent(message, { agentMode: true, hasAttachments: attachments.length > 0 })) || isCodingRequest(message, attachments));
   if (agentExecutionRequired && !clarificationFirst && !clarificationFollowup) {
-    return json({ error: "AGENT_RUNTIME_REQUIRED", detail: "Executable Agent work must use /api/build so files, task state, validation and deployment are persisted together.", conversation_id: convId, project_id: activeProjectId }, 409, requestId);
+    return json({ error: "AGENT_RUNTIME_REQUIRED", detail: "Executable Agent work must use /api/build so files, task state, validation and deployment are persisted together.", conversation_id: convId, project_id: activeProjectId, ...(userMessageId ? { user_message_id: userMessageId } : {}) }, 409, requestId);
   }
   const codingDetected = route.coding || mode === "agent" || isCodingRequest(message, attachments);
   const useAgentPolicy = mode === "agent" || mode === "code";
@@ -620,7 +642,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const selectedModel = targets[0]?.model ?? MATRIX_MODEL_ID;
   if (!targets.length) {
     await logUsage(d, user.uid, "none", "chat", {}, Date.now() - started, "error", requestId);
-    return json({ error: useAgentPolicy ? "CODING_MODEL_NOT_CONFIGURED" : "AI_GATEWAY_NOT_CONFIGURED", conversation_id: convId }, 503, requestId);
+    return json({ error: useAgentPolicy ? "CODING_MODEL_NOT_CONFIGURED" : "AI_GATEWAY_NOT_CONFIGURED", conversation_id: convId, ...(userMessageId ? { user_message_id: userMessageId } : {}) }, 503, requestId);
   }
 
   // Context: summary + recent messages + safe memory + RAG.
@@ -640,6 +662,20 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     profileCountry = (profileDoc.data()?.country as string | undefined) ?? null;
   } catch (error) {
     logGatewayFailure("chat_context", { requestId, conversationId: convId }, error);
+  }
+  // Regenerate / Edit & resend: the newest message is the answer being
+  // replaced. It is rewritten in place (versioned) instead of adding a second
+  // assistant message under the same prompt. Execution records are never
+  // replaced, and without a previous answer the reply is simply added.
+  let replaceTarget: { id: string; data: Record<string, unknown> } | null = null;
+  if (regenerate) {
+    const newest = recentDocs[recentDocs.length - 1];
+    if (newest && isReplaceableReply(newest.data())) replaceTarget = { id: newest.id, data: newest.data() };
+  }
+  if (reuseUser && !userMessageId) {
+    for (let i = recentDocs.length - 1; i >= 0; i--) {
+      if (recentDocs[i].data().role === "user") { userMessageId = recentDocs[i].id; break; }
+    }
   }
   const history: AIMessage[] = [];
   if (summaryText) history.push({ role: "system", content: "Summary of the earlier conversation:\n" + summaryText });
@@ -709,6 +745,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
         try {
           emit({
             conversation_id: convId,
+            ...(userMessageId ? { user_message_id: userMessageId } : {}),
             mode,
             model: activeTarget.model,
             provider: activeTarget.provider,
@@ -873,12 +910,13 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
             toolsExecuted: 0,
           });
           let degraded = conversationPersistDegraded;
+          let stored: Awaited<ReturnType<typeof finalizeChat>> = { messageId: null, versions: [] };
           try {
-            await finalizeChat(d, {
+            stored = await finalizeChat(d, {
               provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
               redactedMessage: redaction.redacted, reply: streamedReply, history, redaction, started,
               model: activeTarget.model, mode, codingDetected, files: streamedFiles, projectId, requestId, usage: streamUsage,
-              tier: route.tier, steps: recordedSteps, taskContext,
+              tier: route.tier, steps: recordedSteps, taskContext, replace: replaceTarget,
             });
           } catch (error) {
             degraded = true;
@@ -887,6 +925,9 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
           emit({
             done: true,
             conversation_id: convId,
+            ...(stored.messageId ? { message_id: stored.messageId } : {}),
+            ...(userMessageId ? { user_message_id: userMessageId } : {}),
+            ...(stored.versions.length ? { versions: stored.versions } : {}),
             pii_redacted: !redaction.safe,
             mode,
             model: activeTarget.model,
@@ -915,6 +956,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
                 provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
                 redactedMessage: redaction.redacted, reply: full, history, redaction, started,
                 model: activeTarget.model, mode, codingDetected, requestId, usage: streamUsage, usageStatus: "partial", taskContext,
+                replace: replaceTarget,
               });
               done = true;
             } catch {
@@ -923,7 +965,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
           }
           if (msg !== "CLIENT_DISCONNECTED") {
             try {
-              emit({ error: providerPublicCode(e), conversation_id: convId });
+              emit({ error: providerPublicCode(e), conversation_id: convId, ...(userMessageId ? { user_message_id: userMessageId } : {}) });
             } catch {
               /* client gone */
             }
@@ -1062,7 +1104,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   } catch (error) {
     logProviderFailure(error, requestId);
     await logUsage(d, user.uid, activeTarget?.model ?? selectedModel, "chat", {}, Date.now() - started, "error", requestId);
-    return json({ error: providerPublicCode(error), conversation_id: convId, ...providerDiagnostic(error, targets.length) }, providerStatus(error), requestId);
+    return json({ error: providerPublicCode(error), conversation_id: convId, ...(userMessageId ? { user_message_id: userMessageId } : {}), ...providerDiagnostic(error, targets.length) }, providerStatus(error), requestId);
   }
 
   // Never persist or render the model's chain-of-thought. Providers already
@@ -1085,12 +1127,13 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const projectId = activeProjectId;
 
   let finalizeFailed = conversationPersistDegraded;
+  let stored: Awaited<ReturnType<typeof finalizeChat>> = { messageId: null, versions: [] };
   try {
-    await finalizeChat(d, {
+    stored = await finalizeChat(d, {
       provider: activeTarget.client, providerName: activeTarget.provider, user, conversationId: convId, isTemporary, message,
       redactedMessage: redaction.redacted, reply, history, redaction, started,
       model: activeTarget.model, mode, codingDetected, files, projectId, requestId, usage,
-      tier: route.tier, steps: nonStreamSteps, taskContext,
+      tier: route.tier, steps: nonStreamSteps, taskContext, replace: replaceTarget,
     });
   } catch (error) {
     // The AI answered — never convert that into a request failure. Surface the
@@ -1102,6 +1145,9 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     reply,
     files,
     conversation_id: convId,
+    ...(stored.messageId ? { message_id: stored.messageId } : {}),
+    ...(userMessageId ? { user_message_id: userMessageId } : {}),
+    ...(stored.versions.length ? { versions: stored.versions } : {}),
     project_id: projectId,
     refused: false,
     pii_redacted: !redaction.safe,

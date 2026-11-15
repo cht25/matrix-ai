@@ -2,7 +2,6 @@ import { redirect, notFound } from "next/navigation";
 import { db, getCurrentUser } from "@/lib/data";
 import { getConversation } from "@/lib/server/queries";
 import { ChatClient, type ChatMessage } from "@/components/chat-client";
-import { ChatHeader } from "@/components/chat-header";
 
 export const metadata = { title: "Chat" } as const;
 
@@ -17,7 +16,7 @@ export default async function ChatPage({ params }: { params: Promise<{ id: strin
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-4xl flex-1 flex-col">
-      <ChatHeader conversationId={id} initialTitle={data.conversation.title} />
+      {/* The title and the conversation's own actions live in the chat toolbar. */}
       <ChatClient
         initialMessages={data.messages as ChatMessage[]}
         conversationId={id}
@@ -25,6 +24,7 @@ export default async function ChatPage({ params }: { params: Promise<{ id: strin
         initialMode={data.conversation.mode}
         initialHasMore={data.hasMore}
         initialProjectId={data.conversation.active_project_id}
+        initialTitle={data.conversation.title}
       />
     </div>
   );

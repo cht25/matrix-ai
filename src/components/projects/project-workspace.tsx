@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import type { AgentFile } from "@/lib/ai/agent";
 import { rpc, RpcCallError } from "@/lib/client/api";
+import { useDialogs } from "@/components/dialogs";
 import { pollBuildRun, streamBuildRun } from "@/lib/client/build-runner";
 import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
 import { looksLikeFrameworkProject, type ProjectFile } from "@/lib/projects/paths";
@@ -68,6 +69,7 @@ export function ProjectWorkspace({
   onTitle?: (title: string) => void;
   onProjectId?: (id: string) => void;
 }) {
+  const dialogs = useDialogs();
   const toast = useToast();
   const [tab, setTab] = useState<Tab>("preview");
   const [project, setProject] = useState<ProjectMeta | null>(null);
@@ -206,7 +208,7 @@ export function ProjectWorkspace({
 
   async function addFile() {
     if (!project) return;
-    const path = window.prompt("New file path", "pages/about.html");
+    const path = await dialogs.prompt({ title: "New file", label: "File path", initial: "pages/about.html", hint: "Folders in the path are created automatically.", confirmLabel: "Create file" });
     if (!path) return;
     setBusy(true);
     try {
@@ -223,7 +225,7 @@ export function ProjectWorkspace({
 
   async function addFolder() {
     if (!project) return;
-    const path = window.prompt("New folder path", "assets/icons");
+    const path = await dialogs.prompt({ title: "New folder", label: "Folder path", initial: "assets/icons", confirmLabel: "Create folder" });
     if (!path) return;
     setBusy(true);
     try {
@@ -255,7 +257,7 @@ export function ProjectWorkspace({
 
   async function removeFile(path: string) {
     if (!project || !path) return;
-    if (!window.confirm(`Delete ${path}?`)) return;
+    if (!(await dialogs.confirm({ title: `Delete ${path}?`, body: "The file is removed from this project. Deployed versions keep their own copy.", confirmLabel: "Delete" }))) return;
     setBusy(true);
     try {
       await rpc("project_file_delete", { project_id: project.id, path });
@@ -292,7 +294,7 @@ export function ProjectWorkspace({
 
   async function restore(id: string) {
     if (!project) return;
-    if (!window.confirm("Restore this version? A snapshot of the current files is saved first.")) return;
+    if (!(await dialogs.confirm({ title: "Restore this version?", body: "A snapshot of the current files is saved first, so this can be undone.", confirmLabel: "Restore", tone: "primary" }))) return;
     setBusy(true);
     try {
       await rpc("project_version_restore", { project_id: project.id, version_id: id });
@@ -399,6 +401,7 @@ export function ProjectWorkspace({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {dialogs.element}
       {/* §31 project dashboard header */}
       <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-2.5 sm:px-4">
         <div className="min-w-0 flex-1">

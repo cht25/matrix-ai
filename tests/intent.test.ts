@@ -295,10 +295,14 @@ describe("contextual response actions", () => {
     expect(plan.overflow).not.toContain("export");
   });
 
-  it("mobile keeps a single visible action plus More", () => {
+  it("mobile keeps Copy and Regenerate one tap away, the rest in More", () => {
     const plan = planResponseActions({ ...base, compact: true });
-    expect(plan.primary).toHaveLength(1);
-    expect(plan.overflow).toContain("regenerate");
+    expect(plan.primary).toEqual(["copy", "regenerate"]);
+    expect(plan.overflow).not.toContain("regenerate");
+    // A reply with more actions than fit still overflows on a phone.
+    const code = planResponseActions({ ...base, intent: "CODE", canRun: true, compact: true });
+    expect(code.primary).toHaveLength(2);
+    expect(code.overflow).toContain("regenerate");
   });
 
   it("response kinds are classified from content and intent", () => {

@@ -424,14 +424,16 @@ export function AppShell({
         {/* Mobile top bar — brand, live AI status, notifications. Nothing else,
             and explicitly no hamburger. */}
         <header className="app-topbar sticky top-0 z-30 flex h-[calc(var(--app-header)+env(safe-area-inset-top))] items-end pt-[env(safe-area-inset-top)] lg:hidden">
-          <div className="flex h-14 w-full items-center justify-between gap-2 px-3">
-            <div className="flex min-w-0 items-center gap-2">
-              <div className="sidebar-brand">
+          {/* One compact row: brand · live AI status · notifications · new chat.
+              The status shrinks before anything else; nothing ever wraps. */}
+          <div className="flex h-[var(--app-header)] w-full items-center justify-between gap-2 pl-3 pr-1.5">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <div className="sidebar-brand shrink-0">
                 <Logo size="sm" href="/chat" />
               </div>
-              <AiStatus className="hidden xs:inline-flex sm:inline-flex" />
+              <AiStatus className="min-w-0 shrink truncate" />
             </div>
-            <div className="flex items-center gap-0.5">
+            <div className="app-topbar-actions flex shrink-0 items-center">
               <NotificationsBell placement="down" />
               <NewChatButton
                 ariaLabel={t("chat.new")}
@@ -457,7 +459,7 @@ export function AppShell({
             "min-w-0 flex-1",
             sidebarCollapsed ? "lg:pl-[var(--sidebar-width-collapsed)]" : "lg:pl-[var(--sidebar-width)]",
             immersive
-              ? "flex h-[calc(100dvh-var(--app-header)-env(safe-area-inset-top))] flex-col overflow-hidden pb-[calc(var(--app-bottom-nav)+env(safe-area-inset-bottom))] lg:h-dvh lg:pb-0"
+              ? "app-main-immersive flex h-[calc(100dvh-var(--app-header)-env(safe-area-inset-top))] flex-col overflow-hidden lg:h-dvh"
               : "pb-[calc(var(--app-bottom-nav)+env(safe-area-inset-bottom))] lg:pb-0",
           )}
         >
