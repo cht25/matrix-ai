@@ -37,11 +37,17 @@ export function Modal({
   const dialogRef = useRef<HTMLDivElement>(null);
   const restoreFocus = useRef<HTMLElement | null>(null);
 
+  // The latest onClose is read through a ref so the effect below depends only
+  // on `open`. With an inline callback the effect used to re-run on every
+  // parent render, yanking focus back to the first control each time.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+
   const handleKey = useCallback(
     (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== "Tab" || !dialogRef.current) return;
@@ -59,7 +65,7 @@ export function Modal({
         first.focus();
       }
     },
-    [onClose],
+    [],
   );
 
   useEffect(() => {

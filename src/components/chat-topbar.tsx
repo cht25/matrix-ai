@@ -1,192 +1,352 @@
 "use client";
 
 // =============================================================================
-// Chat top bar (product spec §13, §25)
+// Chat toolbar (product spec §13, §25) — one compact row that never wraps,
+// shared by Chat and Agent:
 //
-// Only two primary controls stay visible — what the conversation IS and which
-// model lane it uses — plus a quiet readiness dot. Everything else (response
-// strategy, auto-read, demo mode, routing detail, Agent workspace) lives in
-// [Settings ▾] so the bar never becomes a wall of controls.
+//   [ Chat | Agent ]  [Models ▾]    conversation title    ● Idle   [⚙]
 //
-//   [Mode ▾] [Model ▾]                                   ● Ready   [Settings ▾]
+//   · Chat | Agent     switches mode INSIDE the same conversation.
+//   · Models           the only model control. The bar never prints a
+//                      technical model name; those live inside the selector.
+//   · ● Idle/Working   what MATRIX is doing right now.
+//   · ⚙ Chat settings  everything secondary: chat style, response strategy,
+//                      response display, voice language, read-aloud, demo
+//                      mode and the conversation's own actions.
+//
+// On a phone the title and the status word step aside (the dot stays) so the
+// four controls always fit on one line down to 320px.
 // =============================================================================
 
-import Link from "next/link";
-import { Cpu, FlaskConical, MonitorPlay, Settings2, SlidersHorizontal, Volume2 } from "lucide-react";
-import { MATRIX_MODES, MODEL_LANES, type ChatMode, type ModelLane, type ResponseStrategy } from "@/lib/ai/modes";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import {
+  Archive, ChevronLeft, ChevronRight, Download, EyeOff, FlaskConical, Languages, MessageSquareText, MonitorPlay, Pencil,
+  Settings2, SlidersHorizontal, Trash2, Type, Volume2, VolumeX,
+} from "lucide-react";
+import { MATRIX_MODES, type ChatMode, type ResponseStrategy } from "@/lib/ai/modes";
 import { MenuItem, MenuLabel, MenuSeparator, Popover } from "@/components/popover";
+import { ConfirmModal, Modal } from "@/components/modal";
+import { ModelSelector } from "@/components/model-picker";
+import { VOICE_LANGUAGES, voiceLanguage } from "@/lib/voice-input";
+import type { RevealMode } from "@/lib/stream-reveal";
 import { cn } from "@/lib/utils";
-const SELECT =
-  "inline-flex h-9 min-w-0 cursor-pointer items-center gap-1.5 rounded-[10px] border border-transparent bg-transparent px-2 text-[12.5px] font-medium text-ink transition-colors hover:border-border hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50";
+
+export type ToolbarStatus = "idle" | "working" | "recording";
+
+const STRATEGIES: Array<{ id: ResponseStrategy; label: string; hint: string }> = [
+  { id: "fast", label: "Fast", hint: "Shorter, quicker answers" },
+  { id: "balanced", label: "Balanced", hint: "The default" },
+  { id: "quality", label: "Quality", hint: "More careful and complete" },
+  { id: "efficient", label: "Efficient", hint: "Uses fewer tokens" },
+];
+
+const REVEAL_MODES: Array<{ id: RevealMode; label: string; hint: string }> = [
+  { id: "adaptive", label: "Adaptive typing", hint: "Smooth, keeps up with the answer" },
+  { id: "word", label: "Word by word", hint: "Steady reading pace" },
+  { id: "natural", label: "Natural stream", hint: "Shows text as it arrives" },
+  { id: "reduced", label: "Reduced motion", hint: "Fewer, larger updates" },
+];
+
+/** Chat styles: every mode except Agent, which has its own tab. */
+const CHAT_STYLES = MATRIX_MODES.filter((item) => item.id !== "agent");
+
+const STATUS: Record<ToolbarStatus, { label: string; dot: string }> = {
+  idle: { label: "Idle", dot: "bg-ink-3" },
+  working: { label: "Working", dot: "bg-accent pulse-dot" },
+  recording: { label: "Recording", dot: "bg-danger pulse-dot" },
+};
+
+type SettingsView = "main" | "style" | "strategy" | "display" | "voice";
+
+export type ConversationActions = {
+  title: string;
+  onRename: (title: string) => Promise<void> | void;
+  onExport: () => void;
+  onArchive: () => void;
+  onDelete: () => Promise<void> | void;
+};
 
 export function ChatTopBar({
   mode,
   onModeChange,
-  lane,
-  onLaneChange,
   strategy,
   onStrategyChange,
-  streaming,
+  revealMode,
+  onRevealModeChange,
+  voiceLang,
+  onVoiceLangChange,
+  status,
   locked,
   autoSpeak,
   onToggleAutoSpeak,
   demoMode,
   onToggleDemo,
-  routingLabel,
   workspaceCount,
   onOpenWorkspace,
   autoSpeakLabels,
+  conversation,
 }: {
   mode: ChatMode;
   onModeChange: (mode: ChatMode) => void;
-  lane: ModelLane;
-  onLaneChange: (lane: ModelLane) => void;
   strategy: ResponseStrategy;
   onStrategyChange: (strategy: ResponseStrategy) => void;
-  streaming: boolean;
-  /** Temporary chats cannot switch mode. */
+  revealMode: RevealMode;
+  onRevealModeChange: (mode: RevealMode) => void;
+  voiceLang: string;
+  onVoiceLangChange: (code: string) => void;
+  status: ToolbarStatus;
+  /** Temporary chats stay in Chat mode and are never saved. */
   locked?: boolean;
   autoSpeak: boolean;
   onToggleAutoSpeak: () => void;
   demoMode: boolean;
   onToggleDemo: () => void;
-  routingLabel: string | null;
   workspaceCount: number;
   onOpenWorkspace: () => void;
   autoSpeakLabels: { on: string; off: string };
+  /** Present once the conversation is saved: title plus its own actions. */
+  conversation?: ConversationActions | null;
 }) {
-  const strategies: Array<{ id: ResponseStrategy; label: string }> = [
-    { id: "fast", label: "Fast" },
-    { id: "balanced", label: "Balanced" },
-    { id: "quality", label: "Quality" },
-    { id: "efficient", label: "Efficient" },
-  ];
+  const [view, setView] = useState<SettingsView>("main");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  // The settings menu always opens on its first page.
+  useEffect(() => { if (!settingsOpen) setView("main"); }, [settingsOpen]);
+
+  const busy = status !== "idle";
+  const agent = mode === "agent";
+  const state = STATUS[status];
+  const style = CHAT_STYLES.find((item) => item.id === mode) ?? CHAT_STYLES[0];
+  const strategyLabel = STRATEGIES.find((item) => item.id === strategy)?.label ?? "Balanced";
+  const revealLabel = REVEAL_MODES.find((item) => item.id === revealMode)?.label ?? "Adaptive typing";
+  const voice = voiceLanguage(voiceLang);
+
+  async function submitRename(event: FormEvent) {
+    event.preventDefault();
+    const next = renameValue.trim();
+    if (!conversation || !next || renameBusy) return;
+    setRenameBusy(true);
+    try { await conversation.onRename(next); setRenaming(false); }
+    finally { setRenameBusy(false); }
+  }
+
+  /** A settings row that opens a second page instead of growing the menu. */
+  const drill = (target: SettingsView, icon: ReactNode, label: string, value: string) => (
+    <MenuItem icon={icon} onClick={() => setView(target)} description={value}>
+      <span className="flex items-center justify-between gap-2">{label}<ChevronRight size={14} className="shrink-0 text-ink-3" aria-hidden="true" /></span>
+    </MenuItem>
+  );
+  const back = (label: string) => (
+    <>
+      <MenuItem icon={<ChevronLeft size={15} />} onClick={() => setView("main")}>{label}</MenuItem>
+      <MenuSeparator />
+    </>
+  );
 
   return (
-    <div className="chat-topbar mb-2 flex min-h-12 shrink-0 items-center justify-between gap-2 border-b border-border py-1.5">
-      <div className="flex min-w-0 items-center gap-1">
-        <label className="sr-only" htmlFor="matrix-mode">Matrix mode</label>
-        <select
-          id="matrix-mode"
-          value={mode}
-          disabled={streaming || locked}
-          onChange={(event) => onModeChange(event.target.value as ChatMode)}
-          className={cn(SELECT, "max-w-40 font-semibold")}
-        >
-          {MATRIX_MODES.map((item) => (
-            <option key={item.id} value={item.id}>{item.label}</option>
-          ))}
-        </select>
-        <label className="sr-only" htmlFor="matrix-lane">Model</label>
-        <select
-          id="matrix-lane"
-          value={lane}
-          disabled={streaming}
-          onChange={(event) => onLaneChange(event.target.value as ModelLane)}
-          className={cn(SELECT, "max-w-32 text-ink-2")}
-        >
-          {MODEL_LANES.map((item) => (
-            <option key={item.id} value={item.id}>{item.label}</option>
-          ))}
-        </select>
-        <Link href="/models" className={cn(SELECT, "hidden text-ink-2 sm:inline-flex")} title="AI model status"><Cpu size={14} /> GPT OSS 120B</Link>
+    <div className="chat-toolbar" role="toolbar" aria-label="Chat controls">
+      <div className="flex min-w-0 items-center gap-1 sm:gap-1.5">
+        {locked ? (
+          <span className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[10px] border border-border bg-surface-2 px-2.5 text-[13px] font-semibold text-ink" title="Nothing in this chat is saved">
+            <EyeOff size={14} aria-hidden="true" /> Temporary
+          </span>
+        ) : (
+          <div className="mode-switch" role="radiogroup" aria-label="Matrix mode">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={!agent}
+              disabled={busy}
+              onClick={() => { if (agent) onModeChange("general"); }}
+              title="Chat — ask, learn, write and plan"
+            >
+              Chat
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={agent}
+              disabled={busy}
+              onClick={() => { if (!agent) onModeChange("agent"); }}
+              title="Agent — build, preview and publish projects"
+            >
+              Agent
+            </button>
+          </div>
+        )}
+        <ModelSelector disabled={status === "recording"} />
+        {conversation?.title ? (
+          <p className="ml-1 hidden min-w-0 truncate text-[13px] text-ink-3 md:block" title={conversation.title}>{conversation.title}</p>
+        ) : null}
       </div>
 
-      <div className="flex shrink-0 items-center gap-1.5">
-        {/* The Agent workspace button is contextual: it appears only once an
-            Agent run actually produced files. */}
+      <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+        {/* Contextual: appears only once an Agent run actually produced files. */}
         {workspaceCount > 0 ? (
           <button
             type="button"
             onClick={onOpenWorkspace}
-            className="inline-flex h-9 items-center gap-1.5 rounded-[10px] border border-border px-2.5 text-[12px] font-medium text-ink-2 transition-colors hover:border-accent/40 hover:bg-accent-soft hover:text-accent"
+            aria-label={`Open workspace, ${workspaceCount} file${workspaceCount === 1 ? "" : "s"}`}
+            className="inline-flex h-9 items-center gap-1.5 rounded-[10px] border border-border px-2 text-[12.5px] font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
           >
-            <MonitorPlay size={13} aria-hidden="true" />
+            <MonitorPlay size={14} aria-hidden="true" />
             <span className="hidden sm:inline">Workspace</span>
-            <span className="font-mono text-[10.5px]">{workspaceCount}</span>
+            <span className="font-mono text-[11px] tabular-nums">{workspaceCount}</span>
           </button>
         ) : null}
 
-        <span
-          role="status"
-          aria-live="polite"
-          className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium text-ink-2"
-        >
-          <span aria-hidden="true" className={cn("h-1.5 w-1.5 rounded-full", streaming ? "bg-accent pulse-dot" : "bg-ink-3")} />
-          {streaming ? "Working" : "Idle"}
+        <span role="status" aria-live="polite" title={state.label} className="inline-flex h-9 items-center gap-1.5 px-1.5 text-[12px] font-medium text-ink-2 sm:px-2">
+          <span aria-hidden="true" className={cn("h-2 w-2 shrink-0 rounded-full", state.dot)} />
+          <span className="sr-only sm:not-sr-only">{state.label}</span>
         </span>
 
         <Popover
           label="Chat settings"
-          panelClassName="w-60"
+          sheetTitle="Chat settings"
+          panelClassName="w-72"
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+          viewKey={view}
           trigger={({ toggle, open, aria }) => (
             <button
               type="button"
               onClick={toggle}
-              title="Settings"
+              title="Chat settings"
               aria-label="Chat settings"
               className={cn(
-                "grid h-9 w-9 place-items-center rounded-[10px] border transition-colors",
-                open ? "border-border bg-surface-2 text-ink" : "border-transparent text-ink-3 hover:border-border hover:bg-surface-2 hover:text-ink",
+                "grid h-9 w-9 shrink-0 place-items-center rounded-[10px] border transition-colors",
+                open ? "border-border bg-surface-2 text-ink" : "border-transparent text-ink-2 hover:border-border hover:bg-surface-2 hover:text-ink",
               )}
               {...aria}
             >
-              <Settings2 size={15} strokeWidth={1.8} />
+              <Settings2 size={16} strokeWidth={1.8} aria-hidden="true" />
             </button>
           )}
         >
-          {({ close }) => (
-            <>
-              <MenuLabel>Response strategy</MenuLabel>
-              {strategies.map((item) => (
-                <MenuItem
-                  key={item.id}
-                  icon={<SlidersHorizontal size={13} strokeWidth={1.7} />}
-                  active={strategy === item.id}
-                  onClick={() => {
-                    onStrategyChange(item.id);
-                    close();
-                  }}
-                >
-                  {item.label}
-                </MenuItem>
-              ))}
-              <MenuSeparator />
-              <MenuLabel>Session</MenuLabel>
-              <MenuItem
-                icon={<Volume2 size={13} strokeWidth={1.7} />}
-                active={autoSpeak}
-                onClick={() => {
-                  onToggleAutoSpeak();
-                  close();
-                }}
-              >
-                {autoSpeak ? autoSpeakLabels.on : autoSpeakLabels.off}
-              </MenuItem>
-              <MenuItem
-                icon={<FlaskConical size={13} strokeWidth={1.7} />}
-                active={demoMode}
-                onClick={() => {
-                  onToggleDemo();
-                  close();
-                }}
-              >
-                Demo mode {demoMode ? "on" : "off"}
-              </MenuItem>
-              {routingLabel ? (
+          {({ close }) => {
+            if (view === "style") {
+              return (
                 <>
-                  <MenuSeparator />
-                  <p className="px-2.5 pb-1.5 pt-1 font-mono text-[10px] leading-relaxed text-ink-3">
-                    Routing · {routingLabel}
-                    <br />
-                    Set in Admin → AI configuration.
-                  </p>
+                  {back("Chat style")}
+                  {CHAT_STYLES.map((item) => (
+                    <MenuItem key={item.id} checked={!agent && mode === item.id} description={item.hint} onClick={() => { onModeChange(item.id); close(); }}>
+                      {item.label}
+                    </MenuItem>
+                  ))}
                 </>
-              ) : null}
-            </>
-          )}
+              );
+            }
+            if (view === "strategy") {
+              return (
+                <>
+                  {back("Response strategy")}
+                  {STRATEGIES.map((item) => (
+                    <MenuItem key={item.id} checked={strategy === item.id} description={item.hint} onClick={() => { onStrategyChange(item.id); close(); }}>
+                      {item.label}
+                    </MenuItem>
+                  ))}
+                </>
+              );
+            }
+            if (view === "display") {
+              return (
+                <>
+                  {back("Response display")}
+                  {REVEAL_MODES.map((item) => (
+                    <MenuItem key={item.id} checked={revealMode === item.id} description={item.hint} onClick={() => { onRevealModeChange(item.id); close(); }}>
+                      {item.label}
+                    </MenuItem>
+                  ))}
+                </>
+              );
+            }
+            if (view === "voice") {
+              return (
+                <>
+                  {back("Voice language")}
+                  {VOICE_LANGUAGES.map((item) => (
+                    <MenuItem key={item.code} checked={voice.code === item.code} description={item.code === "auto" ? "Detects Bangla, English and more" : item.native} onClick={() => { onVoiceLangChange(item.code); close(); }}>
+                      {item.code === "auto" ? "Auto-detect" : item.label}
+                    </MenuItem>
+                  ))}
+                </>
+              );
+            }
+            return (
+              <>
+                {conversation ? (
+                  <>
+                    <MenuLabel>Conversation</MenuLabel>
+                    <p className="truncate px-2.5 pb-1 text-[12.5px] text-ink-2 md:hidden" title={conversation.title}>{conversation.title}</p>
+                    <MenuItem icon={<Pencil size={15} />} onClick={() => { close(); setRenameValue(conversation.title); setRenaming(true); }}>Rename</MenuItem>
+                    <MenuItem icon={<Download size={15} />} onClick={() => { close(); conversation.onExport(); }}>Export JSON</MenuItem>
+                    <MenuItem icon={<Archive size={15} />} onClick={() => { close(); conversation.onArchive(); }}>Archive</MenuItem>
+                    <MenuItem icon={<Trash2 size={15} />} danger onClick={() => { close(); setConfirmDelete(true); }}>Delete conversation</MenuItem>
+                    <MenuSeparator />
+                  </>
+                ) : null}
+                <MenuLabel>Responses</MenuLabel>
+                {!locked && !agent ? drill("style", <MessageSquareText size={15} />, "Chat style", style.label) : null}
+                {drill("strategy", <SlidersHorizontal size={15} />, "Response strategy", strategyLabel)}
+                {drill("display", <Type size={15} />, "Response display", revealLabel)}
+                <MenuSeparator />
+                <MenuLabel>Voice</MenuLabel>
+                {drill("voice", <Languages size={15} />, "Voice language", voice.code === "auto" ? "Auto-detect" : voice.label)}
+                {!agent ? (
+                  <MenuItem icon={autoSpeak ? <Volume2 size={15} /> : <VolumeX size={15} />} checked={autoSpeak} onClick={() => { onToggleAutoSpeak(); close(); }}>
+                    {autoSpeak ? autoSpeakLabels.on : autoSpeakLabels.off}
+                  </MenuItem>
+                ) : null}
+                <MenuSeparator />
+                <MenuItem icon={<FlaskConical size={15} />} checked={demoMode} description="Shows execution detail for every reply" onClick={() => { onToggleDemo(); close(); }}>
+                  Demo mode {demoMode ? "on" : "off"}
+                </MenuItem>
+              </>
+            );
+          }}
         </Popover>
       </div>
+
+      {conversation ? (
+        <>
+          <Modal open={renaming} onClose={() => setRenaming(false)} title="Rename conversation" size="sm">
+            <form onSubmit={(event) => void submitRename(event)} className="space-y-4">
+              <label className="block">
+                <span className="mb-1.5 block text-[13px] font-medium text-ink-2">Title</span>
+                <input
+                  value={renameValue}
+                  onChange={(event) => setRenameValue(event.target.value)}
+                  maxLength={120}
+                  autoComplete="off"
+                  className="input-base w-full"
+                />
+              </label>
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => setRenaming(false)} className="min-h-10 rounded-lg px-3.5 text-sm font-medium text-ink-2 hover:bg-surface-2">Cancel</button>
+                <button type="submit" disabled={!renameValue.trim() || renameBusy} className="min-h-10 rounded-lg bg-accent px-4 text-sm font-semibold text-[var(--primary-contrast)] hover:bg-accent-hover disabled:opacity-50">
+                  {renameBusy ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </form>
+          </Modal>
+          <ConfirmModal
+            open={confirmDelete}
+            onClose={() => setConfirmDelete(false)}
+            onConfirm={() => {
+              setDeleteBusy(true);
+              void Promise.resolve(conversation.onDelete()).finally(() => { setDeleteBusy(false); setConfirmDelete(false); });
+            }}
+            title="Delete this conversation?"
+            body="The conversation and its messages are removed from your history. This can't be undone."
+            confirmLabel="Delete"
+            busy={deleteBusy}
+          />
+        </>
+      ) : null}
     </div>
   );
 }

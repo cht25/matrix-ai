@@ -59,6 +59,10 @@ export type BuildStartInput = {
   imageRequests?: Array<{ name: string; prompt: string }>;
   maxFixAttempts?: number;
   requestId?: string;
+  /** Run again / Retry: the prompt is already stored in this conversation. */
+  reuseUser?: boolean;
+  /** Voice message: the private recording whose transcript is the prompt. */
+  audioAssetId?: string | null;
 };
 
 const IDLE_TIMEOUT_MS = 90_000;
@@ -91,6 +95,8 @@ export async function streamBuildRun(
     image_requests: input.imageRequests ?? [],
     max_fix_attempts: input.maxFixAttempts ?? undefined,
     request_id: input.requestId ?? crypto.randomUUID(),
+    reuse_user: input.reuseUser === true,
+    audio_asset_id: input.audioAssetId ?? undefined,
   }, handlers);
   return continueWhilePaused(first, handlers);
 }

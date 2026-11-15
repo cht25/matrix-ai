@@ -122,9 +122,14 @@ describe("progressive disclosure defaults to closed", () => {
 });
 
 describe("clean top bar", () => {
-  it("keeps two primary selects and moves the rest into Settings", () => {
+  it("keeps mode, Models, status and Settings — and moves the rest into Settings", () => {
     const source = topBar();
-    expect((source.match(/<select/g) ?? []).length).toBe(2);
+    // Chat | Agent is a segmented control and Models is a searchable selector:
+    // no native selects, and never a hard-coded technical model name.
+    expect((source.match(/<select/g) ?? []).length).toBe(0);
+    expect(source).toContain('aria-label="Matrix mode"');
+    expect(source).toContain("<ModelSelector");
+    expect(source).not.toMatch(/GPT OSS|gpt-oss|llama|qwen/i);
     expect(source).toMatch(/Chat settings/);
     expect(source).toMatch(/Response strategy/);
     expect(source).toMatch(/Demo mode/);

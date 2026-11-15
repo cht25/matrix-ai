@@ -597,7 +597,8 @@ export function classifyResponseKind(context: Pick<ActionContext, "intent" | "mo
  */
 export function planResponseActions(context: ActionContext): { primary: ResponseActionId[]; overflow: ResponseActionId[] } {
   const kind = classifyResponseKind(context);
-  const maxPrimary = context.compact ? 1 : 3;
+  // A phone keeps Copy and Regenerate one tap away; everything else is in More.
+  const maxPrimary = context.compact ? 2 : 3;
   const wanted: ResponseActionId[] = [];
 
   switch (kind) {

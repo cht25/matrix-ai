@@ -53,12 +53,18 @@ describe("stable streaming render", () => {
     expect(source).toContain('key !== settledKey && "msg-in"');
   });
 
-  it("voice input is available in Agent mode and never auto-sends", () => {
+  it("Stop sends a voice message; Transcribe only fills the composer", () => {
     const source = readFileSync("src/components/chat-client.tsx", "utf8");
-    expect(source).not.toMatch(/mode !== "code" && mode !== "agent" \? <button[^>]*toggleVoiceRecording/);
-    expect(source).toContain("<VoiceReviewBar");
-    const fn = source.slice(source.indexOf("async function uploadAndTranscribeVoice"), source.indexOf("function finishVoiceCapture"));
-    expect(fn).not.toMatch(/\bsend\(/);
-    expect(fn).toContain("placeTranscript(");
+    // One composer for every mode, Agent included.
+    expect(source).toContain("<ChatComposer");
+    expect(source).toContain('onStopVoice={() => void finishVoice("send")}');
+    expect(source).toContain('onTranscribeVoice={() => void finishVoice("transcribe")}');
+    // Stop → the recording is sent as a voice message without another click.
+    const sendFn = source.slice(source.indexOf("async function sendVoiceMessage"), source.indexOf("function discardVoice"));
+    expect(sendFn).toMatch(/await send\(undefined, transcript, \{ voice:/);
+    // Transcribe → editable text in the composer, and nothing is sent.
+    const dictate = source.slice(source.indexOf("async function transcribeToComposer"), source.indexOf("async function streamMessage"));
+    expect(dictate).toContain("placeTranscript(");
+    expect(dictate).not.toMatch(/\bsend\(/);
   });
 });

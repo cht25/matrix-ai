@@ -171,7 +171,7 @@ export function voiceErrorMessage(code: string): string {
     case "language-not-supported":
       return "This browser cannot recognise that language. Choose Auto-detect to transcribe on the server.";
     case "VOICE_TRANSCRIPTION_NOT_CONFIGURED":
-      return "Server transcription is not configured on this deployment. Choose a specific language to use your browser's speech recognition instead.";
+      return "Voice transcription is not configured on this deployment. Type your message, or choose a specific voice language in a desktop browser to use its built-in speech recognition.";
     case "AUDIO_SIZE_INVALID":
       return "That recording is too long to transcribe. Record a shorter message.";
     case "UNAUTHENTICATED":

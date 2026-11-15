@@ -17,6 +17,7 @@ import { adminAuth, adminDb, nowTs } from "@/lib/firebase/admin";
 import { verifySession, type SessionUser } from "@/lib/firebase/session";
 import { FirestoreDeploymentProvider } from "@/lib/deploy/firestore-provider";
 import { runBuildPipeline, latestBuildRunForProject, readBuildRun, type ImageAssetRequest } from "@/lib/server/build";
+import { sendableVoiceAsset } from "@/lib/server/voice-assets";
 import { cancelAgentTask, createAgentTask, getAgentTask } from "@/lib/server/agent-tasks";
 import { toFirestoreRun } from "@/lib/deploy/run-store";
 import { getDeploymentOverview } from "@/lib/server/deploy";
@@ -206,11 +207,37 @@ export async function POST(req: NextRequest) {
         });
         convId = created.id;
       }
-      await d
-        .collection("conversations")
-        .doc(convId)
-        .collection("messages")
-        .add({ role: "user", content: taskContext && typeof body.visible_message === "string" ? body.visible_message.slice(0, 12_000) : prompt.slice(0, 12_000), metadata: { mode: "agent", intent: "BUILD" }, created_at: nowTs() });
+      // Run again / Retry reuses the prompt that is already in the thread:
+      // one request stays one user message however many times it is executed.
+      const reuseUser = body.reuse_user === true && Boolean(conversationId);
+      if (!reuseUser) {
+        const visible = taskContext && typeof body.visible_message === "string" ? body.visible_message.slice(0, 12_000) : prompt.slice(0, 12_000);
+        const messages = d.collection("conversations").doc(convId).collection("messages");
+        const base = { role: "user", content: visible, created_at: nowTs() };
+        const plain = { ...base, metadata: { mode: "agent", intent: "BUILD" } };
+        // A voice message keeps its private recording in Agent mode exactly as
+        // it does in Chat. The transcript is the request either way, so a
+        // recording that cannot be linked never blocks the build.
+        const audioAssetId = typeof body.audio_asset_id === "string" ? body.audio_asset_id.trim() : "";
+        const voice = audioAssetId ? await sendableVoiceAsset(d, user.uid, audioAssetId, visible) : null;
+        let linked = false;
+        if (voice?.ok) {
+          try {
+            const ref = messages.doc();
+            const assetRef = d.collection("chat_audio_assets").doc(audioAssetId);
+            await d.runTransaction(async (tx) => {
+              const snap = await tx.get(assetRef);
+              if (snap.data()?.user_id !== user.uid || snap.data()?.conversation_id) throw new Error("AUDIO_ALREADY_SENT");
+              tx.create(ref, { ...base, metadata: { ...plain.metadata, ...voice.metadata } });
+              tx.update(assetRef, { conversation_id: convId, message_id: ref.id });
+            });
+            linked = true;
+          } catch (error) {
+            logGatewayFailure("build_voice_message", { requestId, userId: user.uid }, error);
+          }
+        }
+        if (!linked) await messages.add(plain);
+      }
     } catch (error) {
       // A persistent Agent chat requires durable storage. Continuing with a
       // missing conversation would create an unbound/duplicate project.

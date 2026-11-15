@@ -207,69 +207,7 @@
 .status-dot[data-state="warn"] { background: var(--warning); }
 .status-dot[data-state="down"] { background: var(--danger); }
 
-/* --- AI response ----------------------------------------------------------- */
-.ai-reply {
-  font-size: var(--text-base);
-  line-height: 1.7;
-  color: var(--text-secondary);
-}
-.ai-reply strong { color: var(--text); font-weight: 600; }
-.ai-reply h1, .ai-reply h2, .ai-reply h3, .ai-reply h4 {
-  font-size: var(--text-base);
-  font-weight: 600;
-  margin: 1.1em 0 0.4em;
-}
-.ai-reply p { margin: 0.55em 0; }
-.ai-reply ul, .ai-reply ol {
-  display: grid;
-  gap: 0.3em;
-  margin: 0.55em 0;
-  padding-left: 1.3rem;
-}
-.ai-reply ul { list-style: disc; }
-.ai-reply ol { list-style: decimal; }
-.ai-reply code {
-  font-family: var(--font-mono);
-  font-size: 0.84em;
-  background: var(--surface-3);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.08em 0.32em;
-  color: var(--purple);
-}
-.ai-reply a {
-  color: var(--blue);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.code-block {
-  background: var(--surface-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text);
-}
-.code-block pre {
-  overflow-x: auto;
-  margin: 0;
-  padding: 0.875rem 1rem;
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  line-height: 1.6;
-}
-
 /* --- chat composer + suggestions ------------------------------------------- */
-.composer-shell {
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-xl);
-  background: var(--surface);
-  transition: border-color var(--ease), box-shadow var(--ease);
-}
-.composer-shell:focus-within {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px var(--primary-soft);
-}
-
 .suggest-card {
   display: flex;
   align-items: flex-start;
@@ -335,17 +273,3 @@
   transition: top var(--ease);
 }
 .skip-link:focus { top: 12px; }
-
-/* Chat has one stable scrollport. Browser smooth scrolling on every SSE delta
-   queues animations and fights scroll anchoring; the hook follows per frame. */
-.chat-viewport {
-  scrollbar-gutter: stable;
-  overflow-anchor: none;
-  scroll-behavior: auto;
-  min-width: 0;
-  overscroll-behavior-y: contain;
-}
-.chat-viewport .msg-in,
-.chat-viewport .ai-reply { min-width: 0; overflow-wrap: anywhere; }
-.chat-viewport .code-block { max-width: 100%; }
-.chat-viewport img { height: auto; }
