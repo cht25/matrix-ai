@@ -694,6 +694,11 @@ const ACTIONS: Record<string, Handler> = {
     // choice only restores the selector after a reload. It grants nothing:
     // every request still states its own mode and is authorised on its own.
     if (b.mode !== undefined) patch.mode = z.enum(CONVERSATION_MODES).parse(b.mode);
+    if (b.active_project_id !== undefined) patch.active_project_id = b.active_project_id === null ? null : z.string().min(1).max(128).parse(b.active_project_id);
+    if (b.agent_session_id !== undefined) patch.agent_session_id = b.agent_session_id === null ? null : z.string().min(1).max(128).parse(b.agent_session_id);
+    if (b.execution_state !== undefined) patch.execution_state = b.execution_state === null ? null : z.string().min(1).max(64).parse(b.execution_state);
+    if (b.selected_model !== undefined) patch.selected_model = b.selected_model === null ? null : z.string().min(1).max(128).parse(b.selected_model);
+    if (b.selected_provider !== undefined) patch.selected_provider = b.selected_provider === null ? null : z.string().min(1).max(128).parse(b.selected_provider);
     await ref.set(patch, { merge: true });
     return true;
   },

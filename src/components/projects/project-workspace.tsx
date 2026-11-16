@@ -30,7 +30,7 @@ import type { BuildRun } from "@/lib/deploy/stages";
 import { absoluteUrl, pluralize, shortUrl } from "@/lib/deploy/format";
 import { GithubConnection } from "@/components/github-connection";
 import { FileTree } from "@/components/projects/file-tree";
-import { FileEditor } from "@/components/projects/file-editor";
+import { FileEditor, type SaveStatus } from "@/components/projects/file-editor";
 import { Alert, Button, Input, Menu, Spinner } from "@/components/ui";
 import { BuildStatusCard, ChangeSummary } from "@/components/build/build-progress";
 import { DeploymentPanel } from "@/components/build/deployment-panel";
@@ -77,6 +77,9 @@ export function ProjectWorkspace({
   const [openTabs, setOpenTabs] = useState<string[]>(initialFiles[0]?.path ? [initialFiles[0].path] : []);
   const [activePath, setActivePath] = useState(initialFiles[0]?.path ?? "");
   const [dirty, setDirty] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [savePaused, setSavePaused] = useState(false);
   const revisionRef = useRef(0);
   const [busy, setBusy] = useState(false);
@@ -172,26 +175,65 @@ export function ProjectWorkspace({
   }
 
   // ------------------------------------------------------------------ files --
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [dirty]);
+
+  async function persistFile(path: string, content: string) {
+    if (!project) return;
+    setSaveStatus("saving");
+    setSaveError(null);
+    try {
+      const result = await rpc<{ revision: number }>("project_file_upsert", {
+        project_id: project.id,
+        path,
+        content,
+        expected_revision: revisionRef.current,
+      });
+      revisionRef.current = result.revision;
+      setProject((current) => (current ? { ...current, revision: result.revision } : current));
+      setDirty(false);
+      setSaveStatus("saved");
+      setLastSavedAt(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+      recordOp(`Saved ${path}`);
+    } catch (err: unknown) {
+      setSaveStatus("error");
+      if (err && typeof err === "object" && "code" in err && (err as { code?: string }).code === "PROJECT_REVISION_CONFLICT") {
+        setSavePaused(true);
+        const conflictMsg = "This project changed elsewhere. Autosave is paused — reload the workspace before editing again.";
+        setSaveError("Revision conflict");
+        setMsg(conflictMsg);
+      } else {
+        setSaveError("Save failed — retry");
+        setMsg("Save failed — the change is only in this browser.");
+      }
+    }
+  }
+
+  async function saveNow() {
+    if (!active || !project) return;
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    await persistFile(active.path, active.content);
+  }
+
   function queueSave(nextFiles: ProjectFile[], path: string, content: string) {
     setDirty(true);
+    setSaveStatus("dirty");
+    setSaveError(null);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     if (savePaused) return;
     saveTimer.current = setTimeout(() => {
-      if (!project) return;
-      void rpc<{ revision: number }>("project_file_upsert", { project_id: project.id, path, content, expected_revision: revisionRef.current })
-        .then((result) => {
-          revisionRef.current = result.revision;
-          setProject((current) => current ? { ...current, revision: result.revision } : current);
-          setDirty(false);
-          recordOp(`Updated ${path}`);
-        })
-        .catch((err: unknown) => {
-          if (err && typeof err === "object" && "code" in err && (err as { code?: string }).code === "PROJECT_REVISION_CONFLICT") {
-            setSavePaused(true);
-            setMsg("This project changed elsewhere. Autosave is paused — reload the workspace before editing again.");
-          } else setMsg("Autosave failed — the change is only in this browser.");
-        });
-    }, 450);
+      void persistFile(path, content);
+    }, 650);
     setFiles(nextFiles);
   }
 
@@ -662,7 +704,16 @@ export function ProjectWorkspace({
               {run?.changes.length ? <div className="px-3 pt-3"><ChangeSummary changes={run.changes} /></div> : null}
 
               {active && active.encoding !== "base64" ? (
-                <FileEditor path={active.path} value={active.content} onChange={updateActive} disabled={busy} />
+                <FileEditor
+                  path={active.path}
+                  value={active.content}
+                  onChange={updateActive}
+                  onSave={() => void saveNow()}
+                  saveStatus={saveStatus}
+                  lastSavedAt={lastSavedAt}
+                  saveError={saveError}
+                  disabled={busy}
+                />
               ) : active ? (
                 <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-center text-sm text-ink-3">
                   <p>This file is a binary asset — it is served in the preview, not edited as text.</p>

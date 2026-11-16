@@ -24,6 +24,8 @@ export default async function ChatPage({ params }: { params: Promise<{ id: strin
         initialMode={data.conversation.mode}
         initialHasMore={data.hasMore}
         initialProjectId={data.conversation.active_project_id}
+        initialExecutionState={data.conversation.execution_state}
+        initialAgentSessionId={data.conversation.agent_session_id}
         initialTitle={data.conversation.title}
       />
     </div>
