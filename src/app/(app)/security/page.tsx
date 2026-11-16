@@ -5,7 +5,7 @@ import { db, getCurrentUser } from "@/lib/data";
 import { getSecurityPageData } from "@/lib/server/queries";
 import { Badge, Card, EmptyState, Progress } from "@/components/ui";
 import { RevokeSessionButton } from "@/components/revoke-session-button";
-import { timeAgo } from "@/lib/utils";
+import { TimeAgoText } from "@/components/local-time";
 
 export const metadata: Metadata = { title: "Security" };
 
@@ -92,7 +92,7 @@ export default async function SecurityPage() {
                   <p className="font-medium text-ink">
                     {s.device_name || "Device"} {s.revoked_at ? <Badge className="ml-2 border-border bg-surface text-ink-3">revoked</Badge> : null}
                   </p>
-                  <p className="text-xs text-ink-3">Last seen {timeAgo(s.last_seen_at)}</p>
+                  <p className="text-xs text-ink-3">Last seen <TimeAgoText iso={s.last_seen_at} /></p>
                 </div>
                 {!s.revoked_at ? <RevokeSessionButton sessionId={s.id} /> : null}
               </li>
@@ -111,7 +111,7 @@ export default async function SecurityPage() {
             {events.map((e) => (
               <li key={e.id} className="flex items-center justify-between rounded-xl bg-surface-2 px-3 py-2.5 text-sm">
                 <span className="capitalize text-ink-2">{e.event_type.replaceAll("_", " ")}</span>
-                <span className="text-xs text-ink-3">{timeAgo(e.created_at)}</span>
+                <span className="text-xs text-ink-3"><TimeAgoText iso={e.created_at} /></span>
               </li>
             ))}
           </ul>

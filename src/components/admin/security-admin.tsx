@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { rpc, RpcCallError } from "@/lib/client/api";
 import { Badge, Card, Spinner } from "@/components/ui";
-import { timeAgo } from "@/lib/utils";
+import { TimeAgoText } from "@/components/local-time";
 
 type Event = { id: string; user_id: string; event_type: string; created_at: string };
 type Session = { id: string; user_id: string; device_name: string; last_seen_at: string; revoked_at: string | null };
@@ -40,7 +40,7 @@ export function SecurityAdmin({ codes }: { codes: string[] }) {
                   <Badge className="border-border bg-surface capitalize text-ink-2">{e.event_type.replaceAll("_", " ")}</Badge>
                   <span className="truncate font-mono text-xs text-ink-3">{e.user_id.slice(0, 8)}</span>
                 </span>
-                <span className="shrink-0 text-xs text-ink-3">{timeAgo(e.created_at)}</span>
+                <span className="shrink-0 text-xs text-ink-3"><TimeAgoText iso={e.created_at} /></span>
               </li>
             ))}
           </ul>
@@ -54,7 +54,7 @@ export function SecurityAdmin({ codes }: { codes: string[] }) {
               <li key={s.id} className="flex items-center justify-between gap-3 rounded-xl bg-surface-2 px-3 py-2 text-sm">
                 <div className="min-w-0">
                   <p className="truncate font-medium text-ink">{s.device_name || "Device"} {s.revoked_at ? <Badge className="ml-1 border-border bg-surface text-ink-3">revoked</Badge> : null}</p>
-                  <p className="font-mono text-xs text-ink-3">{s.user_id.slice(0, 8)} · last seen {timeAgo(s.last_seen_at)}</p>
+                  <p className="font-mono text-xs text-ink-3">{s.user_id.slice(0, 8)} · last seen <TimeAgoText iso={s.last_seen_at} /></p>
                 </div>
               </li>
             ))}

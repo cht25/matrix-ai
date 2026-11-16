@@ -60,7 +60,7 @@ async function probe(): Promise<AiState> {
 
 export function AiStatus({ className }: { className?: string }) {
   const [state, setState] = useState<AiState>(
-    firebaseBrowserConfigured ? (peekCache<AiState>(CACHE_KEY) ?? "checking") : "not-configured",
+    firebaseBrowserConfigured ? "checking" : "not-configured",
   );
 
   const check = useCallback(async (force = false) => {
@@ -73,6 +73,8 @@ export function AiStatus({ className }: { className?: string }) {
 
   useEffect(() => {
     if (!firebaseBrowserConfigured) return;
+    const cached = peekCache<AiState>(CACHE_KEY);
+    if (cached) setState(cached);
     // Keep every mounted pill in sync from the single shared request.
     const unsubscribe = subscribe<AiState>(CACHE_KEY, setState);
     void check();

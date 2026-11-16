@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { Card, Spinner } from "@/components/ui";
+import { TimeOfDayText } from "@/components/local-time";
 
 type Health = {
   ok: boolean;
@@ -106,7 +107,7 @@ export function ProviderStatus() {
       )}
 
       {health?.checkedAt ? (
-        <p className="mono text-xs text-ink-3">Checked {new Date(health.checkedAt).toLocaleTimeString()}</p>
+        <p className="mono text-xs text-ink-3">Checked <TimeOfDayText value={health.checkedAt} /></p>
       ) : null}
     </Card>
   );

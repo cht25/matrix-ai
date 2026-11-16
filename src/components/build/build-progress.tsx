@@ -20,7 +20,7 @@ import { Activity, ChevronDown, FileDiff, Terminal } from "lucide-react";
 import type { BuildCheck } from "@/lib/deploy/validate";
 import type { BuildRun, BuildStageId, FileChange, StageState } from "@/lib/deploy/stages";
 import { changeCounts, stageDef, stageProgress } from "@/lib/deploy/stages";
-import { relativeTime, timeOfDay } from "@/lib/deploy/format";
+import { RelativeDeployTimeText, TimeOfDayText } from "@/components/local-time";
 import { cn } from "@/lib/utils";
 import { Progress, Spinner } from "@/components/ui";
 
@@ -182,7 +182,7 @@ export function BuildStatusCard({
                   {stage.message ? <span className="mt-0.5 block break-words text-[11px] leading-snug text-ink-3">{stage.message}</span> : null}
                 </span>
                 {stage.state === "running" && stage.startedAt ? (
-                  <span className="shrink-0 font-mono text-[10px] text-ink-3">{relativeTime(stage.startedAt)}</span>
+                  <span className="shrink-0 font-mono text-[10px] text-ink-3"><RelativeDeployTimeText value={stage.startedAt} /></span>
                 ) : null}
               </li>
             ))}
@@ -362,7 +362,7 @@ export function LogList({ lines, maxHeight = 200 }: { lines: LogRow[]; maxHeight
     <ol className="mt-1 overflow-y-auto rounded-lg border border-border bg-bg/80 p-2 font-mono text-[11px] leading-relaxed text-ink-2" style={{ maxHeight }}>
       {lines.map((line, index) => (
         <li key={index} className="flex gap-2">
-          <span className="shrink-0 text-ink-3">{line.at.includes("T") ? timeOfDay(line.at) : line.at}</span>
+          <span className="shrink-0 text-ink-3">{line.at.includes("T") ? <TimeOfDayText value={line.at} /> : line.at}</span>
           <span className="min-w-0 flex-1 break-words">
             <span className="text-accent">{line.step}</span> {line.detail}
           </span>

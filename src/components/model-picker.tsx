@@ -290,7 +290,7 @@ function ModelPanel({ data, setData, onReload, loadFailed }: { data: ModelPoolPa
 
 /** The toolbar control. Its label is always just "Models". */
 export function ModelSelector({ className, disabled }: { className?: string; disabled?: boolean }) {
-  const [data, setDataState] = useState<ModelPoolPayload | null>(cached?.data ?? null);
+  const [data, setDataState] = useState<ModelPoolPayload | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [open, setOpen] = useState(false);
 
@@ -300,7 +300,10 @@ export function ModelSelector({ className, disabled }: { className?: string; dis
     if (next) setDataState(next);
   }, []);
 
-  useEffect(() => { void reload(false); }, [reload]);
+  useEffect(() => {
+    if (cached?.data) setDataState(cached.data);
+    void reload(false);
+  }, [reload]);
   useEffect(() => onModelPoolChange((pool) => setDataState((current) => (current ? { ...current, pool } : current))), []);
   // Availability can change while the tab is open; re-read it when the panel opens.
   useEffect(() => { if (open && (!cached || Date.now() - cached.at > CACHE_MS)) void reload(false); }, [open, reload]);

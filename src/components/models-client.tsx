@@ -131,8 +131,8 @@ export function ModelsClient({ showChatLink = true }: { showChatLink?: boolean }
               <dl className="grid gap-x-4 gap-y-1 border-t border-border pt-3 text-xs text-ink-3 sm:grid-cols-2">
                 <div><dt className="inline">Provider: </dt><dd className="inline text-ink-2">{model.provider}</dd></div>
                 <div className="min-w-0"><dt className="inline">Model ID: </dt><dd className="inline break-all font-mono text-ink-2">{model.model_id}</dd></div>
-                <div><dt className="inline">Context window: </dt><dd className="inline text-ink-2">{model.context_tokens.toLocaleString()} tokens</dd></div>
-                <div><dt className="inline">Longest reply: </dt><dd className="inline text-ink-2">{model.max_output_tokens.toLocaleString()} tokens</dd></div>
+                <div><dt className="inline">Context window: </dt><dd className="inline text-ink-2">{model.context_tokens.toLocaleString("en-US")} tokens</dd></div>
+                <div><dt className="inline">Longest reply: </dt><dd className="inline text-ink-2">{model.max_output_tokens.toLocaleString("en-US")} tokens</dd></div>
               </dl>
             </Card>
           </li>;

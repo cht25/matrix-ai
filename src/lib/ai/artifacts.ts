@@ -293,7 +293,8 @@ export function activityLines(state: ExecutionState): ActivityLine[] {
     }
   }
   if (state.status === "running" && (lines.length === 0 || lines[lines.length - 1].state !== "active")) {
-    lines.push({ at: Date.now(), label: "Preparing response", state: "active" });
+    const fallbackAt = state.startedAt ?? state.events[state.events.length - 1]?.at ?? 0;
+    lines.push({ at: fallbackAt, label: "Preparing response", state: "active" });
   }
   return dedupeAdjacent(lines);
 }

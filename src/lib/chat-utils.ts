@@ -34,6 +34,20 @@ export function groupConversations(list: SidebarConversation[], now = new Date()
   return groups;
 }
 
+/** Deterministic UTC grouping safe for SSR + initial client hydration. */
+export function groupConversationsUtc(list: SidebarConversation[], now: Date): Record<GroupKey, SidebarConversation[]> {
+  const groups: Record<GroupKey, SidebarConversation[]> = { today: [], yesterday: [], week: [], older: [] };
+  const startOfDay = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const dayMs = 86_400_000;
+  for (const c of list) {
+    const t = new Date(c.updated_at).getTime();
+    const dayDiff = Math.floor((startOfDay - t) / dayMs);
+    const key: GroupKey = dayDiff <= 0 ? "today" : dayDiff === 1 ? "yesterday" : dayDiff <= 7 ? "week" : "older";
+    groups[key].push(c);
+  }
+  return groups;
+}
+
 export function formatTime(iso: string): string {
   const d = new Date(iso);
   const now = new Date();

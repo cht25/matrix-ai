@@ -11,15 +11,16 @@
 // and no popup, only the failing state with [Retry] / [View logs].
 // =============================================================================
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   AlertTriangle, Check, ChevronDown, Copy, ExternalLink, FileCode2, FolderTree, Globe2, RefreshCcw, Rocket, Terminal, X,
 } from "lucide-react";
 import type { BuildRun } from "@/lib/deploy/stages";
 import { buildRunCopy, stageProgress } from "@/lib/deploy/stages";
 import type { ProjectDeploymentOverview } from "@/lib/deploy/provider";
-import { copyToClipboard, formatBytes, pluralize, relativeTime, shortUrl } from "@/lib/deploy/format";
+import { copyToClipboard, formatBytes, pluralize, shortUrl } from "@/lib/deploy/format";
 import { BuildChecks, ChangeSummary, DeploymentLogsDisclosure } from "@/components/build/build-progress";
+import { LocalDateTimeText, RelativeDeployTimeText } from "@/components/local-time";
 import { cn } from "@/lib/utils";
 import { Spinner } from "@/components/ui";
 
@@ -171,7 +172,7 @@ export function DeploymentRow({
             <Stat label="Deployment" value={overview ? overview.status_label : progress.activeLabel} />
             <Stat label="URLs" value={String(urls.length || (liveUrl ? 1 : 0))} />
             {overview?.deployments?.[0]?.version ? <Stat label="Version" value={`v${overview.deployments[0].version}`} /> : null}
-            {overview?.last_deployed_at ? <Stat label="Deployed" value={relativeTime(overview.last_deployed_at)} /> : null}
+            {overview?.last_deployed_at ? <Stat label="Deployed" value={<RelativeDeployTimeText value={overview.last_deployed_at} />} /> : null}
             {overview?.deployments?.[0]?.bytes ? <Stat label="Uploaded" value={formatBytes(overview.deployments[0].bytes)} /> : null}
             {run.attempts ? <Stat label="Auto-fix" value={`${run.attempts}/${run.maxAttempts}`} /> : null}
             {run.model ? <Stat label="Model" value={`${run.model.provider} · ${run.model.model}`} /> : null}
@@ -228,7 +229,7 @@ export function DeploymentRow({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-lg border border-border bg-surface-2/70 px-2.5 py-1.5">
       <dt className="eyebrow text-[9.5px] text-ink-3">{label}</dt>
@@ -327,7 +328,7 @@ export function DeploySuccessPopup({
             <div className="rounded-lg border border-border bg-surface-2/70 px-2.5 py-1.5">
               <dt className="eyebrow text-[9.5px] text-ink-3">Hosting</dt>
               <dd className="mt-0.5 truncate font-semibold text-ink">{run.deployment?.slug ? `/s/${run.deployment.slug}` : "QORVYNA"}</dd>
-              <dd className="mt-0.5 text-[10px] text-ink-3">{run.finishedAt ? new Date(run.finishedAt).toLocaleString() : "Just now"}</dd>
+              <dd className="mt-0.5 text-[10px] text-ink-3"><LocalDateTimeText value={run.finishedAt} fallback="Just now" /></dd>
             </div>
           </dl>
 

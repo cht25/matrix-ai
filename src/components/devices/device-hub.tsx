@@ -12,6 +12,7 @@ import { Alert, Badge, Button, Card, EmptyState, Field, Input } from "@/componen
 import { Modal, ConfirmModal } from "@/components/modal";
 import { useToast } from "@/components/toast";
 import { rpc, RpcCallError } from "@/lib/client/api";
+import { useHydrated } from "@/lib/client/use-hydrated";
 import { cn } from "@/lib/utils";
 import { QrScanner } from "@/components/devices/qr-scanner";
 import {
@@ -146,8 +147,12 @@ export function DeviceHub() {
   const [edit, setEdit] = useState<{ device: HubDevice; name: string; permissions: DevicePermission[] } | null>(null);
   const [confirmRevoke, setConfirmRevoke] = useState<HubDevice | null>(null);
   const requesting = useRef(false);
+  const hydrated = useHydrated();
 
-  const me = useMemo(() => (typeof navigator === "undefined" ? null : describeUserAgent(navigator.userAgent)), []);
+  const me = useMemo(
+    () => (hydrated && typeof navigator !== "undefined" ? describeUserAgent(navigator.userAgent) : null),
+    [hydrated],
+  );
   const currentId = role === "parent" ? parentId : child?.device_id ?? "";
 
   const loadDevices = useCallback(async () => {

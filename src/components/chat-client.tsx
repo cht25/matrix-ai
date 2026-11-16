@@ -43,6 +43,7 @@ import { ServerProblem } from "@/components/server-problem";
 import { ConfirmModal } from "@/components/modal";
 import { classifyGatewayResponse, classifyRequestException, failureCopy, withRequestReference, type ApiFailure } from "@/lib/api-errors";
 import { useI18n } from "@/lib/i18n/client";
+import { useHydrated } from "@/lib/client/use-hydrated";
 import { useIsCompact } from "@/lib/client/use-media-query";
 import { useChatScroll } from "@/lib/use-chat-scroll";
 import { StreamingReply } from "@/components/streaming-reply";
@@ -246,6 +247,7 @@ export function ChatClient({
   const router = useRouter();
   const toast = useToast();
   const { t, locale } = useI18n();
+  const hydrated = useHydrated();
   const compact = useIsCompact();
 
   // --- conversation -------------------------------------------------------
@@ -2526,7 +2528,7 @@ export function ChatClient({
         <UserMessage
           key={key}
           message={message}
-          timeLabel={timeLabelOf(message.created_at)}
+          timeLabel={hydrated ? timeLabelOf(message.created_at) : ""}
           actions={userActions(index, message, key)}
           editing={editingKey === key}
           editMode={index === latestUserIndex ? "resend" : "transcript"}
@@ -2571,7 +2573,7 @@ export function ChatClient({
             execution={isLatest ? execution : null}
             liveBuildRun={isLatest ? buildRun : null}
             onRetryBuild={retryBuild}
-            timeLabel={timeLabelOf(message.created_at)}
+            timeLabel={hydrated ? timeLabelOf(message.created_at) : ""}
             actions={actions}
             exportFormats={availableExportFormats(signals, intent.suppressExport ? [] : intent.formats)}
             exportPickerOpen={exportPickerKey === key && !intent.suppressExport}
@@ -2623,7 +2625,7 @@ export function ChatClient({
     () => messages.map((message, index) => (index === latestAssistantIndex ? null : renderRow(message, index))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [messages, signalsByIndex, artifacts, latestAssistantIndex, latestUserIndex, busy, settledKey, hiddenKey, editingKey, savingEdit,
-      exportPickerKey, mode, compact, speakingId, agentFiles, agentProjectId, t, router],
+      exportPickerKey, mode, compact, speakingId, agentFiles, agentProjectId, hydrated, t, router],
   );
   const latestRow = latestAssistantIndex >= 0 ? renderRow(messages[latestAssistantIndex], latestAssistantIndex) : null;
   const renderedHistory = settledRows.map((row, index) => (index === latestAssistantIndex ? latestRow : row));

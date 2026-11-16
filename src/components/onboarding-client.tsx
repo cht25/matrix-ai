@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { sendEmailVerification } from "firebase/auth";
 import { fbAuth } from "@/lib/firebase/client";
 import { rpc, RpcCallError } from "@/lib/client/api";
+import { useHydrated } from "@/lib/client/use-hydrated";
 import { calculateAge } from "@/lib/utils";
 import { Check, Circle, Eye, EyeOff } from "lucide-react";
 import { Alert, Button, Card, Field, Input, Select, Spinner } from "@/components/ui";
@@ -30,6 +31,7 @@ export function OnboardingClient({
   emailVerified: boolean;
 }) {
   const router = useRouter();
+  const hydrated = useHydrated();
   const [fullName, setFullName] = useState(profile?.full_name ?? "");
   const [dob, setDob] = useState(profile?.date_of_birth ?? "");
   const [certNumber, setCertNumber] = useState("");
@@ -47,7 +49,7 @@ export function OnboardingClient({
   const consentStatus = consent?.status ?? "pending";
   const verificationStatus = verification?.verification_status ?? "none";
   const selectedCountry = countries.find((c) => c.id === country);
-  const age = dob ? calculateAge(dob) : null;
+  const age = hydrated && dob ? calculateAge(dob) : null;
   const identityDone = verificationStatus === "approved" || verificationStatus === "pending_review" || profile?.age_verified;
 
   async function saveProfile(e: React.FormEvent) {
@@ -176,7 +178,7 @@ export function OnboardingClient({
               <Input id="full-name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
             </Field>
             <Field label="Date of birth" htmlFor="dob" hint={age ? `Age calculated: ${age}` : "Required — validated on the server."}>
-              <Input id="dob" type="date" value={dob} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setDob(e.target.value)} required={needsDob} />
+              <Input id="dob" type="date" value={dob} max={hydrated ? new Date().toISOString().slice(0, 10) : undefined} onChange={(e) => setDob(e.target.value)} required={needsDob} />
             </Field>
             <Field label="Country" htmlFor="country">
               <Select id="country" value={country} onChange={(e) => setCountry(e.target.value)}>

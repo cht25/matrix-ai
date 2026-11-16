@@ -13,6 +13,7 @@ import { useState } from "react";
 import { Activity as ActivityIcon, ChevronDown, Gauge } from "lucide-react";
 import { activityLines, hasExecutionDetail, type ExecutionState } from "@/lib/ai/artifacts";
 import { PipelineAnalyticsPanel } from "@/components/pipeline-analytics";
+import { TimeOfDayText } from "@/components/local-time";
 import { BottomSheet } from "@/components/bottom-sheet";
 import { useIsCompact } from "@/lib/client/use-media-query";
 import { cn } from "@/lib/utils";
@@ -78,7 +79,7 @@ function ActivityLines({ lines }: { lines: ReturnType<typeof activityLines> }) {
           />
           <span className={cn("min-w-0 flex-1 truncate", line.state === "active" && "font-medium text-ink")}>{line.label}</span>
           <span className="mono shrink-0 text-[10px] text-ink-3">
-            {new Date(line.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            <TimeOfDayText value={line.at} />
           </span>
         </li>
       ))}
