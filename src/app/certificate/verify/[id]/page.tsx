@@ -41,7 +41,7 @@ export default async function CertificateVerifyPage({ params }: { params: Promis
                 <span className="status-dot" data-state="ok" aria-hidden="true" /> Verified certificate
               </span>
               <span className="text-xs text-ink-3">
-                Issued {new Date(result.issued_at).toLocaleDateString("en-GB", { year: "numeric", month: "long", day: "numeric" })}
+                Issued {new Date(result.issued_at).toLocaleDateString("en-GB", { year: "numeric", month: "long", day: "numeric", timeZone: "UTC" })}
               </span>
             </div>
 

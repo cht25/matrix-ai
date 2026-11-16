@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Modal } from "@/components/ui-interactive";
 import { Button, Skeleton } from "@/components/ui";
+import { TimeOfDayText } from "@/components/local-time";
 import { cn } from "@/lib/utils";
 
 // Real health only — every field below comes from GET /api/health, which
@@ -154,7 +155,7 @@ export function SystemStatusPill() {
                 model route: {health.codingProvider} · {health.codingModel}
               </p>
             ) : null}
-            <p className="mt-1 font-mono text-[11px] text-ink-3">checked {health ? new Date(health.checkedAt).toLocaleTimeString() : "—"}</p>
+            <p className="mt-1 font-mono text-[11px] text-ink-3">checked {health ? <TimeOfDayText value={health.checkedAt} /> : "—"}</p>
           </>
         )}
       </Modal>

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { EmptyState, Input } from "@/components/ui";
-import { timeAgo } from "@/lib/utils";
+import { TimeAgoText } from "@/components/local-time";
 import { ConversationActions } from "@/components/conversation-actions";
 
 type Conv = { id: string; title: string; summary: string; created_at: string; updated_at: string; archived_at: string | null };
@@ -38,7 +38,7 @@ export function HistorySearch({ conversations }: { conversations: Conv[] }) {
                 <p className="truncate font-semibold text-ink hover:text-accent">{c.title}</p>
                 {c.summary ? <p className="mt-0.5 line-clamp-1 text-sm text-ink-2">{c.summary}</p> : null}
                 <p className="mt-1 text-xs text-ink-3">
-                  {timeAgo(c.updated_at)} · {c.archived_at ? "archived" : "active"}
+                  <TimeAgoText iso={c.updated_at} /> · {c.archived_at ? "archived" : "active"}
                 </p>
               </Link>
               <ConversationActions conversationId={c.id} />

@@ -24,7 +24,8 @@ import { NotificationsBell } from "@/components/notifications-bell";
 import { MirrorAndLockBanner } from "@/components/family/mirror-banner";
 import { UserAvatar } from "@/components/avatar";
 import { MobileNav } from "@/components/mobile-nav";
-import { groupConversations, groupLabel, formatTime, type SidebarConversation } from "@/lib/chat-utils";
+import { groupConversations, groupConversationsUtc, groupLabel, formatTime, type SidebarConversation } from "@/lib/chat-utils";
+import { useHydrated } from "@/lib/client/use-hydrated";
 import { useI18n } from "@/lib/i18n/client";
 import { cn } from "@/lib/utils";
 import { PRIMARY_NAV, navigationActive } from "@/lib/navigation";
@@ -80,10 +81,11 @@ function NewChatButton({
   );
 }
 
-function HistoryList({ conversations, onNavigate }: { conversations: SidebarConversation[]; onNavigate?: () => void }) {
+function HistoryList({ conversations, renderedAt, onNavigate }: { conversations: SidebarConversation[]; renderedAt?: string; onNavigate?: () => void }) {
   const router = useRouter();
   const pathname = usePathname();
   const { t } = useI18n();
+  const hydrated = useHydrated();
   const [q, setQ] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -108,7 +110,11 @@ function HistoryList({ conversations, onNavigate }: { conversations: SidebarConv
     return () => window.removeEventListener("keydown", onKey);
   }, [openId]);
 
-  const groups = useMemo(() => groupConversations(filtered), [filtered]);
+  const groups = useMemo(() => {
+    if (hydrated) return groupConversations(filtered);
+    if (renderedAt) return groupConversationsUtc(filtered, new Date(renderedAt));
+    return { today: [], yesterday: [], week: [], older: filtered };
+  }, [filtered, hydrated, renderedAt]);
   const groupKeys = (Object.keys(groups) as (keyof typeof groups)[]).filter((k) => groups[k].length > 0);
 
   async function rename(id: string) {
@@ -166,7 +172,7 @@ function HistoryList({ conversations, onNavigate }: { conversations: SidebarConv
                       <span className="min-w-0 flex-1 truncate">{c.title}</span>
                     </Link>
                     <span className="pointer-events-none mr-0.5 hidden shrink-0 text-[10px] text-ink-3 lg:group-hover:inline">
-                      {formatTime(c.updated_at)}
+                      {hydrated ? formatTime(c.updated_at) : ""}
                     </span>
                     <div className="relative shrink-0">
                       <button
@@ -220,6 +226,7 @@ function HistoryList({ conversations, onNavigate }: { conversations: SidebarConv
 function SidebarBody({
   conversations,
   isAdmin,
+  renderedAt,
   onNavigate,
   footer,
   hideBrand,
@@ -228,6 +235,7 @@ function SidebarBody({
 }: {
   conversations: SidebarConversation[];
   isAdmin: boolean;
+  renderedAt?: string;
   onNavigate?: () => void;
   footer?: ReactNode;
   hideBrand?: boolean;
@@ -283,7 +291,7 @@ function SidebarBody({
           <p className="eyebrow">Recent chats</p>
           <Link href="/history" onClick={onNavigate} className="text-[11px] font-medium text-ink-3 transition-colors hover:text-ink">View all</Link>
         </div>
-        <HistoryList conversations={conversations} onNavigate={onNavigate} />
+        <HistoryList conversations={conversations} renderedAt={renderedAt} onNavigate={onNavigate} />
 
         <details className="group mt-5 border-t border-border pt-3" open={conversations.length === 0 || tools.some((item) => pathname.startsWith(item.href))}>
           <summary className="flex min-h-9 cursor-pointer list-none items-center justify-between rounded-[8px] px-1 text-ink-2 hover:text-ink [&::-webkit-details-marker]:hidden">
@@ -393,12 +401,14 @@ export function AppShell({
   conversations,
   isAdmin,
   sidebarError = null,
+  renderedAt,
   children,
 }: {
   user: ShellUser | null;
   conversations: SidebarConversation[];
   isAdmin: boolean;
   sidebarError?: string | null;
+  renderedAt?: string;
   children: ReactNode;
 }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -421,6 +431,7 @@ export function AppShell({
           <SidebarBody
             conversations={conversations}
             isAdmin={isAdmin}
+            renderedAt={renderedAt}
             collapsed={sidebarCollapsed}
             onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
             footer={<ShellFooter user={user} />}

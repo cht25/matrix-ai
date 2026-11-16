@@ -64,8 +64,9 @@ export function BuildRunCard({
 
   // A persisted run snapshot carries the run id where the deployment id
   // belongs; the message metadata knows the real one, so merge them here.
+  // Pass 0 for synthetic fallback timestamps so SSR and client agree byte-for-byte.
   const run: BuildRun | null = useMemo(() => {
-    const base = liveRun ?? stored ?? (snapshot ? runFromSnapshot(snapshot, Date.now()) : null);
+    const base = liveRun ?? stored ?? (snapshot ? runFromSnapshot(snapshot, 0) : null);
     if (!base) return null;
     if (!deployment?.id) return base;
     return {

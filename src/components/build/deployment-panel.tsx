@@ -18,8 +18,10 @@ import type { DeploymentRow, ProjectDeploymentOverview, ValidationView } from "@
 import { supportedEnvironments } from "@/lib/deploy/provider";
 import type { DeployEnvironmentId } from "@/lib/deploy/provider";
 import type { BuildRun } from "@/lib/deploy/stages";
-import { absoluteUrl, formatBytes, relativeTime, shortUrl } from "@/lib/deploy/format";
+import { absoluteUrl, formatBytes, shortUrl } from "@/lib/deploy/format";
 import { rpc, RpcCallError } from "@/lib/client/api";
+import { useHydrated } from "@/lib/client/use-hydrated";
+import { RelativeDeployTimeText } from "@/components/local-time";
 import { useDialogs } from "@/components/dialogs";
 import { errorCodeOf, mapAdminError } from "@/lib/admin-errors";
 import { BuildChecks, DeploymentLogsDisclosure, LogList, type LogRow } from "@/components/build/build-progress";
@@ -48,6 +50,7 @@ export function DeploymentPanel({
   onOpenFiles: () => void;
   onManageUrls: () => void;
 }) {
+  const hydrated = useHydrated();
   const [validation, setValidation] = useState<ValidationView | null>(null);
   const [checking, setChecking] = useState(false);
   const [override, setOverride] = useState(false);
@@ -56,7 +59,8 @@ export function DeploymentPanel({
 
   const capabilities = overview?.capabilities;
   const environments = useMemo(() => (capabilities ? supportedEnvironments(capabilities) : []), [capabilities]);
-  const liveUrl = overview?.is_live ? absoluteUrl(overview.live_url) : "";
+  const originOverride = hydrated ? undefined : "";
+  const liveUrl = overview?.is_live ? absoluteUrl(overview.live_url, originOverride) : "";
   const primary = overview?.urls?.find((item) => item.primary && item.status === "active") ?? overview?.urls?.[0];
 
   useEffect(() => {
@@ -121,7 +125,7 @@ export function DeploymentPanel({
             <span className="font-semibold text-ink">{overview?.urls?.filter((item) => item.status === "active").length ?? 0}</span>
           </Cell>
           <Cell label="Last deployed">
-            <span className="font-semibold text-ink">{overview?.last_deployed_at ? relativeTime(overview.last_deployed_at) : "Never"}</span>
+            <span className="font-semibold text-ink"><RelativeDeployTimeText value={overview?.last_deployed_at} empty="Never" /></span>
           </Cell>
         </dl>
 
@@ -267,6 +271,8 @@ export function DeploymentHistory({
   rollbackSupported: boolean;
   onChanged: () => void;
 }) {
+  const hydrated = useHydrated();
+  const originOverride = hydrated ? undefined : "";
   const [expanded, setExpanded] = useState<string | null>(null);
   const [logs, setLogs] = useState<Record<string, LogRow[]>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -329,12 +335,12 @@ export function DeploymentHistory({
                 >
                   {row.status === "live" ? "● Live" : row.status === "failed" ? "✕ Failed" : "○ " + row.status}
                 </span>
-                <span className="text-[11.5px] text-ink-3">{relativeTime(row.created_at)}</span>
+                <span className="text-[11.5px] text-ink-3"><RelativeDeployTimeText value={row.created_at} /></span>
                 <span className="text-[11.5px] text-ink-3">· {row.files} files · {formatBytes(row.bytes)}</span>
                 {row.overridden ? <span className="rounded-full border border-warning/40 bg-warning-soft px-2 py-0.5 text-[10px] text-warning">checks overridden</span> : null}
                 <span className="ml-auto flex flex-wrap items-center gap-1">
                   {row.status === "live" && row.public_url ? (
-                    <a href={absoluteUrl(row.public_url)} target="_blank" rel="noreferrer noopener" className="inline-flex min-h-7 items-center gap-1 rounded-lg px-2 text-[11.5px] font-medium text-accent hover:bg-surface-2">
+                    <a href={absoluteUrl(row.public_url, originOverride)} target="_blank" rel="noreferrer noopener" className="inline-flex min-h-7 items-center gap-1 rounded-lg px-2 text-[11.5px] font-medium text-accent hover:bg-surface-2">
                       <Globe2 size={11} /> Open
                     </a>
                   ) : null}

@@ -28,11 +28,18 @@ export function relativeTime(value: string | number | null | undefined, now = Da
 }
 
 /** HH:MM:SS for log rows (the stored value is a full ISO timestamp). */
-export function timeOfDay(value: string | number | null | undefined, locale = "en-GB"): string {
+export function timeOfDay(value: string | number | null | undefined, locale = "en-GB", timeZone?: string): string {
   if (!value) return "";
   const at = typeof value === "number" ? value : Date.parse(value);
   if (!Number.isFinite(at)) return "";
-  return new Date(at).toLocaleTimeString(locale, { hour12: false });
+  return new Date(at).toLocaleTimeString(locale, { hour12: false, ...(timeZone ? { timeZone } : {}) });
+}
+
+export function formatUtcShortDate(value: string | number | null | undefined): string {
+  if (!value) return "";
+  const at = typeof value === "number" ? value : Date.parse(value);
+  if (!Number.isFinite(at)) return "";
+  return new Date(at).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
 export function pluralize(count: number, singular: string, plural?: string): string {
@@ -52,7 +59,7 @@ export function shortUrl(url: string | null | undefined, limit = 52): string {
  * addresses as `/s/<slug>` so they keep working on preview, Render and the
  * production apex without a rebuild — the browser fills in the real host.
  */
-export function absoluteUrl(url: string | null | undefined): string {
+export function absoluteUrl(url: string | null | undefined, origin?: string): string {
   const value = String(url ?? "").trim();
   if (!value) return "";
   if (/^https?:\/\//i.test(value)) {
@@ -64,9 +71,10 @@ export function absoluteUrl(url: string | null | undefined): string {
     } catch { return ""; }
     return value;
   }
-  if (typeof window === "undefined") return value;
+  const baseOrigin = origin !== undefined ? origin : typeof window === "undefined" ? "" : window.location.origin;
+  if (!baseOrigin) return value;
   try {
-    return new URL(value, window.location.origin).toString();
+    return new URL(value, baseOrigin).toString();
   } catch {
     return value;
   }

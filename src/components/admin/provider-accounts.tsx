@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 import { rpc } from "@/lib/client/api";
 import { errorCodeOf } from "@/lib/admin-errors";
 import { Alert, Button, Card, Field, Input, Spinner } from "@/components/ui";
+import { TimeOfDayText } from "@/components/local-time";
 import { cn } from "@/lib/utils";
 
 type ModelWindow = { model: string; limit_requests: number | null; remaining_requests: number | null; limit_tokens: number | null; remaining_tokens: number | null; cooldown_until: string | null; observed_at: string | null };
@@ -38,12 +39,6 @@ const ERRORS: Record<string, string> = {
   SECRET_STORAGE_UNAVAILABLE: "Keys cannot be stored encrypted on this deployment. Set PROVIDER_SECRET_KEY, or add the key as GROQ_API_KEY_2 … GROQ_API_KEY_8 in the environment.",
 };
 
-function time(value: string | null): string {
-  if (!value) return "—";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
-
 function Meter({ label, remaining, limit }: { label: string; remaining: number | null; limit: number | null }) {
   const known = remaining !== null && limit !== null && limit > 0;
   const percent = known ? Math.max(0, Math.min(100, Math.round((remaining / limit) * 100))) : 0;
@@ -51,7 +46,7 @@ function Meter({ label, remaining, limit }: { label: string; remaining: number |
     <div className="min-w-0">
       <div className="flex items-baseline justify-between gap-2 text-[11px] text-ink-3">
         <span>{label}</span>
-        <span className="font-mono tabular-nums text-ink-2">{known ? `${remaining.toLocaleString()} / ${limit.toLocaleString()}` : "not reported yet"}</span>
+        <span className="font-mono tabular-nums text-ink-2">{known ? `${remaining.toLocaleString("en-US")} / ${limit.toLocaleString("en-US")}` : "not reported yet"}</span>
       </div>
       <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-2" role="progressbar" aria-label={`${label} remaining`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
         <div className={cn("h-full rounded-full", percent > 25 ? "bg-success" : percent > 0 ? "bg-warning" : known ? "bg-danger" : "bg-transparent")} style={{ width: `${percent}%` }} />
@@ -133,15 +128,15 @@ export function ProviderAccounts() {
                   </div>
                   <dl className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11.5px] sm:grid-cols-4">
                     <div><dt className="text-ink-3">Requests, last minute</dt><dd className="font-mono tabular-nums text-ink">{account.requests_last_minute}</dd></div>
-                    <div><dt className="text-ink-3">Tokens, last minute (est.)</dt><dd className="font-mono tabular-nums text-ink">{account.tokens_last_minute.toLocaleString()}</dd></div>
-                    <div><dt className="text-ink-3">Last success</dt><dd className="font-mono tabular-nums text-ink">{time(account.last_ok_at)}</dd></div>
-                    <div><dt className="text-ink-3">{account.available_at ? "Usable again" : "Moved away from"}</dt><dd className="font-mono tabular-nums text-ink">{account.available_at ? time(account.available_at) : `${account.rotations_away}×`}</dd></div>
+                    <div><dt className="text-ink-3">Tokens, last minute (est.)</dt><dd className="font-mono tabular-nums text-ink">{account.tokens_last_minute.toLocaleString("en-US")}</dd></div>
+                    <div><dt className="text-ink-3">Last success</dt><dd className="font-mono tabular-nums text-ink">{account.last_ok_at ? <TimeOfDayText value={account.last_ok_at} /> : "—"}</dd></div>
+                    <div><dt className="text-ink-3">{account.available_at ? "Usable again" : "Moved away from"}</dt><dd className="font-mono tabular-nums text-ink">{account.available_at ? <TimeOfDayText value={account.available_at} /> : `${account.rotations_away}×`}</dd></div>
                   </dl>
                   {account.models.length ? (
                     <div className="mt-3 grid gap-2.5">
                       {account.models.map((window) => (
                         <div key={window.model} className="rounded-lg border border-border bg-surface-2 px-2.5 py-2">
-                          <p className="truncate font-mono text-[11px] text-ink-2">{window.model}{window.cooldown_until ? <span className="ml-2 text-warning">limited until {time(window.cooldown_until)}</span> : null}</p>
+                          <p className="truncate font-mono text-[11px] text-ink-2">{window.model}{window.cooldown_until ? <span className="ml-2 text-warning">limited until <TimeOfDayText value={window.cooldown_until} /></span> : null}</p>
                           <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
                             <Meter label="Requests (RPM window)" remaining={window.remaining_requests} limit={window.limit_requests} />
                             <Meter label="Tokens (TPM window)" remaining={window.remaining_tokens} limit={window.limit_tokens} />
@@ -152,7 +147,7 @@ export function ProviderAccounts() {
                   ) : (
                     <p className="mt-2.5 text-[11.5px] text-ink-3">No request has used this account since the server started, so Groq has not reported its limits yet.</p>
                   )}
-                  {account.last_error ? <p className="mt-2 break-words text-[11.5px] text-ink-3">Last problem ({time(account.last_error_at)}): {account.last_error}</p> : null}
+                  {account.last_error ? <p className="mt-2 break-words text-[11.5px] text-ink-3">Last problem ({account.last_error_at ? <TimeOfDayText value={account.last_error_at} /> : "—"}): {account.last_error}</p> : null}
                 </li>
               );
             })}

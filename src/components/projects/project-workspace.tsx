@@ -28,6 +28,7 @@ import { looksLikeFrameworkProject, type ProjectFile } from "@/lib/projects/path
 import type { ProjectDeploymentOverview } from "@/lib/deploy/provider";
 import type { BuildRun } from "@/lib/deploy/stages";
 import { absoluteUrl, pluralize, shortUrl } from "@/lib/deploy/format";
+import { useHydrated } from "@/lib/client/use-hydrated";
 import { GithubConnection } from "@/components/github-connection";
 import { FileTree } from "@/components/projects/file-tree";
 import { FileEditor, type SaveStatus } from "@/components/projects/file-editor";
@@ -71,6 +72,7 @@ export function ProjectWorkspace({
 }) {
   const dialogs = useDialogs();
   const toast = useToast();
+  const hydrated = useHydrated();
   const [tab, setTab] = useState<Tab>("preview");
   const [project, setProject] = useState<ProjectMeta | null>(null);
   const [files, setFiles] = useState<ProjectFile[]>(initialFiles.map((f) => ({ ...f, encoding: "utf8" as const })));
@@ -98,7 +100,7 @@ export function ProjectWorkspace({
 
   const active = files.find((f) => f.path === activePath) ?? files[0];
   const framework = looksLikeFrameworkProject(files.map((f) => f.path));
-  const liveUrl = overview?.is_live ? absoluteUrl(overview.live_url) : "";
+  const liveUrl = overview?.is_live ? absoluteUrl(overview.live_url, hydrated ? undefined : "") : "";
   const activeUrlCount = overview?.urls?.filter((item) => item.status === "active").length ?? 0;
 
   const recordOp = useCallback((label: string) => {
@@ -749,7 +751,7 @@ export function ProjectWorkspace({
                 <UrlManager
                   projectId={project.id}
                   urls={overview?.urls ?? []}
-                  origin={typeof window === "undefined" ? "" : window.location.origin}
+                  origin={hydrated && typeof window !== "undefined" ? window.location.origin : ""}
                   isLive={Boolean(overview?.is_live)}
                   onChanged={() => void load(project.id)}
                 />

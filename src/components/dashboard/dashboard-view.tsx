@@ -9,7 +9,8 @@
 
 import Link from "next/link";
 import { Badge, Card, EmptyState, Progress } from "@/components/ui";
-import { formatDate, scoreLabel, timeAgo } from "@/lib/utils";
+import { TimeAgoText } from "@/components/local-time";
+import { formatDate, scoreLabel } from "@/lib/utils";
 
 export type DashboardRecommendation = { text: string; href: string; cta: string };
 
@@ -107,7 +108,7 @@ export function DashboardView({
               {events.map((event, index) => (
                 <Row key={index}>
                   <span className="min-w-0 truncate capitalize text-ink-2">{event.event_type.replaceAll("_", " ")}</span>
-                  <span className="shrink-0 text-xs text-ink-3">{timeAgo(event.created_at)}</span>
+                  <span className="shrink-0 text-xs text-ink-3"><TimeAgoText iso={event.created_at} /></span>
                 </Row>
               ))}
             </ul>
@@ -125,7 +126,7 @@ export function DashboardView({
                   <span className="min-w-0 truncate text-ink-2">Screenshot analysis</span>
                   <span className="flex shrink-0 items-center gap-2">
                     <Badge className="border-border bg-surface capitalize text-ink-2">{analysis.risk_level} risk</Badge>
-                    <span className="text-xs text-ink-3">{timeAgo(analysis.created_at)}</span>
+                    <span className="text-xs text-ink-3"><TimeAgoText iso={analysis.created_at} /></span>
                   </span>
                 </Row>
               ))}

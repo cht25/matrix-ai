@@ -11,12 +11,12 @@ export function PipelineAnalyticsPanel({ analytics, compact = false }: { analyti
   if (!analytics) return null;
   const rows: Array<[string, string]> = [
     ["Tokens/sec", analytics.tokensPerSec == null ? "—" : String(analytics.tokensPerSec)],
-    ["Total tokens", analytics.totalTokens.toLocaleString()],
+    ["Total tokens", analytics.totalTokens.toLocaleString("en-US")],
     ["Total latency", `${(analytics.totalLatencyMs / 1000).toFixed(2)}s`],
   ];
   const detail: Array<[string, string]> = [
-    ["Input tokens", analytics.inputTokens.toLocaleString()],
-    ["Output tokens", analytics.outputTokens.toLocaleString()],
+    ["Input tokens", analytics.inputTokens.toLocaleString("en-US")],
+    ["Output tokens", analytics.outputTokens.toLocaleString("en-US")],
     ["Time to first", analytics.timeToFirstMs == null ? "—" : `${(analytics.timeToFirstMs / 1000).toFixed(2)}s`],
     ["Agent steps", String(analytics.agentSteps)],
     ["Tools executed", String(analytics.toolsExecuted)],

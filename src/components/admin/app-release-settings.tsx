@@ -5,6 +5,7 @@ import { Download, RefreshCw, ShieldCheck, Smartphone } from "lucide-react";
 import { rpc } from "@/lib/client/api";
 import { errorCodeOf } from "@/lib/admin-errors";
 import { Alert, Badge, Button, Card, Field, Input, Spinner, Textarea } from "@/components/ui";
+import { formatDate } from "@/lib/utils";
 
 type ReleaseRecord = {
   version: string;
@@ -115,7 +116,7 @@ export function AppReleaseSettings() {
         </div>
         <div className="flex items-center gap-2">
           <Badge className="!border-success/40 !text-success">v{version} · build {buildNumber}</Badge>
-          {publishedAt ? <Badge>{new Date(publishedAt).toLocaleDateString()}</Badge> : null}
+          {publishedAt ? <Badge>{formatDate(publishedAt)}</Badge> : null}
         </div>
       </header>
 

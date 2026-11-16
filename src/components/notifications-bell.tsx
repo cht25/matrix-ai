@@ -24,12 +24,14 @@ const notifiedIds = new Set<string>();
 
 export function NotificationsBell({ placement = "auto" }: { placement?: "up" | "down" | "auto" }) {
   const [open, setOpen] = useState(false);
-  const [items, setItems] = useState<Item[]>(() => peekCache<Item[]>(CACHE_KEY) ?? []);
+  const [items, setItems] = useState<Item[]>([]);
   const [perm, setPerm] = useState<NotificationPermission | "tauri" | "unsupported">("granted");
   const mountedRef = useRef(true);
 
   useEffect(() => {
     mountedRef.current = true;
+    const cached = peekCache<Item[]>(CACHE_KEY);
+    if (cached) setItems(cached);
     if (isTauriApp()) {
       setPerm("tauri");
     } else if (typeof window !== "undefined" && "Notification" in window) {

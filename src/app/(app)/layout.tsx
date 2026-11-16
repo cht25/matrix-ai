@@ -53,6 +53,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       conversations={conversations as SidebarConversation[]}
       isAdmin={isAdmin}
       sidebarError={sidebarError}
+      renderedAt={new Date().toISOString()}
     >
       <RoboticsBackground />
       <PhoneUpdateBanner />

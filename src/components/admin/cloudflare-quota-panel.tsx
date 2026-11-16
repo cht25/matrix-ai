@@ -125,7 +125,7 @@ export function CloudflareQuotaPanel() {
         <div className="mb-1 flex items-center justify-between text-xs text-ink-2">
           <span className="inline-flex items-center gap-1">
             <Gauge className="h-3.5 w-3.5" aria-hidden="true" />
-            {usingNeurons ? `${used.toLocaleString()} / ${max.toLocaleString()} Neurons` : `${used} / ${max} requests`}
+            {usingNeurons ? `${used.toLocaleString("en-US")} / ${max.toLocaleString("en-US")} Neurons` : `${used} / ${max} requests`}
           </span>
           <span>{usedPercent}%</span>
         </div>
@@ -143,8 +143,8 @@ export function CloudflareQuotaPanel() {
           />
         </div>
         <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-3">
-          Model {quota.model ?? "—"} · {sourceLabel(quota.neuronsSource)} · daily budget {quota.budget.toLocaleString()}{" "}
-          Neurons with a {quota.safetyReserve.toLocaleString()}-Neuron safety reserve
+          Model {quota.model ?? "—"} · {sourceLabel(quota.neuronsSource)} · daily budget {quota.budget.toLocaleString("en-US")}{" "}
+          Neurons with a {quota.safetyReserve.toLocaleString("en-US")}-Neuron safety reserve
           {!usingNeurons ? ` · request safety budget ${quota.requestBudget}/day` : ""}.
         </p>
       </div>
@@ -162,11 +162,11 @@ export function CloudflareQuotaPanel() {
         </div>
         <div className="rounded-lg bg-surface-2 px-3 py-2">
           <dt className="text-ink-3">Neurons used</dt>
-          <dd className="font-mono text-ink">{quota.neurons === null ? "unavailable" : quota.neurons.toLocaleString()}</dd>
+          <dd className="font-mono text-ink">{quota.neurons === null ? "unavailable" : quota.neurons.toLocaleString("en-US")}</dd>
         </div>
         <div className="rounded-lg bg-surface-2 px-3 py-2">
           <dt className="text-ink-3">Remaining</dt>
-          <dd className="font-mono text-ink">{quota.remainingNeurons === null ? "—" : quota.remainingNeurons.toLocaleString()}</dd>
+          <dd className="font-mono text-ink">{quota.remainingNeurons === null ? "—" : quota.remainingNeurons.toLocaleString("en-US")}</dd>
         </div>
       </dl>
     </Card>

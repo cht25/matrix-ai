@@ -19,8 +19,10 @@ import {
 } from "lucide-react";
 import type { ProjectUrl, UrlKind } from "@/lib/deploy/urls";
 import { openableUrlOf, prepareNewUrl, urlErrorCopy, urlLabel } from "@/lib/deploy/urls";
-import { absoluteUrl, copyToClipboard, formatBytes, relativeTime, shortUrl } from "@/lib/deploy/format";
+import { absoluteUrl, copyToClipboard, formatBytes, shortUrl } from "@/lib/deploy/format";
 import { rpc } from "@/lib/client/api";
+import { useHydrated } from "@/lib/client/use-hydrated";
+import { RelativeDeployTimeText } from "@/components/local-time";
 import { Alert, Button, Input, Spinner } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +43,8 @@ export function UrlManager({
   onChanged: () => void;
   isLive: boolean;
 }) {
+  const hydrated = useHydrated();
+  const originOverride = hydrated ? undefined : "";
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "success" | "danger" | "info"; text: string } | null>(null);
@@ -83,7 +87,7 @@ export function UrlManager({
                   </span>
                   <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink">
                     {openable ? (
-                      <a href={absoluteUrl(openable)} target="_blank" rel="noreferrer noopener" className="hover:text-accent">
+                      <a href={absoluteUrl(openable, originOverride)} target="_blank" rel="noreferrer noopener" className="hover:text-accent">
                         {shortUrl(item.url, 60)}
                       </a>
                     ) : (
@@ -101,7 +105,7 @@ export function UrlManager({
                     <MiniAction label="Copy" icon={<Copy size={11} />} onClick={() => void copyToClipboard(absoluteUrl(item.url))} />
                     {openable ? (
                       <a
-                        href={absoluteUrl(openable)}
+                        href={absoluteUrl(openable, originOverride)}
                         target="_blank"
                         rel="noreferrer noopener"
                         className="inline-flex min-h-7 items-center gap-1 rounded-lg px-2 text-[11.5px] text-ink-2 hover:bg-surface-2 hover:text-ink"
@@ -480,7 +484,7 @@ export function AssetLibrary({ projectId, onOpenFile }: { projectId: string; onO
                       <span className="min-w-0 flex-1">
                         <span className="block truncate font-mono text-[11.5px] text-ink">{asset.path}</span>
                         <span className="block text-[10.5px] text-ink-3">
-                          {formatBytes(asset.bytes)} · {relativeTime(asset.updated_at)}
+                          {formatBytes(asset.bytes)} · <RelativeDeployTimeText value={asset.updated_at} />
                         </span>
                       </span>
                       {asset.generated ? <span className="shrink-0 rounded-full border border-accent/40 bg-accent-soft px-1.5 py-0.5 text-[9.5px] font-semibold uppercase text-accent">AI</span> : null}
