@@ -16,9 +16,21 @@
 // content.
 
 import { initializeApp, getApps, getApp, type FirebaseApp } from "firebase/app";
-import { connectAuthEmulator, getAuth, onAuthStateChanged, type Auth, type User } from "firebase/auth";
+import {
+  browserLocalPersistence,
+  browserPopupRedirectResolver,
+  browserSessionPersistence,
+  connectAuthEmulator,
+  getAuth,
+  indexedDBLocalPersistence,
+  initializeAuth,
+  onAuthStateChanged,
+  type Auth,
+  type User,
+} from "firebase/auth";
 import { connectFirestoreEmulator, getFirestore, type Firestore } from "firebase/firestore";
 import { firebasePublic, isConfigured } from "@/lib/env-public";
+import { logAuthEvent } from "@/lib/auth/diagnostics";
 
 export const firebaseBrowserConfigured = isConfigured();
 
@@ -28,6 +40,8 @@ export const firebaseBrowserConfigured = isConfigured();
 //   NEXT_PUBLIC_FIREBASE_EMULATOR_HOST=localhost
 //   auth → http://$HOST:9099 · firestore → $HOST:8080
 const EMULATOR_HOST = (process.env.NEXT_PUBLIC_FIREBASE_EMULATOR_HOST ?? "").trim();
+
+const AUTH_SINGLETON_KEY = "__qorvynaFirebaseAuth";
 
 function app(): FirebaseApp {
   return getApps().length ? getApp() : initializeApp(firebasePublic);
@@ -50,9 +64,43 @@ function connectEmulators(auth: Auth, db: Firestore) {
   }
 }
 
+function createOrReuseAuth(): Auth {
+  const firebaseApp = app();
+  if (typeof window === "undefined") {
+    return getAuth(firebaseApp);
+  }
+  const hostGlobal = globalThis as typeof globalThis & { [AUTH_SINGLETON_KEY]?: Auth };
+  if (hostGlobal[AUTH_SINGLETON_KEY]) {
+    return hostGlobal[AUTH_SINGLETON_KEY]!;
+  }
+  let instance: Auth;
+  let persistenceStrategy = "sdk-default";
+  try {
+    instance = initializeAuth(firebaseApp, {
+      persistence: [browserLocalPersistence, indexedDBLocalPersistence, browserSessionPersistence],
+      popupRedirectResolver: browserPopupRedirectResolver,
+    });
+    persistenceStrategy = "browserLocalPersistence";
+  } catch {
+    // Already initialized (e.g. HMR reload or test runtime) — reuse the
+    // single existing Auth instance on the FirebaseApp.
+    instance = getAuth(firebaseApp);
+  }
+  hostGlobal[AUTH_SINGLETON_KEY] = instance;
+  logAuthEvent("FIREBASE_INITIALIZED", {
+    detail: {
+      configured: firebaseBrowserConfigured,
+      persistence: persistenceStrategy,
+      appsCount: getApps().length,
+      hasWindow: true,
+    },
+  });
+  return instance;
+}
+
 export function fbAuth(): Auth {
   if (!cachedAuth) {
-    cachedAuth = getAuth(app());
+    cachedAuth = createOrReuseAuth();
     connectEmulators(cachedAuth, fbDb());
   }
   return cachedAuth;
@@ -69,10 +117,21 @@ export const FIREBASE_NOT_CONFIGURED_MESSAGE =
   "Set them in the host environment and redeploy.";
 
 /** Wait until Firebase Auth has restored a persisted session (or timed out). */
-export function waitForAuthUser(timeoutMs = 4000): Promise<User | null> {
-  if (!firebaseBrowserConfigured) return Promise.resolve(null);
+export async function waitForAuthUser(timeoutMs = 4000): Promise<User | null> {
+  if (!firebaseBrowserConfigured) return null;
   const auth = fbAuth();
-  if (auth.currentUser) return Promise.resolve(auth.currentUser);
+  if (auth.currentUser) return auth.currentUser;
+  if (typeof (auth as { authStateReady?: () => Promise<void> }).authStateReady === "function") {
+    try {
+      await Promise.race([
+        (auth as { authStateReady: () => Promise<void> }).authStateReady(),
+        new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+      ]);
+      if (auth.currentUser) return auth.currentUser;
+    } catch {
+      /* fall back to onAuthStateChanged */
+    }
+  }
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       unsub();
@@ -84,4 +143,17 @@ export function waitForAuthUser(timeoutMs = 4000): Promise<User | null> {
       resolve(user);
     });
   });
+}
+
+/** Obtain the active user's Firebase ID token if signed in (never logs tokens). */
+export async function getFirebaseIdToken(forceRefresh = false, timeoutMs = 2000): Promise<string | null> {
+  if (!firebaseBrowserConfigured || typeof window === "undefined") return null;
+  const auth = fbAuth();
+  const user = auth.currentUser ?? (await waitForAuthUser(timeoutMs));
+  if (!user) return null;
+  try {
+    return await user.getIdToken(forceRefresh);
+  } catch {
+    return null;
+  }
 }

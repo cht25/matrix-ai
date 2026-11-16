@@ -72,13 +72,19 @@ export function RegisterForm() {
     setBusy(true);
     try {
       const session = await mintSessionCookie();
-      markSessionEstablished({ uid: session.uid, onboardingComplete: session.onboarding_complete });
       if (!recordPostLoginNavigation()) {
         setLoopBlocked(true);
         setBusy(false);
         return;
       }
-      window.location.href = postAuthPath(session.onboarding_complete);
+      navigatedRef.current = true;
+      markSessionEstablished({
+        uid: session.uid,
+        onboardingComplete: session.onboarding_complete,
+        profileLoaded: session.profile_loaded,
+        profile: session.profile ?? null,
+      });
+      window.location.replace(postAuthPath(session.onboarding_complete));
     } catch {
       setError("Signed in with your account, but the server could not create your session. Tap Retry session — you will not create a second account.");
       setSessionRetry(true);
@@ -97,19 +103,25 @@ export function RegisterForm() {
       const auth = fbAuth();
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
       if (fullName.trim()) await updateProfile(cred.user, { displayName: fullName.trim() });
-      await sendEmailVerification(cred.user, { url: `${window.location.origin}/verify?next=/chat` });
-      const session = await mintSessionCookie();
-      markSessionEstablished({ uid: session.uid, onboardingComplete: session.onboarding_complete });
+      await sendEmailVerification(cred.user, { url: `${window.location.origin}/verify?next=/chat` }).catch(() => { /* best effort */ });
+      const session = await mintSessionCookie(cred.user, { forceRefresh: true });
       if (!recordPostLoginNavigation()) {
         setLoopBlocked(true);
         setBusy(false);
         return;
       }
-      window.location.href = postAuthPath(session.onboarding_complete);
+      navigatedRef.current = true;
+      markSessionEstablished({
+        uid: session.uid,
+        onboardingComplete: session.onboarding_complete,
+        profileLoaded: session.profile_loaded,
+        profile: session.profile ?? null,
+      });
+      window.location.replace(postAuthPath(session.onboarding_complete));
     } catch (err) {
       setBusy(false);
       const code = (err as { code?: string }).code ?? "";
-      if (code === "SESSION_MINT_FAILED" || code === "INTERNAL") {
+      if (code === "SESSION_MINT_FAILED" || code === "PROFILE_PROVISION_FAILED" || code === "PROFILE_LOAD_FAILED" || code === "INTERNAL") {
         setSessionRetry(true);
         return setError("Your account was created, but the server could not create your session. Tap Retry session.");
       }

@@ -110,7 +110,19 @@ export function authEnvironment(): AuthEnvironment {
   };
 }
 
+export type AuthLifecycleEvent =
+  | "FIREBASE_INITIALIZED"
+  | "REDIRECT_RESULT_STARTED"
+  | "REDIRECT_RESULT_COMPLETED"
+  | "AUTH_STATE_CHANGED"
+  | "AUTH_USER_DETECTED"
+  | "PROFILE_LOADING"
+  | "BACKEND_AUTH_CHECK"
+  | "CHAT_INITIALIZATION"
+  | "AUTH_REDIRECT_ERROR";
+
 export type AuthDiagnostic = {
+  event?: AuthLifecycleEvent;
   stage: AuthStage;
   method: AuthMethod;
   provider?: "google" | "facebook";
@@ -118,6 +130,20 @@ export type AuthDiagnostic = {
   /** Extra non-secret facts (redirect consumed, destination, etc.). */
   detail?: Record<string, string | number | boolean | undefined>;
 };
+
+const SENSITIVE_DETAIL_KEY = /token|password|secret|credential|cookie|authorization/i;
+
+function sanitizeDetail(
+  detail: Record<string, string | number | boolean | undefined> | undefined,
+): Record<string, string | number | boolean | undefined> {
+  if (!detail) return {};
+  const clean: Record<string, string | number | boolean | undefined> = {};
+  for (const [key, value] of Object.entries(detail)) {
+    if (SENSITIVE_DETAIL_KEY.test(key)) continue;
+    clean[key] = typeof value === "string" ? truncate(value) : value;
+  }
+  return clean;
+}
 
 /** True for `next dev` / test builds, where verbose diagnostics are helpful. */
 export function isVerboseAuthDiagnostics(): boolean {
@@ -128,27 +154,69 @@ export function isVerboseAuthDiagnostics(): boolean {
  * Record one authentication event. Always safe to call: every field is either
  * an enum, a hostname, or a redacted error summary.
  */
-export function logAuthDiagnostic(event: AuthDiagnostic): void {
+export function logAuthDiagnostic(diagnostic: AuthDiagnostic): void {
+  const safeDetail = sanitizeDetail(diagnostic.detail);
   const payload = {
-    stage: event.stage,
-    method: event.method,
-    provider: event.provider,
+    ...(diagnostic.event ? { event: diagnostic.event } : {}),
+    stage: diagnostic.stage,
+    method: diagnostic.method,
+    provider: diagnostic.provider,
     ...authEnvironment(),
-    ...(event.error === undefined ? {} : { error: safeAuthError(event.error) }),
-    ...(event.detail ?? {}),
+    ...(diagnostic.error === undefined ? {} : { error: safeAuthError(diagnostic.error) }),
+    ...safeDetail,
   };
-  const label = `[QORVYNA auth] ${event.stage} (${event.method})`;
+  const label = diagnostic.event
+    ? `[QORVYNA auth] ${diagnostic.event} (${diagnostic.stage}/${diagnostic.method})`
+    : `[QORVYNA auth] ${diagnostic.stage} (${diagnostic.method})`;
   if (isVerboseAuthDiagnostics()) {
     console.warn(label, payload);
   } else {
-    // Production keeps one compact line: enough to diagnose a report from a
-    // user without dumping objects into the console.
+    // Production keeps one compact redacted line: enough to trace each stage
+    // and diagnose redirect/session issues without dumping secrets.
     const error = payload.error;
+    const summaryPairs = Object.entries(safeDetail)
+      .filter(([, value]) => value !== undefined)
+      .slice(0, 8)
+      .map(([key, value]) => `${key}=${String(value)}`)
+      .join(" ");
     console.warn(
       `${label} code=${error?.code ?? "none"} status=${error?.status ?? "none"} host=${payload.hostname} ` +
-        `authDomain=${payload.authDomain} (${payload.authDomainSource}) redirect=${String(event.detail?.redirect ?? "n/a")}`,
+        `authDomain=${payload.authDomain} (${payload.authDomainSource}) redirect=${String(safeDetail.redirect ?? "n/a")}` +
+        (summaryPairs ? ` ${summaryPairs}` : ""),
     );
   }
+}
+
+/** Convenience helper for the named lifecycle events (always redacted). */
+export function logAuthEvent(
+  event: AuthLifecycleEvent,
+  options: {
+    stage?: AuthStage;
+    method?: AuthMethod;
+    provider?: "google" | "facebook";
+    error?: unknown;
+    detail?: Record<string, string | number | boolean | undefined>;
+  } = {},
+): void {
+  const stageByEvent: Record<AuthLifecycleEvent, AuthStage> = {
+    FIREBASE_INITIALIZED: "auth-init",
+    REDIRECT_RESULT_STARTED: "redirect-result",
+    REDIRECT_RESULT_COMPLETED: "redirect-result",
+    AUTH_STATE_CHANGED: "auth-state",
+    AUTH_USER_DETECTED: "auth-state",
+    PROFILE_LOADING: "profile",
+    BACKEND_AUTH_CHECK: "session-check",
+    CHAT_INITIALIZATION: "chat-load",
+    AUTH_REDIRECT_ERROR: "redirect-result",
+  };
+  logAuthDiagnostic({
+    event,
+    stage: options.stage ?? stageByEvent[event],
+    method: options.method ?? "session",
+    provider: options.provider,
+    error: options.error,
+    detail: options.detail,
+  });
 }
 
 /** Development-only detail; silent in production builds. */

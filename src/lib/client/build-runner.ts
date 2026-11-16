@@ -13,7 +13,7 @@
 import type { PendingAgentTask } from "@/lib/ai/agent-execution";
 import type { BuildStageId, BuildRun } from "@/lib/deploy/stages";
 import { applyStaleness, MAX_RUN_SEGMENTS } from "@/lib/deploy/stages";
-import { rpc } from "@/lib/client/api";
+import { optionalAuthHeaders, rpc } from "@/lib/client/api";
 
 export type BuildStreamEvent = {
   type?: "accepted" | "run" | "done" | "error";
@@ -184,9 +184,10 @@ async function streamSegment(body: Record<string, unknown>, handlers: BuildStrea
 
   armIdle();
   try {
+    const authHeaders = await optionalAuthHeaders();
     const res = await fetch("/api/build", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream", ...authHeaders },
       credentials: "same-origin",
       signal: controller.signal,
       body: JSON.stringify(body),

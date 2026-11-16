@@ -51,7 +51,7 @@ function VerifyInner() {
             return;
           }
         }
-        await mintSessionCookie().catch(() => {});
+        await mintSessionCookie(undefined, { forceRefresh: true }).catch(() => {});
         setStatus("done");
         setMessage("Your email is verified. Welcome to QORVYNA!");
         setTimeout(() => router.push(next), 1100);

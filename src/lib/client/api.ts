@@ -6,6 +6,7 @@
 // timestamp are baked into the signature), and are stored as private
 // ("authenticated") assets — mirroring the old private-bucket model.
 
+import type { User } from "firebase/auth";
 import { fbAuth } from "@/lib/firebase/client";
 
 export class RpcCallError extends Error {
@@ -20,14 +21,53 @@ export class RpcCallError extends Error {
   }
 }
 
-/** POST /api/rpc — same-origin, authenticated by the __session cookie. */
+/**
+ * Optional Firebase ID token bearer header for backend endpoints (/api/ai,
+ * /api/build, /api/rpc). Never throws if Firebase is unconfigured or signed
+ * out — cookie auth remains active as primary on SSR/browser requests.
+ */
+export async function optionalAuthHeaders(forceRefresh = false): Promise<Record<string, string>> {
+  try {
+    const auth = fbAuth();
+    let user = auth?.currentUser ?? null;
+    if (!user && typeof (auth as { authStateReady?: () => Promise<void> } | null)?.authStateReady === "function") {
+      await Promise.race([
+        (auth as { authStateReady: () => Promise<void> }).authStateReady(),
+        new Promise<void>((resolve) => setTimeout(resolve, 1500)),
+      ]);
+      user = auth.currentUser ?? null;
+    }
+    if (!user) return {};
+    const idToken = await user.getIdToken(forceRefresh);
+    return idToken ? { Authorization: `Bearer ${idToken}` } : {};
+  } catch {
+    return {};
+  }
+}
+
+/** POST /api/rpc — same-origin, authenticated by the __session cookie (+ optional ID token). */
 export async function rpc<T = unknown>(action: string, args: Record<string, unknown> = {}): Promise<T> {
-  const res = await fetch("/api/rpc", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action, ...args }),
-    credentials: "same-origin",
-  });
+  const doFetch = async (forceRefresh = false) =>
+    fetch("/api/rpc", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await optionalAuthHeaders(forceRefresh)) },
+      body: JSON.stringify({ action, ...args }),
+      credentials: "same-origin",
+    });
+
+  let res = await doFetch(false);
+  if (res.status === 401) {
+    let hasUser = false;
+    try {
+      hasUser = Boolean(fbAuth()?.currentUser);
+    } catch {
+      hasUser = false;
+    }
+    if (hasUser) {
+      await mintSessionCookie(undefined, { forceRefresh: true }).catch(() => {});
+      res = await doFetch(true);
+    }
+  }
   // Standard envelope: { success, data } / { success:false, error:{ code, message } }.
   // The legacy top-level string `error` is still tolerated.
   const data = (await res.json().catch(() => ({}))) as {
@@ -50,23 +90,59 @@ export async function rpc<T = unknown>(action: string, args: Record<string, unkn
  * cookie used by server components and API routes. Called right after any
  * successful sign-in (password, OAuth, MFA) — idempotent.
  */
-export type SessionMint = { ok: true; uid: string; onboarding_complete: boolean };
+export type SessionProfileSummary = {
+  uid: string;
+  email: string | null;
+  full_name: string;
+  avatar_url: string;
+};
 
-export async function mintSessionCookie(): Promise<SessionMint> {
-  const user = fbAuth().currentUser;
+export type SessionMint = {
+  ok: true;
+  uid: string;
+  onboarding_complete: boolean;
+  profile_loaded?: boolean;
+  profile?: SessionProfileSummary | null;
+};
+
+export async function mintSessionCookie(
+  userOverride?: User | null,
+  options: { forceRefresh?: boolean } = {},
+): Promise<SessionMint> {
+  const auth = fbAuth();
+  let user = userOverride ?? auth.currentUser;
+  if (!user && typeof (auth as { authStateReady?: () => Promise<void> } | null)?.authStateReady === "function") {
+    await Promise.race([
+      (auth as { authStateReady: () => Promise<void> }).authStateReady(),
+      new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+    ]).catch(() => {});
+    user = auth.currentUser;
+  }
   if (!user) throw new RpcCallError("UNAUTHENTICATED", 401);
-  // Force-refresh so the server never sees a stale token after OAuth.
-  const idToken = await user.getIdToken(true);
-  const res = await fetch("/api/auth/session", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ idToken }),
-    credentials: "same-origin",
-  });
+
+  const postToken = async (idToken: string) =>
+    fetch("/api/auth/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken }),
+      credentials: "same-origin",
+    });
+
+  let idToken = await user.getIdToken(options.forceRefresh === true);
+  let res = await postToken(idToken);
+  if (res.status === 401 && options.forceRefresh !== true) {
+    // Cached token may have been stale/revoked — refresh once before failing.
+    idToken = await user.getIdToken(true);
+    res = await postToken(idToken);
+  }
+
   const data = (await res.json().catch(() => ({}))) as {
     error?: string | { code?: string; message?: string };
     uid?: string;
     onboarding_complete?: boolean;
+    profile_loaded?: boolean;
+    profile_error?: string;
+    profile?: SessionProfileSummary | null;
   };
   if (!res.ok) {
     // The session route answers with the standard { error: { code, message } }
@@ -79,14 +155,39 @@ export async function mintSessionCookie(): Promise<SessionMint> {
     const detail = typeof data.error === "object" ? data.error?.message : undefined;
     throw new RpcCallError(code, res.status, detail);
   }
-  return { ok: true, uid: data.uid ?? user.uid, onboarding_complete: data.onboarding_complete === true };
+  if (data.profile_loaded === false) {
+    throw new RpcCallError(
+      data.profile_error ?? "PROFILE_LOAD_FAILED",
+      500,
+      "Signed in with your account, but your user profile could not be loaded.",
+    );
+  }
+  return {
+    ok: true,
+    uid: data.uid ?? user.uid,
+    onboarding_complete: data.onboarding_complete === true,
+    profile_loaded: true,
+    profile: data.profile ?? null,
+  };
 }
 
-/** Sign out everywhere: clear the cookie + Firebase client state. */
+/** Sign out everywhere: clear the cookie + Firebase client state + lifecycle/loop markers. */
 export async function signOutEverywhere(): Promise<void> {
   await fetch("/api/auth/session", { method: "DELETE", credentials: "same-origin" }).catch(() => {});
   const { signOut } = await import("firebase/auth");
   await signOut(fbAuth()).catch(() => {});
+  try {
+    const { clearOAuthFlowMarkers } = await import("@/lib/auth/oauth");
+    clearOAuthFlowMarkers();
+  } catch {
+    /* ignore in tests */
+  }
+  try {
+    const { resetAuthLifecycleOnSignOut } = await import("@/lib/auth/lifecycle");
+    resetAuthLifecycleOnSignOut();
+  } catch {
+    /* ignore in tests */
+  }
 }
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;

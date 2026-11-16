@@ -397,4 +397,89 @@ describe("diagnostics safety", () => {
       }
     }
   });
+
+  it("emits AUTH_STATE_CHANGED, AUTH_USER_DETECTED, PROFILE_LOADING and BACKEND_AUTH_CHECK events", async () => {
+    mocks.consumeOAuthRedirect.mockResolvedValue(null);
+    mocks.fetch.mockResolvedValue({ ok: true, json: async () => ({ authenticated: true, uid: "uid-1" }) });
+    const lifecycle = await load();
+    await startUntilAuthState(lifecycle);
+    fireAuthState(USER);
+    await lifecycle.startAuthLifecycle();
+    const events = mocks.logAuthDiagnostic.mock.calls.map(
+      (call) => (call[0] as { event?: string }).event,
+    );
+    expect(events).toContain("AUTH_STATE_CHANGED");
+    expect(events).toContain("AUTH_USER_DETECTED");
+    expect(events).toContain("PROFILE_LOADING");
+    expect(events).toContain("BACKEND_AUTH_CHECK");
+  });
+});
+
+describe("mobile redirect timeout resilience and sign-out cleanup", () => {
+  it("allows up to 18s for initial auth state when a Google redirect is pending", async () => {
+    vi.useFakeTimers();
+    mocks.oauthRedirectPending.mockReturnValue(true);
+    mocks.consumeOAuthRedirect.mockResolvedValue({
+      status: "ok",
+      uid: "uid-1",
+      onboardingComplete: false,
+      provider: "google",
+      isNewUser: false,
+      operation: "signIn",
+    });
+    const lifecycle = await load();
+    const run = lifecycle.startAuthLifecycle();
+    await vi.advanceTimersByTimeAsync(7_000);
+    // At 7s (> 5s non-redirect limit), still waiting cleanly for Firebase redirect completion.
+    expect(lifecycle.getAuthLifecycleState().status).toBe("INITIALIZING");
+    fireAuthState(USER);
+    await vi.advanceTimersByTimeAsync(1);
+    const state = await run;
+    expect(state.status).toBe("READY");
+  });
+
+  it("resets loop guard and memoised state on explicit sign-out", async () => {
+    const lifecycle = await load();
+    expect(lifecycle.recordPostLoginNavigation()).toBe(true);
+    expect(lifecycle.recordPostLoginNavigation()).toBe(true);
+    expect(lifecycle.recordPostLoginNavigation()).toBe(false);
+    lifecycle.resetAuthLifecycleOnSignOut();
+    expect(lifecycle.getAuthLifecycleState().status).toBe("UNAUTHENTICATED");
+    expect(lifecycle.recordPostLoginNavigation()).toBe(true);
+  });
+
+  it("recovers automatically when auth-state timed out transiently before Firebase emitted USER", async () => {
+    vi.useFakeTimers();
+    mocks.consumeOAuthRedirect.mockResolvedValue(null);
+    mocks.fetch.mockResolvedValue({ ok: true, json: async () => ({ authenticated: true, uid: "uid-1" }) });
+    const lifecycle = await load();
+    const run = lifecycle.startAuthLifecycle();
+    await vi.advanceTimersByTimeAsync(5_100);
+    const failed = await run;
+    expect(failed.status).toBe("ERROR");
+    expect(failed.error?.stage).toBe("auth-state");
+
+    fireAuthState(USER);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(lifecycle.getAuthLifecycleState().status).toBe("READY");
+    expect(lifecycle.getAuthLifecycleState().user).toEqual(USER);
+  });
+
+  it("never silently ignores explicit profileLoaded: false on redirect completion", async () => {
+    mocks.consumeOAuthRedirect.mockResolvedValue({
+      status: "ok",
+      uid: "uid-1",
+      onboardingComplete: false,
+      provider: "google",
+      isNewUser: true,
+      operation: "signIn",
+      profileLoaded: false,
+    });
+    const lifecycle = await load();
+    await startUntilAuthState(lifecycle);
+    fireAuthState(USER);
+    const state = await lifecycle.startAuthLifecycle();
+    expect(state.status).toBe("ERROR");
+    expect(state.error?.stage).toBe("profile");
+  });
 });

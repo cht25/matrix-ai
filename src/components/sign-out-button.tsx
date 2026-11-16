@@ -1,14 +1,12 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { signOutEverywhere } from "@/lib/client/api";
 
 export function SignOutButton({ label = "Logout" }: { label?: string }) {
-  const router = useRouter();
   async function signOut() {
     await signOutEverywhere();
-    router.push("/");
-    router.refresh();
+    // Hard navigation clears any in-memory React state before the next login.
+    window.location.replace("/login");
   }
   return (
     <button

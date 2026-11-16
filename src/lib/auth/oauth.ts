@@ -28,13 +28,14 @@ import {
   linkWithRedirect,
   signInWithRedirect,
   type AuthProvider,
+  type User,
   type UserCredential,
 } from "firebase/auth";
 import { fbAuth } from "@/lib/firebase/client";
 import { describeAuthError } from "@/lib/firebase/auth-errors";
-import { mintSessionCookie } from "@/lib/client/api";
+import { mintSessionCookie, type SessionProfileSummary } from "@/lib/client/api";
 import { postAuthDestination } from "@/lib/routing";
-import { logAuthDiagnostic } from "@/lib/auth/diagnostics";
+import { logAuthDiagnostic, logAuthEvent } from "@/lib/auth/diagnostics";
 
 export type OAuthProviderId = "google" | "facebook";
 
@@ -49,6 +50,8 @@ export type OAuthOk = {
    * Linked sign-in). It must never trigger a post-login navigation.
    */
   operation: "signIn" | "link";
+  profileLoaded?: boolean;
+  profile?: SessionProfileSummary | null;
 };
 
 export type OAuthResult =
@@ -262,19 +265,35 @@ export function describeOAuthFailure(err: unknown, provider: OAuthProviderId): s
 // -----------------------------------------------------------------------------
 
 /** Exchange the signed-in user's ID token for the httpOnly `__session` cookie. */
-export async function completeAuthenticatedSession(): Promise<{ uid: string; onboardingComplete: boolean }> {
-  const data = await mintSessionCookie();
-  try {
-    await fetch("/api/rpc", {
+export async function completeAuthenticatedSession(
+  userOverride?: User | null,
+  options?: { forceRefresh?: boolean },
+): Promise<{
+  uid: string;
+  onboardingComplete: boolean;
+  profileLoaded?: boolean;
+  profile?: SessionProfileSummary | null;
+}> {
+  const data =
+    userOverride || options
+      ? await mintSessionCookie(userOverride, options)
+      : await mintSessionCookie();
+  if (typeof fetch === "function") {
+    void fetch("/api/rpc", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
       body: JSON.stringify({ action: "record_security_event", event_type: "login", metadata: {} }),
+    }).catch(() => {
+      /* best-effort audit only */
     });
-  } catch {
-    /* best-effort audit only */
   }
-  return { uid: data.uid, onboardingComplete: data.onboarding_complete };
+  return {
+    uid: data.uid,
+    onboardingComplete: data.onboarding_complete,
+    profileLoaded: data.profile_loaded,
+    profile: data.profile,
+  };
 }
 
 function sessionFailureResult(err: unknown, provider: OAuthProviderId): OAuthResult {
@@ -327,7 +346,7 @@ export async function startOAuthSignIn(
     return { status: "redirecting" };
   } catch (err) {
     clearRedirectPending();
-    logAuthDiagnostic({ stage: "redirect-start", method: "redirect", provider, error: err });
+    logAuthEvent("AUTH_REDIRECT_ERROR", { stage: "redirect-start", method: "redirect", provider, error: err });
     if (isOAuthCancelled(err)) return { status: "cancelled" };
     return { status: "error", message: describeOAuthFailure(err, provider), provider };
   }
@@ -350,7 +369,7 @@ export async function startOAuthLink(provider: OAuthProviderId): Promise<OAuthRe
   } catch (err) {
     clearPendingLink();
     clearRedirectPending();
-    logAuthDiagnostic({ stage: "link-start", method: "link", provider, error: err });
+    logAuthEvent("AUTH_REDIRECT_ERROR", { stage: "link-start", method: "link", provider, error: err });
     if (isOAuthCancelled(err)) return { status: "cancelled" };
     return { status: "error", message: describeOAuthFailure(err, provider), provider };
   }
@@ -365,6 +384,14 @@ export async function startOAuthLink(provider: OAuthProviderId): Promise<OAuthRe
  */
 let redirectConsumption: Promise<OAuthResult | null> | null = null;
 
+export function clearOAuthFlowMarkers(): void {
+  clearPendingLink();
+  clearRedirectPending();
+  clearRememberedPostLoginPath();
+  remove(K_NOTICE);
+  redirectConsumption = null;
+}
+
 export function consumeOAuthRedirect(): Promise<OAuthResult | null> {
   if (!redirectConsumption) {
     redirectConsumption = handleRedirectResult().catch((err: unknown) => {
@@ -372,7 +399,12 @@ export function consumeOAuthRedirect(): Promise<OAuthResult | null> {
       // marker is what turns "try again" into a spinner that never resolves.
       clearPendingLink();
       clearRedirectPending();
-      logAuthDiagnostic({ stage: "redirect-result", method: "redirect", error: err, detail: { crashed: true } });
+      logAuthEvent("AUTH_REDIRECT_ERROR", {
+        stage: "redirect-result",
+        method: "redirect",
+        error: err,
+        detail: { crashed: true },
+      });
       return { status: "error", message: describeOAuthFailure(err, "google") } as OAuthResult;
     });
   }
@@ -382,6 +414,13 @@ export function consumeOAuthRedirect(): Promise<OAuthResult | null> {
 async function handleRedirectResult(): Promise<OAuthResult | null> {
   const auth = fbAuth();
   const linkProvider = pendingLinkProvider();
+  const wasPending = oauthRedirectPending();
+  logAuthEvent("REDIRECT_RESULT_STARTED", {
+    stage: linkProvider ? "link-result" : "redirect-result",
+    method: linkProvider ? "link" : "redirect",
+    provider: linkProvider ?? undefined,
+    detail: { wasPending },
+  });
   let cred: UserCredential;
   try {
     const result = await getRedirectResult(auth);
@@ -391,28 +430,56 @@ async function handleRedirectResult(): Promise<OAuthResult | null> {
       clearRedirectPending();
       if (linkProvider) {
         clearPendingLink();
-        logAuthDiagnostic({ stage: "link-result", method: "link", provider: linkProvider, detail: { redirect: "absent" } });
+        logAuthEvent("REDIRECT_RESULT_COMPLETED", {
+          stage: "link-result",
+          method: "link",
+          provider: linkProvider,
+          detail: { redirect: "absent", wasPending },
+        });
         return {
           status: "error",
           message: "Linking didn't complete. Please try again from Settings.",
           provider: linkProvider,
         };
       }
-      logAuthDiagnostic({ stage: "redirect-result", method: "redirect", detail: { redirect: "absent" } });
+      logAuthEvent("REDIRECT_RESULT_COMPLETED", {
+        stage: "redirect-result",
+        method: "redirect",
+        detail: { redirect: "absent", wasPending, hasCurrentUser: Boolean(auth.currentUser) },
+      });
+      if (wasPending && !auth.currentUser) {
+        logAuthEvent("AUTH_REDIRECT_ERROR", {
+          stage: "redirect-result",
+          method: "redirect",
+          detail: { reason: "null_redirect_after_pending", hasCurrentUser: false },
+        });
+      }
       return null;
     }
     cred = result;
   } catch (err) {
     clearRedirectPending();
-    if (isNoAuthEvent(err)) return null;
+    if (isNoAuthEvent(err)) {
+      logAuthEvent("REDIRECT_RESULT_COMPLETED", {
+        stage: "redirect-result",
+        method: "redirect",
+        detail: { redirect: "no-auth-event", wasPending },
+      });
+      return null;
+    }
     if (isOAuthCancelled(err)) {
       clearPendingLink();
-      logAuthDiagnostic({ stage: "redirect-result", method: "redirect", error: err, detail: { redirect: "cancelled" } });
+      logAuthEvent("REDIRECT_RESULT_COMPLETED", {
+        stage: "redirect-result",
+        method: "redirect",
+        error: err,
+        detail: { redirect: "cancelled" },
+      });
       return { status: "cancelled" };
     }
     const provider = linkProvider ?? providerFromError(err);
-    logAuthDiagnostic({
-      stage: "redirect-result",
+    logAuthEvent("AUTH_REDIRECT_ERROR", {
+      stage: linkProvider ? "link-result" : "redirect-result",
       method: linkProvider ? "link" : "redirect",
       provider,
       error: err,
@@ -424,7 +491,7 @@ async function handleRedirectResult(): Promise<OAuthResult | null> {
 
   clearRedirectPending();
   const provider = providerFromCredential(cred) ?? linkProvider ?? "google";
-  logAuthDiagnostic({
+  logAuthEvent("REDIRECT_RESULT_COMPLETED", {
     stage: linkProvider ? "link-result" : "redirect-result",
     method: linkProvider ? "link" : "redirect",
     provider,
@@ -434,6 +501,14 @@ async function handleRedirectResult(): Promise<OAuthResult | null> {
       hasUser: Boolean(cred.user),
     },
   });
+  if (cred.user) {
+    logAuthEvent("AUTH_USER_DETECTED", {
+      stage: "auth-state",
+      method: linkProvider ? "link" : "redirect",
+      provider,
+      detail: { source: "redirect_result", uidPresent: Boolean(cred.user.uid) },
+    });
+  }
 
   // Settings → Linked sign-in return trip.
   if (linkProvider) {
@@ -450,7 +525,7 @@ async function handleRedirectResult(): Promise<OAuthResult | null> {
       };
     }
     try {
-      await completeAuthenticatedSession();
+      await completeAuthenticatedSession(cred.user);
     } catch {
       /* the link itself succeeded; the existing cookie is still valid */
     }
@@ -477,7 +552,7 @@ async function finishSignIn(cred: UserCredential, provider: OAuthProviderId): Pr
   })();
 
   try {
-    const session = await completeAuthenticatedSession();
+    const session = await completeAuthenticatedSession(cred.user);
     clearRememberedPostLoginPath();
     return {
       status: "ok",
@@ -486,6 +561,8 @@ async function finishSignIn(cred: UserCredential, provider: OAuthProviderId): Pr
       provider,
       isNewUser,
       operation: "signIn",
+      profileLoaded: session.profileLoaded,
+      profile: session.profile,
     };
   } catch (err) {
     // The Firebase user exists (or was returned) — this is a session problem,

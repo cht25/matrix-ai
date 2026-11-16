@@ -30,8 +30,11 @@ import {
 import {
   primeSpeech, readAutoSpeakPreference, speakMarkdown, speechTextFromMarkdown, stopSpeech, writeAutoSpeakPreference,
 } from "@/lib/chat-speech";
-import { firebaseBrowserConfigured, waitForAuthUser } from "@/lib/firebase/client";
-import { rpc } from "@/lib/client/api";
+import { fbAuth, firebaseBrowserConfigured, waitForAuthUser } from "@/lib/firebase/client";
+import { mintSessionCookie, optionalAuthHeaders, rpc } from "@/lib/client/api";
+import { useAuthLifecycle } from "@/components/auth/auth-provider";
+import { startAuthLifecycle } from "@/lib/auth/lifecycle";
+import { logAuthEvent } from "@/lib/auth/diagnostics";
 import { notifyWorkDone } from "@/lib/client/work-notifications";
 import { loadModelPool } from "@/components/model-picker";
 import { QorvynaMark } from "@/components/logo";
@@ -471,19 +474,111 @@ export function ChatClient({
   }, []);
   useEffect(() => { localeRef.current = locale; }, [locale]);
 
+  const authLifecycle = useAuthLifecycle();
+  const [sessionInitError, setSessionInitError] = useState<string | null>(null);
+  const chatInitializedRef = useRef(false);
+
   // The composer sits on the keyboard; the bottom navigation steps aside.
   useKeyboardInset();
 
   // An unsent draft survives a refresh (per conversation, this tab only).
   const draftKey = `${DRAFT_PREFIX}${isTemporary ? "temporary" : convId ?? "new"}`;
+
   useEffect(() => {
-    try {
-      const saved = window.sessionStorage.getItem(draftKey);
-      if (saved) setInput((current) => current || saved);
-    } catch { /* storage unavailable: nothing to restore */ }
-    // Restored once, when the conversation opens.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (!firebaseBrowserConfigured) return;
+    let cancelled = false;
+
+    const finalizeChatInit = (authMode: string, profileLoaded: boolean) => {
+      if (cancelled) return;
+      setSessionInitError(null);
+      if (!chatInitializedRef.current) {
+        chatInitializedRef.current = true;
+        logAuthEvent("CHAT_INITIALIZATION", {
+          stage: "chat-load",
+          method: "session",
+          detail: {
+            sessionReady: true,
+            profileLoaded,
+            authMode,
+            conversation: convIdRef.current ?? "new",
+            mode,
+          },
+        });
+        try {
+          const saved = window.sessionStorage.getItem(draftKey);
+          if (saved) setInput((current) => current || saved);
+        } catch {
+          /* storage unavailable: nothing to restore */
+        }
+      }
+    };
+
+    if (authLifecycle.status === "INITIALIZING" || authLifecycle.status === "PROFILE_LOADING") {
+      return;
+    }
+    if (authLifecycle.status === "READY") {
+      if (authLifecycle.profileLoaded === false) {
+        setSessionInitError("Signed in, but your user profile could not be loaded. Tap Retry to reload your session.");
+        return;
+      }
+      finalizeChatInit("lifecycle", authLifecycle.profileLoaded);
+      return;
+    }
+    if (authLifecycle.status === "ERROR") {
+      logAuthEvent("CHAT_INITIALIZATION", {
+        stage: "chat-load",
+        method: "session",
+        detail: {
+          sessionReady: false,
+          failedStage: authLifecycle.error?.stage ?? "unknown",
+        },
+      });
+      setSessionInitError(authLifecycle.error?.message ?? "Your session could not be verified. Tap Retry.");
+      return;
+    }
+
+    // UNAUTHENTICATED in Firebase client (e.g., cookie-only SSR or signed out in
+    // another tab): verify backend auth independently before initializing chat.
+    void (async () => {
+      logAuthEvent("BACKEND_AUTH_CHECK", {
+        stage: "session-check",
+        method: "session",
+        detail: { caller: "chat-init" },
+      });
+      try {
+        const res = await fetch("/api/auth/session", {
+          method: "GET",
+          credentials: "same-origin",
+          cache: "no-store",
+        });
+        if (cancelled) return;
+        const data = (await res.json().catch(() => ({}))) as {
+          authenticated?: boolean;
+          profile_loaded?: boolean;
+        };
+        if (res.ok && data.authenticated) {
+          if (data.profile_loaded === false) {
+            setSessionInitError("Signed in, but your user profile failed to load. Tap Retry.");
+            return;
+          }
+          finalizeChatInit("cookie", true);
+          return;
+        }
+      } catch {
+        if (cancelled) return;
+      }
+      logAuthEvent("CHAT_INITIALIZATION", {
+        stage: "chat-load",
+        method: "session",
+        detail: { sessionReady: false, reason: "backend-unauthenticated" },
+      });
+      setSessionInitError("Your session could not be verified by the server. Sign in again to continue.");
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authLifecycle.status, authLifecycle.profileLoaded, authLifecycle.error, draftKey, mode]);
   useEffect(() => {
     const handle = window.setTimeout(() => {
       try {
@@ -1138,8 +1233,14 @@ export function ChatClient({
       return;
     }
 
-    // Session cookie authenticates /api/ai — do NOT require Firebase currentUser
-    // (it is often still null for a beat after a refresh, which used to fail every send).
+    // Wait briefly for startup auth lifecycle / Firebase hydration before sending
+    // so both the __session cookie and optional Bearer ID token are ready.
+    if (authLifecycle.status === "INITIALIZING" || authLifecycle.status === "PROFILE_LOADING") {
+      await Promise.race([
+        startAuthLifecycle(),
+        waitForAuthUser(2500),
+      ]).catch(() => {});
+    }
     const controller = new AbortController();
     abortRef.current = controller;
     const requestId = crypto.randomUUID();
@@ -1209,33 +1310,41 @@ export function ChatClient({
 
     try {
       armIdleTimer(isAgentRun ? 180_000 : CONNECT_TIMEOUT_MS, controller);
-      const res = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({
-          action: isImage ? "image" : isOrchestrator ? "orchestrate" : "chat",
-          stream: !isImage && !isOrchestrator && messageMode !== "agent",
-          conversation_id: convIdRef.current,
-          project_id: agentProjectId,
-          is_temporary: isTemporary,
-          mode: messageMode,
-          lane,
-          strategy,
-          study_level: studyLevel,
-          explain_style: explainStyle,
-          message,
-          task_context: opts.taskContext ?? undefined,
-          audio_asset_id: opts.audioAssetId ?? undefined,
-          image_storage_path: imageStoragePath ?? undefined,
-          attachments: sentAttachments.map(({ name, content, type }) => ({ name, content, type })),
-          language: locale,
-          regenerate: opts.regenerate === true,
-          reuse_user: opts.reuseUser === true || opts.regenerate === true,
-          request_id: requestId,
-        }),
-        signal: controller.signal,
+      const requestBody = JSON.stringify({
+        action: isImage ? "image" : isOrchestrator ? "orchestrate" : "chat",
+        stream: !isImage && !isOrchestrator && messageMode !== "agent",
+        conversation_id: convIdRef.current,
+        project_id: agentProjectId,
+        is_temporary: isTemporary,
+        mode: messageMode,
+        lane,
+        strategy,
+        study_level: studyLevel,
+        explain_style: explainStyle,
+        message,
+        task_context: opts.taskContext ?? undefined,
+        audio_asset_id: opts.audioAssetId ?? undefined,
+        image_storage_path: imageStoragePath ?? undefined,
+        attachments: sentAttachments.map(({ name, content, type }) => ({ name, content, type })),
+        language: locale,
+        regenerate: opts.regenerate === true,
+        reuse_user: opts.reuseUser === true || opts.regenerate === true,
+        request_id: requestId,
       });
+      const postAi = async (forceRefresh = false) =>
+        fetch("/api/ai", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(await optionalAuthHeaders(forceRefresh)) },
+          credentials: "same-origin",
+          body: requestBody,
+          signal: controller.signal,
+        });
+
+      let res = await postAi(false);
+      if (res.status === 401 && fbAuth().currentUser) {
+        await mintSessionCookie(undefined, { forceRefresh: true }).catch(() => {});
+        res = await postAi(true);
+      }
       armIdleTimer(STREAM_IDLE_TIMEOUT_MS, controller);
 
       if (!res.ok) {
@@ -1690,7 +1799,7 @@ export function ChatClient({
           commitPartial("Okay, I won't start the build. Your existing project is unchanged.", { turnId }, { mode: "agent", agent_task: { ...pendingTask, state: "CONVERSATION" }, execution_state: "CONVERSATION" });
         } else {
           try {
-            const res = await fetch("/api/ai", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+            const res = await fetch("/api/ai", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", ...(await optionalAuthHeaders()) },
               body: JSON.stringify({ action: "cancel_pending_task", conversation_id: convIdRef.current, original_request: pendingTask.originalRequest }) });
             if (!res.ok) throw new Error("CANCEL_PENDING_TASK_FAILED");
             agentTaskRef.current = null;
@@ -2691,6 +2800,22 @@ export function ChatClient({
               </>
             )}
 
+            {sessionInitError ? (
+              <ServerProblem
+                failure={{
+                  ...failureCopy("auth"),
+                  title: "Session verification failed",
+                  detail: sessionInitError,
+                  retryable: true,
+                  action: "sign-in",
+                }}
+                onRetry={() => {
+                  setSessionInitError(null);
+                  authLifecycle.retry();
+                }}
+                onDismiss={() => setSessionInitError(null)}
+              />
+            ) : null}
             {failure ? (
               <ServerProblem failure={failure} onRetry={buildRun?.status === "failed" ? retryBuild : () => void retry()} onDismiss={() => setFailure(null)} />
             ) : null}

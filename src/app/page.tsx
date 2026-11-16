@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/data";
 import { LoginScreen } from "@/components/auth/login-screen";
@@ -15,5 +16,9 @@ export default async function HomePage() {
   }
   const user = await getCurrentUser();
   if (user) redirect("/chat");
-  return <LoginScreen />;
+  return (
+    <Suspense fallback={null}>
+      <LoginScreen />
+    </Suspense>
+  );
 }

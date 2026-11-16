@@ -392,11 +392,13 @@ export function AppShell({
   user,
   conversations,
   isAdmin,
+  sidebarError = null,
   children,
 }: {
   user: ShellUser | null;
   conversations: SidebarConversation[];
   isAdmin: boolean;
+  sidebarError?: string | null;
   children: ReactNode;
 }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -483,6 +485,21 @@ export function AppShell({
             </div>
           ) : null}
           <MirrorAndLockBanner />
+          {sidebarError ? (
+            <div
+              role="alert"
+              className="mx-auto mt-2 flex w-full max-w-4xl items-center justify-between gap-3 rounded-lg border border-danger/40 bg-danger-soft px-3 py-2 text-xs text-danger"
+            >
+              <span>{sidebarError}</span>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="shrink-0 rounded border border-danger/40 px-2 py-0.5 font-medium hover:bg-danger/10"
+              >
+                Retry
+              </button>
+            </div>
+          ) : null}
           <div
             className={cn(
               immersive

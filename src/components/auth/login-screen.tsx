@@ -212,17 +212,23 @@ export function LoginForm() {
     window.location.replace(destination);
   }, [decision, onboardingComplete, next, status, loopBlocked]);
 
-  async function finishSignIn() {
-    const session = await completeAuthenticatedSession();
-    // Reflect the established session in the shared state so every guard
-    // agrees with the navigation this screen is about to perform.
-    markSessionEstablished({ uid: session.uid, onboardingComplete: session.onboardingComplete });
+  async function finishSignIn(userOverride?: import("firebase/auth").User) {
+    const session = await completeAuthenticatedSession(userOverride);
     if (!recordPostLoginNavigation()) {
       setLoopBlocked(true);
       setBusy(false);
       return;
     }
-    window.location.href = postAuthPath(session.onboardingComplete, next);
+    // Mark navigatedRef before updating lifecycle state so the decision-watcher
+    // effect does not double-count `recordPostLoginNavigation()` on this login.
+    navigatedRef.current = true;
+    markSessionEstablished({
+      uid: session.uid,
+      onboardingComplete: session.onboardingComplete,
+      profileLoaded: session.profileLoaded,
+      profile: session.profile ?? null,
+    });
+    window.location.replace(postAuthPath(session.onboardingComplete, next));
   }
 
   function clearLoopAndRetry() {
@@ -253,12 +259,22 @@ export function LoginForm() {
     setError(null);
     setBusy(true);
     try {
-      await signInWithEmailAndPassword(fbAuth(), email.trim(), password);
-      await finishSignIn();
+      const cred = await signInWithEmailAndPassword(fbAuth(), email.trim(), password);
+      await finishSignIn(cred.user);
     } catch (err) {
       const code = (err as { code?: string }).code ?? "";
-      if (code === "SESSION_MINT_FAILED" || (err as { status?: number }).status === 500) {
-        setError("Signed in with Firebase, but the server could not create your session. Check FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY on the host and retry.");
+      if (
+        code === "SESSION_MINT_FAILED" ||
+        code === "PROFILE_PROVISION_FAILED" ||
+        code === "PROFILE_LOAD_FAILED" ||
+        (err as { status?: number }).status === 500
+      ) {
+        setError(
+          code === "PROFILE_PROVISION_FAILED" || code === "PROFILE_LOAD_FAILED"
+            ? "Signed in with Firebase, but your profile could not be loaded. Tap Retry session."
+            : "Signed in with Firebase, but the server could not create your session. Check FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY on the host and retry.",
+        );
+        setSessionRetry(true);
         setBusy(false);
         return;
       }
@@ -288,8 +304,8 @@ export function LoginForm() {
       const hint = mfa.hints.find((h) => h.factorId === "totp");
       if (!hint) throw new Error("no totp factor");
       const assertion = await TotpMultiFactorGenerator.assertionForSignIn(hint.uid, mfaCode.trim());
-      await mfa.resolveSignIn(assertion);
-      await finishSignIn();
+      const cred = await mfa.resolveSignIn(assertion);
+      await finishSignIn(cred.user);
     } catch {
       setError("That verification code didn't work. Please try again.");
       setBusy(false);
