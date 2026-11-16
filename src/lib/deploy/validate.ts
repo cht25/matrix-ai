@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX build validation (§14)
+// QORVYNA build validation (§14)
 //
 // Real, local, deterministic checks that run before anything is published:
 //
@@ -375,7 +375,7 @@ function dependenciesCheck(text: ProjectFile[], files: ProjectFile[]): BuildChec
     issues.push({
       path: "package.json",
       code: "needs-bundler",
-      message: "This project needs a bundler (React/Vite/Next) and MATRIX hosting serves built static files, so nothing was installed or compiled. Ask MATRIX for a self-contained static build (index.html + CSS + JS) instead.",
+      message: "This project needs a bundler (React/Vite/Next) and QORVYNA hosting serves built static files, so nothing was installed or compiled. Ask QORVYNA for a self-contained static build (index.html + CSS + JS) instead.",
       severity: "error",
     });
     return { id: "dependencies", label: BUILD_CHECK_LABELS.dependencies, status: "failed", message: "A bundler build is required but is not supported by this host.", issues };
@@ -466,7 +466,7 @@ function syntaxCheck(text: ProjectFile[]): BuildCheck {
       id: "syntax",
       label: BUILD_CHECK_LABELS.syntax,
       status: "skipped",
-      message: `${skipped.length} file${skipped.length === 1 ? "" : "s"} (${skipped.slice(0, 3).join(", ")}${skipped.length > 3 ? "…" : ""}) need a TSX/JSX compiler that MATRIX does not run — not verified.`,
+      message: `${skipped.length} file${skipped.length === 1 ? "" : "s"} (${skipped.slice(0, 3).join(", ")}${skipped.length > 3 ? "…" : ""}) need a TSX/JSX compiler that QORVYNA does not run — not verified.`,
       issues: [
         ...issues,
         ...skipped.slice(0, 8).map((path) => ({ path, message: "Not syntax-checked by this host.", severity: "warning" as const })),
@@ -662,7 +662,7 @@ export function formatIssues(issues: BuildIssue[], limit = 12): string {
 export function buildFixPrompt(report: BuildReport, projectFiles: number): string {
   const issues = blockingIssues(report);
   return [
-    `The MATRIX build validator rejected this project (${projectFiles} files). Fix every problem listed below and return the COMPLETE corrected files using the MATRIX_FILE protocol. Change nothing unrelated to these problems, and keep the existing visual design.`,
+    `The QORVYNA build validator rejected this project (${projectFiles} files). Fix every problem listed below and return the COMPLETE corrected files using the QORVYNA_FILE protocol. Change nothing unrelated to these problems, and keep the existing visual design.`,
     ``,
     `PROBLEMS:`,
     formatIssues(issues) || "Unknown validation failure.",

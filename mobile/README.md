@@ -1,6 +1,6 @@
-# MATRIX AI — Android app (`mobile/matrix_app`)
+# QORVYNA AI — Android app (`mobile/matrix_app`)
 
-Flutter app for Android. It talks to the MATRIX backend
+Flutter app for Android. It talks to the QORVYNA backend
 (`https://matrix.thamjj13.top` by default).
 
 ## What it does
@@ -41,6 +41,39 @@ flutter build apk --release \
 The four `FIREBASE_*` values are the public client configuration of the
 Firebase project (the web app's `NEXT_PUBLIC_FIREBASE_*`). A build without
 them opens to a clear "can't start" screen rather than a broken sign-in.
+
+Optional build settings, all read in `lib/config.dart`:
+
+| `--dart-define` | Default | Purpose |
+|---|---|---|
+| `QORVYNA_API_BASE` | `https://matrix.thamjj13.top` | The backend the app talks to |
+| `QORVYNA_APP_VERSION` | the version in `config.dart` | Version reported to the update check |
+| `QORVYNA_APP_BUILD` | the build number in `config.dart` | Build number reported to the update check |
+
+The earlier names `MATRIX_API_BASE`, `MATRIX_APP_VERSION` and
+`MATRIX_APP_BUILD` are still read, so existing build scripts keep working.
+
+## Names that still say "matrix"
+
+The product is QORVYNA; these identifiers were kept on purpose when it was
+renamed, because changing them would break installed apps:
+
+- the application IDs `top.thamjj13.matrix` and `top.thamjj13.matrixwear` —
+  a new ID would be a different app to Android, so installed copies would
+  stop updating;
+- the APK file name `matrix-android.apk` — installed apps download their
+  update from that address;
+- the folders `matrix_app` / `matrix_wear` and the Dart classes `MatrixApi`,
+  `MatrixConfig`, `MatrixApp` — internal names no user sees.
+
+What users see — the app label, launcher icon, splash colour and every screen
+— says QORVYNA. See `docs/REBRAND_MIGRATION.md`.
+
+## Wear OS app (`mobile/matrix_wear`)
+
+A companion for Wear OS, built the same way from `mobile/matrix_wear`. Its
+launcher icons and the `LaunchTheme` / `NormalTheme` styles its manifest
+refers to are in `android/app/src/main/res/`.
 
 Output: `build/app/outputs/flutter-apk/app-release.apk`.
 

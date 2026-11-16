@@ -66,6 +66,6 @@ export function AdminSetupForm({ seedOnly = false }: { seedOnly?: boolean }) {
 /** Internal code -> human sentence. The raw code stays in the console only. */
 function friendly(err: unknown, fallback: string): string {
   const view = mapAdminError(errorCodeOf(err, fallback));
-  console.error("[MATRIX]", view.code, err);
+  console.error("[QORVYNA]", view.code, err);
   return `${view.title} — ${view.detail}`;
 }

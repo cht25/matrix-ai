@@ -1,7 +1,7 @@
 "use client";
 
 // Response-style comparison: one prompt → several response styles of the one
-// MATRIX model (GPT OSS 120B), each answer attributed to it. Results are ephemeral
+// QORVYNA model (GPT OSS 120B), each answer attributed to it. Results are ephemeral
 // (not saved to a conversation); failures show honest error codes.
 
 import { useState } from "react";

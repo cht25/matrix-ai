@@ -1,8 +1,9 @@
 "use client";
 
-// MATRIX authentication — premium, editorial, monochrome.
-// Calligraphic brand lockup as the primary identity; restrained inputs;
-// black sign-in button; OAuth as secondary actions.
+// QORVYNA authentication.
+// The brand lockup (emblem, wordmark, tagline) is the identity; the form is a
+// single quiet card with the primary action in brand blue and OAuth as
+// secondary actions. One column at every width, so nothing reflows on phones.
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -15,9 +16,10 @@ import {
 import { TotpMultiFactorGenerator } from "firebase/auth";
 import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
 import { describeAuthError } from "@/lib/firebase/auth-errors";
-import { isValidEmail } from "@/lib/utils";
+import { MAX_AGE, MIN_AGE, isValidEmail } from "@/lib/utils";
 import { completeAuthenticatedSession, consumeOAuthRedirect, postAuthPath, signInWithOAuth } from "@/lib/auth/oauth";
 import { BrandLockup } from "@/components/logo";
+import { BRAND, BRAND_PILLARS } from "@/lib/brand";
 import { PasswordInput } from "@/components/password-input";
 import { Alert, Button, Field, Input, Spinner } from "@/components/ui";
 import { ThemeToggle } from "@/lib/theme";
@@ -32,7 +34,7 @@ export function AuthUnavailable() {
       failure={{
         ...failureCopy("not-configured"),
         detail:
-          "MATRIX is not connected to its backend services yet, so authentication is unavailable. The administrator must set the NEXT_PUBLIC_FIREBASE_* variables and redeploy.",
+          "QORVYNA is not connected to its backend services yet, so authentication is unavailable. The administrator must set the NEXT_PUBLIC_FIREBASE_* variables and redeploy.",
       }}
     />
   );
@@ -48,19 +50,27 @@ export function LoginScreen() {
 
 export function AuthShell({ children, title, subtitle }: { children: React.ReactNode; title?: string; subtitle?: string }) {
   return (
-    <div className="relative flex min-h-dvh flex-col items-center justify-center px-4 py-10">
-      <div className="absolute right-4 top-4"><ThemeToggle compact /></div>
+    <div className="relative flex min-h-dvh flex-col items-center justify-center px-4 pb-10 pt-16">
+      <div className="absolute right-3 top-3 pt-[env(safe-area-inset-top)]"><ThemeToggle compact /></div>
       <div className="mb-8"><BrandLockup /></div>
       {title ? (
-        <div className="mb-7 max-w-sm text-center">
-          <p className="text-lg font-medium tracking-tight text-ink">{title}</p>
+        <div className="mb-6 max-w-sm text-center">
+          <h1 className="text-lg font-semibold tracking-tight text-ink">{title}</h1>
           {subtitle ? <p className="mt-1 text-[13px] leading-relaxed text-ink-2">{subtitle}</p> : null}
         </div>
       ) : null}
-      <div className="card w-full max-w-sm p-6 sm:p-7">{children}</div>
-      <hr className="swash-rule mt-10 w-40" />
-      <p className="mt-4 text-[11px] uppercase tracking-[0.18em] text-ink-3">
-        For ages 11–17 · THAMJJ13.TOP White Hat Team
+      <div className="card w-full max-w-sm p-5 shadow-[var(--shadow-pop)] sm:p-7">{children}</div>
+      <ul className="mt-8 flex max-w-sm flex-wrap items-center justify-center gap-x-2.5 gap-y-1 text-[11.5px] text-ink-3" aria-label={`${BRAND.name} ecosystem`}>
+        {BRAND_PILLARS.filter((pillar) => pillar.status === "live").map((pillar, index) => (
+          <li key={pillar.id} className="flex items-center gap-2.5">
+            {/* On the narrowest phones the list wraps; a rule at the start of a line would look like a stray character. */}
+            {index > 0 ? <span className="h-3 w-px bg-border-strong max-[359px]:hidden" aria-hidden="true" /> : null}
+            {pillar.label}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 text-center text-[11px] leading-relaxed text-ink-3">
+        For ages {MIN_AGE}–{MAX_AGE} · Operated by {BRAND.operator}
       </p>
     </div>
   );

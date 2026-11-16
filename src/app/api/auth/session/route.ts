@@ -39,13 +39,13 @@ export async function POST(req: NextRequest) {
       await ensureUserDocuments(adminAuth(), d, decoded.uid, decoded.email ?? null, decoded.name as string | undefined);
       onboardingComplete = await profileOnboardingComplete(d, decoded.uid);
     } catch (provisionErr) {
-      console.error("[MATRIX] ensureUserDocuments failed", provisionErr);
+      console.error("[QORVYNA] ensureUserDocuments failed", provisionErr);
     }
     const res = NextResponse.json({ ok: true, uid: decoded.uid, onboarding_complete: onboardingComplete });
     res.cookies.set(SESSION_COOKIE, cookie, sessionCookieOptions(req));
     return res;
   } catch (err) {
-    console.error("[MATRIX] session cookie mint failed", err);
+    console.error("[QORVYNA] session cookie mint failed", err);
     return NextResponse.json({ error: "SESSION_MINT_FAILED" }, { status: 500 });
   }
 }

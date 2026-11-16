@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — Device hub: Parent / Child registration with approved QR pairing.
+// QORVYNA AI — Device hub: Parent / Child registration with approved QR pairing.
 //
 // Roles
 //   parent  A signed-in browser or app that manages the account's devices. It
@@ -75,7 +75,7 @@ async function audit(d: Db, actor: string, action: string, deviceId: string, rea
   try {
     await d.collection("audit_logs").add({ actor_id: actor, action, target_type: "device", target_id: deviceId, reason, metadata, created_at: nowTs() });
   } catch (error) {
-    console.error("[MATRIX] device audit log write failed", action, error instanceof Error ? error.message : "unknown");
+    console.error("[QORVYNA] device audit log write failed", action, error instanceof Error ? error.message : "unknown");
   }
 }
 
@@ -98,7 +98,7 @@ function toDevice(id: string, data: Record<string, unknown>, nowMs: number, curr
   const lastSeen = millis(data.last_seen_at);
   return {
     id,
-    device_name: text(data.device_name, 80) || "MATRIX device",
+    device_name: text(data.device_name, 80) || "QORVYNA device",
     device_type: text(data.device_type, 40) || "device",
     platform: text(data.platform, 40) || "unknown",
     os: text(data.os, 60),
@@ -150,7 +150,7 @@ export async function registerParentDevice(
     tx.set(ref, {
       user_id: user.uid,
       role: "parent",
-      device_name: text(input.device_name, 80) || "MATRIX device",
+      device_name: text(input.device_name, 80) || "QORVYNA device",
       device_type: text(input.device_type, 40) || "desktop",
       platform: text(input.platform, 40) || "web",
       os: text(input.os, 60),
@@ -211,7 +211,7 @@ export async function listPairingRequests(d: Db, user: SessionUser, nowMs: numbe
       const request = (data.request ?? {}) as Record<string, unknown>;
       return {
         challenge_id: id,
-        device_name: text(request.device_name, 80) || "MATRIX device",
+        device_name: text(request.device_name, 80) || "QORVYNA device",
         device_type: text(request.device_type, 40),
         platform: text(request.platform, 40),
         os: text(request.os, 60),
@@ -254,7 +254,7 @@ export async function decidePairing(
       user_id: user.uid,
       role: "child",
       parent_device_id: typeof data.parent_device_id === "string" ? data.parent_device_id : null,
-      device_name: text(input.device_name, 80) || text(request.device_name, 80) || "MATRIX device",
+      device_name: text(input.device_name, 80) || text(request.device_name, 80) || "QORVYNA device",
       device_type: text(request.device_type, 40) || "device",
       platform: text(request.platform, 40) || "unknown",
       os: text(request.os, 60),
@@ -337,7 +337,7 @@ export async function requestPairing(
       decide_by: Timestamp.fromMillis(decideBy),
       claim_hash: sha256(`${challengeId}.${claimSecret}`),
       request: {
-        device_name: text(input.device_name, 80) || "MATRIX device",
+        device_name: text(input.device_name, 80) || "QORVYNA device",
         device_type: text(input.device_type, 40) || "device",
         platform: text(input.platform, 40) || "unknown",
         os: text(input.os, 60),

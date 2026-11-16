@@ -59,7 +59,7 @@ export async function GET(_req: NextRequest) {
 
   const p = profile.data();
   const payload = {
-    platform: "MATRIX AI",
+    platform: "QORVYNA AI",
     generated_at: new Date().toISOString(),
     user: {
       id: profile.id,
@@ -100,7 +100,7 @@ export async function GET(_req: NextRequest) {
     d.collection("notifications").add({ user_id: user.uid, type: "info", title: "Data export downloaded", body: "Your data export was generated and downloaded.", link: "/settings?tab=privacy", read_at: null, created_at: nowTs() }),
   ]);
 
-  const fileName = `matrix-export-${new Date().toISOString().slice(0, 10)}.json`;
+  const fileName = `qorvyna-export-${new Date().toISOString().slice(0, 10)}.json`;
   return new NextResponse(JSON.stringify(payload, null, 2), {
     headers: {
       "Content-Type": "application/json",

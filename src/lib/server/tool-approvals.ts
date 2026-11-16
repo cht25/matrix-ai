@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — real, one-time tool approval records.
+// QORVYNA AI — real, one-time tool approval records.
 //
 // A non-empty approval string is NOT authority. Medium+ risk tools require a
 // server-created record that the owner explicitly approved, bound to the exact

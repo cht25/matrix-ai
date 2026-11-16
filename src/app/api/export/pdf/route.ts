@@ -27,7 +27,7 @@ export async function POST(req: Request) {
 
   const body = (payload ?? {}) as { content?: unknown; title?: unknown; subtitle?: unknown; footer?: unknown };
   const content = typeof body.content === "string" ? body.content : "";
-  const title = typeof body.title === "string" && body.title.trim() ? body.title.trim().slice(0, 200) : "MATRIX document";
+  const title = typeof body.title === "string" && body.title.trim() ? body.title.trim().slice(0, 200) : "QORVYNA document";
 
   if (!content.trim()) {
     return NextResponse.json({ error: "CONTENT_REQUIRED" }, { status: 400 });
@@ -40,7 +40,7 @@ export async function POST(req: Request) {
     const bytes = await renderDocumentPdf(content, {
       title,
       subtitle: typeof body.subtitle === "string" ? body.subtitle.slice(0, 300) : null,
-      footer: typeof body.footer === "string" ? body.footer.slice(0, 120) : "MATRIX",
+      footer: typeof body.footer === "string" ? body.footer.slice(0, 120) : "QORVYNA",
     });
     return new NextResponse(bytes as unknown as BodyInit, {
       status: 200,
@@ -51,7 +51,7 @@ export async function POST(req: Request) {
       },
     });
   } catch (error) {
-    console.error("[MATRIX] PDF export failed", error);
+    console.error("[QORVYNA] PDF export failed", error);
     return NextResponse.json({ error: "PDF_EXPORT_FAILED" }, { status: 500 });
   }
 }

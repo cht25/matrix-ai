@@ -1,5 +1,5 @@
 -- =============================================================================
--- MATRIX AI — 0007: Seed data
+-- QORVYNA AI — 0007: Seed data
 -- Countries, admin RBAC, scam categories & articles, verified reporting
 -- resources, 7 courses with modules/lessons/quizzes, RAG knowledge chunks.
 -- =============================================================================
@@ -283,7 +283,7 @@ insert into public.document_chunks (title, content, source_type, trust_level) va
    'Never share passwords, one-time codes, ID documents, bank cards, home addresses or school details with strangers online. Scammers can combine small pieces of information to steal your identity.',
    'knowledge', 'trusted_official'),
   ('Reporting scams to official organisations',
-   'MATRIX AI never invents reporting websites. Reporting guidance always comes from the verified reporting resources database, which contains official organisations such as the FTC, Action Fraud, Scamwatch and the Canadian Anti-Fraud Centre.',
+   'QORVYNA AI never invents reporting websites. Reporting guidance always comes from the verified reporting resources database, which contains official organisations such as the FTC, Action Fraud, Scamwatch and the Canadian Anti-Fraud Centre.',
    'knowledge', 'trusted_internal')
 on conflict (id) do nothing;
 
@@ -344,7 +344,7 @@ from (values
    'Scams work by rushing you: "act now", "your account will close", "you won but must pay today". The Pause Rule is simple: when a message makes you feel rushed, stop. Do not click, do not reply, do not send money or codes. Take ten minutes. Check with a trusted adult. Type the official website yourself instead of clicking the link. Almost every scam collapses when you slow down.', 2),
   ('cyber-safety-basics','If Something Goes Wrong','Bad things happen — the right response fixes most of the damage.',
    'If you clicked a suspicious link, shared a code, or lost money: you are not in trouble, and the fastest way to limit damage is to act quickly and calmly. Tell a trusted adult immediately. Change the affected passwords from a different device. Log out of all sessions. Keep screenshots as evidence. Use the Emergency help ("I Need Help Now") section for step-by-step guidance specific to what happened. The worst thing you can do is hide it or wait.', 1),
-  ('cyber-safety-basics','Getting Help Without Judgment','MATRIX AI is a judgment-free space — and so should your reporting experience be.',
+  ('cyber-safety-basics','Getting Help Without Judgment','QORVYNA AI is a judgment-free space — and so should your reporting experience be.',
    'Everyone makes mistakes online; that is how we learn. The platform never blames you, and neither should you blame yourself. You can ask the AI anything about cybersecurity, use Emergency mode for step-by-step help, or report a scam to the official reporting organisation. If you are being pressured, threatened or blackmailed online, that is never your fault — tell a trusted adult or a support service right away.', 2),
   -- Phishing & Scam Detection
   ('phishing-scam-detection','Anatomy of a Phishing Message','Every phishing message has a small set of ingredients.',
@@ -356,9 +356,9 @@ from (values
   ('phishing-scam-detection','Job, Prize and Tech-Support Traps','Three scam families that target teens specifically.',
    'Job scams offer easy money for "tasks" then demand fees or ID photos. Prize scams say you won something you never entered and ask for a "fee" to release it. Tech-support scams pop up with virus warnings and ask you to call a number or pay to "fix" your device. Real jobs do not charge you, real prizes do not ask for money, and real tech companies never call you about viruses. If it costs money to receive money, it is a scam.', 2),
   ('phishing-scam-detection','Verifying a Suspicious Message','A simple checklist turns suspicion into certainty.',
-   'When a message feels off, run the checklist: 1) Who really sent it? (check the raw address, not the display name). 2) Did I expect this? 3) Does it create urgency? 4) Does it ask for a secret or money? 5) Is the link address correct? If two or more checkboxes are ticked, treat it as a scam: do not reply, do not click, report it. You can also paste the message into the MATRIX AI chat for a safe analysis.', 1),
+   'When a message feels off, run the checklist: 1) Who really sent it? (check the raw address, not the display name). 2) Did I expect this? 3) Does it create urgency? 4) Does it ask for a secret or money? 5) Is the link address correct? If two or more checkboxes are ticked, treat it as a scam: do not reply, do not click, report it. You can also paste the message into the QORVYNA AI chat for a safe analysis.', 1),
   ('phishing-scam-detection','Reporting a Scam','Reporting protects you and everyone else.',
-   'Reporting a scam takes two minutes and helps platforms and authorities take it down. Save evidence first: screenshots of the message, the sender address, and the link (without clicking it). Then report through the platform (most apps have a report button), and report to the official reporting organisation for your country using the verified reporting resources in this app. MATRIX AI never invents reporting websites — it always uses verified official contacts.', 2),
+   'Reporting a scam takes two minutes and helps platforms and authorities take it down. Save evidence first: screenshots of the message, the sender address, and the link (without clicking it). Then report through the platform (most apps have a report button), and report to the official reporting organisation for your country using the verified reporting resources in this app. QORVYNA AI never invents reporting websites — it always uses verified official contacts.', 2),
   -- Password & MFA
   ('password-mfa-security','Passphrases Beat Passwords','Length beats complexity when it comes to passwords.',
    'A passphrase is 3–4 random words put together, like "purple-lantern-cloud-42". It is long, easy for you to remember, and hard for computers to guess. Avoid personal details (your name, birthday, pet) because scammers can find those online. Never reuse passwords: when one site leaks your password, scammers try it on every other site. That is how most accounts get taken over.', 1),
@@ -453,7 +453,7 @@ from (values
    'False — real companies never ask for passwords or codes in messages.', 3),
   ('When Something Goes Wrong', 'You clicked a suspicious link. The best first step is…',
    'Act quickly and calmly, tell a trusted adult, change passwords from another device.', 1),
-  ('When Something Goes Wrong', 'If you made a mistake online, MATRIX AI will…',
+  ('When Something Goes Wrong', 'If you made a mistake online, QORVYNA AI will…',
    'Help you without judgment — everyone makes mistakes, that is how we learn.', 2),
   ('When Something Goes Wrong', 'Which is the right attitude after a security mistake?',
    'Mistakes are learning moments; hiding them makes things worse.', 3),
@@ -471,7 +471,7 @@ from (values
    'A tech-support scam — real companies never call you about viruses.', 3),
   ('How to Check and Report', 'Before reporting a scam you should…',
    'Save evidence first: screenshots of the message, sender and link.', 1),
-  ('How to Check and Report', 'Where does MATRIX AI get reporting contacts from?',
+  ('How to Check and Report', 'Where does QORVYNA AI get reporting contacts from?',
    'From the verified reporting resources database — it never invents websites.', 2),
   ('How to Check and Report', 'Reporting a scam helps…',
    'You and everyone else — reports help platforms take scams down.', 3),
@@ -594,9 +594,9 @@ from (values
   ('You clicked a suspicious link. The best first step is…', 'Ignore it and hope for the best', false, 1),
   ('You clicked a suspicious link. The best first step is…', 'Tell a trusted adult and change passwords from another device', true, 2),
   ('You clicked a suspicious link. The best first step is…', 'Send the link to friends to test it', false, 3),
-  ('If you made a mistake online, MATRIX AI will…', 'Shame you', false, 1),
-  ('If you made a mistake online, MATRIX AI will…', 'Help you without judgment', true, 2),
-  ('If you made a mistake online, MATRIX AI will…', 'Ban your account', false, 3),
+  ('If you made a mistake online, QORVYNA AI will…', 'Shame you', false, 1),
+  ('If you made a mistake online, QORVYNA AI will…', 'Help you without judgment', true, 2),
+  ('If you made a mistake online, QORVYNA AI will…', 'Ban your account', false, 3),
   ('Which is the right attitude after a security mistake?', 'Hide it — mistakes are embarrassing', false, 1),
   ('Which is the right attitude after a security mistake?', 'Mistakes are learning moments; tell a trusted adult', true, 2),
   ('Which is the right attitude after a security mistake?', 'Blame whoever sent the message', false, 3),
@@ -621,9 +621,9 @@ from (values
   ('Before reporting a scam you should…', 'Delete all evidence to stay safe', false, 1),
   ('Before reporting a scam you should…', 'Save evidence: screenshots of the message, sender and link', true, 2),
   ('Before reporting a scam you should…', 'Pay the scammer to stop', false, 3),
-  ('Where does MATRIX AI get reporting contacts from?', 'It invents them when needed', false, 1),
-  ('Where does MATRIX AI get reporting contacts from?', 'The verified reporting resources database', true, 2),
-  ('Where does MATRIX AI get reporting contacts from?', 'Random websites', false, 3),
+  ('Where does QORVYNA AI get reporting contacts from?', 'It invents them when needed', false, 1),
+  ('Where does QORVYNA AI get reporting contacts from?', 'The verified reporting resources database', true, 2),
+  ('Where does QORVYNA AI get reporting contacts from?', 'Random websites', false, 3),
   ('Reporting a scam helps…', 'Only the reporter', false, 1),
   ('Reporting a scam helps…', 'Everyone — reports help platforms take scams down', true, 2),
   ('What is the best kind of password?', 'Your birthday and name', false, 1),

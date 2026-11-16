@@ -5,7 +5,7 @@
 // without Firebase credentials. Not reachable in production.
 
 import { useEffect, useState } from "react";
-import { MATRIX_MODEL_ID } from "@/lib/ai/model";
+import { QORVYNA_MODEL_ID } from "@/lib/ai/model";
 import { AdminNav } from "@/components/admin/admin-nav";
 import { UsersTab } from "@/components/admin/users-tab";
 import { AuditLog } from "@/components/admin/audit-log";
@@ -25,11 +25,11 @@ type MockUser = {
 const day = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
 
 const USERS: MockUser[] = [
-  { id: "u-alex-0001", email: "alex@matrix.test", full_name: "Alex Rahman", created_at: day(120), last_sign_in_at: day(0), age_verified: true, country: "BD", consent_status: "approved", identity_status: "approved", disabled: false, admin_role: null },
-  { id: "u-nadia-002", email: "nadia@matrix.test", full_name: "Nadia Karim", created_at: day(95), last_sign_in_at: day(1), age_verified: true, country: "BD", consent_status: "approved", identity_status: "approved", disabled: false, admin_role: "super_admin" },
-  { id: "u-imran-003", email: "imran@matrix.test", full_name: "Imran Hossain", created_at: day(60), last_sign_in_at: day(4), age_verified: false, country: "BD", consent_status: "pending", identity_status: "pending_review", disabled: false, admin_role: "security_admin" },
-  { id: "u-sara-0004", email: "sara@matrix.test", full_name: "Sara Chowdhury", created_at: day(30), last_sign_in_at: null, age_verified: false, country: "GB", consent_status: "none", identity_status: "none", disabled: true, admin_role: null },
-  { id: "u-tan-00005", email: "tanvir@matrix.test", full_name: "Tanvir Ahmed", created_at: day(12), last_sign_in_at: day(2), age_verified: true, country: "BD", consent_status: "approved", identity_status: "approved", disabled: false, admin_role: "auditor" },
+  { id: "u-alex-0001", email: "alex@qorvyna.test", full_name: "Alex Rahman", created_at: day(120), last_sign_in_at: day(0), age_verified: true, country: "BD", consent_status: "approved", identity_status: "approved", disabled: false, admin_role: null },
+  { id: "u-nadia-002", email: "nadia@qorvyna.test", full_name: "Nadia Karim", created_at: day(95), last_sign_in_at: day(1), age_verified: true, country: "BD", consent_status: "approved", identity_status: "approved", disabled: false, admin_role: "super_admin" },
+  { id: "u-imran-003", email: "imran@qorvyna.test", full_name: "Imran Hossain", created_at: day(60), last_sign_in_at: day(4), age_verified: false, country: "BD", consent_status: "pending", identity_status: "pending_review", disabled: false, admin_role: "security_admin" },
+  { id: "u-sara-0004", email: "sara@qorvyna.test", full_name: "Sara Chowdhury", created_at: day(30), last_sign_in_at: null, age_verified: false, country: "GB", consent_status: "none", identity_status: "none", disabled: true, admin_role: null },
+  { id: "u-tan-00005", email: "tanvir@qorvyna.test", full_name: "Tanvir Ahmed", created_at: day(12), last_sign_in_at: day(2), age_verified: true, country: "BD", consent_status: "approved", identity_status: "approved", disabled: false, admin_role: "auditor" },
 ];
 
 type Audit = { id: string; actor_id: string; action: string; target_type: string; target_id: string; reason: string; created_at: string; metadata: Record<string, unknown> };
@@ -53,7 +53,7 @@ function useMockTransport() {
         new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
       if (url.includes("/api/health")) {
-        return json({ ok: true, firebase: "reachable", webConfig: "valid", cloudinary: "reachable", ai: "online", codingAi: "online", codingProvider: "Groq", codingModel: MATRIX_MODEL_ID, checkedAt: new Date().toISOString() });
+        return json({ ok: true, firebase: "reachable", webConfig: "valid", cloudinary: "reachable", ai: "online", codingAi: "online", codingProvider: "Groq", codingModel: QORVYNA_MODEL_ID, checkedAt: new Date().toISOString() });
       }
 
       if (url.includes("/api/rpc")) {
@@ -121,7 +121,7 @@ export function AdminPreview() {
 
         <header className="flex flex-col gap-3 rounded-2xl border border-border bg-surface px-4 py-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
-            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-3">Matrix · Admin control centre</p>
+            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-3">QORVYNA · Admin control centre</p>
             <h1 className="mt-1 font-display text-xl font-semibold tracking-tight text-ink sm:text-2xl">Admin control centre</h1>
             <p className="mt-1 max-w-2xl text-sm leading-relaxed text-ink-2">Manage users, permissions, security and AI infrastructure.</p>
           </div>

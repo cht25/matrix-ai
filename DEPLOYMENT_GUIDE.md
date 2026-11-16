@@ -1,4 +1,4 @@
-# MATRIX deployment and operations guide
+# QORVYNA deployment and operations guide
 
 This repository contains the primary Next.js website and Firebase integration. Deploy to a staging project first. Do not run migrations, seed scripts, Firebase rules deployment, or production publishing without reviewing the target project and taking a recoverable backup.
 
@@ -51,7 +51,7 @@ Keep service-account permissions least-privileged. Do not expose the private key
 
 ### AI model secret (GPT OSS 120B only)
 
-MATRIX uses exactly one language model: **GPT OSS 120B**, Groq model ID `openai/gpt-oss-120b`. The ID is defined in `src/lib/ai/model.ts` and cannot be changed by environment variable. There is no alternative provider and no fallback.
+QORVYNA uses exactly one language model: **GPT OSS 120B**, Groq model ID `openai/gpt-oss-120b`. The ID is defined in `src/lib/ai/model.ts` and cannot be changed by environment variable. There is no alternative provider and no fallback.
 
 - `GROQ_API_KEY` — required. Also used for Whisper speech-to-text (`GROQ_AUDIO_MODEL`, default `whisper-large-v3-turbo`).
 - Optional dedicated endpoint for the same model: `GPT_OSS_API_KEY` + `GPT_OSS_BASE_URL` (both required together; replaces the Groq route rather than backing it up).
@@ -68,8 +68,8 @@ Variables from earlier releases (`GLM_*`, `ZAI_API_KEY`, `GEMINI_*`, `OPENROUTER
 - GitHub OAuth: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_TOKEN_ENCRYPTION_KEY` (at least 32 random characters), `GITHUB_OAUTH_CALLBACK_URL` (exact deployed callback).
 - Vercel: `VERCEL_TOKEN`, optional `VERCEL_TEAM_ID`, `VERCEL_APPS_DOMAIN` (for the deployment adapter's approved parent domain).
 - Security: `IDENTITY_PEPPER` and `ADMIN_BOOTSTRAP_KEY` (strong random values; bootstrap key is temporary and should be rotated/removed after secure first-admin setup); optional `PAIRING_HMAC_SECRET` (dedicated random key for signed pairing challenges).
-- Proxy/egress configuration: `MATRIX_TRUST_PROXY_HEADERS` only when a trusted proxy overwrites forwarded headers; `AI_ALLOW_LOCAL_HTTP` should not be enabled on a public production deployment.
-- Automation worker: `AUTOMATION_WORKER_SECRET` (at least 32 random characters), `MATRIX_WORKER_TARGET_URL` (reachable HTTPS application URL), optional `AUTOMATION_POLL_MS` (minimum 10 seconds).
+- Proxy/egress configuration: `QORVYNA_TRUST_PROXY_HEADERS` (earlier name `MATRIX_TRUST_PROXY_HEADERS` still read) only when a trusted proxy overwrites forwarded headers; `AI_ALLOW_LOCAL_HTTP` should not be enabled on a public production deployment.
+- Automation worker: `AUTOMATION_WORKER_SECRET` (at least 32 random characters), `QORVYNA_WORKER_TARGET_URL` (reachable HTTPS application URL; the earlier name `MATRIX_WORKER_TARGET_URL` is still read), optional `AUTOMATION_POLL_MS` (minimum 10 seconds).
 
 `NEXT_PUBLIC_FIREBASE_EMULATOR_HOST`, `FIREBASE_AUTH_EMULATOR_HOST`, `FIRESTORE_EMULATOR_HOST`, and `AI_ALLOW_LOCAL_HTTP` are local/test controls. Do not accidentally carry emulator or insecure-provider configuration into production.
 
@@ -110,7 +110,7 @@ Scheduled automations require the independent worker; a website process/browser 
 
 ```bash
 AUTOMATION_WORKER_SECRET='(secret manager value)' \
-MATRIX_WORKER_TARGET_URL='https://matrix.example.com' \
+QORVYNA_WORKER_TARGET_URL='https://qorvyna.example.com' \
 node scripts/automation-worker.mjs
 ```
 

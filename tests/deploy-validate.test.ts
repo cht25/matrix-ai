@@ -135,6 +135,6 @@ describe("fix loop helpers", () => {
     const prompt = buildFixPrompt(report, failing.length);
     expect(prompt).toContain("index.html");
     expect(prompt).toContain("gone.png");
-    expect(prompt).toContain("MATRIX_FILE");
+    expect(prompt).toContain("QORVYNA_FILE");
   });
 });

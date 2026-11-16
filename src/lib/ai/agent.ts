@@ -135,10 +135,21 @@ export function safeAgentPath(input: string): string | null {
   return path;
 }
 
-const FILE_BLOCK = /<<<MATRIX_FILE\s+path="([^"]+)"\s*>>>\s*\n?([\s\S]*?)\n?<<<END_MATRIX_FILE>>>/g;
+// The file protocol tag. Prompts only ever ask for QORVYNA_FILE. MATRIX_FILE is
+// the tag from before the product was renamed: conversations stored back then
+// still contain it, and a model that reads that history may imitate it — so
+// both spellings are parsed everywhere, and neither is ever shown to the user.
+export const FILE_TAG = "(?:QORVYNA|MATRIX)_FILE";
+/** True when the text contains an opening file-protocol tag (either spelling). */
+export function hasFileProtocol(text: string): boolean {
+  return new RegExp(`<<<${FILE_TAG}\\b`).test(text);
+}
+
+const FILE_BLOCK = new RegExp(`<<<${FILE_TAG}\\s+path="([^"]+)"\\s*>>>\\s*\\n?([\\s\\S]*?)\\n?<<<END_${FILE_TAG}>>>`, "g");
+const DANGLING_FILE_MARKER = new RegExp(`<<<${FILE_TAG}[^\\n]*>>>|<<<END_${FILE_TAG}>>>`, "g");
 
 // Markdown fenced blocks the model may emit instead of (or around) the exact
-// MATRIX_FILE protocol. We only treat a fence as a *file* when a concrete
+// QORVYNA_FILE protocol. We only treat a fence as a *file* when a concrete
 // filename is present — either in the fence's info string (` ```html index.html `
 // or ` ```src/app.tsx `) or as a bold/heading filename on the line just above
 // the fence (`**index.html**`). Bare ```html snippets with no filename are left
@@ -247,7 +258,7 @@ export function parseAgentResponse(raw: string, options: { allowUnlabelledFences
   reply = reply
     .replace(FILE_BLOCK, "")
     // Strip any dangling protocol markers the model left half-written.
-    .replace(/<<<MATRIX_FILE[^\n]*>>>|<<<END_MATRIX_FILE>>>/g, "")
+    .replace(DANGLING_FILE_MARKER, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
@@ -259,7 +270,7 @@ export function parseAgentResponse(raw: string, options: { allowUnlabelledFences
 
 function isStandaloneHtmlDocument(value: string): boolean {
   const lower = value.toLowerCase();
-  if (!value.startsWith("<") || value.includes("```") || value.includes("<<<MATRIX_FILE")) return false;
+  if (!value.startsWith("<") || value.includes("```") || hasFileProtocol(value)) return false;
   const startsWithHtml = ["<!doctype html", "<html", "<head", "<body", "<main", "<div", "<section", "<article", "<header", "<nav", "<form", "<table", "<ul", "<ol", "<svg", "<h1", "<h2", "<h3", "<h4", "<h5", "<h6", "<p"]
     .some((tag) => lower.startsWith(tag));
   return startsWithHtml && value.includes("</") && value.includes(">");
@@ -305,11 +316,11 @@ function pathForUnlabelledFence(info: string, files: AgentFile[]): string | null
   return paths[lang] ?? null;
 }
 
-/** True when the model stopped mid-file (open MATRIX_FILE or odd fence count). */
+/** True when the model stopped mid-file (open QORVYNA_FILE or odd fence count). */
 export function agentGenerationIncomplete(raw: string): boolean {
   if (!raw.trim()) return true;
-  const opens = raw.match(/<<<MATRIX_FILE\b/g)?.length ?? 0;
-  const closes = raw.match(/<<<END_MATRIX_FILE>>>/g)?.length ?? 0;
+  const opens = raw.match(new RegExp(`<<<${FILE_TAG}\\b`, "g"))?.length ?? 0;
+  const closes = raw.match(new RegExp(`<<<END_${FILE_TAG}>>>`, "g"))?.length ?? 0;
   if (opens > closes) return true;
   const fences = raw.match(/```/g)?.length ?? 0;
   if (fences % 2 === 1) return true;
@@ -328,7 +339,7 @@ export function filesFromSnippet(lang: string, code: string): AgentFile[] {
       { path: "styles.css", content, language: "css" },
       {
         path: "index.html",
-        content: `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8"/>\n<meta name="viewport" content="width=device-width, initial-scale=1"/>\n<link rel="stylesheet" href="styles.css"/>\n<title>MATRIX site</title>\n</head>\n<body></body>\n</html>\n`,
+        content: `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8"/>\n<meta name="viewport" content="width=device-width, initial-scale=1"/>\n<link rel="stylesheet" href="styles.css"/>\n<title>QORVYNA site</title>\n</head>\n<body></body>\n</html>\n`,
         language: "html",
       },
     ];
@@ -338,7 +349,7 @@ export function filesFromSnippet(lang: string, code: string): AgentFile[] {
       { path: "app.js", content, language: "javascript" },
       {
         path: "index.html",
-        content: `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8"/>\n<meta name="viewport" content="width=device-width, initial-scale=1"/>\n<title>MATRIX site</title>\n</head>\n<body>\n<script src="app.js"></script>\n</body>\n</html>\n`,
+        content: `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8"/>\n<meta name="viewport" content="width=device-width, initial-scale=1"/>\n<title>QORVYNA site</title>\n</head>\n<body>\n<script src="app.js"></script>\n</body>\n</html>\n`,
         language: "html",
       },
     ];

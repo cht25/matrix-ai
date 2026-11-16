@@ -7,10 +7,10 @@
 import { useRouter } from "next/navigation";
 import type { ApiFailure } from "@/lib/api-errors";
 import { Button } from "@/components/ui";
-import { MatrixMark } from "@/components/logo";
+import { QorvynaMark } from "@/components/logo";
 
 const CONFIG_DETAIL =
-  "MATRIX is not connected to its backend services yet. The administrator must set the Firebase environment variables (NEXT_PUBLIC_FIREBASE_API_KEY, NEXT_PUBLIC_FIREBASE_PROJECT_ID and the Admin service account) and redeploy before sign-in, chat and data can work.";
+  "QORVYNA is not connected to its backend services yet. The administrator must set the Firebase environment variables (NEXT_PUBLIC_FIREBASE_API_KEY, NEXT_PUBLIC_FIREBASE_PROJECT_ID and the Admin service account) and redeploy before sign-in, chat and data can work.";
 
 /** Inline card used inside flows (chat, scanner, forms). */
 export function ServerProblem({
@@ -62,15 +62,15 @@ export function ServerProblemScreen({ kind, onRetry }: { kind: "config" | "serve
   const router = useRouter();
   return (
     <div className="flex min-h-[100dvh] flex-col items-center justify-center px-6 text-center">
-      <MatrixMark className="h-10 w-10 text-ink-2" />
-      <p className="eyebrow mt-6">MATRIX</p>
+      <QorvynaMark className="h-16 w-16" />
+      <p className="eyebrow mt-6">QORVYNA</p>
       <h1 className="mt-2 font-display text-2xl font-semibold tracking-tight text-ink">
         Server problem
       </h1>
       <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-ink-2">
         {kind === "config"
           ? CONFIG_DETAIL
-          : "MATRIX could not reach its services right now. Please try again in a moment."}
+          : "QORVYNA could not reach its services right now. Please try again in a moment."}
       </p>
       <div className="mt-6 flex items-center gap-3">
         <Button variant="outline" onClick={onRetry ?? (() => router.refresh())}>

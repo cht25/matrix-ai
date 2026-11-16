@@ -1,4 +1,4 @@
-# MATRIX workspace/build/deploy repair — verification record
+# QORVYNA workspace/build/deploy repair — verification record
 
 Date: 2026-11-07 (Asia/Dhaka)
 Branch: `arena/f05e0edc-matrix-ai`
@@ -37,7 +37,7 @@ npx vitest run tests/mandatory-repair-cases.test.ts --reporter=dot
 
 npm run build
   -> Next.js production build completed successfully
-     log: /tmp/matrix-repair-build.log
+     log: /tmp/qorvyna-repair-build.log
 
 npm run test:browser
   -> desktop/mobile responsive smoke passed
@@ -46,7 +46,7 @@ npm run test:browser
      cross-origin session deletion: real HTTP 403
      unconfigured automation worker: explicit HTTP 503
      health endpoint: HTTP 503, ok=false because local service credentials are not supplied
-     log: /tmp/matrix-repair-browser.log
+     log: /tmp/qorvyna-repair-browser.log
 ```
 
 The browser smoke intentionally verifies honest unconfigured states. It is not an authenticated end-to-end AI/build/deploy test.

@@ -30,7 +30,7 @@ describe("buildPublishedFiles", () => {
     expect(idx.content).toContain("h1{color:red}");
     expect(idx.content).toContain('console.log("works")');
     expect(idx.content).toContain("data:image/svg+xml");
-    expect(idx.content).toContain("window.MATRIX_ENV");
+    expect(idx.content).toContain("window.QORVYNA_ENV");
     expect(idx.content).not.toContain('src="js/app.js"');
     expect(idx.content).not.toContain('href="css/styles.css"');
     // Sibling pages and source files are still published for deeper links.
@@ -44,7 +44,7 @@ describe("buildPublishedFiles", () => {
     const html = outFiles.find((file) => file.path === "index.html")!.content;
     expect(html).not.toContain(attack);
     expect(html).not.toContain("</script><script>globalThis.compromised");
-    const serialized = html.match(/<script data-matrix-env>window\.MATRIX_ENV=(.*?);<\/script>/s)?.[1];
+    const serialized = html.match(/<script data-qorvyna-env>window\.QORVYNA_ENV=(.*?);<\/script>/s)?.[1];
     expect(serialized).toBeDefined();
     expect(JSON.parse(serialized!).PUBLIC_MESSAGE).toBe(attack);
   });

@@ -12,7 +12,7 @@
 //
 // IMPORTANT: `classifyGatewayResponse(status, code)` in these tests is the
 // SAME function the browser uses — so the asserted `failure.title/detail`
-// values are literally what a MATRIX user sees on screen.
+// values are literally what a QORVYNA user sees on screen.
 // =============================================================================
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
@@ -47,7 +47,7 @@ async function post(body: unknown) {
   } catch {
     /* SSE or non-JSON */
   }
-  return { status: res.status, text, json, requestId: res.headers.get("X-MATRIX-Request-ID") };
+  return { status: res.status, text, json, requestId: res.headers.get("X-QORVYNA-Request-ID") };
 }
 
 const stubHolder: { current: StubBehavior } = { current: { kind: "ok", content: "PROBE-OK" } };
@@ -163,7 +163,7 @@ describe("AI gateway — happy paths (real route, real HTTP provider)", () => {
 describe("AI gateway — failure handling (regression: the old generic 500s are gone)", () => {
   it("storage failure returns an honest CHAT_STORAGE_UNAVAILABLE, never the fake 'AI service' 500", async () => {
     // Previously: unhandled exception → 500 INTERNAL → browser showed
-    // "Server problem. MATRIX could not connect to the AI service right now."
+    // "Server problem. QORVYNA could not connect to the AI service right now."
     // even though the AI service was never reached.
     stub.fault({ collection: "conversations", method: "add", error: new Error("Quota exceeded. RESOURCE_EXHAUSTED") });
     const res = await post({ action: "chat", message: "hello", is_temporary: true, request_id: "itest-fail-store-1" });

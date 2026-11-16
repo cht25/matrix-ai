@@ -1,6 +1,6 @@
 # Collaborative model pool
 
-MATRIX can use several models on one request. This replaces the
+QORVYNA can use several models on one request. This replaces the
 "GPT OSS 120B only" rule described in `SINGLE_MODEL.md`; GPT OSS 120B remains
 the default and the preferred coordinator.
 
@@ -41,8 +41,8 @@ Planning is deterministic (no model call): `src/lib/ai/orchestrator/plan.ts`.
 ## Rate budgets
 
 `src/lib/ai/orchestrator/scheduler.ts` keeps a rolling 60-second token ledger
-per model. The per-minute budgets are MATRIX's own scheduling limits
-(`MATRIX_MODEL_TPM_<KEY>`), not a statement of the provider account's quota.
+per model. The per-minute budgets are QORVYNA's own scheduling limits
+(`QORVYNA_MODEL_TPM_<KEY>`; the earlier `MATRIX_MODEL_TPM_<KEY>` is still read), not a statement of the provider account's quota.
 A provider rate-limit response cools the model down for 30 seconds.
 
 ## Not verified in the build environment

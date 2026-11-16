@@ -153,7 +153,7 @@ export function ArtifactCard({
 }
 
 /**
- * §20 — "Make a report." never auto-builds PDF + DOCX + TXT + JSON. Matrix
+ * §20 — "Make a report." never auto-builds PDF + DOCX + TXT + JSON. QORVYNA
  * answers normally and offers a minimal format choice.
  */
 export function FormatChoice({ formats, onPick }: { formats: ExportFormat[]; onPick: (format: ExportFormat) => void }) {

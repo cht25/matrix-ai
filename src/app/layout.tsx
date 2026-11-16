@@ -10,43 +10,50 @@ import "@fontsource/jetbrains-mono/500.css";
 import "./globals.css";
 import { ThemeProvider } from "@/lib/theme";
 import { LocaleProvider } from "@/lib/i18n/client";
-import { BRAND_ICON_URL, BRAND_WORDMARK_URL } from "@/lib/brand";
-import { MatrixRain } from "@/components/matrix-rain";
+import { BRAND, BRAND_ASSETS, BRAND_THEME } from "@/lib/brand";
+import { siteOrigin } from "@/lib/seo";
+
+const TITLE = `${BRAND.name} — ${BRAND.headline}`;
 
 export const metadata: Metadata = {
+  // Makes the icon and social-card paths below absolute for crawlers.
+  metadataBase: new URL(siteOrigin()),
   title: {
-    default: "MATRIX — All-in-one AI Assistant & Coding Agent",
-    template: "%s · MATRIX",
+    default: TITLE,
+    template: `%s · ${BRAND.name}`,
   },
-  description:
-    "MATRIX is an all-in-one AI assistant for writing, learning, planning, research, digital safety and coding, with an Agent workspace, live preview and review-before-push GitHub integration.",
-  applicationName: "MATRIX",
+  description: BRAND.description,
+  applicationName: BRAND.name,
   verification: {
     google: "w7nP74RD04O12Z-gbtUMGn1cZ9SRQz9SnRY-94e1v-w",
   },
+  // All artwork is generated from one drawing (scripts/generate-brand-assets.mjs)
+  // and served from this origin — no third-party image host in the head.
   icons: {
     icon: [
-      { url: BRAND_ICON_URL, type: "image/png" },
-      { url: BRAND_ICON_URL, sizes: "32x32", type: "image/png" },
-      { url: BRAND_ICON_URL, sizes: "192x192", type: "image/png" },
+      { url: BRAND_ASSETS.favicon, sizes: "48x48" },
+      { url: BRAND_ASSETS.faviconSvg, type: "image/svg+xml" },
+      { url: BRAND_ASSETS.favicon16, sizes: "16x16", type: "image/png" },
+      { url: BRAND_ASSETS.favicon32, sizes: "32x32", type: "image/png" },
+      { url: BRAND_ASSETS.icon192, sizes: "192x192", type: "image/png" },
     ],
-    shortcut: [{ url: BRAND_ICON_URL, type: "image/png" }],
-    apple: [{ url: BRAND_ICON_URL, sizes: "180x180", type: "image/png" }],
+    shortcut: [{ url: BRAND_ASSETS.favicon }],
+    apple: [{ url: BRAND_ASSETS.appleTouchIcon, sizes: "180x180", type: "image/png" }],
   },
   manifest: "/site.webmanifest",
+  appleWebApp: { capable: true, title: BRAND.name, statusBarStyle: "black-translucent" },
   openGraph: {
-    title: "MATRIX — All-in-one AI Assistant & Coding Agent",
-    description:
-      "Chat, create, learn and build in one workspace—with file-aware help, live preview and explicit GitHub push from Agent mode.",
+    title: TITLE,
+    description: BRAND.description,
     type: "website",
-    siteName: "MATRIX",
-    images: [{ url: BRAND_WORDMARK_URL, alt: "MATRIX — AI Assistant & Coding Agent" }],
+    siteName: BRAND.name,
+    images: [{ url: BRAND_ASSETS.socialPreview, width: 1200, height: 630, alt: `${BRAND.name} — ${BRAND.tagline}` }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "MATRIX — All-in-one AI Assistant & Coding Agent",
-    description: "Chat, create, learn and build in one secure workspace.",
-    images: [BRAND_WORDMARK_URL],
+    title: TITLE,
+    description: BRAND.shortDescription,
+    images: [BRAND_ASSETS.socialPreview],
   },
 };
 
@@ -55,32 +62,32 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 5,
   viewportFit: "cover",
-  // Light is the primary theme, so it is also the default (no media) chrome.
+  // Dark is the primary theme, so it is also what a device with no stated
+  // preference gets for its browser chrome.
   themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#070B12" },
-    { media: "(prefers-color-scheme: light)", color: "#F7F9FC" },
+    { media: "(prefers-color-scheme: light)", color: BRAND_THEME.light },
+    { media: "(prefers-color-scheme: dark)", color: BRAND_THEME.dark },
   ],
-  colorScheme: "light dark",
+  colorScheme: "dark light",
 };
 
-// Runs before first paint so there is no theme flash. LIGHT is the default
-// for everyone who never picked a theme — only a stored preference or an
-// explicit "system" choice can land on dark.
-// Applies the stored theme, language AND background preference before first
-// paint, so the MATRIX rain layer never flashes on for someone who turned it off.
-const THEME_SCRIPT = `try{var t=localStorage.getItem('matrix-theme')||'dark';var r=t==='light'||t==='dark'?t:(t==='system'&&matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.setAttribute('data-theme',r);var l=localStorage.getItem('matrix-lang');if(l==='bn'||l==='en')document.documentElement.setAttribute('lang',l);var rain=localStorage.getItem('matrix-rain');document.documentElement.setAttribute('data-rain',rain==='off'||rain==='subtle'||rain==='normal'||rain==='heavy'?rain:'normal');}catch(e){document.documentElement.setAttribute('data-theme','dark');document.documentElement.setAttribute('data-rain','normal')}`;
+// Runs before first paint so there is no theme flash. DARK is the default for
+// everyone who never picked a theme — only a stored preference or an explicit
+// "system" choice can land on light. It also applies the stored language and
+// the background-glow strength, so neither flashes in after hydration.
+// The storage keys are the ones the product has always used: renaming them
+// would silently reset every existing user's theme and language.
+const THEME_SCRIPT = `try{var t=localStorage.getItem('matrix-theme')||'dark';var r=t==='light'||t==='dark'?t:(t==='system'&&matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.setAttribute('data-theme',r);var l=localStorage.getItem('matrix-lang');if(l==='bn'||l==='en')document.documentElement.setAttribute('lang',l);var a=localStorage.getItem('matrix-rain');document.documentElement.setAttribute('data-ambient',a==='off'||a==='subtle'||a==='normal'||a==='heavy'?a:'normal');}catch(e){document.documentElement.setAttribute('data-theme','dark');document.documentElement.setAttribute('data-ambient','normal')}`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-theme="dark" suppressHydrationWarning>
+    <html lang="en" data-theme="dark" data-ambient="normal" suppressHydrationWarning>
       <head>
-        <link rel="preconnect" href="https://res.cloudinary.com" crossOrigin="" />
-        <link rel="icon" type="image/png" href={BRAND_ICON_URL} />
-        <link rel="apple-touch-icon" href={BRAND_ICON_URL} />
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+        {/* User media (avatars, voice clips) is served from here; brand artwork is first-party. */}
+        <link rel="dns-prefetch" href="https://res.cloudinary.com" />
       </head>
       <body>
-        <MatrixRain />
         <ThemeProvider>
           <LocaleProvider>
             <a href="#main" className="skip-link">

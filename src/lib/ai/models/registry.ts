@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX model registry — the only place (with ./model.ts for the default)
+// QORVYNA model registry — the only place (with ./model.ts for the default)
 // where language-model identifiers are written.
 //
 // What is and is not verified
@@ -10,13 +10,15 @@
 //     as unavailable and is never sent a request.
 //   • Context window: the catalog's reported value replaces the figure here
 //     when the provider reports one.
-//   • `tpm` is MATRIX's own conservative scheduling budget (tokens per minute
+//   • `tpm` is QORVYNA's own conservative scheduling budget (tokens per minute
 //     per server instance), not a claim about the account's quota. Override
-//     with MATRIX_MODEL_TPM_<KEY> (e.g. MATRIX_MODEL_TPM_QWEN3_32B=12000). Real
-//     provider rate-limit responses always take precedence (cool-down).
+//     with QORVYNA_MODEL_TPM_<KEY> (e.g. QORVYNA_MODEL_TPM_QWEN3_32B=12000; the
+//     earlier MATRIX_MODEL_TPM_<KEY> is still honoured). Real provider
+//     rate-limit responses always take precedence (cool-down).
 // =============================================================================
 
-import { MATRIX_MODEL_ID, MATRIX_MODEL_LABEL } from "@/lib/ai/model";
+import { QORVYNA_MODEL_ID, QORVYNA_MODEL_LABEL, QORVYNA_MODEL_PUBLISHER } from "@/lib/ai/model";
+import { brandEnv } from "@/lib/brand-env";
 
 /** What a model is good at. Drives which responsibility it is given. */
 export type ModelStrength = "planning" | "coding" | "review" | "reasoning" | "research" | "writing" | "fast";
@@ -32,6 +34,8 @@ export type ModelSpec = {
   summary: string;
   provider: "groq";
   providerLabel: "Groq";
+  /** The organisation that published the model's weights (not the host). */
+  publisher: string;
   contextTokens: number;
   maxOutputTokens: number;
   tpm: number;
@@ -49,28 +53,28 @@ export const DEFAULT_MODEL_KEY = "gpt-oss-120b";
 
 export const MODEL_REGISTRY: readonly ModelSpec[] = [
   {
-    key: DEFAULT_MODEL_KEY, id: MATRIX_MODEL_ID, label: MATRIX_MODEL_LABEL, summary: "Strongest all-rounder for planning, code and careful answers.",
-    provider: "groq", providerLabel: "Groq", contextTokens: 131_072, maxOutputTokens: 16_384, tpm: 30_000,
+    key: DEFAULT_MODEL_KEY, id: QORVYNA_MODEL_ID, label: QORVYNA_MODEL_LABEL, summary: "Strongest all-rounder for planning, code and careful answers.",
+    provider: "groq", providerLabel: "Groq", publisher: QORVYNA_MODEL_PUBLISHER, contextTokens: 131_072, maxOutputTokens: 16_384, tpm: 30_000,
     strengths: ["planning", "coding", "reasoning", "review", "writing"], reasoning: "effort", streaming: true, toolCalling: true, structuredOutput: true, coordinatorRank: 1,
   },
   {
     key: "qwen3-32b", id: "qwen/qwen3-32b", label: "Qwen 3 32B", summary: "Step-by-step reasoning and code review.",
-    provider: "groq", providerLabel: "Groq", contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 12_000,
+    provider: "groq", providerLabel: "Groq", publisher: "Alibaba Cloud", contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 12_000,
     strengths: ["reasoning", "coding", "review"], reasoning: "format", streaming: true, toolCalling: true, structuredOutput: true, coordinatorRank: 3,
   },
   {
     key: "llama-3.3-70b", id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", summary: "Clear writing, research summaries and second opinions.",
-    provider: "groq", providerLabel: "Groq", contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 12_000,
+    provider: "groq", providerLabel: "Groq", publisher: "Meta", contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 12_000,
     strengths: ["writing", "research", "review", "coding"], reasoning: "none", streaming: true, toolCalling: true, structuredOutput: true, coordinatorRank: 2,
   },
   {
     key: "gpt-oss-20b", id: "openai/gpt-oss-20b", label: "GPT OSS 20B", summary: "Quick drafts and small code tasks.",
-    provider: "groq", providerLabel: "Groq", contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 12_000,
+    provider: "groq", providerLabel: "Groq", publisher: QORVYNA_MODEL_PUBLISHER, contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 12_000,
     strengths: ["fast", "coding", "planning"], reasoning: "effort", streaming: true, toolCalling: true, structuredOutput: true, coordinatorRank: 4,
   },
   {
     key: "llama-3.1-8b", id: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant", summary: "Very fast checks and short summaries.",
-    provider: "groq", providerLabel: "Groq", contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 6_000,
+    provider: "groq", providerLabel: "Groq", publisher: "Meta", contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 6_000,
     strengths: ["fast", "writing"], reasoning: "none", streaming: true, toolCalling: true, structuredOutput: true, coordinatorRank: 5,
   },
 ];
@@ -104,6 +108,6 @@ export function sanitizeModelKeys(value: unknown): string[] {
 }
 /** Scheduling budget, with the optional per-deployment override. */
 export function modelTpm(spec: ModelSpec, env: Record<string, string | undefined> = process.env): number {
-  const override = Number(env[`MATRIX_MODEL_TPM_${spec.key.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`]);
+  const override = Number(brandEnv(`MODEL_TPM_${spec.key.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`, env));
   return Number.isFinite(override) && override >= 1000 ? Math.floor(override) : spec.tpm;
 }

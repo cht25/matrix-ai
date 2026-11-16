@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Github, GitPullRequestArrow, Link2, Loader2, LogOut, ShieldCheck } from "lucide-react";
 import type { AgentFile } from "@/lib/ai/agent";
+import { useDialogs } from "@/components/dialogs";
 import { Button, Input, Select } from "@/components/ui";
 
 export type GithubStatus = {
@@ -21,6 +22,7 @@ type Repo = {
 };
 
 export function GithubConnection({ files = [], showPush = false }: { files?: AgentFile[]; showPush?: boolean }) {
+  const dialogs = useDialogs();
   const [status, setStatus] = useState<GithubStatus | null>(null);
   const [connectHref, setConnectHref] = useState("/api/github/connect");
   useEffect(() => {
@@ -32,7 +34,7 @@ export function GithubConnection({ files = [], showPush = false }: { files?: Age
   const [repos, setRepos] = useState<Repo[]>([]);
   const [repository, setRepository] = useState("");
   const [branch, setBranch] = useState("");
-  const [message, setMessage] = useState("Apply MATRIX Agent changes");
+  const [message, setMessage] = useState("Apply QORVYNA Agent changes");
   const [reviewed, setReviewed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -80,7 +82,8 @@ export function GithubConnection({ files = [], showPush = false }: { files?: Age
   }, [selectedRepo]);
 
   async function disconnect() {
-    if (!confirm("Disconnect GitHub from MATRIX? Generated files will not be deleted.")) return;
+    const confirmed = await dialogs.confirm({ title: "Disconnect GitHub?", body: "QORVYNA loses access to your repositories. Files already generated or pushed are not deleted.", confirmLabel: "Disconnect" });
+    if (!confirmed) return;
     setBusy(true);
     setNotice(null);
     try {
@@ -96,7 +99,13 @@ export function GithubConnection({ files = [], showPush = false }: { files?: Age
 
   async function push() {
     if (!reviewed || !repository || !branch || !message.trim() || !files.length) return;
-    if (!confirm(`Push ${files.length} reviewed file${files.length === 1 ? "" : "s"} to ${repository} on ${branch}?`)) return;
+    const confirmed = await dialogs.confirm({
+      title: `Push ${files.length} file${files.length === 1 ? "" : "s"} to ${branch}?`,
+      body: `The reviewed file${files.length === 1 ? " is" : "s are"} committed to ${repository} on the ${branch} branch.`,
+      confirmLabel: "Push",
+      tone: "primary",
+    });
+    if (!confirmed) return;
     setBusy(true);
     setNotice(null);
     setCommitUrl(null);
@@ -145,7 +154,7 @@ export function GithubConnection({ files = [], showPush = false }: { files?: Age
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-border-strong bg-surface"><Github size={18} /></span>
           <div>
             <p className="text-sm font-semibold text-ink">Connect GitHub</p>
-            <p className="mt-1 text-xs leading-relaxed text-ink-2">Authorise repository access to push files you have reviewed in Agent mode. MATRIX encrypts the OAuth token server-side and never sends it to the AI model.</p>
+            <p className="mt-1 text-xs leading-relaxed text-ink-2">Authorise repository access to push files you have reviewed in Agent mode. QORVYNA encrypts the OAuth token server-side and never sends it to the AI model.</p>
           </div>
         </div>
         <a href={connectHref} className="mt-4 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 text-sm font-medium text-bg hover:bg-ink-2">
@@ -204,6 +213,7 @@ export function GithubConnection({ files = [], showPush = false }: { files?: Age
           {commitUrl ? <a href={commitUrl} target="_blank" rel="noopener noreferrer" className="ml-2 inline-flex items-center gap-1 font-medium text-accent hover:underline"><Link2 size={11} /> View commit</a> : null}
         </div>
       ) : null}
+      {dialogs.element}
     </div>
   );
 }

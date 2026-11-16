@@ -1,6 +1,6 @@
 // Server-side AI configuration.
 //
-// MATRIX runs a pool of collaborating models (see `@/lib/ai/models/registry`).
+// QORVYNA runs a pool of collaborating models (see `@/lib/ai/models/registry`).
 // GPT OSS 120B is the default; additional models are used only when the
 // provider's live catalog confirms they are offered to this deployment and
 // the user has them enabled (see `@/lib/ai/models/pool`). This module turns a
@@ -15,13 +15,13 @@ import { createOpenAICompatibleProvider } from "@/lib/ai/openai";
 import type { WorkloadTier } from "@/lib/ai/router";
 import type { AIProviderName } from "@/lib/ai/provider-error";
 import {
-  MATRIX_MODEL_BASE_URL,
-  MATRIX_MODEL_ID,
-  MATRIX_MODEL_LABEL,
-  MATRIX_MODEL_PROVIDER,
-  MATRIX_MODEL_PROVIDER_ID,
+  QORVYNA_MODEL_BASE_URL,
+  QORVYNA_MODEL_ID,
+  QORVYNA_MODEL_LABEL,
+  QORVYNA_MODEL_PROVIDER,
+  QORVYNA_MODEL_PROVIDER_ID,
   dedicatedEndpointModelId,
-  isMatrixModelId,
+  isQorvynaModelId,
 } from "@/lib/ai/model";
 import { DEFAULT_MODEL_KEY, type ModelSpec } from "@/lib/ai/models/registry";
 import { ensureAccounts, listAccounts } from "@/lib/ai/accounts";
@@ -37,8 +37,8 @@ export type AIRouteTarget = {
 
 /** Displayed defaults. Every role is the same model. */
 export const AI_CONFIG = {
-  general: { provider: MATRIX_MODEL_PROVIDER, model: MATRIX_MODEL_ID },
-  coding: { provider: MATRIX_MODEL_PROVIDER, model: MATRIX_MODEL_ID },
+  general: { provider: QORVYNA_MODEL_PROVIDER, model: QORVYNA_MODEL_ID },
+  coding: { provider: QORVYNA_MODEL_PROVIDER, model: QORVYNA_MODEL_ID },
 } as const;
 
 function secret(value: string | undefined): string {
@@ -46,7 +46,7 @@ function secret(value: string | undefined): string {
   return key && !key.endsWith("...") && !key.includes("...") && !key.startsWith("YOUR-") && !key.startsWith("replace-with") ? key : "";
 }
 
-export type MatrixModelStatus = {
+export type QorvynaModelStatus = {
   configured: boolean;
   provider: string;
   provider_id: string;
@@ -60,14 +60,14 @@ export type MatrixModelStatus = {
 /**
  * The one executable route, or null when no credential is installed.
  *
- *   GROQ_API_KEY                       → Groq, MATRIX_MODEL_ID          (default)
+ *   GROQ_API_KEY                       → Groq, QORVYNA_MODEL_ID          (default)
  *   GPT_OSS_API_KEY + GPT_OSS_BASE_URL → the same model on a dedicated
  *                                        OpenAI-compatible endpoint
  *
  * Both serve GPT OSS 120B. Exactly one is active per deployment; the second
  * is never a fallback for the first.
  */
-export function matrixModelRoute(): AIRouteTarget | null {
+export function qorvynaModelRoute(): AIRouteTarget | null {
   const dedicatedKey = secret(process.env.GPT_OSS_API_KEY);
   const dedicatedBase = process.env.GPT_OSS_BASE_URL?.trim() ?? "";
   if (dedicatedKey && dedicatedBase) {
@@ -76,16 +76,16 @@ export function matrixModelRoute(): AIRouteTarget | null {
       provider: "OpenAI",
       providerId: "gpt-oss",
       model,
-      client: createOpenAICompatibleProvider({ apiKey: dedicatedKey, baseUrl: dedicatedBase, label: MATRIX_MODEL_LABEL, model }),
+      client: createOpenAICompatibleProvider({ apiKey: dedicatedKey, baseUrl: dedicatedBase, label: QORVYNA_MODEL_LABEL, model }),
       tier: "high",
     };
   }
   const groqKey = hostedProviderKey() || dedicatedKey;
   if (!groqKey) return null;
   return {
-    provider: MATRIX_MODEL_PROVIDER,
-    providerId: MATRIX_MODEL_PROVIDER_ID,
-    model: MATRIX_MODEL_ID,
+    provider: QORVYNA_MODEL_PROVIDER,
+    providerId: QORVYNA_MODEL_PROVIDER_ID,
+    model: QORVYNA_MODEL_ID,
     client: new GroqProvider(groqKey, { pooled: true }),
     tier: "high",
   };
@@ -104,23 +104,23 @@ export function hostedProviderKey(): string {
  * dedicated endpoint; every other model needs the hosted provider key.
  */
 export function routeForModel(spec: ModelSpec): AIRouteTarget | null {
-  if (spec.key === DEFAULT_MODEL_KEY) return matrixModelRoute();
+  if (spec.key === DEFAULT_MODEL_KEY) return qorvynaModelRoute();
   const key = hostedProviderKey();
   if (!key) return null;
-  return { provider: MATRIX_MODEL_PROVIDER, providerId: MATRIX_MODEL_PROVIDER_ID, model: spec.id, client: new GroqProvider(key, { pooled: true }), tier: "high", contextTokens: spec.contextTokens };
+  return { provider: QORVYNA_MODEL_PROVIDER, providerId: QORVYNA_MODEL_PROVIDER_ID, model: spec.id, client: new GroqProvider(key, { pooled: true }), tier: "high", contextTokens: spec.contextTokens };
 }
 
-export function matrixModelStatus(): MatrixModelStatus {
-  const route = matrixModelRoute();
+export function qorvynaModelStatus(): QorvynaModelStatus {
+  const route = qorvynaModelRoute();
   const dedicated = route?.providerId === "gpt-oss";
   return {
     configured: Boolean(route),
-    provider: dedicated ? "Dedicated GPT OSS endpoint" : MATRIX_MODEL_PROVIDER,
-    provider_id: route?.providerId ?? MATRIX_MODEL_PROVIDER_ID,
-    model: route?.model ?? MATRIX_MODEL_ID,
-    label: MATRIX_MODEL_LABEL,
+    provider: dedicated ? "Dedicated GPT OSS endpoint" : QORVYNA_MODEL_PROVIDER,
+    provider_id: route?.providerId ?? QORVYNA_MODEL_PROVIDER_ID,
+    model: route?.model ?? QORVYNA_MODEL_ID,
+    label: QORVYNA_MODEL_LABEL,
     credential: !route ? "none" : dedicated ? "GPT_OSS_API_KEY" : secret(process.env.GROQ_API_KEY) ? "GROQ_API_KEY" : "GPT_OSS_API_KEY",
-    endpoint: dedicated ? "dedicated" : MATRIX_MODEL_BASE_URL,
+    endpoint: dedicated ? "dedicated" : QORVYNA_MODEL_BASE_URL,
   };
 }
 
@@ -130,8 +130,8 @@ export function logAIConfiguration(): void {
   const globalState = globalThis as Record<string, unknown>;
   if (globalState[CONFIG_LOGGED]) return;
   globalState[CONFIG_LOGGED] = true;
-  const status = matrixModelStatus();
-  console.info("[MATRIX] AI configuration", {
+  const status = qorvynaModelStatus();
+  console.info("[QORVYNA] AI configuration", {
     architecture: "collaborative model pool — GPT OSS 120B by default; other models only when the provider catalog lists them",
     provider: status.provider,
     model: status.model,
@@ -140,8 +140,8 @@ export function logAIConfiguration(): void {
   // These legacy variables never select a model — say so once.
   for (const name of ["GROQ_CHAT_MODEL", "GROQ_CODING_MODEL", "GROQ_FAST_MODEL", "GPT_OSS_MODEL"] as const) {
     const value = process.env[name]?.trim();
-    if (value && !isMatrixModelId(value)) {
-      console.warn(`[MATRIX] ${name} is set to a different model and is ignored: models are chosen from the registry (default ${MATRIX_MODEL_ID}).`);
+    if (value && !isQorvynaModelId(value)) {
+      console.warn(`[QORVYNA] ${name} is set to a different model and is ignored: models are chosen from the registry (default ${QORVYNA_MODEL_ID}).`);
     }
   }
 }
@@ -149,13 +149,13 @@ export function logAIConfiguration(): void {
 /** The default model's route (zero or one entry). The user's pool is resolved in models/pool.ts. */
 export function createAIRoutes(_coding = false): AIRouteTarget[] {
   void _coding;
-  const route = matrixModelRoute();
+  const route = qorvynaModelRoute();
   return route ? [route] : [];
 }
 
 export function aiProviderConfigured(_coding = false): boolean {
   void _coding;
-  return matrixModelRoute() !== null;
+  return qorvynaModelRoute() !== null;
 }
 
 /**
@@ -176,7 +176,7 @@ export async function resolveExecutionRoutes(d?: Db | null): Promise<{ routes: A
 }
 
 /**
- * Image understanding. GPT OSS 120B is a text model, and MATRIX does not route
+ * Image understanding. GPT OSS 120B is a text model, and QORVYNA does not route
  * to any other model, so there is no vision route. Callers report
  * `VISION_NOT_SUPPORTED` instead of sending an image to a model that cannot
  * read it.
@@ -185,7 +185,7 @@ export const VISION_SUPPORTED = false;
 
 export class AIConfigurationError extends Error {
   constructor(public readonly coding: boolean = false) {
-    super(`${MATRIX_MODEL_LABEL} is not configured on this server`);
+    super(`${QORVYNA_MODEL_LABEL} is not configured on this server`);
     this.name = "AIConfigurationError";
   }
 }

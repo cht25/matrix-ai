@@ -1,6 +1,6 @@
 "use client";
 
-// MATRIX mobile navigation — a fixed bottom bar plus a "More" bottom sheet.
+// QORVYNA mobile navigation — a fixed bottom bar plus a "More" bottom sheet.
 // There is deliberately NO hamburger menu: the five primary destinations are
 // always one tap away and every secondary feature lives in More.
 

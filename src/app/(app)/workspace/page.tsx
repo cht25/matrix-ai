@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/data";
-import { MATRIX_MODES } from "@/lib/ai/modes";
+import { QORVYNA_MODES } from "@/lib/ai/modes";
 import { AgentToolsPanel } from "@/components/agent-tools-panel";
 
 export const metadata = { title: "Workspace" } as const;
@@ -15,7 +15,7 @@ export default async function WorkspacePage() {
       <h1 className="mt-2 text-2xl font-semibold">Specialized intelligences</h1>
       <p className="mt-2 text-sm text-ink-2">Open a mode without mixing unrelated contexts. Health never shares a coding project automatically.</p>
       <ul className="mt-6 grid gap-2 sm:grid-cols-2">
-        {MATRIX_MODES.map((m) => (
+        {QORVYNA_MODES.map((m) => (
           <li key={m.id}>
             <Link href={`/chat?mode=${m.id}&new=${Date.now()}`} className="suggest-card w-full">
               <span>

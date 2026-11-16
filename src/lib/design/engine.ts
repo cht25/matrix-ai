@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — Dynamic Design Engine: deterministic natural-language → tokens.
+// QORVYNA AI — Dynamic Design Engine: deterministic natural-language → tokens.
 //
 // Like the theme gallery, this is intentionally deterministic (no LLM): a
 // description is mapped by keyword rules onto the validated token schema from

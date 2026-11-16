@@ -1,5 +1,5 @@
 /* =============================================================================
-   MATRIX V3 — the chat surface (Chat and Agent share every rule here).
+   QORVYNA V3 — the chat surface (Chat and Agent share every rule here).
 
    Layout is done with Tailwind utilities in the components. This file only
    holds what utilities cannot express cleanly: the typography of rendered
@@ -341,4 +341,52 @@ html[data-keyboard="open"] .composer-note { display: none; }
 html[data-keyboard="open"] .sheet {
   bottom: var(--kb-inset, 0px);
   max-height: calc(100dvh - var(--kb-inset, 0px) - 1rem);
+}
+
+/* --- welcome screen ----------------------------------------------------------
+   The conversation viewport follows its bottom edge. A welcome screen taller
+   than the room it has would therefore open scrolled past its own logo, which
+   is what happened on phones and short laptop windows. So while a conversation
+   is empty the stage is a size container: the welcome screen centres itself in
+   the real space and sheds its least important parts until it fits. Browsers
+   without container queries simply show everything, as before. */
+.chat-stage { container: chat-stage / size; }
+.chat-stage .chat-welcome {
+  min-height: calc(100cqh - 1.5rem);
+  justify-content: center;
+}
+
+/* two-column layout (stage at least 640px wide) */
+@container chat-stage (min-width: 640px) and (max-height: 600px) {
+  .chat-welcome-features { display: none; }
+}
+@container chat-stage (min-width: 640px) and (max-height: 490px) {
+  .chat-welcome-mark { display: none; }
+  .chat-welcome { padding-block: 0.5rem; }
+}
+@container chat-stage (min-width: 640px) and (max-height: 410px) {
+  .chat-welcome-sub { display: none; }
+  .chat-welcome-cards > :nth-child(n + 5) { display: none; }
+}
+@container chat-stage (min-width: 640px) and (max-height: 300px) {
+  .chat-welcome-cards > :nth-child(n + 3) { display: none; }
+}
+
+/* single column (phones): six stacked suggestions never fit beside the keyboard */
+@container chat-stage (max-width: 639.98px) and (max-height: 660px) {
+  .chat-welcome-cards > :nth-child(n + 5) { display: none; }
+}
+@container chat-stage (max-width: 639.98px) and (max-height: 520px) {
+  .chat-welcome-mark { display: none; }
+  .chat-welcome { padding-block: 0.5rem; }
+}
+@container chat-stage (max-width: 639.98px) and (max-height: 440px) {
+  .chat-welcome-sub { display: none; }
+  .chat-welcome-cards > :nth-child(n + 4) { display: none; }
+}
+@container chat-stage (max-width: 639.98px) and (max-height: 330px) {
+  .chat-welcome-cards > :nth-child(n + 3) { display: none; }
+}
+@container chat-stage (max-height: 240px) {
+  .chat-welcome-cards { display: none; }
 }

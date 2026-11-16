@@ -16,7 +16,7 @@ export type CertificateData = {
 export function CertificateDocument({ cert }: { cert: CertificateData }) {
   return (
     <article className="certificate" aria-label={`Certificate ${cert.certificate_id}`}>
-      <p className="certificate-brand">MATRIX</p>
+      <p className="certificate-brand">QORVYNA</p>
       <p className="certificate-title">Certificate of Completion</p>
 
       <p className="certificate-lede">This certifies that</p>

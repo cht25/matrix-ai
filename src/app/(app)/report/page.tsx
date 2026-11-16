@@ -20,7 +20,7 @@ export default async function ReportPage() {
       <div>
         <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Report a Scam</h1>
         <p className="mt-1 text-ink-2">
-          Three ways to report: a private <strong>platform report</strong> to MATRIX support, an
+          Three ways to report: a private <strong>platform report</strong> to QORVYNA support, an
           <strong> official report</strong> to a verified government organisation, and a
           <strong> platform report</strong> inside the app where the scam happened. We never invent
           reporting websites.
@@ -61,7 +61,7 @@ export default async function ReportPage() {
             ))}
           </div>
           <p className="mt-3 text-xs text-ink-3">
-            Verified {resourceList.map((r) => r.last_verified?.slice(0, 10)).filter(Boolean)[0] ?? "recently"} by the MATRIX content team.
+            Verified {resourceList.map((r) => r.last_verified?.slice(0, 10)).filter(Boolean)[0] ?? "recently"} by the QORVYNA content team.
           </p>
         </Card>
       ) : null}

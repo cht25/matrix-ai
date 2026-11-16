@@ -91,7 +91,7 @@ export async function githubRequest<T>(uid: string, path: string, init: RequestI
       Authorization: `Bearer ${token}`,
       "X-GitHub-Api-Version": "2022-11-28",
       "Content-Type": "application/json",
-      "User-Agent": "MATRIX-AI-Agent",
+      "User-Agent": "QORVYNA-AI-Agent",
       ...(init.headers ?? {}),
     },
     cache: "no-store",

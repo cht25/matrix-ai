@@ -1,4 +1,4 @@
-// Unit tests for MATRIX Phone App API client, canonical URLs, and OTA UpdateService.
+// Unit tests for QORVYNA Phone App API client, canonical URLs, and OTA UpdateService.
 // Run with: flutter test
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';

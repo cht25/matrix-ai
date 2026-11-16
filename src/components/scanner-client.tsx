@@ -2,7 +2,7 @@
 
 // Screenshot & Image Analyser (spec §29): upload, drag & drop, or paste an
 // image. Assets upload privately to Cloudinary via a server-signed grant, then
-// Screenshot analysis needs a vision-capable model. MATRIX runs only GPT OSS
+// Screenshot analysis needs a vision-capable model. QORVYNA runs only GPT OSS
 // 120B (text), so the page explains this and points to the text-based check.
 //
 // Real analysis only: failures render "Server problem" / category-aware cards
@@ -71,11 +71,11 @@ export function ScannerClient() {
     setFileName(file.name);
 
     if (!firebaseBrowserConfigured) {
-      setFailure({ ...failureCopy("not-configured"), detail: "The MATRIX backend is not configured on this deployment yet, so screenshots cannot be analysed." });
+      setFailure({ ...failureCopy("not-configured"), detail: "The QORVYNA backend is not configured on this deployment yet, so screenshots cannot be analysed." });
       return;
     }
 
-    // No vision-capable model exists in MATRIX: do not upload the image.
+    // No vision-capable model exists in QORVYNA: do not upload the image.
     setFailure(failureCopy("vision-unsupported"));
   }
 
@@ -133,7 +133,7 @@ export function ScannerClient() {
       setResult(data);
       toast("Image analysis complete.");
       void notifyWorkDone({
-        title: "MATRIX image analysis complete",
+        title: "QORVYNA image analysis complete",
         body: data.risk_level && data.risk_level !== "unknown"
           ? `Result: ${data.risk_level} risk (${source})`
           : `Finished analysing ${file.name}.`,
@@ -167,7 +167,7 @@ export function ScannerClient() {
     <div className="space-y-4">
       <div className="rounded-lg border border-warning/30 bg-warn-soft/15 px-3.5 py-3 text-sm leading-6 text-ink-2" role="status">
         <p className="font-semibold text-ink">Screenshot analysis is not available.</p>
-        <p className="mt-1">MATRIX runs entirely on GPT OSS 120B, a text model that cannot read images, and it does not switch to another model. To check a suspicious message, copy its text and <a href="/chat" className="text-accent underline underline-offset-2">paste it into Chat</a> — the same scam and phishing review is done on the text.</p>
+        <p className="mt-1">QORVYNA runs entirely on GPT OSS 120B, a text model that cannot read images, and it does not switch to another model. To check a suspicious message, copy its text and <a href="/chat" className="text-accent underline underline-offset-2">paste it into Chat</a> — the same scam and phishing review is done on the text.</p>
       </div>
       {/* Source chips */}
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="Where does this image come from?">
@@ -250,9 +250,9 @@ export function ScannerClient() {
       ) : null}
 
       {busy ? (
-        <div role="status" aria-label="MATRIX is analysing your image">
+        <div role="status" aria-label="QORVYNA is analysing your image">
           <Card className="flex items-center gap-3 text-ink-2">
-            <Spinner /> MATRIX is responding — analysing your {source.toLowerCase()} image…
+            <Spinner /> QORVYNA is responding — analysing your {source.toLowerCase()} image…
           </Card>
         </div>
       ) : null}
@@ -281,7 +281,7 @@ export function ScannerClient() {
           </div>
           <Markdown text={result.reply} />
           <p className="mt-4 border-t border-border pt-3 text-xs text-ink-3">
-            MATRIX never claims 100% certainty from an image alone. When in doubt about suspicious content, involve a trusted adult.
+            QORVYNA never claims 100% certainty from an image alone. When in doubt about suspicious content, involve a trusted adult.
           </p>
         </Card>
       ) : null}

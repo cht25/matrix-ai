@@ -40,7 +40,7 @@ describe("Agent clarification and actual-output classification", () => {
     expect(classifyAgentOutput("Here is an example:\n```html\n<h1>Example</h1>\n```").files).toEqual([]);
   });
   it("recognizes explicit project files, JSON operations, and supported structured tool calls", () => {
-    expect(classifyAgentOutput('<<<MATRIX_FILE path="index.html">>>\n<h1>Ready</h1>\n<<<END_MATRIX_FILE>>>').files[0].path).toBe("index.html");
+    expect(classifyAgentOutput('<<<QORVYNA_FILE path="index.html">>>\n<h1>Ready</h1>\n<<<END_QORVYNA_FILE>>>').files[0].path).toBe("index.html");
     expect(classifyAgentOutput(JSON.stringify({ operations: [{ type: "write", path: "styles.css", content: "body{}" }] })).files).toMatchObject([{ path: "styles.css" }]);
     expect(classifyAgentOutput("", [{ function: { name: "write_file", arguments: JSON.stringify({ path: "index.html", content: "<main>Ready</main>" }) } }]).state).toBe("FILE_GENERATION");
     expect(classifyAgentOutput("", [{ function: { name: "shell", arguments: "{}" } }]).files).toEqual([]);

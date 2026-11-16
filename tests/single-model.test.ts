@@ -32,13 +32,13 @@ vi.mock("@/lib/firebase/session", () => {
 import { POST } from "../src/app/api/ai/route";
 import { GET as getModels } from "../src/app/api/models/route";
 import { sharedFirestoreStub } from "./helpers/firestore-stub";
-import { MATRIX_MODEL_ID, MATRIX_MODEL_LABEL, MATRIX_MODEL_PROVIDER, MATRIX_MODEL_BASE_URL, dedicatedEndpointModelId, isMatrixModelId } from "../src/lib/ai/model";
-import { createAIRoutes, matrixModelRoute, matrixModelStatus, resolveExecutionRoutes } from "../src/lib/ai/config";
+import { QORVYNA_MODEL_ID, QORVYNA_MODEL_LABEL, QORVYNA_MODEL_PROVIDER, QORVYNA_MODEL_BASE_URL, dedicatedEndpointModelId, isQorvynaModelId } from "../src/lib/ai/model";
+import { createAIRoutes, qorvynaModelRoute, qorvynaModelStatus, resolveExecutionRoutes } from "../src/lib/ai/config";
 import { completeWithModel, streamWithModel } from "../src/lib/ai/executor";
 import { resetHealthCacheForTests } from "../src/lib/ai/provider-health";
 import { runBuildPipeline } from "../src/lib/server/build";
 import { FirestoreDeploymentProvider } from "../src/lib/deploy/firestore-provider";
-import { MATRIX_MODES } from "../src/lib/ai/modes";
+import { QORVYNA_MODES } from "../src/lib/ai/modes";
 import { classifyGatewayResponse } from "../src/lib/api-errors";
 import type { Db } from "../src/lib/firebase/admin";
 
@@ -105,28 +105,28 @@ const completions = () => calls.filter((call) => call.url.endsWith("/chat/comple
 function expectOnlyTheOneModel(minimumCalls = 1) {
   const made = completions();
   expect(made.length).toBeGreaterThanOrEqual(minimumCalls);
-  for (const call of made) expect(call.body?.model).toBe(MATRIX_MODEL_ID);
+  for (const call of made) expect(call.body?.model).toBe(QORVYNA_MODEL_ID);
   for (const url of outbound) expect(url.startsWith(stubOrigin), `unexpected outbound request to ${url}`).toBe(true);
 }
 
 describe("one authoritative model configuration", () => {
   it("defines GPT OSS 120B on Groq, once", () => {
-    expect(MATRIX_MODEL_ID).toBe("openai/gpt-oss-120b");
-    expect(MATRIX_MODEL_LABEL).toBe("GPT OSS 120B");
-    expect(MATRIX_MODEL_PROVIDER).toBe("Groq");
-    expect(MATRIX_MODEL_BASE_URL).toBe("https://api.groq.com/openai/v1");
-    expect(isMatrixModelId("openai/gpt-oss-120b")).toBe(true);
-    expect(isMatrixModelId("glm-5-turbo")).toBe(false);
-    expect(isMatrixModelId("gemini-3-flash")).toBe(false);
+    expect(QORVYNA_MODEL_ID).toBe("openai/gpt-oss-120b");
+    expect(QORVYNA_MODEL_LABEL).toBe("GPT OSS 120B");
+    expect(QORVYNA_MODEL_PROVIDER).toBe("Groq");
+    expect(QORVYNA_MODEL_BASE_URL).toBe("https://api.groq.com/openai/v1");
+    expect(isQorvynaModelId("openai/gpt-oss-120b")).toBe(true);
+    expect(isQorvynaModelId("glm-5-turbo")).toBe(false);
+    expect(isQorvynaModelId("gemini-3-flash")).toBe(false);
   });
 
   it("uses Groq with the fixed ID when GROQ_API_KEY is set, ignoring model overrides", () => {
     vi.stubEnv("GPT_OSS_API_KEY", "");
     vi.stubEnv("GPT_OSS_BASE_URL", "");
     vi.stubEnv("GROQ_API_KEY", "gsk_test");
-    const route = matrixModelRoute();
+    const route = qorvynaModelRoute();
     expect(route).toMatchObject({ provider: "Groq", providerId: "groq", model: "openai/gpt-oss-120b" });
-    expect(matrixModelStatus()).toMatchObject({ configured: true, model: "openai/gpt-oss-120b", credential: "GROQ_API_KEY" });
+    expect(qorvynaModelStatus()).toMatchObject({ configured: true, model: "openai/gpt-oss-120b", credential: "GROQ_API_KEY" });
   });
 
   it("returns exactly one route for chat and for Agent — the same one — and none without a key", async () => {
@@ -134,23 +134,23 @@ describe("one authoritative model configuration", () => {
     const agent = createAIRoutes(true);
     expect(chat).toHaveLength(1);
     expect(agent).toHaveLength(1);
-    expect(chat[0].model).toBe(MATRIX_MODEL_ID);
-    expect(agent[0].model).toBe(MATRIX_MODEL_ID);
+    expect(chat[0].model).toBe(QORVYNA_MODEL_ID);
+    expect(agent[0].model).toBe(QORVYNA_MODEL_ID);
     expect((await resolveExecutionRoutes()).routes).toHaveLength(1);
 
     vi.stubEnv("GPT_OSS_API_KEY", "");
     vi.stubEnv("GPT_OSS_BASE_URL", "");
-    // Only removed providers' keys remain: MATRIX is "not configured", it does not use them.
-    expect(matrixModelRoute()).toBeNull();
+    // Only removed providers' keys remain: QORVYNA is "not configured", it does not use them.
+    expect(qorvynaModelRoute()).toBeNull();
     expect(createAIRoutes(true)).toEqual([]);
-    expect(matrixModelStatus().configured).toBe(false);
+    expect(qorvynaModelStatus().configured).toBe(false);
   });
 
   it("a dedicated endpoint can only name the same model", () => {
     expect(dedicatedEndpointModelId("gpt-oss-120b")).toBe("gpt-oss-120b");
     expect(dedicatedEndpointModelId("openai/gpt-oss-120b")).toBe("openai/gpt-oss-120b");
     for (const other of ["glm-5-turbo", "gemini-3-flash", "llama-3.3-70b-versatile", "openai/gpt-oss-20b", "gpt-4o"]) {
-      expect(dedicatedEndpointModelId(other)).toBe(MATRIX_MODEL_ID);
+      expect(dedicatedEndpointModelId(other)).toBe(QORVYNA_MODEL_ID);
     }
   });
 
@@ -158,9 +158,9 @@ describe("one authoritative model configuration", () => {
     const res = await getModels(new Request("http://localhost/api/models?check=1"));
     expect(res.status).toBe(200);
     const body = await res.json() as Record<string, unknown>;
-    expect(body.model).toMatchObject({ id: MATRIX_MODEL_ID, label: "GPT OSS 120B", configured: true, tool_calling: true, streaming: true, vision: false });
+    expect(body.model).toMatchObject({ id: QORVYNA_MODEL_ID, label: "GPT OSS 120B", configured: true, tool_calling: true, streaming: true, vision: false });
     const models = body.models as { model_id: string; availability: string; is_default: boolean }[];
-    expect(models.filter((model) => model.availability === "available").map((model) => model.model_id)).toEqual([MATRIX_MODEL_ID]);
+    expect(models.filter((model) => model.availability === "available").map((model) => model.model_id)).toEqual([QORVYNA_MODEL_ID]);
     // No hosted credential here, so every additional model is reported as not configured — never as working.
     expect(models.filter((model) => !model.is_default).every((model) => model.availability === "not_configured")).toBe(true);
     expect(body.pool).toEqual({ auto: true, enabled: [] });
@@ -175,7 +175,7 @@ describe("every surface runs on GPT OSS 120B", () => {
     const res = await post({ action: "chat", message: "hello", is_temporary: true, request_id: "one-chat-1" });
     expect(res.status).toBe(200);
     expect(res.json?.reply).toBe("CHAT-OK");
-    expect(res.json?.model).toBe(MATRIX_MODEL_ID);
+    expect(res.json?.model).toBe(QORVYNA_MODEL_ID);
     expectOnlyTheOneModel();
   });
 
@@ -183,7 +183,7 @@ describe("every surface runs on GPT OSS 120B", () => {
     holder.current = { kind: "ok", content: "AGENT-OK" };
     const res = await post({ action: "chat", mode: "agent", stream: false, message: "Explain how my deployment works.", is_temporary: true, request_id: "one-agent-1" });
     expect(res.status).toBe(200);
-    expect(res.json?.model).toBe(MATRIX_MODEL_ID);
+    expect(res.json?.model).toBe(QORVYNA_MODEL_ID);
     expectOnlyTheOneModel();
   });
 
@@ -200,22 +200,22 @@ describe("every surface runs on GPT OSS 120B", () => {
     for (const [mode, message] of prompts) {
       const res = await post({ action: "chat", mode, stream: false, message, is_temporary: true, request_id: `one-mode-${Math.random().toString(36).slice(2, 10)}` });
       expect(res.status, `${mode}: ${message}`).toBe(200);
-      expect(res.json?.model, `${mode}: ${message}`).toBe(MATRIX_MODEL_ID);
+      expect(res.json?.model, `${mode}: ${message}`).toBe(QORVYNA_MODEL_ID);
     }
     // Every selectable lane and strategy is a prompt style on the same model.
     for (const lane of ["auto", "fast", "balanced", "reasoning", "coding"]) {
       const res = await post({ action: "chat", lane, strategy: "quality", stream: false, message: "Summarise what HTTP is.", is_temporary: true, request_id: `one-lane-${lane}-1` });
       expect(res.status, lane).toBe(200);
-      expect(res.json?.model, lane).toBe(MATRIX_MODEL_ID);
+      expect(res.json?.model, lane).toBe(QORVYNA_MODEL_ID);
     }
-    expect(MATRIX_MODES.map((mode) => mode.id)).toEqual(expect.arrayContaining(["general", "code", "research", "agent"]));
+    expect(QORVYNA_MODES.map((mode) => mode.id)).toEqual(expect.arrayContaining(["general", "code", "research", "agent"]));
     expectOnlyTheOneModel(prompts.length + 5);
   });
 
   it("a client cannot choose a model: provider_id / model_id in the request are ignored", async () => {
     const res = await post({ action: "chat", message: "hello", is_temporary: true, provider_id: "glm", model_id: "glm-5-turbo", prefer_fallback: true, request_id: "one-select-1" });
     expect(res.status).toBe(200);
-    expect(res.json?.model).toBe(MATRIX_MODEL_ID);
+    expect(res.json?.model).toBe(QORVYNA_MODEL_ID);
     expectOnlyTheOneModel();
   });
 
@@ -242,7 +242,7 @@ describe("every surface runs on GPT OSS 120B", () => {
     expect(res.status).toBe(200);
     expect(res.text).toContain("Str");
     expect(res.text).toContain('"done":true');
-    expect(res.text).toContain(MATRIX_MODEL_ID);
+    expect(res.text).toContain(QORVYNA_MODEL_ID);
     expect(completions().at(-1)?.body?.stream).toBe(true);
     expectOnlyTheOneModel();
   });
@@ -252,7 +252,7 @@ describe("every surface runs on GPT OSS 120B", () => {
     holder.current = { kind: "ok", content: "VOICE-OK" };
     const res = await post({ action: "chat", message: transcript, is_temporary: true, input_source: "voice", request_id: "one-voice-1" });
     expect(res.status).toBe(200);
-    expect(res.json?.model).toBe(MATRIX_MODEL_ID);
+    expect(res.json?.model).toBe(QORVYNA_MODEL_ID);
     const sent = JSON.stringify(completions().at(-1)?.body?.messages);
     expect(sent).toContain("রেস্তোরাঁর");
     expect(sent).toContain("with a modern look");
@@ -310,7 +310,7 @@ describe("3–4. website generation and project editing", () => {
 <main><section id="menu"><h2>Today's menu</h2><div class="menu"><article class="card"><h3>Country sourdough</h3><p>48-hour ferment, crackling crust.</p></article><article class="card"><h3>Cardamom buns</h3><p>Soft, fragrant and glazed.</p></article><article class="card"><h3>Seeded rye</h3><p>Dense, nutty and good for a week.</p></article></div></section>
 <section id="contact"><h2>Find us</h2><p>12 Mill Lane. Open Tuesday to Sunday, 7am to 3pm.</p><p><a href="mailto:hello@rise.example">hello@rise.example</a></p></section></main>
 <footer><p>Rise Bakery</p></footer></body></html>`;
-    holder.current = { kind: "stream", deltas: ["I built the bakery site.\n\n", '<<<MATRIX_FILE path="index.html">>>\n', page, "\n<<<END_MATRIX_FILE>>>"] };
+    holder.current = { kind: "stream", deltas: ["I built the bakery site.\n\n", '<<<QORVYNA_FILE path="index.html">>>\n', page, "\n<<<END_QORVYNA_FILE>>>"] };
     const db = dbWithWrites();
     const result = await runBuildPipeline({
       d: db, user, provider: new FirestoreDeploymentProvider(db, user), runId: "one-build-ok-1", requestId: "one-build-ok-req-1",
@@ -323,7 +323,7 @@ describe("3–4. website generation and project editing", () => {
     expect(result.run.status).toBe("succeeded");
     expect(result.projectId).toBeTruthy();
     expect(written.length).toBeGreaterThanOrEqual(1);
-    expect(result.run.model).toMatchObject({ model: MATRIX_MODEL_ID });
+    expect(result.run.model).toMatchObject({ model: QORVYNA_MODEL_ID });
   });
 
   it("editing an existing project asks GPT OSS 120B and leaves the project untouched when it fails", async () => {
@@ -343,7 +343,7 @@ describe("3–4. website generation and project editing", () => {
     expect(result.run.continuation?.phase).toBe("generate");
     expect(completions().length).toBeGreaterThanOrEqual(1);
     expect(JSON.stringify([...stub._state.docs.entries()].filter(([key]) => key.startsWith(`projects/${projectId}`)))).toBe(snapshot);
-    for (const call of completions()) expect(call.body?.model).toBe(MATRIX_MODEL_ID);
+    for (const call of completions()) expect(call.body?.model).toBe(QORVYNA_MODEL_ID);
     for (const url of outbound) expect(url.startsWith(stubOrigin)).toBe(true);
   });
 });
@@ -377,10 +377,10 @@ describe("11–12. no other model, no hidden fallback", () => {
     }) as typeof fetch;
     const { listModelStatus, resolvePool } = await import("../src/lib/ai/models/pool");
     const statuses = await listModelStatus({ refresh: true });
-    expect(statuses.filter((model) => model.availability === "available").map((model) => model.model_id)).toEqual([MATRIX_MODEL_ID]);
+    expect(statuses.filter((model) => model.availability === "available").map((model) => model.model_id)).toEqual([QORVYNA_MODEL_ID]);
     expect(statuses.filter((model) => !model.is_default).every((model) => model.availability === "unverified")).toBe(true);
     const pool = await resolvePool(null, null);
-    expect(pool.targets.map((target) => target.model)).toEqual([MATRIX_MODEL_ID]);
+    expect(pool.targets.map((target) => target.model)).toEqual([QORVYNA_MODEL_ID]);
     holder.current = { kind: "ok", content: "fine" };
     const res = await post({ action: "chat", message: "Explain in detail how binary search works and why it is logarithmic, step by step please.", is_temporary: true, request_id: "one-unverified-1" });
     expect(res.status).toBe(200);
@@ -411,10 +411,10 @@ describe("11–12. no other model, no hidden fallback", () => {
   });
 
   it("the executor sends one request to one registered model only", async () => {
-    const route = matrixModelRoute()!;
+    const route = qorvynaModelRoute()!;
     holder.current = { kind: "ok", content: "fine" };
     const ok = await completeWithModel([route], { messages: [{ role: "user", content: "hi" }] });
-    expect(ok.target.model).toBe(MATRIX_MODEL_ID);
+    expect(ok.target.model).toBe(QORVYNA_MODEL_ID);
     const impostor = { ...route, model: "glm-5-turbo" };
     await expect(completeWithModel([impostor], { messages: [{ role: "user", content: "hi" }] })).rejects.toThrow(/Refusing to send a request/);
     await expect(completeWithModel([route, route], { messages: [{ role: "user", content: "hi" }] })).rejects.toThrow(/Refusing to send a request/);

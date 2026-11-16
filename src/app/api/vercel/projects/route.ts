@@ -13,7 +13,7 @@ export async function GET() {
     return NextResponse.json({ projects: await listVercelProjects() });
   } catch (err) {
     if (err instanceof RpcError) return NextResponse.json({ error: err.code }, { status: err.status });
-    console.error("[MATRIX] vercel projects failed", err);
+    console.error("[QORVYNA] vercel projects failed", err);
     return NextResponse.json({ error: "VERCEL_ERROR" }, { status: 502 });
   }
 }

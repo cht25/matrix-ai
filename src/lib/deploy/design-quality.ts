@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX design-quality validation
+// QORVYNA design-quality validation
 //
 // `validateProject` answers "will this build and serve?". This module answers
 // "is the page any good to look at and use?" — the checks a successful build

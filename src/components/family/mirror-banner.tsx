@@ -224,7 +224,7 @@ export function MirrorAndLockBanner() {
                   type="button"
                   disabled={busy}
                   onClick={() => void startScreenShare(active.session_id)}
-                  className="btn-primary !min-h-0 !px-2.5 !py-1.5 !text-xs"
+                  className="btn btn-primary !min-h-0 !px-2.5 !py-1.5 !text-xs"
                 >
                   <Camera size={13} /> Share screen (ss)
                 </button>
@@ -233,7 +233,7 @@ export function MirrorAndLockBanner() {
                 type="button"
                 disabled={busy}
                 onClick={() => void stopSession(active.session_id)}
-                className="btn-ghost !min-h-0 !px-2.5 !py-1.5 !text-xs"
+                className="btn btn-ghost !min-h-0 !px-2.5 !py-1.5 !text-xs"
               >
                 <StopCircle size={13} /> Stop session
               </button>
@@ -241,7 +241,7 @@ export function MirrorAndLockBanner() {
                 type="button"
                 disabled={busy}
                 onClick={() => void disableMirroring(active.family_id)}
-                className="btn-danger !min-h-0 !px-2.5 !py-1.5 !text-xs"
+                className="btn btn-danger !min-h-0 !px-2.5 !py-1.5 !text-xs"
               >
                 <ShieldOff size={13} /> Disable mirroring
               </button>
@@ -286,7 +286,7 @@ export function MirrorAndLockBanner() {
                   type="button"
                   disabled={busy}
                   onClick={() => state.locked && void askParentUnlock(state.locked.family_id)}
-                  className="btn-primary w-full justify-center"
+                  className="btn btn-primary w-full"
                 >
                   Ask parent to unlock
                 </button>

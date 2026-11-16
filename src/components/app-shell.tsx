@@ -1,6 +1,6 @@
 "use client";
 
-// MATRIX application shell.
+// QORVYNA application shell.
 //
 // Desktop: a fixed, collapsible sidebar next to a wide workspace.
 // Mobile:   a minimal top bar + a fixed bottom navigation bar + a "More"
@@ -16,6 +16,7 @@ import {
 import { rpc } from "@/lib/client/api";
 import { Logo } from "@/components/logo";
 import { AiStatus } from "@/components/ai-status";
+import { useDialogs } from "@/components/dialogs";
 import { ThemeToggle } from "@/lib/theme";
 import { ToastProvider } from "@/components/toast";
 import { SignOutButton } from "@/components/sign-out-button";
@@ -87,6 +88,7 @@ function HistoryList({ conversations, onNavigate }: { conversations: SidebarConv
   const [openId, setOpenId] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const dialogs = useDialogs();
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -122,9 +124,10 @@ function HistoryList({ conversations, onNavigate }: { conversations: SidebarConv
     router.refresh();
   }
   async function remove(id: string) {
-    if (!confirm("Delete this conversation? This can't be undone.")) return;
-    await rpc("conversation_update", { id, delete: true }).catch(() => {});
     setOpenId(null);
+    const confirmed = await dialogs.confirm({ title: "Delete this conversation?", body: "The conversation and all of its messages are deleted for good.", confirmLabel: "Delete" });
+    if (!confirmed) return;
+    await rpc("conversation_update", { id, delete: true }).catch(() => {});
     if (pathname === `/chat/${id}`) router.push("/chat");
     router.refresh();
   }
@@ -189,7 +192,7 @@ function HistoryList({ conversations, onNavigate }: { conversations: SidebarConv
                                   className="input-base !py-1 text-xs"
                                   aria-label="New title"
                                 />
-                                <button type="button" onClick={() => void rename(c.id)} className="w-full rounded-[8px] bg-accent px-2 py-1.5 text-white">{t("common.save")}</button>
+                                <button type="button" onClick={() => void rename(c.id)} className="w-full rounded-[8px] bg-accent-solid px-2 py-1.5 text-accent-ink">{t("common.save")}</button>
                               </div>
                             ) : (
                               <>
@@ -209,6 +212,7 @@ function HistoryList({ conversations, onNavigate }: { conversations: SidebarConv
           ))
         )}
       </nav>
+      {dialogs.element}
     </div>
   );
 }
@@ -251,7 +255,7 @@ function SidebarBody({
       {hideBrand ? null : (
         <div className="shrink-0 px-3 pb-3 pt-4">
           <div className="flex items-center justify-between gap-2">
-            {collapsed ? <Logo size="sm" href="/chat" /> : <div className="sidebar-brand min-w-0"><Logo size="md" href="/chat" /></div>}
+            {collapsed ? <Logo size="md" href="/chat" showWordmark={false} /> : <div className="sidebar-brand min-w-0 pl-1"><Logo size="md" href="/chat" /></div>}
             {onToggleCollapsed ? (
               <button type="button" onClick={onToggleCollapsed} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-ink-3 transition-colors hover:bg-surface-2 hover:text-ink" aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
                 <PanelLeft size={14} strokeWidth={1.7} />
@@ -263,7 +267,7 @@ function SidebarBody({
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3">
-        <NewChatButton onNavigate={onNavigate} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-accent text-sm font-semibold text-[var(--primary-contrast)] transition-colors hover:bg-accent-hover">
+        <NewChatButton onNavigate={onNavigate} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-accent-solid text-sm font-semibold text-accent-ink transition-colors hover:bg-accent-solid-hover">
           <Plus size={16} aria-hidden="true" /> New Chat
         </NewChatButton>
         <nav className="mt-3 space-y-0.5" aria-label="Primary platform">
@@ -428,8 +432,10 @@ export function AppShell({
               The status shrinks before anything else; nothing ever wraps. */}
           <div className="flex h-[var(--app-header)] w-full items-center justify-between gap-2 pl-3 pr-1.5">
             <div className="flex min-w-0 items-center gap-1.5">
+              {/* The name stays on every common phone width (360px and up). Only
+                  below 340px does it step aside for the status; the emblem never does. */}
               <div className="sidebar-brand shrink-0">
-                <Logo size="sm" href="/chat" />
+                <Logo size="sm" href="/chat" className="[&_.brand-logo-word]:hidden min-[340px]:[&_.brand-logo-word]:block" />
               </div>
               <AiStatus className="min-w-0 shrink truncate" />
             </div>
@@ -466,7 +472,7 @@ export function AppShell({
           {!immersive ? (
             <div className="hidden h-12 shrink-0 items-center justify-end gap-1 border-b border-border px-4 lg:flex">
               <NotificationsBell placement="down" />
-              <ThemeToggle compact />
+              <ThemeToggle compact ghost />
               <Link
                 href="/settings?tab=account"
                 aria-label="Edit profile"

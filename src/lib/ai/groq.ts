@@ -1,6 +1,6 @@
 // =============================================================================
 // Groq provider (spec §15: AIProvider abstraction). The Groq API key NEVER
-// leaves the server. Groq hosts the one MATRIX model, GPT OSS 120B; the model
+// leaves the server. Groq hosts the one QORVYNA model, GPT OSS 120B; the model
 // ID is defined in src/lib/ai/model.ts and passed in by the caller.
 // =============================================================================
 
@@ -227,7 +227,7 @@ export class GroqProvider implements AIProvider {
         signal: AbortSignal.timeout(5000),
       });
       if (!res.ok) {
-        console.error("[MATRIX] AI provider health check failed", {
+        console.error("[QORVYNA] AI provider health check failed", {
           provider: "Groq",
           httpStatus: res.status,
           detail: res.status === 401 ? "API key rejected (401)" : `/models probe failed (${res.status})`,

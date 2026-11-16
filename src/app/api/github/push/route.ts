@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
       code === "GITHUB_PUSH_FORBIDDEN" ? 403 :
       code.startsWith("GITHUB_409") || code.startsWith("GITHUB_422") ? 409 :
       ["FILES_INVALID", "FILES_TOO_LARGE", "TARGET_INVALID", "COMMIT_MESSAGE_REQUIRED"].includes(code) ? 400 : 502;
-    console.error("[MATRIX] Agent GitHub push failed.", code);
+    console.error("[QORVYNA] Agent GitHub push failed.", code);
     return NextResponse.json({ error: code }, { status });
   }
 }

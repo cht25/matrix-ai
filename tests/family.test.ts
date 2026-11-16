@@ -1,4 +1,4 @@
-// MATRIX Family: role separation invariants (pure logic, shared client/server).
+// QORVYNA Family: role separation invariants (pure logic, shared client/server).
 import { describe, expect, it } from "vitest";
 import {
   assertRoleAssignmentAllowed,

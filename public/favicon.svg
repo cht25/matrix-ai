@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="QORVYNA"><title>QORVYNA</title><defs>
+    <linearGradient id="s43-ring" gradientUnits="userSpaceOnUse" x1="330" y1="92" x2="110" y2="470">
+      <stop offset="0" stop-color="#22CCFF"/><stop offset=".46" stop-color="#2563FF"/><stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+    <linearGradient id="s43-tail" gradientUnits="userSpaceOnUse" x1="200" y1="282" x2="470" y2="470">
+      <stop offset="0" stop-color="#22CCFF"/><stop offset="1" stop-color="#1437D6"/>
+    </linearGradient>
+    <mask id="s43-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <rect width="512" height="512" fill="#fff"/>
+      <path d="M196 282L316 282L478 470L358 470Z" fill="#000" stroke="#000" stroke-width="34" stroke-linejoin="miter"/>
+    </mask>
+  </defs>
+  <path d="M36 282a190 190 0 1 0 380 0a190 190 0 1 0 -380 0ZM122 282a104 104 0 1 0 208 0a104 104 0 1 0 -208 0Z" fill-rule="evenodd" fill="url(#s43-ring)" mask="url(#s43-cut)"/>
+  <path d="M196 282L316 282L478 470L358 470Z" fill="url(#s43-tail)"/>
+  <circle cx="432" cy="84" r="50" fill="#22CCFF"/></svg>

@@ -1,6 +1,6 @@
 "use client";
 
-// MATRIX registration: create the Auth account, then go straight into chat.
+// QORVYNA registration: create the Auth account, then go straight into chat.
 // Profile details (name, photo, optional identity) live in Settings.
 
 import { useEffect, useState } from "react";
@@ -113,10 +113,6 @@ export function RegisterForm() {
   return (
     <div>
       <form onSubmit={submitBasic} className="space-y-4" noValidate>
-        <h1 className="text-lg font-semibold text-ink">Create your MATRIX account</h1>
-        <p className="text-sm leading-relaxed text-ink-2">
-          You can add a photo and extra profile details later in Settings.
-        </p>
         <Field label="Full name" htmlFor="full-name">
           <Input id="full-name" autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Your name" required />
         </Field>

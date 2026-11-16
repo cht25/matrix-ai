@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // =============================================================================
-// MATRIX AI — promote a user to an admin role (replaces scripts/promote-admin.sql).
+// QORVYNA AI — promote a user to an admin role (replaces scripts/promote-admin.sql).
 //
 //   node scripts/set-admin.mjs <email> [role]
 //   role: super_admin | security_admin | content_admin | support_admin | auditor

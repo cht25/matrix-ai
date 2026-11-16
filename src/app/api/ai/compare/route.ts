@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — /api/ai/compare: response-style comparison on the default model.
+// QORVYNA AI — /api/ai/compare: response-style comparison on the default model.
 //
 // Sends the SAME redacted prompt to several routing lanes in parallel and
 // returns one attributed result per lane (provider + model + content or an
@@ -13,6 +13,7 @@ import { getApiSessionUser, deviceScopeResponse } from "@/lib/firebase/device-se
 import { createAIRoutesFromDb, type AIRouteTarget } from "@/lib/ai/config";
 import { decideRoute } from "@/lib/ai/router";
 import { buildModeSystemMessages } from "@/lib/ai/prompts";
+import { routingFromTargets } from "@/lib/ai/identity";
 import { redactPII } from "@/lib/ai/pii";
 import { isChatMode, isModelLane, type ChatMode, type ModelLane } from "@/lib/ai/modes";
 import type { AIMessage } from "@/lib/ai/groq";
@@ -63,7 +64,7 @@ async function logUsage(d: ReturnType<typeof adminDb>, userId: string, model: st
       created_at: nowTs(),
     });
   } catch (err) {
-    console.warn("[MATRIX] compare usage log failed", err);
+    console.warn("[QORVYNA] compare usage log failed", err);
   }
 }
 
@@ -83,7 +84,7 @@ async function runLane(
     return { lane, provider: "none", model: "unconfigured", ok: false, error: "AI_GATEWAY_NOT_CONFIGURED" };
   }
   const messages: AIMessage[] = [
-    ...buildModeSystemMessages(mode, ""),
+    ...buildModeSystemMessages(mode, "", undefined, { routing: routingFromTargets([target]) }),
     { role: "user", content: message },
   ];
   try {

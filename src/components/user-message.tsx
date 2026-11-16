@@ -97,7 +97,7 @@ function InlineEditor({ initial, mode, saving, onSubmit, onCancel }: { initial: 
           <button type="button" onClick={onCancel} disabled={saving} className="min-h-9 rounded-lg px-3 text-[13px] font-medium text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-50">
             Cancel
           </button>
-          <button type="button" onClick={() => canSubmit && onSubmit(text)} disabled={!canSubmit} className="min-h-9 rounded-lg bg-accent px-3.5 text-[13px] font-semibold text-[var(--primary-contrast)] hover:bg-accent-hover disabled:opacity-45">
+          <button type="button" onClick={() => canSubmit && onSubmit(text)} disabled={!canSubmit} className="min-h-9 rounded-lg bg-accent-solid px-3.5 text-[13px] font-semibold text-accent-ink hover:bg-accent-solid-hover disabled:opacity-45">
             {saving ? "Saving…" : mode === "resend" ? "Send" : "Save"}
           </button>
         </div>

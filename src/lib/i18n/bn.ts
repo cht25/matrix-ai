@@ -2,7 +2,7 @@ import type { En } from "./en";
 
 // Bangla (বাংলা) translations — architecture-ready for full i18n.
 export const bn: En = {
-  "brand.name": "ম্যাট্রিক্স এআই",
+  "brand.name": "QORVYNA AI",
   "brand.byline": "THAMJJ13.TOP হোয়াইট হ্যাট টিম",
   "nav.home": "হোম",
   "nav.dashboard": "ড্যাশবোর্ড",
@@ -48,11 +48,11 @@ export const bn: En = {
   "auth.facebook": "ফেসবুক দিয়ে চালিয়ে যান",
   "auth.needAccount": "নতুন? একটি অ্যাকাউন্ট খুলুন",
   "auth.haveAccount": "ইতিমধ্যে অ্যাকাউন্ট আছে? সাইন ইন করুন",
-  "auth.ageNote": "ম্যাট্রিক্স এআই ১১–১৭ বছর বয়সীদের জন্য।",
+  "auth.ageNote": "QORVYNA AI ১১–১৭ বছর বয়সীদের জন্য।",
   "dashboard.title": "আপনার নিরাপত্তা ড্যাশবোর্ড",
   "dashboard.score": "সাইবার সেফটি স্কোর",
   "dashboard.recommendations": "নিরাপত্তা পরামর্শ",
-  "chat.title": "ম্যাট্রিক্স এআইকে জিজ্ঞাসা করুন",
+  "chat.title": "QORVYNA AI-কে জিজ্ঞাসা করুন",
   "chat.placeholder": "কম্পিউটার, ফোন, অ্যাপ, আইটি বা অনলাইন নিরাপত্তা নিয়ে জিজ্ঞাসা করুন…",
   "chat.tempNotice": "অস্থায়ী চ্যাট — এই কথোপকথন আপনার অ্যাকাউন্ট বা মেমরিতে সংরক্ষিত হবে না।",
   "chat.send": "পাঠান",

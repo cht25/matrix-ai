@@ -1,7 +1,7 @@
 rules_version = '2';
 
 // =============================================================================
-// MATRIX AI — Firestore security rules (port of the Postgres RLS policies).
+// QORVYNA AI — Firestore security rules (port of the Postgres RLS policies).
 //
 // Model: every WRITE goes through Next.js API routes / server components using
 // the Firebase Admin SDK, which re-checks auth, ownership, validation, audit
@@ -218,7 +218,7 @@ service cloud.firestore {
       }
     }
 
-    // --- MATRIX Family ----------------------------------------------------------------
+    // --- QORVYNA Family ----------------------------------------------------------------
     match /families/{id} {
       // Readable by active members (membership doc id is `${uid}_${familyId}`)
       // and admins; all mutations run server-side with role checks in code.
@@ -282,7 +282,7 @@ service cloud.firestore {
       }
     }
 
-    // --- MATRIX Connect (device pairing) ----------------------------------------------
+    // --- QORVYNA Connect (device pairing) ----------------------------------------------
     match /pairing_challenges/{id} {
       allow read, write: if false; // HMAC-signed one-time challenges — server only
     }

@@ -3,7 +3,7 @@ import { DOC_SECTIONS } from "@/content/docs";
 import { siteOrigin } from "@/lib/seo";
 
 // =============================================================================
-// MATRIX sitemap — served by Next.js at /sitemap.xml.
+// QORVYNA sitemap — served by Next.js at /sitemap.xml.
 //
 // Lists every page a search engine should index:
 //   • the homepage and the public help / legal pages

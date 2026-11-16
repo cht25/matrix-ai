@@ -27,7 +27,7 @@ export function AdminShell({
     <div className="space-y-5">
       <header className="flex flex-col gap-3 rounded-2xl border border-border bg-surface px-4 py-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
-          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-3">Matrix · Admin control centre</p>
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-3">QORVYNA · Admin control centre</p>
           <h1 className="mt-1 truncate font-display text-xl font-semibold tracking-tight text-ink sm:text-2xl">{title}</h1>
           <p className="mt-1 max-w-2xl text-sm leading-relaxed text-ink-2">{subtitle}</p>
         </div>

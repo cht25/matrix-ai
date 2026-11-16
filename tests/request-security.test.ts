@@ -19,8 +19,15 @@ describe("central mutation CSRF boundary", () => {
   it("does not trust forwarded headers unless explicitly configured", () => {
     const headers = { Origin: "https://preview.example", "x-forwarded-host": "preview.example", "x-forwarded-proto": "https" };
     expect(mutationOriginAllowed(request(headers))).toBe(false);
+    vi.stubEnv("QORVYNA_TRUST_PROXY_HEADERS", "true");
+    expect(mutationOriginAllowed(request(headers))).toBe(true);
+  });
+  it("still honours the pre-rename MATRIX_TRUST_PROXY_HEADERS, and lets the new name override it", () => {
+    const headers = { Origin: "https://preview.example", "x-forwarded-host": "preview.example", "x-forwarded-proto": "https" };
     vi.stubEnv("MATRIX_TRUST_PROXY_HEADERS", "true");
     expect(mutationOriginAllowed(request(headers))).toBe(true);
+    vi.stubEnv("QORVYNA_TRUST_PROXY_HEADERS", "false");
+    expect(mutationOriginAllowed(request(headers))).toBe(false);
   });
 });
 

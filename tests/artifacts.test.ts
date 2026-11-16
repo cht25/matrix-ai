@@ -82,10 +82,10 @@ describe("artifact lifecycle", () => {
     const image = requestArtifact(emptyArtifactState(), { type: "IMAGE" });
     expect(image.type).toBe("IMAGE");
     expect(image.format).toBeNull();
-    expect(image.filename).toBe("matrix-image.png");
+    expect(image.filename).toBe("qorvyna-image.png");
     expect(artifactLabel("AGENT_TASK")).toBe("Agent task");
     expect(artifactFilename("MARKDOWN", "My Report")).toBe("my-report.md");
-    expect(artifactFilename("IMAGE", " Anything ")).toBe("matrix-image.png");
+    expect(artifactFilename("IMAGE", " Anything ")).toBe("qorvyna-image.png");
   });
 
   it("round-trips through a serializable snapshot", () => {

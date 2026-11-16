@@ -6,7 +6,7 @@
 // Polls `/api/app/version?platform=web` on mobile viewports & standalone PWAs
 // (on mount and when returning to foreground). Never renders on initial paint
 // so desktop and SSR stay completely clean; surfaces a compact one-tap update
-// bar when a newer MATRIX build is published.
+// bar when a newer QORVYNA build is published.
 // =============================================================================
 
 import { useCallback, useEffect, useState } from "react";
@@ -92,21 +92,21 @@ export function PhoneUpdateBanner() {
   return (
     <div
       role="region"
-      aria-label="MATRIX phone update available"
+      aria-label="QORVYNA phone update available"
       className="border-b border-accent/30 bg-accent-soft px-3 py-2 text-xs text-ink"
     >
       <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <Smartphone size={14} className="shrink-0 text-accent" aria-hidden="true" />
           <span className="truncate font-medium">
-            MATRIX v{update.latest_version} is available{update.force_update ? " (required update)" : ""}
+            QORVYNA v{update.latest_version} is available{update.force_update ? " (required update)" : ""}
           </span>
         </div>
         <div className="flex items-center gap-1.5">
           <button
             type="button"
             onClick={() => void applyWebRefresh()}
-            className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-accent-hover"
+            className="inline-flex items-center gap-1 rounded-md bg-accent-solid px-2.5 py-1 text-[11px] font-semibold text-accent-ink hover:bg-accent-solid-hover"
           >
             <RefreshCw size={11} /> Update now
           </button>

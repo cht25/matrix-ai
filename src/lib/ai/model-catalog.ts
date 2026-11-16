@@ -68,7 +68,7 @@ export async function fetchModelCatalog(input: {
 export async function verifyCatalogModel(input: Parameters<typeof fetchModelCatalog>[0], model: string): Promise<void> {
   const catalog = await fetchModelCatalog(input);
   if (!catalog.models.some((item) => item.id === model)) {
-    throw new AIProviderError({ provider: input.provider ?? "OpenAI", model, status: 404, type: "invalid_request", detail: `Model ${model} is not present in this provider's account catalog. Choose a listed model; MATRIX will not guess a replacement.` });
+    throw new AIProviderError({ provider: input.provider ?? "OpenAI", model, status: 404, type: "invalid_request", detail: `Model ${model} is not present in this provider's account catalog. Choose a listed model; QORVYNA will not guess a replacement.` });
   }
 }
 
@@ -107,7 +107,7 @@ export async function verifyProviderModel(
       model,
       status: 404,
       type: "invalid_request",
-      detail: `Model ${model} is not present in this provider's account catalog. Choose a listed model; MATRIX will not guess a replacement.`,
+      detail: `Model ${model} is not present in this provider's account catalog. Choose a listed model; QORVYNA will not guess a replacement.`,
     });
   }
 }

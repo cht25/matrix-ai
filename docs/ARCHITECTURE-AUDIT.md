@@ -1,4 +1,4 @@
-# MATRIX — Architecture Audit & Transformation Plan (Phase 0)
+# QORVYNA — Architecture Audit & Transformation Plan (Phase 0)
 
 Date: 2026-11-06 · Branch: `arena/fae63b29-matrix-ai` · Baseline commit: `74409d5`
 
@@ -47,7 +47,7 @@ Chat (streaming, history, temporary chat, pinned, projects, attachments), AI mod
 - `src/lib/design/tokens.ts` + `src/lib/design/engine.ts` — Dynamic Design Engine: deterministic NL → validated tokens (allowlisted fonts/densities/sidebar/radius, hex-only colors, WCAG AA contrast gate), preview/edit/build pipeline. No arbitrary CSS/JS possible.
 - `src/lib/server/design.ts` — persistence: `design_configs/{uid}` + `versions` subcollection; preview never writes; save/apply/reset audited.
 - `src/lib/family.ts` + `src/lib/server/family.ts` — account roles (individual/org_admin/support_operator) strictly separated from family roles (parent/child); child can never be org admin; create/invite (hashed one-time tokens, 7-day TTL)/accept/role-change/revoke/list; all server-enforced + audited.
-- `src/lib/server/pairing.ts` + `/api/devices/pairing/create|complete`, `/api/devices` — MATRIX Connect QR pairing: HMAC-SHA256-signed, 5-minute, single-use challenges (replay-protected via transaction), scoped device registration, revocation, audit + security events. QR contains no credentials.
+- `src/lib/server/pairing.ts` + `/api/devices/pairing/create|complete`, `/api/devices` — QORVYNA Connect QR pairing: HMAC-SHA256-signed, 5-minute, single-use challenges (replay-protected via transaction), scoped device registration, revocation, audit + security events. QR contains no credentials.
 - `firestore.rules` / `firestore.indexes.json` — new collections locked down (server-write-only; owner reads).
 - RPC actions: `design_*`, `family_*` in `/api/rpc`.
 - Tests: `tests/tool-registry.test.ts`, `tests/design-engine.test.ts`, `tests/family.test.ts`, `tests/device-pairing.test.ts` (32 new tests → **516 total passing**).
@@ -72,7 +72,7 @@ Chat (streaming, history, temporary chat, pinned, projects, attachments), AI mod
 
 - **Multi-model comparison** (§5): `POST /api/ai/compare` runs the same PII-redacted prompt across up to 3 routing lanes in parallel using the real provider routing (`createAIRoutesFromDb`), returning per-lane `{ provider, model, content | error }` with usage logging and a per-user rate limit. UI: `/compare` (`src/components/compare-client.tsx`) with lane picker, side-by-side markdown, per-lane regenerate and copy. Comparisons are ephemeral and attributed — never saved silently.
 - **Family UI** (§8): `/family` (`src/components/family/family-client.tsx`) — create family, invite by email (one-time code shown once), accept via code, member list, promote/revoke (parent-only, server-enforced).
-- **MATRIX Connect UI** (§9): `/devices` (`src/components/devices/devices-client.tsx`) — generate signed QR (5-min, single-use), pair-this-device by pasting the payload, device list with scopes, unlink.
+- **QORVYNA Connect UI** (§9): `/devices` (`src/components/devices/devices-client.tsx`) — generate signed QR (5-min, single-use), pair-this-device by pasting the payload, device list with scopes, unlink.
 - **Design Studio UI** (§4): `/design` (`src/components/design/design-studio-client.tsx`) — NL instruction → validated preview (contrast-gated) → approve & save → version history with apply/reset.
 - Nav: Family, Devices, Design studio, Compare models added to desktop sidebar "More tools" and the mobile More sheet.
 - Tests: `tests/ai-compare.test.ts` (4 tests) → **520 total passing**, `tsc` clean, `next build` succeeds with all new routes.

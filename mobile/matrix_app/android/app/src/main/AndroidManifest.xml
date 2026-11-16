@@ -15,7 +15,7 @@
     </queries>
 
     <application
-        android:label="MATRIX AI"
+        android:label="QORVYNA AI"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="false">

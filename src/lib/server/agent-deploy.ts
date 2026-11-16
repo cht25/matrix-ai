@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — Agent task → Vercel deployment flow (server-only).
+// QORVYNA AI — Agent task → Vercel deployment flow (server-only).
 //
 // One guarded workflow that records REAL checkpoints on the agent task while
 // performing the Vercel deployment:
@@ -24,7 +24,7 @@ export type AgentDeployResult = {
 };
 
 /**
- * Deploy a MATRIX agent task to Vercel with the full checkpoint trail.
+ * Deploy a QORVYNA agent task to Vercel with the full checkpoint trail.
  * `approve` must be true (the user's explicit deploy approval checkpoint).
  */
 export async function deployAgentTask(

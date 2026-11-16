@@ -1,7 +1,7 @@
 // =============================================================================
-// THE MATRIX AI MODEL — single source of truth.
+// THE QORVYNA AI MODEL — single source of truth.
 //
-// MATRIX runs on exactly one language model: GPT OSS 120B. Normal Chat, Agent
+// QORVYNA runs on exactly one language model: GPT OSS 120B. Normal Chat, Agent
 // mode, website generation, project editing, code generation and analysis,
 // debugging, tool calling, planning, build/deploy assistance, research,
 // comparison lanes and voice-transcript turns all resolve to the identifier
@@ -14,29 +14,37 @@
 // =============================================================================
 
 /** Provider-verified model ID, exactly as the Groq API lists it. */
-export const MATRIX_MODEL_ID = "openai/gpt-oss-120b";
+export const QORVYNA_MODEL_ID = "openai/gpt-oss-120b";
 
 /** Human-readable name shown in the UI. */
-export const MATRIX_MODEL_LABEL = "GPT OSS 120B";
+export const QORVYNA_MODEL_LABEL = "GPT OSS 120B";
+
+/**
+ * Who published the model. GPT OSS 120B is an open-weight model released by
+ * OpenAI; QORVYNA did not create it, and reaches it through a hosting provider
+ * (below) or a dedicated OpenAI-compatible endpoint the operator configures.
+ */
+export const QORVYNA_MODEL_PUBLISHER = "OpenAI" as const;
 
 /** The hosted provider that serves the model. */
-export const MATRIX_MODEL_PROVIDER = "Groq" as const;
-export const MATRIX_MODEL_PROVIDER_ID = "groq" as const;
-export const MATRIX_MODEL_BASE_URL = "https://api.groq.com/openai/v1";
+export const QORVYNA_MODEL_PROVIDER = "Groq" as const;
+export const QORVYNA_MODEL_PROVIDER_ID = "groq" as const;
+export const QORVYNA_MODEL_BASE_URL = "https://api.groq.com/openai/v1";
 
 /** Public descriptor — safe to send to the browser (no credentials). */
-export const MATRIX_MODEL = {
-  id: MATRIX_MODEL_ID,
-  label: MATRIX_MODEL_LABEL,
-  provider: MATRIX_MODEL_PROVIDER,
-  providerId: MATRIX_MODEL_PROVIDER_ID,
+export const QORVYNA_MODEL = {
+  id: QORVYNA_MODEL_ID,
+  label: QORVYNA_MODEL_LABEL,
+  provider: QORVYNA_MODEL_PROVIDER,
+  providerId: QORVYNA_MODEL_PROVIDER_ID,
+  publisher: QORVYNA_MODEL_PUBLISHER,
   streaming: true,
   toolCalling: true,
   vision: false,
 } as const;
 
 /** True for any spelling of the one permitted model (hosts name it with or without the `openai/` prefix). */
-export function isMatrixModelId(value: string | null | undefined): boolean {
+export function isQorvynaModelId(value: string | null | undefined): boolean {
   return /^(?:openai\/)?gpt-oss-120b$/i.test((value ?? "").trim());
 }
 
@@ -48,5 +56,5 @@ export function isMatrixModelId(value: string | null | undefined): boolean {
  */
 export function dedicatedEndpointModelId(configured: string | null | undefined): string {
   const value = (configured ?? "").trim();
-  return isMatrixModelId(value) ? value : MATRIX_MODEL_ID;
+  return isQorvynaModelId(value) ? value : QORVYNA_MODEL_ID;
 }

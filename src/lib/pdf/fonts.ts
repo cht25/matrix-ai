@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX PDF fonts — real, Unicode-capable TrueType faces embedded as subsets.
+// QORVYNA PDF fonts — real, Unicode-capable TrueType faces embedded as subsets.
 //
 // The legacy exporters used the PDF "standard 14" Type 1 fonts (Helvetica /
 // Courier with WinAnsiEncoding). Those fonts physically cannot encode anything
@@ -9,10 +9,10 @@
 //
 // Two families cover everything the platform produces:
 //
-//   MatrixSans / MatrixMono  — DejaVu Sans / Sans Mono (~5.9k glyphs: Latin,
+//   QorvynaSans / QorvynaMono  — DejaVu Sans / Sans Mono (~5.9k glyphs: Latin,
 //                              Greek, Cyrillic, punctuation, arrows, maths,
 //                              ✓ • → — … ★ √ and the rest of the symbol set).
-//   MatrixBengali            — Noto Sans Bengali (Bengali/Bangla, including
+//   QorvynaBengali            — Noto Sans Bengali (Bengali/Bangla, including
 //                              conjuncts and reordered vowel signs, which need
 //                              real OpenType shaping).
 //
@@ -36,12 +36,12 @@ export type FaceName =
   | "bengali-bold";
 
 const FILES: Record<FaceName, string> = {
-  sans: "MatrixSans-Regular.ttf",
-  "sans-bold": "MatrixSans-Bold.ttf",
-  mono: "MatrixMono-Regular.ttf",
-  "mono-bold": "MatrixMono-Bold.ttf",
-  bengali: "MatrixBengali-Regular.ttf",
-  "bengali-bold": "MatrixBengali-Bold.ttf",
+  sans: "QorvynaSans-Regular.ttf",
+  "sans-bold": "QorvynaSans-Bold.ttf",
+  mono: "QorvynaMono-Regular.ttf",
+  "mono-bold": "QorvynaMono-Bold.ttf",
+  bengali: "QorvynaBengali-Regular.ttf",
+  "bengali-bold": "QorvynaBengali-Bold.ttf",
 };
 
 export const FACE_NAMES = Object.keys(FILES) as FaceName[];

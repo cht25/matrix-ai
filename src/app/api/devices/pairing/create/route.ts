@@ -1,4 +1,4 @@
-// MATRIX Connect — create a short-lived, signed QR pairing challenge.
+// QORVYNA Connect — create a short-lived, signed QR pairing challenge.
 // Returns the QR payload plus a rendered PNG data URL. The payload contains
 // NO tokens or credentials — only a one-time challenge id + HMAC signature.
 import { NextResponse } from "next/server";
@@ -32,7 +32,7 @@ export async function POST(req: Request) {
     });
     return NextResponse.json({ ...challenge, qr_data_url: qrDataUrl });
   } catch (error) {
-    console.error("[MATRIX] pairing challenge creation failed", error);
+    console.error("[QORVYNA] pairing challenge creation failed", error);
     return NextResponse.json({ error: "PAIRING_CREATE_FAILED" }, { status: 500 });
   }
 }

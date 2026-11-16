@@ -1,4 +1,4 @@
-/// Authenticated API client for the MATRIX backend.
+/// Authenticated API client for the QORVYNA backend.
 ///
 /// Pairing uses a Firebase ID token; subsequent requests use the
 /// revocable device credential in `Authorization: Bearer` — the server verifies it exactly like the
@@ -262,7 +262,7 @@ class MatrixApi {
     }
   }
 
-  /// Sends a chat or image request to the real MATRIX `/api/ai` gateway
+  /// Sends a chat or image request to the real QORVYNA `/api/ai` gateway
   /// (image generation is a separate media service).
   Future<Map<String, dynamic>> sendAiGateway(Map<String, dynamic> payload) async {
     // Chat always runs as the signed-in account; the device credential only

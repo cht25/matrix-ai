@@ -79,8 +79,8 @@ export async function POST(req: NextRequest) {
           "Content-Length": String(audioBytes.byteLength),
           "Cache-Control": "private, no-store",
           "X-Content-Type-Options": "nosniff",
-          "X-MATRIX-Provider": providerName,
-          "X-MATRIX-Model": activeModel,
+          "X-QORVYNA-Provider": providerName,
+          "X-QORVYNA-Model": activeModel,
         },
       });
     }

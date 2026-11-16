@@ -1,4 +1,4 @@
-# MATRIX feature status
+# QORVYNA feature status
 
 Baseline: 2026-11-07, commit `f65ad24`. **Source present** does not mean production verified. Unit tests passed at baseline (587); authenticated live workflows were not accessible.
 

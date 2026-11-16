@@ -34,7 +34,7 @@ export function CertificateActions({
     setError(null);
     const win = window.open(printUrl, "_blank", "noopener,width=1100,height=800");
     if (!win) {
-      setError("Your browser blocked the print window. Allow pop-ups for MATRIX, or open the certificate and use your browser's Print command.");
+      setError("Your browser blocked the print window. Allow pop-ups for QORVYNA, or open the certificate and use your browser's Print command.");
     }
   }
 
@@ -52,13 +52,13 @@ export function CertificateActions({
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `MATRIX-${cert.certificate_id}.pdf`;
+      anchor.download = `QORVYNA-${cert.certificate_id}.pdf`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
     } catch (err) {
-      console.error("[MATRIX] certificate PDF download failed", err);
+      console.error("[QORVYNA] certificate PDF download failed", err);
       setError("The certificate PDF could not be downloaded. Please try again in a moment.");
     } finally {
       setDownloading(false);

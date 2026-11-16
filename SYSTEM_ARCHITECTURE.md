@@ -1,4 +1,4 @@
-# MATRIX system architecture
+# QORVYNA system architecture
 
 **Current architecture audited:** 2026-11-07. This describes code present in the repository, not a claim that every external integration is live.
 
@@ -56,11 +56,11 @@ Chat, coding assistance, and agent/build execution are distinct. Chat/coding res
 
 ## Durable automation
 
-Automation definitions and due timestamps are stored in Firestore. The scheduler worker polls the protected `/api/jobs/automations` endpoint, and execution claims are transactionally leased to avoid duplicate runs. Deploy the worker separately with `AUTOMATION_WORKER_SECRET` and a reachable `MATRIX_WORKER_TARGET_URL`; a Next.js browser tab is not the scheduler. Event triggers beyond the implemented schedule/manual action paths must not be advertised as active without a dispatcher.
+Automation definitions and due timestamps are stored in Firestore. The scheduler worker polls the protected `/api/jobs/automations` endpoint, and execution claims are transactionally leased to avoid duplicate runs. Deploy the worker separately with `AUTOMATION_WORKER_SECRET` and a reachable `QORVYNA_WORKER_TARGET_URL` (the earlier name `MATRIX_WORKER_TARGET_URL` is still read); a Next.js browser tab is not the scheduler. Event triggers beyond the implemented schedule/manual action paths must not be advertised as active without a dispatcher.
 
 ## Device/family and native boundaries
 
-MATRIX Connect account devices are not smart-home actuators. Pairing creates short-lived QR challenges and scoped credentials with server-side revocation checks. There is no ESP32 firmware, MQTT TLS broker adapter, actuator command acknowledgement, OTA signing system or physical pairing-button implementation. Likewise, no Tauri native desktop project, Android MediaProjection companion or browser screen-sharing transport is present. These require separate consented native/embedded components and cannot be substituted by decorative web controls.
+QORVYNA Connect account devices are not smart-home actuators. Pairing creates short-lived QR challenges and scoped credentials with server-side revocation checks. There is no ESP32 firmware, MQTT TLS broker adapter, actuator command acknowledgement, OTA signing system or physical pairing-button implementation. Likewise, no Tauri native desktop project, Android MediaProjection companion or browser screen-sharing transport is present. These require separate consented native/embedded components and cannot be substituted by decorative web controls.
 
 ## Operational requirements
 

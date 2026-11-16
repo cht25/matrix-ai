@@ -4,11 +4,13 @@ import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { MoreVertical } from "lucide-react";
 import { rpc } from "@/lib/client/api";
+import { useDialogs } from "@/components/dialogs";
 
 export function ConversationActions({ conversationId }: { conversationId: string }) {
   const router = useRouter();
   const pathname = usePathname();
   const [menu, setMenu] = useState(false);
+  const dialogs = useDialogs();
 
   async function archive() {
     await rpc("conversation_update", { id: conversationId, archive: true }).catch(() => {});
@@ -16,7 +18,8 @@ export function ConversationActions({ conversationId }: { conversationId: string
     router.refresh();
   }
   async function remove() {
-    if (!confirm("Delete this conversation? This can't be undone.")) return;
+    const confirmed = await dialogs.confirm({ title: "Delete this conversation?", body: "The conversation and all of its messages are deleted for good.", confirmLabel: "Delete" });
+    if (!confirmed) return;
     await rpc("conversation_update", { id: conversationId, delete: true }).catch(() => {});
     if (pathname === `/chat/${conversationId}`) router.push("/chat");
     router.refresh();
@@ -26,7 +29,7 @@ export function ConversationActions({ conversationId }: { conversationId: string
     const blob = new Blob([JSON.stringify({ conversation_id: conversationId, exported_at: new Date().toISOString(), messages }, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `matrix-ai-chat-${conversationId.slice(0, 8)}.json`;
+    a.download = `qorvyna-chat-${conversationId.slice(0, 8)}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -52,6 +55,7 @@ export function ConversationActions({ conversationId }: { conversationId: string
           </div>
         </>
       ) : null}
+      {dialogs.element}
     </div>
   );
 }

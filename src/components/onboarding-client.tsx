@@ -15,7 +15,7 @@ type Verification = { verification_status: string; rejection_reason: string; ver
 type Country = { id: string; name: string; consent_required: boolean; consent_min_age: number };
 
 const WHY_DOB =
-  "MATRIX is for people aged 11–17. We ask for your date of birth so we can check that you are in that age range, apply the correct guardian-consent rules for your country, and keep adult accounts out of a youth platform.";
+  "QORVYNA is for people aged 11–17. We ask for your date of birth so we can check that you are in that age range, apply the correct guardian-consent rules for your country, and keep adult accounts out of a youth platform.";
 
 const WHY_CERT =
   "We ask for your birth certificate number (not a photo) so the security team can confirm you are a real person in that age range without collecting a scan of a legal document. A document image is a high-risk piece of identity data. A number can be checked and stored as a one-way hash. We never send your date of birth or certificate number to the AI. We never show the number back in chat, logs, or analytics. Only hashed data is stored. Admins see a masked reference and a verification status, not the raw number.";
@@ -64,7 +64,7 @@ export function OnboardingClient({
       });
       if (result.age !== undefined && (result.age < 11 || result.age > 17)) {
         setBusy(false);
-        setMsg({ tone: "danger", text: `MATRIX AI is for users aged 11–17. (Age entered: ${result.age})` });
+        setMsg({ tone: "danger", text: `QORVYNA AI is for users aged 11–17. (Age entered: ${result.age})` });
         return;
       }
       if (!identityDone && certNumber.trim()) {
@@ -77,8 +77,8 @@ export function OnboardingClient({
       const map: Record<string, string> = {
         DOB_MISSING: "Please enter your date of birth.",
         DOB_FUTURE: "Your date of birth can't be in the future.",
-        DOB_TOO_YOUNG: "MATRIX AI is for users aged 11 and up.",
-        DOB_TOO_OLD: "MATRIX AI is for users aged 17 and under.",
+        DOB_TOO_YOUNG: "QORVYNA AI is for users aged 11 and up.",
+        DOB_TOO_OLD: "QORVYNA AI is for users aged 17 and under.",
         CERT_NUMBER_MISSING: "Please enter your birth certificate number.",
         CERT_NUMBER_INVALID: "That birth certificate number doesn't look valid. Use 6–32 letters or numbers.",
         CERT_NUMBER_IN_USE: "That birth certificate number is already linked to another account.",

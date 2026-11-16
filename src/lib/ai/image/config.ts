@@ -5,7 +5,7 @@
 //   · The API key is stored encrypted (AES-256-GCM) in
 //     `system_settings/image_provider` and is NEVER returned to the browser.
 //   · The public projection exposes only: configured, provider, model, last4.
-//   · The browser calls MATRIX; MATRIX calls the configured image provider. The key is never in
+//   · The browser calls QORVYNA; QORVYNA calls the configured image provider. The key is never in
 //     client JS, localStorage, a NEXT_PUBLIC_ variable or the HTML source.
 //   · Audit entries record that the configuration changed — never the key.
 //

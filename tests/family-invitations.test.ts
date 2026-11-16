@@ -74,7 +74,7 @@ describe("Resend integration", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
   it("records provider acceptance, with stable idempotency and server-only auth", async () => {
-    vi.stubEnv("RESEND_API_KEY", "server-secret"); vi.stubEnv("RESEND_FROM_EMAIL", "MATRIX <invite@example.com>");
+    vi.stubEnv("RESEND_API_KEY", "server-secret"); vi.stubEnv("RESEND_FROM_EMAIL", "QORVYNA <invite@example.com>");
     const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: "email-id" }) }); vi.stubGlobal("fetch", fetch);
     expect(await sendFamilyInvitation(input)).toEqual({ status: "accepted_by_provider", provider_id: "email-id" });
     expect(fetch.mock.calls[0][1].headers["Idempotency-Key"]).toBe("family-invitation/i");

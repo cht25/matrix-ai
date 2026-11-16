@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX intent + artifact detection
+// QORVYNA intent + artifact detection
 //
 // The UI is context-aware: capabilities exist in the system, but the interface
 // only reveals them when they become relevant. This module is the single source
@@ -20,7 +20,7 @@
 
 import type { ChatMode } from "@/lib/ai/modes";
 
-/** What the user wants Matrix to do. */
+/** What the user wants QORVYNA to do. */
 export type IntentId =
   | "CHAT"
   | "EXPORT"
@@ -47,7 +47,7 @@ export type ArtifactType =
   | "RESEARCH"
   | "AGENT_TASK";
 
-/** Export formats Matrix can really build in the browser. */
+/** Export formats QORVYNA can really build in the browser. */
 export type ExportFormat = "pdf" | "docx" | "markdown" | "txt" | "json" | "csv" | "xlsx";
 
 /** Which gateway capability a request needs. */
@@ -64,7 +64,7 @@ export type IntentResult = {
   formats: ExportFormat[];
   /**
    * The user asked for "a report"/"a document" but never said which format.
-   * Matrix answers normally and then offers a minimal format choice.
+   * QORVYNA answers normally and then offers a minimal format choice.
    */
   needsFormatChoice: boolean;
   /** Formats offered when `needsFormatChoice` is true. Kept deliberately small. */
@@ -149,7 +149,7 @@ const HEALTH_CUE =
 /**
  * Information questions ("How do I export data to CSV?", "What is a PDF?") must
  * never be read as "produce that file". Requests phrased as questions but
- * clearly asking Matrix to do the work ("Can you make this a PDF?") still pass.
+ * clearly asking QORVYNA to do the work ("Can you make this a PDF?") still pass.
  */
 const INFO_QUESTION =
   /^\s*(?:what|who|why|where|when|which|how\s+(?:do|does|did|can|could|to|is|are|was|were|much|many|long|often)|explain|define|describe|tell me about|is there|are there)\b/i;
@@ -257,7 +257,7 @@ export function detectCodeRequest(input: string): boolean {
 // ---------------------------------------------------------------------------
 
 export type IntentContext = {
-  /** Active Matrix mode. Explicit user wording always beats the mode. */
+  /** Active QORVYNA mode. Explicit user wording always beats the mode. */
   mode?: ChatMode;
   /** True when the user pressed the Image capability in the composer. */
   imageCapability?: boolean;
@@ -400,7 +400,7 @@ export function selectCapability(result: IntentResult, mode: ChatMode): Capabili
 }
 
 /**
- * The mode Matrix should actually send to the gateway for this one message.
+ * The mode QORVYNA should actually send to the gateway for this one message.
  * Explicit image intent may select the image action. Agent execution never
  * upgrades from General/Code: the user must activate Agent first.
  */

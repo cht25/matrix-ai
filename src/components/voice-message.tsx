@@ -104,7 +104,7 @@ export const VoiceMessage = memo(function VoiceMessage({
           type="button"
           onClick={toggle}
           aria-label={playing ? "Pause voice message" : "Play voice message"}
-          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-accent text-[var(--primary-contrast)] transition-colors hover:bg-accent-hover"
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-accent-solid text-accent-ink transition-colors hover:bg-accent-solid-hover"
         >
           {loading ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : playing ? <Pause size={16} fill="currentColor" aria-hidden="true" /> : <Play size={16} fill="currentColor" className="translate-x-px" aria-hidden="true" />}
         </button>

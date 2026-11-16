@@ -1,7 +1,7 @@
 // =============================================================================
-// MATRIX Phone OTA Update Service (`GET /api/app/version`)
+// QORVYNA Phone OTA Update Service (`GET /api/app/version`)
 //
-// Checks the canonical MATRIX backend (`https://matrix.thamjj13.top/api/app/version`)
+// Checks the canonical QORVYNA backend (`https://matrix.thamjj13.top/api/app/version`)
 // on phone launch, app resume, and manual "Check for updates".
 // Supports:
 //   1. Optional update bottom sheet with release notes & one-tap APK download
@@ -121,7 +121,7 @@ class UpdateService {
       context: context,
       isDismissible: !info.forceUpdate,
       enableDrag: !info.forceUpdate,
-      backgroundColor: const Color(0xFF141418),
+      backgroundColor: const Color(0xFF0D1433),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -141,7 +141,7 @@ class UpdateService {
                     child: Text(
                       info.forceUpdate
                           ? 'Required Update · v${info.latestVersion}'
-                          : 'MATRIX Update Available · v${info.latestVersion}',
+                          : 'QORVYNA Update Available · v${info.latestVersion}',
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
                     ),
                   ),
@@ -159,7 +159,7 @@ class UpdateService {
                   constraints: const BoxConstraints(maxHeight: 180),
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1C1C22),
+                    color: const Color(0xFF141C3D),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: SingleChildScrollView(

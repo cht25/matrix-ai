@@ -102,9 +102,9 @@ describe("intent detection — explicit artifacts", () => {
 describe("intent detection — image, agent and code", () => {
   it("test 5: explicit image generation uses the image service", () => {
     for (const text of [
-      "Generate an image of a futuristic Matrix city.",
+      "Generate an image of a futuristic QORVYNA city.",
       "Create a cyberpunk poster.",
-      "Generate a logo for Matrix.",
+      "Generate a logo for QORVYNA.",
       "Draw an illustration of a neural network.",
     ]) {
       const result = detectIntent(text);

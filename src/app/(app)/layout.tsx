@@ -28,7 +28,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   try {
     sidebar = await getSidebarData(db(), user.uid);
   } catch (err) {
-    console.error(`[MATRIX] Sidebar data failed to load for uid ${user.uid} — rendering the shell without it.`, err);
+    console.error(`[QORVYNA] Sidebar data failed to load for uid ${user.uid} — rendering the shell without it.`, err);
     sidebar = { conversations: [], profileName: "", profileAvatar: "", isAdmin: false };
   }
   const { conversations, profileName, profileAvatar, isAdmin } = sidebar;

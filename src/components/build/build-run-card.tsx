@@ -21,6 +21,8 @@ import { runFromSnapshot } from "@/lib/deploy/stages";
 import { normalizeStatus } from "@/lib/deploy/status";
 import { readBuildRun, resumeBuildRun } from "@/lib/client/build-runner";
 import { DeploymentRow } from "@/components/build/deploy-card";
+import { TaskOutcomeLine } from "@/components/build/task-outcome";
+import { outcomeOfRun } from "@/lib/ai/task-outcome";
 import type { ProjectDeploymentOverview } from "@/lib/deploy/provider";
 
 const POLL_MS = 3_000;
@@ -137,16 +139,26 @@ export function BuildRunCard({
   if (!run) return null;
   const streaming = Boolean(liveRun && busy);
   const canContinue = !streaming && !resuming && run.continuation?.available === true && (run.status === "paused" || run.status === "failed");
+  const finished = run.status !== "running" && run.status !== "requested";
+  // How the task ended — completed, failed, blocked … — from the run record.
+  const outcome = outcomeOfRun(run);
+  const blocked = finished && outcome.state === "blocked";
   return (
     <>
       <DeploymentRow
         run={run}
         overview={overview}
         onOpenWorkspace={onOpenWorkspace}
-        onRetry={canContinue ? undefined : onRetry}
+        // Blocked is not failed: the same request would hit the same wall, so
+        // no Retry is offered for it.
+        onRetry={canContinue || blocked ? undefined : onRetry}
+        blocked={blocked}
         busy={busy || resuming}
         onRequestDetails={hydrate}
       />
+      {/* The state word and the facts behind it. The sentences (what happened,
+          what to do next) are the reply itself, so they are not repeated. */}
+      {finished ? <TaskOutcomeLine outcome={outcome} detail={false} /> : null}
       {canContinue || resumeError ? (
         <div className="mt-1.5 flex max-w-xl flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2 text-[12px] text-ink-2">
           <span className="min-w-0 flex-1">{resumeError ?? run.continuation?.message}</span>

@@ -1,7 +1,7 @@
 [package]
 name = "matrix-ai-desktop"
 version = "1.0.0"
-description = "MATRIX AI Desktop & Companion App — Native OS Notifications, Family Supervision & Device Telemetry"
+description = "QORVYNA AI Desktop & Companion App — Native OS Notifications, Family Supervision & Device Telemetry"
 authors = ["THAMJJ13.TOP White Hat Team"]
 license = "Proprietary"
 edition = "2021"

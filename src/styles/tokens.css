@@ -1,11 +1,22 @@
 /* =============================================================================
-   MATRIX V3 — design tokens.
+   QORVYNA — design tokens.
    Single source of truth for colour, type, space, radius, elevation, motion.
-   Dark = "Tech AI / Dark Neon". Light = "Minimalist Futuristic" (independently
-   designed, NOT an inversion of dark).
+
+   The palette comes from the QORVYNA logo: electric blue, cyan and violet on
+   deep navy. Dark is the primary theme; light is designed on its own (it is
+   not an inversion of dark). Every pair below was checked for WCAG AA
+   contrast on the surfaces it is used on.
    ============================================================================= */
 
 :root {
+  /* --- brand constants (identical in both themes) ------------------------ */
+  --brand-blue: #2563ff;
+  --brand-blue-deep: #1437d6;
+  --brand-cyan: #22ccff;
+  --brand-violet: #7c3aed;
+  --brand-navy: #070b1e;
+  --brand-gradient: linear-gradient(120deg, var(--brand-cyan) 0%, var(--brand-blue) 48%, var(--brand-violet) 100%);
+
   /* --- type ------------------------------------------------------------- */
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Noto Sans", "Noto Sans Bengali", sans-serif;
@@ -47,96 +58,109 @@
   --sidebar-width-collapsed: 68px;
   --content-max: 56rem;
   --tap: 44px;
+
+  /* Strength of the brand glow behind the page (Settings → Appearance). */
+  --ambient: 0.7;
 }
 
 /* -----------------------------------------------------------------------------
-   DARK — Tech AI / Dark Neon. Deep blue-black ground, flat surfaces, one
-   strategic neon accent (mint) plus blue (information) and purple (AI).
+   DARK — deep navy ground, flat raised surfaces, electric blue for action.
+   `--primary` is the accent as TEXT / icon / border (lightened so it stays
+   readable on navy); `--primary-solid` is the accent as a FILL, which carries
+   white text. Cyan = information, violet = AI.
    -------------------------------------------------------------------------- */
 [data-theme="dark"] {
-  --bg: #090b0e;
-  --bg-grad: none;
-  --grid-line: rgba(148, 163, 184, 0.045);
+  --bg: #070b1a;
+  --bg-grad:
+    radial-gradient(1100px 520px at 10% -14%, rgba(37, 99, 255, 0.24), transparent 62%),
+    radial-gradient(900px 480px at 98% -8%, rgba(124, 58, 237, 0.2), transparent 60%),
+    radial-gradient(760px 420px at 50% 112%, rgba(34, 204, 255, 0.08), transparent 62%);
+  --grid-line: rgba(148, 163, 208, 0.04);
 
-  --surface: #111419;
-  --surface-2: #191e25;
-  --surface-3: #222933;
-  --sidebar: #0c0f14;
+  --surface: #0d1326;
+  --surface-2: #141b33;
+  --surface-3: #1c2542;
+  --sidebar: #090e20;
 
-  --text: #f8fafc;
-  --text-secondary: #cbd5e1;
-  --text-muted: #7c8a9e;
+  --text: #f5f8ff;
+  --text-secondary: #c2cbe0;
+  --text-muted: #8793b0;
 
-  --border: rgba(148, 163, 184, 0.14);
-  --border-strong: rgba(148, 163, 184, 0.26);
+  --border: rgba(148, 163, 208, 0.14);
+  --border-strong: rgba(148, 163, 208, 0.28);
 
-  --primary: #3897ff;
-  --primary-hover: #65adff;
-  --primary-contrast: #06101e;
-  --primary-soft: rgba(56, 151, 255, 0.13);
+  --primary: #6ea0ff;
+  --primary-hover: #93b8ff;
+  --primary-solid: #2563ff;
+  --primary-solid-hover: #2f6bff;
+  --primary-contrast: #ffffff;
+  --primary-soft: rgba(79, 134, 255, 0.15);
 
-  --blue: #38bdf8;
-  --blue-soft: rgba(56, 189, 248, 0.12);
-  --purple: #8b5cf6;
-  --purple-soft: rgba(139, 92, 246, 0.14);
+  --blue: #38c6ff;
+  --blue-soft: rgba(56, 198, 255, 0.12);
+  --purple: #a98bff;
+  --purple-soft: rgba(169, 139, 255, 0.15);
 
   --success: #34d399;
-  --success-soft: rgba(0, 245, 160, 0.12);
+  --success-soft: rgba(52, 211, 153, 0.12);
   --warning: #fbbf24;
   --warning-soft: rgba(251, 191, 36, 0.12);
   --danger: #fb7185;
   --danger-soft: rgba(251, 113, 133, 0.12);
+  /* Like the accent, danger has a text colour and a fill colour: the light rose
+     above reads on navy but gives white text only 2.7:1. The fill is 5.3:1. */
+  --danger-solid: #d4183f;
 
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.45);
-  --brand-blend: screen;
+  --shadow-pop: 0 12px 40px rgba(2, 4, 14, 0.55);
   color-scheme: dark;
 }
 
 /* -----------------------------------------------------------------------------
-   LIGHT — Minimalist Futuristic. Cool paper white, crisp hairlines, a deeper
-   teal/emerald primary that holds contrast on light surfaces (neon mint does
-   not), blue for information, violet for AI.
+   LIGHT — cool paper white, crisp hairlines, navy ink. The same electric blue
+   fills buttons; a deeper blue is used wherever the accent is text.
    -------------------------------------------------------------------------- */
 [data-theme="light"] {
-  --bg: #f7f9fc;
+  --bg: #f6f8fd;
   --bg-grad:
-    radial-gradient(900px 420px at 50% -18%, rgba(0, 137, 94, 0.05), transparent 60%),
-    radial-gradient(700px 340px at 92% 4%, rgba(99, 102, 241, 0.04), transparent 58%);
-  --grid-line: rgba(15, 23, 42, 0.035);
+    radial-gradient(1000px 460px at 8% -16%, rgba(37, 99, 255, 0.1), transparent 62%),
+    radial-gradient(820px 420px at 98% -10%, rgba(124, 58, 237, 0.08), transparent 60%);
+  --grid-line: rgba(11, 21, 51, 0.035);
 
   --surface: #ffffff;
-  --surface-2: #f1f5f9;
-  --surface-3: #e6ecf3;
-  --sidebar: #f1f5f9;
+  --surface-2: #eef2fa;
+  --surface-3: #e1e8f5;
+  --sidebar: #eef2fa;
 
-  --text: #0b1220;
-  --text-secondary: #475569;
-  --text-muted: #71809a;
+  --text: #0b1533;
+  --text-secondary: #44516d;
+  --text-muted: #5e6b89;
 
-  --border: rgba(15, 23, 42, 0.1);
-  --border-strong: rgba(15, 23, 42, 0.18);
+  --border: rgba(11, 21, 51, 0.1);
+  --border-strong: rgba(11, 21, 51, 0.18);
 
-  --primary: #00895e;
-  --primary-hover: #00714d;
+  --primary: #1d4fe0;
+  --primary-hover: #163fbf;
+  --primary-solid: #2563ff;
+  --primary-solid-hover: #1d4fe0;
   --primary-contrast: #ffffff;
-  --primary-soft: rgba(0, 137, 94, 0.1);
+  --primary-soft: rgba(37, 99, 255, 0.1);
 
-  --blue: #0284c7;
-  --blue-soft: rgba(2, 132, 199, 0.1);
+  --blue: #0a72b0;
+  --blue-soft: rgba(10, 114, 176, 0.1);
   --purple: #6d28d9;
   --purple-soft: rgba(109, 40, 217, 0.1);
 
-  --success: #00895e;
-  --success-soft: rgba(0, 137, 94, 0.1);
-  --warning: #a16207;
-  --warning-soft: rgba(161, 98, 7, 0.1);
+  --success: #087f5b;
+  --success-soft: rgba(8, 127, 91, 0.1);
+  --warning: #9a5b06;
+  --warning-soft: rgba(154, 91, 6, 0.1);
   --danger: #be123c;
   --danger-soft: rgba(190, 18, 60, 0.09);
+  --danger-solid: #be123c;
 
-  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.05);
-  --shadow-pop: 0 12px 40px rgba(15, 23, 42, 0.14);
-  --brand-blend: multiply;
+  --shadow-card: 0 1px 2px rgba(11, 21, 51, 0.05);
+  --shadow-pop: 0 12px 40px rgba(11, 21, 51, 0.14);
   color-scheme: light;
 }
 
@@ -147,55 +171,65 @@
 [data-theme-template="midnight"][data-theme="dark"] {
   --bg: #04070f; --surface: #0a1020; --surface-2: #101a30; --surface-3: #16233f;
   --sidebar: #060b16; --primary: #818cf8; --primary-hover: #a5b4fc;
+  --primary-solid: var(--primary); --primary-solid-hover: var(--primary-hover);
   --primary-contrast: #0b1020; --primary-soft: rgba(129, 140, 248, 0.14);
 }
 [data-theme-template="midnight"][data-theme="light"] {
   --bg: #f4f5ff; --surface-2: #eef0ff; --surface-3: #e2e6ff;
   --sidebar: #eef0ff; --primary: #4338ca; --primary-hover: #3730a3;
+  --primary-solid: var(--primary); --primary-solid-hover: var(--primary-hover);
   --primary-contrast: #ffffff; --primary-soft: rgba(67, 56, 202, 0.1);
 }
 
 [data-theme-template="ivory"][data-theme="dark"] {
   --bg: #100e0a; --surface: #191510; --surface-2: #221c14; --surface-3: #2d251a;
   --sidebar: #131009; --primary: #f0c040; --primary-hover: #ffd76a;
+  --primary-solid: var(--primary); --primary-solid-hover: var(--primary-hover);
   --primary-contrast: #1a1405; --primary-soft: rgba(240, 192, 64, 0.14);
 }
 [data-theme-template="ivory"][data-theme="light"] {
   --bg: #faf5ec; --surface: #fffcf6; --surface-2: #f3ecdd; --surface-3: #e8dcc5;
   --sidebar: #f3ecdd; --primary: #96690f; --primary-hover: #7a530b;
+  --primary-solid: var(--primary); --primary-solid-hover: var(--primary-hover);
   --primary-contrast: #ffffff; --primary-soft: rgba(150, 105, 15, 0.1);
 }
 
 [data-theme-template="carbon"][data-theme="dark"] {
   --bg: #08090b; --surface: #111317; --surface-2: #191c22; --surface-3: #22262e;
   --sidebar: #0c0e11; --primary: #cbd5e1; --primary-hover: #e2e8f0;
+  --primary-solid: var(--primary); --primary-solid-hover: var(--primary-hover);
   --primary-contrast: #0b0d10; --primary-soft: rgba(203, 213, 225, 0.14);
 }
 [data-theme-template="carbon"][data-theme="light"] {
   --bg: #eef0f3; --surface-2: #f1f5f9; --surface-3: #e2e8f0;
   --sidebar: #f1f5f9; --primary: #334155; --primary-hover: #1e293b;
+  --primary-solid: var(--primary); --primary-solid-hover: var(--primary-hover);
   --primary-contrast: #ffffff; --primary-soft: rgba(51, 65, 85, 0.1);
 }
 
 [data-theme-template="aurora"][data-theme="dark"] {
   --bg: #030e14; --surface: #08181f; --surface-2: #0d2530; --surface-3: #133240;
   --sidebar: #05121a; --primary: #22d3ee; --primary-hover: #67e8f9;
+  --primary-solid: var(--primary); --primary-solid-hover: var(--primary-hover);
   --primary-contrast: #041318; --primary-soft: rgba(34, 211, 238, 0.14);
 }
 [data-theme-template="aurora"][data-theme="light"] {
   --bg: #f0fbfd; --surface-2: #e0f5fa; --surface-3: #c8ecf4;
   --sidebar: #e0f5fa; --primary: #0e7490; --primary-hover: #155e75;
+  --primary-solid: var(--primary); --primary-solid-hover: var(--primary-hover);
   --primary-contrast: #ffffff; --primary-soft: rgba(14, 116, 144, 0.1);
 }
 
 [data-theme-template="forest"][data-theme="dark"] {
   --bg: #05110b; --surface: #0b1a11; --surface-2: #112418; --surface-3: #173021;
   --sidebar: #071510; --primary: #4ade80; --primary-hover: #86efac;
+  --primary-solid: var(--primary); --primary-solid-hover: var(--primary-hover);
   --primary-contrast: #04140b; --primary-soft: rgba(74, 222, 128, 0.14);
 }
 [data-theme-template="forest"][data-theme="light"] {
   --bg: #f2f9f4; --surface-2: #e3f5e9; --surface-3: #cdead7;
   --sidebar: #e3f5e9; --primary: #15803d; --primary-hover: #166534;
+  --primary-solid: var(--primary); --primary-solid-hover: var(--primary-hover);
   --primary-contrast: #ffffff; --primary-soft: rgba(21, 128, 61, 0.1);
 }
 
@@ -217,10 +251,18 @@
   --color-ink-2: var(--text-secondary);
   --color-ink-3: var(--text-muted);
 
+  /* accent = the accent as text, icons, borders and small indicators.
+     accent-solid = the accent as a filled surface; accent-ink = text on it. */
   --color-accent: var(--primary);
   --color-accent-hover: var(--primary-hover);
+  --color-accent-solid: var(--primary-solid);
+  --color-accent-solid-hover: var(--primary-solid-hover);
+  --color-accent-ink: var(--primary-contrast);
   --color-accent-2: var(--purple);
   --color-accent-soft: var(--primary-soft);
+  --color-brand-blue: var(--brand-blue);
+  --color-brand-cyan: var(--brand-cyan);
+  --color-brand-violet: var(--brand-violet);
   --color-blue: var(--blue);
   --color-purple: var(--purple);
 

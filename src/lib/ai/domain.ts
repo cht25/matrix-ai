@@ -1,7 +1,7 @@
 // =============================================================================
 // Digital-life domain + cyber-safety classification.
 //
-// MATRIX is intentionally permissive: normal questions are sent to the model,
+// QORVYNA is intentionally permissive: normal questions are sent to the model,
 // including Bangla/Banglish and wording that a keyword list does not recognise.
 // This pre-filter exists only to stop clearly operational harmful cyber requests.
 // =============================================================================

@@ -155,7 +155,7 @@ export class OpenAICompatibleProvider implements AIProvider {
     if (!result.ok && result.status) {
       // Operators need the REAL reason the provider is down. Sanitized: no key
       // material, no large upstream payloads.
-      console.error("[MATRIX] AI provider health check failed", {
+      console.error("[QORVYNA] AI provider health check failed", {
         provider: "OpenAI-compatible",
         baseUrl: this.baseUrl,
         model: this.healthCheckModel ?? "(chat model)",

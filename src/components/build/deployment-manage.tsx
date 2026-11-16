@@ -154,7 +154,7 @@ export function UrlManager({
 
       {!isLive ? (
         <p className="border-t border-border px-3.5 py-2 text-[11px] text-ink-3">
-          Extra generated addresses mirror a live deployment, so publish first — MATRIX never creates an address that would 404.
+          Extra generated addresses mirror a live deployment, so publish first — QORVYNA never creates an address that would 404.
         </p>
       ) : null}
 
@@ -383,7 +383,7 @@ export function EnvPanel({ projectId, env, onChanged }: EnvPanelProps) {
           {revealed ? <EyeOff size={12} /> : <Eye size={12} />} {revealed ? "Hide values" : "Reveal values"}
         </button>
         <p className="text-[11px] text-ink-3">
-          Values are injected into the published page as <span className="font-mono">window.MATRIX_ENV</span> — public by design, never deployment credentials.
+          Values are injected into the published page as <span className="font-mono">window.QORVYNA_ENV</span> (the earlier name <span className="font-mono">window.MATRIX_ENV</span> still works) — public by design, never deployment credentials.
         </p>
       </div>
       {notice ? <div className="px-3.5 pb-3"><Alert tone="warning">{notice}</Alert></div> : null}

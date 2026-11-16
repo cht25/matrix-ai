@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { adminDb } from "@/lib/firebase/admin";
 import { getSessionUser } from "@/lib/firebase/session";
-import { matrixModelRoute, matrixModelStatus } from "@/lib/ai/config";
-import { MATRIX_MODEL } from "@/lib/ai/model";
+import { qorvynaModelRoute, qorvynaModelStatus } from "@/lib/ai/config";
+import { QORVYNA_MODEL } from "@/lib/ai/model";
 import { providerPublicCode } from "@/lib/ai/provider-error";
 import { MAX_ACTIVE_MODELS, getPoolPreference, listModelStatus, setPoolPreference } from "@/lib/ai/models/pool";
 import { mutationCsrfResponse } from "@/lib/server/request-security";
@@ -21,8 +21,8 @@ export async function GET(request: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: "UNAUTHENTICATED" }, { status: 401 });
   const check = new URL(request.url).searchParams.get("check") === "1";
-  const status = matrixModelStatus();
-  const route = matrixModelRoute();
+  const status = qorvynaModelStatus();
+  const route = qorvynaModelRoute();
   let health: "online" | "unavailable" | "not-configured" | "unchecked" = route ? "unchecked" : "not-configured";
   let error: string | null = null;
   if (route && check) {
@@ -42,12 +42,12 @@ export async function GET(request: Request) {
   return NextResponse.json({
     model: {
       id: status.model,
-      label: MATRIX_MODEL.label,
+      label: QORVYNA_MODEL.label,
       provider: status.provider,
       configured: status.configured,
-      streaming: MATRIX_MODEL.streaming,
-      tool_calling: MATRIX_MODEL.toolCalling,
-      vision: MATRIX_MODEL.vision,
+      streaming: QORVYNA_MODEL.streaming,
+      tool_calling: QORVYNA_MODEL.toolCalling,
+      vision: QORVYNA_MODEL.vision,
       health,
       error,
       checked_at: new Date().toISOString(),
@@ -79,7 +79,7 @@ export async function PUT(request: Request) {
   } catch (error) {
     const code = error instanceof Error && (error.message === "EMPTY_MODEL_POOL" || error.message === "MODEL_UNAVAILABLE") ? error.message : null;
     if (code) return NextResponse.json({ error: code }, { status: 400 });
-    console.error("[MATRIX] saving the model pool failed", error);
+    console.error("[QORVYNA] saving the model pool failed", error);
     return NextResponse.json({ error: "INTERNAL" }, { status: 500 });
   }
 }

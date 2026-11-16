@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ deployment: final, approved_by: user.uid });
   } catch (err) {
     if (err instanceof RpcError) return NextResponse.json({ error: err.code }, { status: err.status });
-    console.error("[MATRIX] vercel deploy failed", err);
+    console.error("[QORVYNA] vercel deploy failed", err);
     return NextResponse.json({ error: "VERCEL_ERROR" }, { status: 502 });
   }
 }

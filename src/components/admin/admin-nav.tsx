@@ -93,7 +93,6 @@ export function AdminNav({ codes = [] }: { codes?: string[] }) {
 
       {/* desktop: grouped rail */}
       <div className="hidden w-56 shrink-0 space-y-5 rounded-2xl border border-border bg-surface p-3 lg:block xl:w-60">
-        <p className="px-2 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-3">Admin</p>
         {visible.map((group) => (
           <div key={group.title} className="space-y-1">
             <p className="px-2 pb-1 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-3">{group.title}</p>

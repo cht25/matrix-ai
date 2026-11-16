@@ -19,7 +19,7 @@ export default async function ScannerPage() {
       <div>
         <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Screenshot Scanner</h1>
         <p className="mt-1 text-ink-2">
-          Analyse a suspicious screenshot — SMS, email, login page, payment request. MATRIX tells you the
+          Analyse a suspicious screenshot — SMS, email, login page, payment request. QORVYNA tells you the
           risk level, what to do, and how to report it. Calmly.
         </p>
       </div>

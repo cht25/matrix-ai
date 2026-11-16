@@ -31,8 +31,8 @@ type ClaimResult =
 const ERRORS: Record<string, string> = {
   PAIRING_EXPIRED: "That pairing code has expired. Ask the Parent device for a new one.",
   PAIRING_USED: "That pairing code was already used. Ask the Parent device for a new one.",
-  PAIRING_INVALID: "That isn't a valid MATRIX pairing code. Check it and try again.",
-  PAIRING_ACCOUNT_MISMATCH: "That code belongs to a different MATRIX account. Sign in to the same account on both devices. To link another person's device, use Family.",
+  PAIRING_INVALID: "That isn't a valid QORVYNA pairing code. Check it and try again.",
+  PAIRING_ACCOUNT_MISMATCH: "That code belongs to a different QORVYNA account. Sign in to the same account on both devices. To link another person's device, use Family.",
   PAIRING_RATE_LIMITED: "Too many pairing attempts. Wait a few minutes and try again.",
   PAIRING_NOT_PENDING: "That request was already answered.",
   PARENT_DEVICE_REQUIRED: "Register this device as a Parent first.",
@@ -313,7 +313,7 @@ export function DeviceHub() {
 
   const onScan = useCallback((text: string) => {
     if (!text.startsWith("matrix-pairing:v1.")) {
-      if (!requesting.current) setError(text.startsWith("matrix-family-pair:") ? "That's a Family invitation code. Open Family to use it." : "That QR code isn't a MATRIX pairing code.");
+      if (!requesting.current) setError(text.startsWith("matrix-family-pair:") ? "That's a Family invitation code. Open Family to use it." : "That QR code isn't a QORVYNA pairing code.");
       return;
     }
     void submitRequest({ qr_payload: text });
@@ -469,7 +469,7 @@ export function DeviceHub() {
           <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-surface-2/40 p-6 text-center" role="status">
             <Loader2 size={22} className="animate-spin text-accent" />
             <p className="text-sm font-semibold text-ink">Waiting for the Parent to approve</p>
-            <p className="max-w-sm text-xs text-ink-3">Open MATRIX on the Parent device and approve “{me?.name}”. This request expires at {new Date(pending.decide_by).toLocaleTimeString()}.</p>
+            <p className="max-w-sm text-xs text-ink-3">Open QORVYNA on the Parent device and approve “{me?.name}”. This request expires at {new Date(pending.decide_by).toLocaleTimeString()}.</p>
             <Button variant="ghost" onClick={() => { write(KEY.pending, null); setPending(null); }}>Cancel</Button>
           </div>
         ) : (
@@ -486,7 +486,7 @@ export function DeviceHub() {
               <Button type="submit" disabled={busy === "request" || normalizeManualCode(manual).length !== 8}>
                 {busy === "request" ? <Loader2 size={15} className="animate-spin" /> : <Plug size={15} />} Request to join
               </Button>
-              <p className="text-xs text-ink-3">Both devices must be signed in to the same MATRIX account. Nothing is shared until the Parent approves.</p>
+              <p className="text-xs text-ink-3">Both devices must be signed in to the same QORVYNA account. Nothing is shared until the Parent approves.</p>
             </form>
           </div>
         )}

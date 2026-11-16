@@ -1,23 +1,51 @@
-# MATRIX AI — All-in-one AI Assistant & Coding Agent
+<p align="center">
+  <img src="public/brand/qorvyna-logo-dark.png" alt="QORVYNA — One Intelligence. Infinite Possibilities." width="420" />
+</p>
 
-**Chat · create · learn · build · preview · push with approval**
+# QORVYNA
 
-MATRIX AI is a production-ready, multilingual workspace that combines a broadly useful assistant with
-cyber-safety tools, learning, and a dedicated software Agent. General Chat helps with writing, study,
-planning, research, technology and safe digital life. Normal Chat defaults to configured
-**GPT OSS 120B** — the one model behind Chat, Agent and every AI feature. Explicit Agent mode adds text/code attachments,
-reviewable file artifacts, a sandboxed static live preview, and encrypted GitHub OAuth with
-review-before-push atomic commits. Existing screenshot scanning, scam reporting, courses, certificates,
-security dashboard and RBAC administration remain available.
+**ONE INTELLIGENCE. INFINITE POSSIBILITIES.**
 
-The platform uses **Firebase (Auth + Firestore)**, **Cloudinary** for private images, and an
-**independent Chat and Agent provider policies** with user-selectable models and guarded Agent fallback. Provider keys and GitHub OAuth tokens never reach
-the browser or an AI prompt.
+QORVYNA is a technology platform built around one assistant, **QORVYNA AI**:
 
-> Previously branded "THAMJJ13.TOP Cyber Safety AI" — rebranded to **MATRIX AI** (developer: THAMJJ13.TOP).
->
-> **v2 (this branch): the backend migrated from Supabase to Firebase.** See
-> [Migration notes](#migration-notes-supabase--firebase) for the full mapping.
+- **AI** — chat, study, research and writing in English and Bangla, with voice
+  input, file and image attachments, and exports (PDF, DOCX, XLSX, CSV).
+- **Agents** — an Agent that plans, writes, validates, builds and publishes real
+  projects, with a file workspace, live preview and review-before-push GitHub
+  commits.
+- **IoT** — pairing and control of ESP32 boards and companion phone, watch and
+  desktop apps.
+- **Automation** — scheduled tasks run by a separate worker.
+- **Cloud** — hosting for what the Agent builds, with versions and rollback.
+- **Developers** — project workspace, ZIP export and GitHub integration; the HTTP
+  API used by the web and native apps is documented in `API_DOCUMENTATION.md`.
+- Cyber-safety tools from the product's origin remain: screenshot scanner, scam
+  library and reporting, courses with certificates, family supervision, and an
+  admin console with role-based permissions.
+
+Robotics is part of the QORVYNA direction and is **planned**; no robotics
+feature exists in this repository yet.
+
+The service is operated by the THAMJJ13.TOP White Hat Team and designed for
+users aged 11–17. It runs on **Firebase (Auth + Firestore)**, **Cloudinary** for
+private media and **Groq** for language models. Provider keys and GitHub tokens
+never reach the browser or a prompt.
+
+> **Renamed from MATRIX.** QORVYNA is the new name of the platform previously
+> called MATRIX (and, earlier, THAMJJ13.TOP Cyber Safety AI). Accounts, data,
+> installed apps and published sites are unaffected; some internal identifiers
+> intentionally still say `matrix`. See
+> [docs/REBRAND_MIGRATION.md](docs/REBRAND_MIGRATION.md) and
+> [CHANGELOG.md](CHANGELOG.md).
+
+| Read this | For |
+|---|---|
+| [docs/AI_IDENTITY_AND_EXECUTION.md](docs/AI_IDENTITY_AND_EXECUTION.md) | How the assistant identifies itself, answers "which model are you?", and why a request for real work is executed or parked for approval instead of being answered in prose |
+| [docs/BRAND.md](docs/BRAND.md) | Name, logo, colours, generated artwork |
+| [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) | How the styles are layered, the type scale, shared primitives, development previews |
+| [docs/REBRAND_MIGRATION.md](docs/REBRAND_MIGRATION.md) | What the rename changed, what it kept, optional environment clean-up |
+| [docs/MULTI_MODEL.md](docs/MULTI_MODEL.md) | The model pool and how a request is split across models |
+| [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md), [API_DOCUMENTATION.md](API_DOCUMENTATION.md), [mobile/README.md](mobile/README.md) | Deploying, the HTTP API, the Android and Wear OS apps |
 
 ---
 
@@ -32,6 +60,8 @@ the browser or an AI prompt.
 7. [Environment variables](#environment-variables)
 8. [Firestore data model](#firestore-data-model)
 9. [AI pipeline](#ai-pipeline)
+   · [Identity and model transparency](#identity-and-model-transparency)
+   · [Chat answers, the Agent executes](#chat-answers-the-agent-executes)
 10. [Context-aware UI & intent-driven responses](#context-aware-ui--intent-driven-responses)
 11. [Security model](#security-model)
 12. [Admin roles & permissions](#admin-roles--permissions)
@@ -49,15 +79,15 @@ the browser or an AI prompt.
 | Layer | Technology |
 |---|---|
 | Frontend | Next.js 15 (App Router), React 19, TypeScript, Tailwind CSS 4 |
-| Design | **MATRIX visual identity**: monochromatic (deep black · charcoal · off-white) with restrained steel-blue accent; editorial Inter + Manrope typography; custom calligraphic vector wordmark; monochrome lucide iconography; animated cinematic background (fine grids, sparse network topology, reduced-motion aware) |
+| Design | Brand defined once in `src/lib/brand.ts`; logo, favicons and app icons generated from vector geometry (`npm run brand:assets`). Tokens in `src/styles/tokens.css`: navy ground, blue primary, cyan-to-violet gradient; dark theme by default, light theme and optional theme templates. Inter for text, lucide icons, a static background glow (no animation). See [docs/BRAND.md](docs/BRAND.md) and [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) |
 | Database | **Cloud Firestore** (single source of truth — no other database) |
 | Auth | **Firebase Auth** (email/password, Google, Facebook, TOTP MFA) with server-verified **session cookies** for SSR |
 | Storage | **Cloudinary** (free tier) — server-signed uploads, private (authenticated) assets only |
 | Authorization | Firestore **security rules** + a server-side RPC layer (`src/lib/server/rpc.ts`) that ports every Postgres `SECURITY DEFINER` function |
 | Backend/API | Next.js route handlers (Node runtime, Admin SDK) |
-| AI | **One model**: GPT OSS 120B (`openai/gpt-oss-120b` on Groq) for Chat, Agent, website generation, code and every specialized agent. The ID is defined once in `src/lib/ai/model.ts`; `src/lib/ai/config.ts` builds the single server-side route. There is no model selector, no alternative provider and no fallback — a provider failure is shown as a real error with Retry. Whisper speech-to-text and Together image generation are separate media services. |
+| AI | Language models served by **Groq** with one key. **GPT OSS 120B** (`openai/gpt-oss-120b`) is the default and the coordinator; the other registered models (`src/lib/ai/models/registry.ts`) join a user's model pool only when Groq's live model list offers them to the account. Model IDs are written only in `src/lib/ai/model.ts` and the registry. Speech-to-text is Whisper; image generation is a separate media service |
 | i18n | English + Bangla dictionaries (architecture ready for more) |
-| Tests | Vitest (AI pipeline, PII, classification, file validation, age rules, env config) |
+| Tests | Vitest — 99 suites: AI pipeline, identity, execution routing, build pipeline, PII, classification, exports, PDF engine, security, RBAC, rename compatibility |
 
 The Firebase service account, AI provider keys, GitHub OAuth secret and encrypted GitHub access tokens exist **only server-side** and are never exposed to the browser.
 
@@ -79,7 +109,10 @@ Next.js server (any Node host / Firebase App Hosting)
   ├─ /api/rpc           ALL mutations — ports of the Postgres RPC layer
   │                      (ownership checks, validation, RBAC, audit, security events)
   ├─ /api/ai            AI gateway: rate limit → PII redaction → domain/safety
-  │                      classification → RAG → GPT OSS 120B → validation
+  │                      classification → RAG → model pool → validation.
+  │                      Answers in words only; never writes project files
+  ├─ /api/build         the Agent's build pipeline: plan → write files →
+  │                      validate → build → publish, streamed as a stored run
   ├─ /api/upload-signature  one-shot signed Cloudinary upload grants
   ├─ /api/account/*     data export (GDPR-style) + self-service deletion w/ re-auth
   └─ /api/auth/session  session-cookie minting + user provisioning
@@ -98,9 +131,13 @@ Key invariants (unchanged from the Supabase edition):
 - **Every write goes through the server.** Browser Firestore rules deny all writes; `quiz_answers`,
   `audit_logs`, `ai_*` collections are not even client-readable. Clients can never fake a quiz score,
   an assistant message, or an audit entry.
-- **The AI gateway is the only path to an AI provider.** PII is redacted before anything leaves the server.
-  The endpoint/model/key can be changed by an admin at runtime (Admin → AI usage) or by environment fallback
-  variables; failures return honest error codes — never a fabricated reply.
+- **The server is the only path to an AI provider.** PII is redacted before anything leaves the server.
+  Provider accounts can be added by an admin at runtime (Admin → AI) or by environment variables;
+  failures return honest error codes — never a fabricated reply.
+- **Words and work are separate.** `/api/ai` answers; only `/api/build` changes a project. A request for
+  real work asked in a chat mode waits for one tap of approval instead of being answered in prose, and
+  every run ends in a stated outcome taken from its record
+  ([docs/AI_IDENTITY_AND_EXECUTION.md](docs/AI_IDENTITY_AND_EXECUTION.md)).
 - **GitHub never auto-pushes.** Agent output becomes a reviewable file set; the user chooses a repository,
   branch and commit message, confirms review, and then one atomic commit is created. OAuth tokens are
   AES-256-GCM encrypted at rest and never sent to an AI provider.
@@ -114,6 +151,8 @@ Key invariants (unchanged from the Supabase edition):
 src/
   app/                     Next.js App Router (pages + API routes)
     api/ai/                AI gateway (chat, scan, health) — SSE streaming
+    api/build/             Agent build pipeline (plan → files → validate → publish)
+    dev-preview/           development-only previews (unavailable in production)
     api/rpc/               typed server mutations (the RPC layer port)
     api/auth/session/      session cookie mint/refresh/clear
     api/upload-signature/  one-shot signed Cloudinary upload grants
@@ -123,9 +162,13 @@ src/
   lib/
     firebase/              client SDK (Auth/Firestore), Admin SDK, session cookies
     server/                rpc.ts (Postgres function ports) + queries.ts (page reads)
-    ai/                    model.ts + config.ts: the single GPT OSS 120B route
-                           fallbacks, coding detection, Agent artifact parser,
-                           PII redaction, safety prompts, uploads
+    brand.ts               the one definition of name, tagline, colours, assets
+    ai/                    model.ts + models/registry.ts: model IDs and the pool;
+                           identity.ts: who the assistant is and what runs it;
+                           build-intent.ts + execution-policy.ts: is this real
+                           work, and where may it run; task-outcome.ts: how it
+                           ended; prompts, PII redaction, Agent file parser
+    deploy/                build-run state machine, validation, hosting provider
     server/github.ts       encrypted OAuth token store + atomic Git push
     server/cloudinary.ts   signed upload grants, private downloads, user asset wipe
     client/api.ts          browser helper: rpc(), mintSessionCookie(), uploads
@@ -133,9 +176,12 @@ src/
   middleware.ts            edge routing guard
 firestore.rules            security rules (RLS port)
 firestore.indexes.json     composite indexes
+scripts/generate-brand-assets.mjs   every logo, favicon and app icon (npm run brand:assets)
 scripts/seed.mjs           seeds Firestore from seed/0007_seed.sql
 scripts/set-admin.mjs      promote a user to an admin role (+ custom claim)
 seed/0007_seed.sql         seed source of truth (original SQL seed)
+mobile/matrix_app, mobile/matrix_wear   Flutter apps for Android and Wear OS
+src-tauri/                 Tauri desktop shell
 apphosting.yaml            Firebase App Hosting backend config
 firebase.json              deploy config (rules, indexes, hosting, emulators)
 ```
@@ -242,7 +288,7 @@ Whichever you choose, remember to:
 | `FIREBASE_CLIENT_EMAIL` | server only | Admin SDK service account |
 | `FIREBASE_PRIVATE_KEY` | server only | Admin SDK private key |
 | `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | server only | Private image and authenticated voice storage |
-| `GROQ_API_KEY` | server only | GPT OSS 120B (the only language model) and Whisper multilingual STT |
+| `GROQ_API_KEY` | server only | Every language model (GPT OSS 120B by default; others only when Groq offers them to the account) and Whisper speech-to-text |
 | `GPT_OSS_API_KEY` + `GPT_OSS_BASE_URL` | server only | Optional dedicated OpenAI-compatible endpoint serving the same GPT OSS 120B model instead of Groq (not a fallback) |
 | `GROQ_AUDIO_MODEL` | server only | Optional STT model (`whisper-large-v3-turbo` by default; `whisper-large-v3` for accuracy-sensitive multilingual recordings) |
 | `OPENAI_API_KEY` / `OPENAI_AUDIO_MODEL` | server only | Optional second speech-to-text service (`whisper-1` default). Speech only — never used for text generation |
@@ -251,6 +297,14 @@ Whichever you choose, remember to:
 | `GITHUB_OAUTH_CALLBACK_URL` | server only | Exact OAuth callback (`https://host/api/github/callback`) |
 | `IDENTITY_PEPPER` | server only | HMAC pepper for birth-certificate numbers (32+ chars). Missing → identity submit fails honestly |
 | `ADMIN_BOOTSTRAP_KEY` | server only | One-time key for `/admin/setup` to create the first super_admin |
+| `QORVYNA_TRUST_PROXY_HEADERS` | server only | Optional. `true` also accepts the origin named by the proxy's `X-Forwarded-Host` / `-Proto` headers in same-origin checks. Only behind a proxy that overwrites them |
+| `QORVYNA_ANDROID_APK_URL` / `QORVYNA_ANDROID_APK_SHA256` | server only | Optional. Where the phone app downloads its update, and its checksum |
+| `QORVYNA_MODEL_TPM_<KEY>` | server only | Optional. Tokens-per-minute scheduling budget for one model of the pool, e.g. `QORVYNA_MODEL_TPM_QWEN3_32B` |
+| `QORVYNA_WORKER_TARGET_URL` | automation worker | The deployed URL the automation worker calls |
+
+Every `QORVYNA_…` setting is also read under its former `MATRIX_…` name, so a deployment configured before
+the rename needs no change; if both are set the new name wins. The complete annotated list is in
+[`.env.example`](.env.example).
 
 ## Firestore data model
 
@@ -281,9 +335,12 @@ Auth → Rate limit (ai_usage_logs: 20/min · 300/day chat; 5/min · 50/day scan
      → Broad task/coding detection + cyber-safety classification
      → Prompt construction (system + rolling summary + last 8 messages + safe memories)
      → RAG retrieval (document_chunks + scam articles + lessons + reporting resources)
-     → GPT OSS 120B for every mode (Chat, Agent, build). One retry on the same
-       model for a transient error, then the real provider error — never
-       another model, never a fabricated reply.
+     → The user's model pool (GPT OSS 120B by default and as coordinator).
+       A short request, or a pool of one, is a single call; otherwise
+       specialists work in parallel and the coordinator writes one answer.
+       A model that fails or is rate-limited is replaced by the next suitable
+       one; if none can do it the real error is returned — never a
+       fabricated reply. See docs/MULTI_MODEL.md.
      → streaming or structured Agent artifacts + output validation + PII-leak filter
      → Store allowed response → usage/safety logs
 ```
@@ -300,6 +357,34 @@ must be split by the user (arbitrary byte slicing would corrupt compressed audio
 Actual language accuracy and mobile device codec support require live-provider/device tests.
 
 `POST { action: "health", mode?: "agent" }` is unauthenticated and performs a real reachability check for the selected provider. `/api/health` reports general and coding AI separately.
+
+### Identity and model transparency
+
+The assistant is **QORVYNA AI** in every mode and language. Asked who it is, it answers with the brand's
+sentence (`IDENTITY_STATEMENT` in `src/lib/ai/identity.ts`). Asked which model or provider powers it, it
+answers from the routing the request really used — by default *GPT OSS 120B (`openai/gpt-oss-120b`), an
+open-weight model published by OpenAI, served by Groq* — and says QORVYNA did not create that model. Nothing
+about the model is typed into a prompt by hand.
+
+Standalone identity questions are answered by the gateway without a model call; the same facts are part of
+every system prompt. Robotics appears in the introduction because it is part of the ecosystem, and is marked
+`planned` in `src/lib/brand.ts`: the assistant is told to say it is not available yet.
+
+### Chat answers, the Agent executes
+
+`/api/ai` never changes a project. `detectBuildIntent` decides whether a message asks for real work (build,
+change, fix, publish) — in English, Bangla and Banglish — and then:
+
+| Asked in | Result |
+|---|---|
+| Agent mode | The build pipeline runs it and streams its real stages |
+| A chat mode | Nothing is sent to the model. An **Awaiting approval** card offers *Run with Agent* or *Answer in chat instead* |
+| `/api/ai` in Agent mode | `409 AGENT_RUNTIME_REQUIRED`; the browser starts the pipeline with the same request |
+
+Every run ends as **Completed**, **Failed**, **Blocked** or **Awaiting approval**, derived from the stored
+run and never from the model's own account of what it did. A chat reply that claims project work with no run
+behind it is labelled **Text only**. Details and the full reasoning:
+[docs/AI_IDENTITY_AND_EXECUTION.md](docs/AI_IDENTITY_AND_EXECUTION.md).
 
 ## Context-aware UI & intent-driven responses
 
@@ -402,10 +487,36 @@ Model preferences are stored separately per mode under `user_security_settings`.
 ## Testing
 
 ```bash
-npm test         # vitest: AI pipeline, PII redaction, domain/safety classification,
-                 #        file validation, age rules, API failure taxonomy, env config
-npm run typecheck
+npm test             # vitest, 99 suites
+npm run typecheck    # tsc --noEmit
+npm run build        # production build
 ```
+
+Suites added with the QORVYNA change:
+
+- `tests/ai-identity.test.ts` — the identity sentence, model facts built from the real routing, the identity
+  block in every system prompt, the gateway answering identity questions without a model call.
+- `tests/execution-routing.test.ts` — which requests are real work (English and Bangla), the approval
+  hand-off, `409` rerouting, outcome resolution and the "Text only" label.
+- `tests/rebrand-compat.test.ts` — old and new file blocks both parse, `window.MATRIX_ENV` alias, settings
+  read under both names.
+
+### Development previews
+
+In development these pages render the real components against sample data, so the interface can be reviewed
+without a Firebase project. They are unavailable in production (signed-out visitors are sent to sign-in, signed-in ones get a 404) and are not linked from the app.
+
+```bash
+# placeholder values are enough: the previews never contact Firebase
+NEXT_PUBLIC_FIREBASE_API_KEY=demo NEXT_PUBLIC_FIREBASE_PROJECT_ID=demo-matrix-ai npm run dev
+```
+
+| Page | Shows |
+|---|---|
+| `/dev-preview/chat` | The chat interface with a mock gateway: replies, exports, images, identity answers, the approval card, and runs that end completed, failed and blocked |
+| `/dev-preview/app` | The signed-in frame (sidebar, top bar, mobile navigation), the security overview, and every shared primitive |
+| `/dev-preview/admin` | The admin console |
+| `/dev-preview/certificate` | The certificate document |
 
 The context-aware UI is covered by four suites:
 
@@ -457,7 +568,7 @@ reachability) — never a cached lie.
 Every AI-gateway failure is logged server-side as structured JSON with no
 secrets and no message contents: `event` (`ai_provider_failure` /
 `ai_gateway_failure`), `timestamp`, `route`, `provider`, `model`, `httpStatus`,
-`errorType`, `requestId` (echoed to the browser as the `X-MATRIX-Request-ID`
+`errorType`, `requestId` (echoed to the browser as the `X-QORVYNA-Request-ID`
 header and shown in the UI failure detail as a short reference), and a
 sanitized `detail`. Grep your host logs by `event` or `requestId`.
 
@@ -468,7 +579,7 @@ streaming request and Agent request — the exact browser flow):
 node scripts/probe-ai.mjs https://your-deployment.example.com
 ```
 
-The probe prints each HTTP status and MATRIX's own response JSON, including
+The probe prints each HTTP status and QORVYNA's own response JSON, including
 the specific error codes the UI maps to user-visible copy. Error-code → UI-copy
 map lives in `src/lib/api-errors.ts`; storage failures are reported honestly as
 `CHAT_STORAGE_UNAVAILABLE` ("Chat storage unavailable") and never as a fake
@@ -504,7 +615,7 @@ Server Components render"* and the host logs show a Firestore error such as
   never need composite indexes) and order/filter/limit in memory; the app
   layout additionally falls back to an empty sidebar — with the full error in
   the server logs — instead of 500-ing every page. The real fix is observable
-  in your host logs as `[MATRIX] Sidebar data failed to load …`.
+  in your host logs as `[QORVYNA] Sidebar data failed to load …`.
 - **Still recommended:** deploy the security rules once
   (`npm run deploy`). Composite indexes from `firestore.indexes.json` remain
   available as an optional performance optimization for large datasets

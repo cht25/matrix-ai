@@ -126,7 +126,7 @@ describe("client components never import server-only code", () => {
   }
 });
 
-describe("styling stays inside the Matrix tokens", () => {
+describe("styling stays inside the QORVYNA tokens", () => {
   it("uses the design system palette instead of new colours", () => {
     const styles = [POPUP, PANEL, read("src/components/build/build-progress.tsx"), read("src/components/build/deployment-manage.tsx")].join("\n");
     expect(styles).not.toMatch(/#[0-9a-f]{6}/i);

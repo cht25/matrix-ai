@@ -13,7 +13,7 @@ const FRESH_ARTIFACT = /\b(?:create|build|start|make|scaffold|develop)\s+(?:me\s
  * request even when it names no "website/app" noun ("build a calculator"). */
 const CREATE_START = /^\s*(?:please\s+|can you\s+|could you\s+|i (?:want|need)(?: you)? to\s+)?(?:create|build|generate|make\s+(?:me\s+)?(?:a|an)\b|design\s+(?:me\s+)?(?:a|an)\b|develop|scaffold|write\s+(?:me\s+)?(?:a|an)\b|code\s+(?:me\s+)?(?:a|an)\b)|^\s*(?:একটি|একটা)\b|(?:তৈরি|বানাও|বানিয়ে)/i;
 /** Titles made only of generic words would "match" almost any prompt. */
-const GENERIC_TITLE = /^(?:(?:my|new|the|a|an|untitled|matrix|test|demo|simple|first)\s+)*(?:website|web\s?site|site|app|application|project|portfolio|dashboard|store|shop|blog|game|landing\s+page|page|home)$/i;
+const GENERIC_TITLE = /^(?:(?:my|new|the|a|an|untitled|qorvyna|matrix|test|demo|simple|first)\s+)*(?:website|web\s?site|site|app|application|project|portfolio|dashboard|store|shop|blog|game|landing\s+page|page|home)$/i;
 
 function updatedMillis(value: unknown): number {
   if (value instanceof Date) return value.getTime();
@@ -114,7 +114,7 @@ export async function resolveProjectContext(
   if (isEdit || pronounOnly || (!CREATION_TARGET.test(prompt) && !CREATE_START.test(prompt) && !input.hasAttachments)) {
     throw new RpcError("PROJECT_CONTEXT_MISSING", 409, mine.length
       ? "No project is associated with this chat. Open the project in Workspace or choose it by name before editing."
-      : "You have no projects yet. Describe what to create and MATRIX will make a new one.");
+      : "You have no projects yet. Describe what to create and QORVYNA will make a new one.");
   }
   return { projectId: null, mode: "create", source: "new", forceNew: false };
 }

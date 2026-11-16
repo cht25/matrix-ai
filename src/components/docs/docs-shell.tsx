@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Search } from "lucide-react";
-import { Logo, MatrixWordmark } from "@/components/logo";
+import { BrandTagline, Logo, QorvynaWordmark } from "@/components/logo";
 import { ThemeToggle } from "@/lib/theme";
 import { DOC_INDEX, DOC_SECTIONS, docNav, type DocSection } from "@/content/docs";
 import { cn } from "@/lib/utils";
@@ -15,9 +15,7 @@ import { cn } from "@/lib/utils";
 function DocBlockRenderer({ section }: { section: DocSection }) {
   return (
     <article>
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-accent">
-        <span aria-hidden="true">{section.icon}</span> MATRIX Documentation
-      </div>
+      <p className="text-xs font-semibold uppercase tracking-widest text-accent">QORVYNA Documentation</p>
       <h1 className="mt-2 text-3xl font-display font-semibold tracking-tight text-ink">{section.title}</h1>
       <div className="mt-6 space-y-4">
         {section.blocks.map((b, i) => {
@@ -209,7 +207,7 @@ export function DocsShell({ slug, children }: { slug: string; children: React.Re
             ))}
           </nav>
           <div className="mt-4 border-t border-border pt-3">
-            <Link href="/" className="block rounded-lg px-2.5 py-2 text-sm text-ink-2 hover:bg-surface-2 hover:text-ink">← Back to MATRIX</Link>
+            <Link href="/" className="block rounded-lg px-2.5 py-2 text-sm text-ink-2 hover:bg-surface-2 hover:text-ink">← Back to QORVYNA</Link>
           </div>
         </aside>
         {menuOpen ? <button type="button" className="fixed inset-0 z-[25] bg-black/50 lg:hidden" aria-label="Close menu" onClick={() => setMenuOpen(false)} /> : null}
@@ -285,8 +283,11 @@ export function DocsShell({ slug, children }: { slug: string; children: React.Re
       {/* Footer */}
       <footer className="border-t border-border">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-4 py-8 text-sm text-ink-3 sm:flex-row">
-          <MatrixWordmark className="h-5 w-24 text-ink" />
-          <p>Powered by THAMJJ13.TOP White Hat Team</p>
+          <div className="flex flex-col items-center gap-2 sm:items-start">
+            <QorvynaWordmark className="h-3 w-auto text-ink" title="QORVYNA" />
+            <BrandTagline className="!justify-start" />
+          </div>
+          <p>Operated by THAMJJ13.TOP White Hat Team</p>
         </div>
       </footer>
 

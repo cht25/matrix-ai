@@ -8,7 +8,7 @@
 // deployment can actually reach it right now, and which ones are active.
 //
 //   · searchable (name, provider, identifier, strengths)
-//   · Auto hands the choice to MATRIX; otherwise pick up to `max_active`
+//   · Auto hands the choice to QORVYNA; otherwise pick up to `max_active`
 //   · a model the provider is not offering is listed, explained and DISABLED —
 //     it can never be selected or sent a request
 //
@@ -206,10 +206,10 @@ function ModelPanel({ data, setData, onReload, loadFailed }: { data: ModelPoolPa
                 onClick={() => void apply({ auto: true, enabled: [] })}
                 className={cn("flex w-full items-start gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none", pool.auto && "bg-accent-soft")}
               >
-                <span className={cn("mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg", pool.auto ? "bg-accent text-[var(--primary-contrast)]" : "bg-surface-2 text-ink-2")} aria-hidden="true"><Sparkles size={15} /></span>
+                <span className={cn("mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg", pool.auto ? "bg-accent-solid text-accent-ink" : "bg-surface-2 text-ink-2")} aria-hidden="true"><Sparkles size={15} /></span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-[14px] font-semibold text-ink">Auto</span>
-                  <span className="block text-[12.5px] leading-snug text-ink-2">MATRIX chooses the right models for each request.</span>
+                  <span className="block text-[12.5px] leading-snug text-ink-2">QORVYNA chooses the right models for each request.</span>
                 </span>
                 {pool.auto ? <Check size={17} className="mt-1.5 shrink-0 text-accent" aria-hidden="true" /> : null}
               </button>
@@ -241,7 +241,7 @@ function ModelPanel({ data, setData, onReload, loadFailed }: { data: ModelPoolPa
                     chosen && "bg-accent-soft",
                   )}
                 >
-                  <span className={cn("mt-1 grid h-5 w-5 shrink-0 place-items-center rounded-md border", chosen ? "border-accent bg-accent text-[var(--primary-contrast)]" : "border-border-strong")} aria-hidden="true">
+                  <span className={cn("mt-1 grid h-5 w-5 shrink-0 place-items-center rounded-md border", chosen ? "border-accent-solid bg-accent-solid text-accent-ink" : "border-border-strong")} aria-hidden="true">
                     {chosen ? <Check size={13} strokeWidth={3} /> : null}
                   </span>
                   <span className="min-w-0 flex-1">

@@ -12,7 +12,7 @@
 // here is painted and then hidden with CSS.
 // =============================================================================
 
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, MonitorPlay, RotateCcw } from "lucide-react";
 import { Markdown } from "@/components/markdown";
 import { ResponseActions, type ChatAction } from "@/components/response-actions";
@@ -26,6 +26,7 @@ import { ThemeGallery } from "@/components/theme-gallery";
 import { isArtifactVisible, type ArtifactState, type ExecutionState } from "@/lib/ai/artifacts";
 import type { ContentSignals, ExportFormat, IntentResult, ResponseKind } from "@/lib/ai/intent";
 import { replyVersions, type ChatMessage } from "@/lib/chat-messages";
+import { unbackedActionClaim } from "@/lib/ai/execution-policy";
 
 export type AssistantMessageProps = {
   message: ChatMessage;
@@ -58,6 +59,8 @@ export type AssistantMessageProps = {
   onRetryInterrupted?: () => void;
   /** Copy the answer that is currently displayed (it may be an earlier version). */
   onCopyVersion?: (text: string) => void;
+  /** Carry out the request above this reply with the Agent (latest turn only). */
+  onRunWithAgent?: () => void;
 };
 
 /**
@@ -85,7 +88,7 @@ export const AssistantMessage = memo(function AssistantMessage(props: AssistantM
     message, isLatest, streaming, kind, signals, intent, artifact, execution, liveBuildRun, onRetryBuild, timeLabel, actions,
     exportFormats, exportPickerOpen, onCloseExportPicker, onPickFormat,
     onGenerateArtifact, onDismissArtifact, onOpenArtifact, onSaveArtifact, onCopyArtifact,
-    onOpenWorkspace, artifactActions, onRetryInterrupted, onCopyVersion,
+    onOpenWorkspace, artifactActions, onRetryInterrupted, onCopyVersion, onRunWithAgent,
   } = props;
 
   const versions = replyVersions(message);
@@ -99,6 +102,13 @@ export const AssistantMessage = memo(function AssistantMessage(props: AssistantM
 
   const files = message.metadata?.artifacts ?? [];
   const showArtifact = isArtifactVisible(artifact);
+  // Only a pipeline run changes a project, and a run leaves its record on the
+  // message. A reply WITHOUT one that says the work was done is labelled as
+  // what it is: text. (Never shown for a reply that has a run, files, a
+  // deployment or a generated image behind it.)
+  const meta = message.metadata;
+  const backed = Boolean(meta?.build || meta?.deployment || meta?.project_id || meta?.image_data_url || files.length || liveBuildRun);
+  const textOnlyClaim = useMemo(() => (backed || streaming && isLatest ? null : unbackedActionClaim(text)), [backed, isLatest, streaming, text]);
   // A format choice is offered only for an ambiguous document request that has
   // not already produced an artifact.
   const showFormatChoice = isLatest && !streaming && intent.needsFormatChoice && !intent.suppressExport && !showArtifact;
@@ -174,13 +184,28 @@ export const AssistantMessage = memo(function AssistantMessage(props: AssistantM
 
       {isLatest && !streaming && signals.hasFlashcards ? <FlashcardDeck text={message.content} /> : null}
 
+      {textOnlyClaim ? (
+        <p className="mt-2 flex max-w-xl flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-warning/40 bg-warning-soft px-3 py-2 text-[12.5px] leading-relaxed text-ink-2" role="note" data-text-only-claim="">
+          <span className="min-w-0 flex-1">
+            <span className="font-semibold text-ink">Text only.</span>{" "}
+            This reply did not change, build or publish anything — no project files were touched.
+          </span>
+          {isLatest && onRunWithAgent ? (
+            <button type="button" onClick={onRunWithAgent} className="shrink-0 rounded-md border border-accent/40 bg-surface px-2.5 py-1 text-[12px] font-semibold text-accent hover:border-accent">
+              Run with Agent
+            </button>
+          ) : null}
+        </p>
+      ) : null}
+
       {message.metadata?.build || liveBuildRun ? (
         <BuildRunCard
           snapshot={message.metadata?.build ?? null}
           deployment={message.metadata?.deployment ?? null}
           liveRun={liveBuildRun}
           onOpenWorkspace={files.length || message.metadata?.project_id ? onOpenWorkspace : undefined}
-          onRetry={onRetryBuild}
+          // Retry re-sends the latest request, so only the latest run offers it.
+          onRetry={isLatest ? onRetryBuild : undefined}
         />
       ) : null}
 
@@ -191,7 +216,7 @@ export const AssistantMessage = memo(function AssistantMessage(props: AssistantM
           className="mt-3 flex w-full max-w-xl items-center justify-between gap-3 rounded-xl border border-accent/30 bg-accent-soft px-3.5 py-2.5 text-left transition-colors hover:border-accent/60"
         >
           <span className="flex min-w-0 items-center gap-2.5">
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent text-white" aria-hidden="true">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent-solid text-accent-ink" aria-hidden="true">
               <MonitorPlay size={15} />
             </span>
             <span className="min-w-0">

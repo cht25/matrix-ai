@@ -127,7 +127,7 @@ describe("clean top bar", () => {
     // Chat | Agent is a segmented control and Models is a searchable selector:
     // no native selects, and never a hard-coded technical model name.
     expect((source.match(/<select/g) ?? []).length).toBe(0);
-    expect(source).toContain('aria-label="Matrix mode"');
+    expect(source).toContain('aria-label="QORVYNA mode"');
     expect(source).toContain("<ModelSelector");
     expect(source).not.toMatch(/GPT OSS|gpt-oss|llama|qwen/i);
     expect(source).toMatch(/Chat settings/);

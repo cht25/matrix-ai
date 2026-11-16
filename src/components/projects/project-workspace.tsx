@@ -1,7 +1,7 @@
 "use client";
 
 // =============================================================================
-// MATRIX project workspace (§9–§13, §16–§21, §28, §31, §35, §36)
+// QORVYNA project workspace (§9–§13, §16–§21, §28, §31, §35, §36)
 //
 //   Project → Files → Build → Deploy → Manage
 //
@@ -452,7 +452,7 @@ export function ProjectWorkspace({
             type="button"
             onClick={() => void runPipeline({ build: false, publish: true, allowOverride: false })}
             disabled={busy}
-            className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-accent px-2.5 text-[11.5px] font-semibold text-white hover:bg-accent-hover disabled:opacity-50"
+            className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-accent-solid px-2.5 text-[11.5px] font-semibold text-accent-ink hover:bg-accent-solid-hover disabled:opacity-50"
           >
             {busy ? <Spinner className="h-3 w-3" /> : <Rocket size={12} />} {liveUrl ? "Update live site" : "Deploy"}
           </button>
@@ -528,7 +528,7 @@ export function ProjectWorkspace({
                   type="button"
                   onClick={() => void runPipeline({ build: false, publish: true, allowOverride: false })}
                   disabled={busy}
-                  className="inline-flex min-h-8 items-center gap-1.5 rounded-md bg-accent px-2.5 text-xs font-medium text-white hover:bg-accent-hover disabled:opacity-40"
+                  className="inline-flex min-h-8 items-center gap-1.5 rounded-md bg-accent-solid px-2.5 text-xs font-medium text-accent-ink hover:bg-accent-solid-hover disabled:opacity-40"
                 >
                   {busy ? <Spinner /> : <Globe size={12} />} {liveUrl ? "Update live site" : "Publish"}
                 </button>
@@ -713,7 +713,7 @@ export function ProjectWorkspace({
                   </Button>
                 </div>
                 <p className="mt-1.5 text-[11px] text-ink-3">
-                  MATRIX only claims an address once the host has written the files and reports the deployment live. Publishing is limited to 10 per hour.
+                  QORVYNA only claims an address once the host has written the files and reports the deployment live. Publishing is limited to 10 per hour.
                 </p>
               </div>
             </div>
@@ -787,6 +787,6 @@ export function ProjectWorkspace({
 function friendly(err: unknown, fallback: string): string {
   const code = err instanceof RpcCallError ? err.code : errorCodeOf(err, fallback);
   const view = mapAdminError(code);
-  console.error("[MATRIX]", view.code, err);
+  console.error("[QORVYNA]", view.code, err);
   return `${view.title} — ${view.detail}`;
 }

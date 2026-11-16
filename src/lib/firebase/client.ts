@@ -43,7 +43,7 @@ function connectEmulators(auth: Auth, db: Firestore) {
   try {
     connectAuthEmulator(auth, `http://${EMULATOR_HOST}:9099`, { disableWarnings: true });
     connectFirestoreEmulator(db, EMULATOR_HOST, 8080);
-    console.warn(`[MATRIX] Firebase emulators enabled at ${EMULATOR_HOST} (local QA only).`);
+    console.warn(`[QORVYNA] Firebase emulators enabled at ${EMULATOR_HOST} (local QA only).`);
   } catch {
     // connectAuthEmulator throws if called after the first auth op — harmless:
     // the module-level caches keep this single-shot.

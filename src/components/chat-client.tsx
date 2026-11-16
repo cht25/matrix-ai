@@ -1,12 +1,12 @@
 "use client";
 
 // =============================================================================
-// MATRIX chat — context-aware, intent-driven.
+// QORVYNA chat — context-aware, intent-driven.
 //
 //   USER INTENT → CAPABILITY SELECTION → EXECUTION → CONTEXTUAL UI
 //
 // A normal conversation renders exactly four things: the user message, the
-// Matrix reply, its contextual actions (Copy · Regenerate · More ▾) and the
+// QORVYNA reply, its contextual actions (Copy · Regenerate · More ▾) and the
 // composer. Export, Agent execution, image generation, analytics and activity
 // are real capabilities, but each one is mounted only when the user's intent
 // (or the content of the reply) makes it relevant.
@@ -34,7 +34,7 @@ import { firebaseBrowserConfigured, waitForAuthUser } from "@/lib/firebase/clien
 import { rpc } from "@/lib/client/api";
 import { notifyWorkDone } from "@/lib/client/work-notifications";
 import { loadModelPool } from "@/components/model-picker";
-import { MatrixMark, MatrixWordmark } from "@/components/logo";
+import { QorvynaMark } from "@/components/logo";
 import { useToast } from "@/components/toast";
 import { ServerProblem } from "@/components/server-problem";
 import { ConfirmModal } from "@/components/modal";
@@ -79,8 +79,10 @@ import { ResponseProgress } from "@/components/response-status";
 import { ModeQuickActions, LiveTaskGraph, type GraphNode } from "@/components/mode-workspace";
 import { cancelsPendingTask, classifyAgentOutput, isClarificationAnswer, isTaskInterruption, requestsClarificationFirst, resumedTaskPrompt, pendingTaskFromMessages, type PendingAgentTask } from "@/lib/ai/agent-execution";
 import { reportSuccessfulAiResponse } from "@/components/ai-status";
-import { buildActionsFor, detectBuildIntent, detectImageAssetRequest, shouldRunBuildPipeline, type BuildIntent } from "@/lib/ai/build-intent";
-import { mayExecuteAgent, shouldCreateCodeWorkspace } from "@/lib/ai/execution-policy";
+import { NO_BUILD_INTENT, buildActionsFor, detectBuildIntent, detectImageAssetRequest, shouldRunBuildPipeline, type BuildIntent } from "@/lib/ai/build-intent";
+import { agentHandoffReason, approvedIntent, isConversationMode, mayExecuteAgent, shouldCreateCodeWorkspace, type HandoffReason } from "@/lib/ai/execution-policy";
+import { outcomeOfRequestError, outcomeOfRun } from "@/lib/ai/task-outcome";
+import { ExecutionHandoff } from "@/components/build/execution-handoff";
 import { BuildRunError, streamBuildRun } from "@/lib/client/build-runner";
 import { BuildStatusCard } from "@/components/build/build-progress";
 import { DeploySuccessPopup } from "@/components/build/deploy-card";
@@ -98,6 +100,20 @@ type TurnOptions = {
   voice?: { turnId: string; assetId: string | null; attachments: PendingAttachment[] };
   /** Edit & resend, or sending again a message that never reached the server. */
   resend?: { turnId: string; stored: boolean; replaceReply: boolean; attachments: PendingAttachment[] };
+  /** The user chose a chat answer for a request the Agent could run. */
+  chatOnly?: boolean;
+};
+
+/** Real project work asked for in a conversation mode: waiting for one tap. */
+type PendingHandoff = {
+  turnId: string;
+  message: string;
+  rawMessage: string;
+  intent: BuildIntent;
+  reason: HandoffReason;
+  attachments: PendingAttachment[];
+  audioAssetId: string | null;
+  reuseUser: boolean;
 };
 
 const MAX_ATTACHMENTS = 8;
@@ -176,12 +192,12 @@ async function parseGatewayError(res: Response): Promise<{ code: string | null; 
     return {
       code: typeof data.error === "string" ? data.error : null,
       conversationId: typeof data.conversation_id === "string" ? data.conversation_id : null,
-      requestId: res.headers.get("X-MATRIX-Request-ID"),
+      requestId: res.headers.get("X-QORVYNA-Request-ID"),
       userMessageId: typeof data.user_message_id === "string" ? data.user_message_id : null,
     };
   } catch {
     // Non-JSON error body (proxy/host interstitial) — still surface the id.
-    return { code: null, conversationId: null, requestId: res.headers.get("X-MATRIX-Request-ID"), userMessageId: null };
+    return { code: null, conversationId: null, requestId: res.headers.get("X-QORVYNA-Request-ID"), userMessageId: null };
   }
 }
 
@@ -314,6 +330,10 @@ export function ChatClient({
   const [agentProjectId, setAgentProjectId] = useState<string | null>(initialProjectId ?? (initialConvId ? null : latestProjectId(initialMessages)));
   const explicitAgentProjectIdRef = useRef<string | null>(null);
   const [projectChoices, setProjectChoices] = useState<Array<{ id: string; title: string }>>([]);
+  // "Awaiting approval": executable work requested in a conversation mode.
+  const [handoff, setHandoff] = useState<PendingHandoff | null>(null);
+  const lastBuildIntentRef = useRef<BuildIntent | null>(null);
+  const lastBuildWorkspaceOnlyRef = useRef(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
 
   // --- build pipeline (real execution state, mirrored from the server) -----
@@ -335,7 +355,7 @@ export function ChatClient({
     return null;
   });
 
-  // --- speech: MATRIX reading an answer aloud --------------------------------
+  // --- speech: QORVYNA reading an answer aloud --------------------------------
   const [autoSpeak, setAutoSpeak] = useState(true);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
 
@@ -506,7 +526,7 @@ export function ChatClient({
     setArtifacts({
       [messageKey(message, assistantIndex)]: requestArtifact(emptyArtifactState(), {
         format: intent.formats[0],
-        title: firstHeading(message.content, "MATRIX response"),
+        title: firstHeading(message.content, "QORVYNA response"),
       }),
     });
     // Runs once per mounted conversation.
@@ -544,6 +564,7 @@ export function ChatClient({
     setFailure(null);
     setNotice(null);
     setExportPickerKey(null);
+    setHandoff(null);
     const id = convIdRef.current;
     if (id) {
       // Remembered so a reload reopens this conversation in the same mode.
@@ -660,7 +681,7 @@ export function ChatClient({
     if (intent.artifact === "IMAGE") {
       // The image itself arrives with the reply; mark the artifact ready.
       updateArtifact(key, (current) =>
-        completeArtifact(beginArtifact(requestArtifact(current, { type: "IMAGE", title: "Matrix image" })), "matrix-image.png"),
+        completeArtifact(beginArtifact(requestArtifact(current, { type: "IMAGE", title: "QORVYNA image" })), "qorvyna-image.png"),
       );
       return;
     }
@@ -670,7 +691,7 @@ export function ChatClient({
     // CSV from this table" refers to the table in the reply that just arrived.
     const previous = lastAssistantContent(messagesRef.current);
     const content = pickArtifactContent({ format, reply, previous });
-    void buildArtifactFor(key, format, content, firstHeading(content, "MATRIX response"));
+    void buildArtifactFor(key, format, content, firstHeading(content, "QORVYNA response"));
   }
 
   // -------------------------------------------------------------------------
@@ -824,7 +845,7 @@ export function ChatClient({
   //   in the conversation as a voice message and is sent. No extra Send click.
   //
   // [Transcribe] is a separate action: it turns the recording into editable
-  // text in the composer and sends nothing. MATRIX reading an answer aloud
+  // text in the composer and sends nothing. QORVYNA reading an answer aloud
   // (listenTo above) is speech synthesis and unrelated to both.
   // -------------------------------------------------------------------------
 
@@ -884,7 +905,7 @@ export function ChatClient({
 
   async function startVoice() {
     if (recorder.state !== "idle" || transcribing || busy) return;
-    // MATRIX must not record its own voice.
+    // QORVYNA must not record its own voice.
     stopSpeech();
     stopGeneratedSpeech();
     setSpeakingId(null);
@@ -1079,7 +1100,7 @@ export function ChatClient({
     if (!isAgentRun && autoSpeakRef.current) primeSpeech();
 
     if (!firebaseBrowserConfigured) {
-      setFailure({ ...failureCopy("not-configured"), detail: "The MATRIX backend is not configured on this deployment yet, so chat cannot start." });
+      setFailure({ ...failureCopy("not-configured"), detail: "The QORVYNA backend is not configured on this deployment yet, so chat cannot start." });
       setStreaming(false);
       setStreamedText(null);
       setHiddenKey(null);
@@ -1117,6 +1138,9 @@ export function ChatClient({
     let replyVersions: ReplyVersion[] | undefined;
     let userStored = opts.reuseUser === true || opts.regenerate === true;
     let storedUserId: string | null = null;
+    // Set when the server answers "this is executable Agent work": the turn is
+    // then carried out by the build pipeline instead of ending as an error.
+    let executeInstead = false;
     const noteStored = (userMessageId?: unknown) => {
       userStored = true;
       if (lastTurnRef.current?.turnId === turnId) lastTurnRef.current.stored = true;
@@ -1148,7 +1172,7 @@ export function ChatClient({
       if (key && !isImage) requestArtifactFromIntent(key, intent, text);
       if (key && isImage && streamMetadata.image_data_url) {
         updateArtifact(key, (current) =>
-          completeArtifact(beginArtifact(requestArtifact(current, { type: "IMAGE", title: "Matrix image" })), "matrix-image.png"),
+          completeArtifact(beginArtifact(requestArtifact(current, { type: "IMAGE", title: "QORVYNA image" })), "qorvyna-image.png"),
         );
       }
     };
@@ -1190,6 +1214,13 @@ export function ChatClient({
         if (gatewayError.conversationId) rememberConv(gatewayError.conversationId);
         if (gatewayError.userMessageId) noteStored(gatewayError.userMessageId);
         else noteUnsent();
+        // AGENT_RUNTIME_REQUIRED is not a failure to show the user. The server
+        // refused to answer executable work with words; the same turn is handed
+        // to the real pipeline (see `finally` below).
+        if (res.status === 409 && gatewayError.code === "AGENT_RUNTIME_REQUIRED" && (messageMode === "agent" || messageMode === "code")) {
+          executeInstead = true;
+          return;
+        }
         setFailure(withRequestReference(classifyGatewayResponse(res.status, gatewayError.code), gatewayError.requestId));
         if (trackExecution) setExecution((current) => finishExecution(advanceExecution(current, { event: { at: Date.now(), type: "error", message: "Request failed" } }), "failed"));
         return;
@@ -1266,15 +1297,15 @@ export function ChatClient({
           }
           return;
         }
-        setFailure(withRequestReference(failureCopy("server"), res.headers.get("X-MATRIX-Request-ID")));
+        setFailure(withRequestReference(failureCopy("server"), res.headers.get("X-QORVYNA-Request-ID")));
         return;
       }
 
-      const sseRequestId = res.headers.get("X-MATRIX-Request-ID");
+      const sseRequestId = res.headers.get("X-QORVYNA-Request-ID");
       const reader = res.body?.getReader();
       if (!reader) {
         clearIdleTimer();
-        setFailure(withRequestReference(failureCopy("server"), res.headers.get("X-MATRIX-Request-ID")));
+        setFailure(withRequestReference(failureCopy("server"), res.headers.get("X-QORVYNA-Request-ID")));
         return;
       }
       const decoder = new TextDecoder();
@@ -1406,7 +1437,7 @@ export function ChatClient({
         commit(collected);
         maybeAutoSpeak(collected);
         void notifyWorkDone({
-          title: "MATRIX finished responding",
+          title: "QORVYNA finished responding",
           body: firstHeading(collected, "Your answer is ready."),
           link: gotConversationId ? `/chat/${gotConversationId}` : "/chat",
           onlyWhenBackgrounded: true,
@@ -1464,6 +1495,74 @@ export function ChatClient({
       abortRef.current = null;
       requestInFlightRef.current = false;
       setStreamStatus(null);
+      if (executeInstead) {
+        void runBuildTurn(
+          message,
+          { ...NO_BUILD_INTENT, build: true, preview: true, explicit: true, signals: ["server required the Agent runtime"] },
+          turnId, sentAttachments, messageMode === "code", null, undefined,
+          { reuseUser: userStored, audioAssetId: opts.audioAssetId ?? null },
+        );
+      }
+    }
+  }
+
+  /** Approve a pending hand-off: the request runs for real, in Agent mode. */
+  function approveHandoff() {
+    const pending = handoff;
+    if (!pending || streaming) return;
+    setHandoff(null);
+    // The conversation continues in Agent mode so follow-up instructions
+    // ("now make the header blue") run directly.
+    switchMode("agent");
+    const intent: BuildIntent = { ...pending.intent, preview: pending.intent.preview || (pending.intent.build && !pending.intent.publish) };
+    void runBuildTurn(pending.message, intent, pending.turnId, pending.attachments, false, null, undefined, { reuseUser: pending.reuseUser, audioAssetId: pending.audioAssetId });
+  }
+
+  /**
+   * A chat reply described work it could not have done. Carry out the request
+   * above it for real: same conversation, the prompt already in the thread.
+   */
+  function runLatestRequestWithAgent() {
+    if (streaming || isTemporary) return;
+    const list = messagesRef.current;
+    let request: ChatMessage | null = null;
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].role === "user") { request = list[i]; break; }
+    }
+    const prompt = request?.content.trim();
+    if (!prompt) return;
+    if (requestsClarificationFirst(prompt)) {
+      // The request asks to be questioned first: that is a conversation in
+      // Agent mode, not a run.
+      switchMode("agent");
+      setNotice("Switched to Agent. Send the request again and the Agent will ask its question first, then do the work.");
+      return;
+    }
+    const detected = detectBuildIntent(prompt, { mode: "agent", agentMode: true, projectFileCount: agentFiles.length || (agentProjectId ? 1 : 0), priorPlan: lastAssistantContent(list) });
+    const intent: BuildIntent = shouldRunBuildPipeline(detected)
+      ? detected
+      : { ...NO_BUILD_INTENT, build: true, preview: true, explicit: true, signals: ["run with Agent requested from a chat reply"] };
+    switchMode("agent");
+    void runBuildTurn(prompt, intent, crypto.randomUUID(), [], false, null, undefined, { reuseUser: Boolean(request?.id) || Boolean(convIdRef.current) });
+  }
+
+  /** Decline the hand-off: the same message gets a conversation answer. */
+  function answerHandoffInChat() {
+    const pending = handoff;
+    if (!pending || streaming) return;
+    setHandoff(null);
+    void send(undefined, pending.message, pending.audioAssetId
+      ? { chatOnly: true, voice: { turnId: pending.turnId, assetId: pending.audioAssetId, attachments: pending.attachments } }
+      : { chatOnly: true, resend: { turnId: pending.turnId, stored: pending.reuseUser, replaceReply: false, attachments: pending.attachments } });
+  }
+
+  /** Dismissed without a decision: the message was never sent anywhere. */
+  function dismissHandoff() {
+    const pending = handoff;
+    if (!pending) return;
+    setHandoff(null);
+    if (!pending.reuseUser) {
+      setMessages((current) => patchTurnMessage(current, "user", pending.turnId, (item) => ({ ...item, metadata: { ...item.metadata, send_failed: true } })));
     }
   }
 
@@ -1502,6 +1601,8 @@ export function ChatClient({
     }
     setComposerError(null);
     setEditingKey(null);
+    // A new message supersedes a request that was waiting for approval.
+    if (handoff && handoff.turnId !== existing?.turnId) dismissHandoff();
     lastAttachmentsRef.current = pending;
     lastImagePathRef.current = attachedImage?.storagePath ?? null;
 
@@ -1540,6 +1641,11 @@ export function ChatClient({
     const hinted = suggestMode(rawMessage, mode);
     if (hinted && hinted !== effectiveMode(intent, mode)) setModeHint(hinted);
     if (mode === "orchestrator") setGraphNodes(planOrchestrator(rawMessage).map((task) => ({ id: task.id, title: task.title, status: "running" as const })));
+    // The user already chose a conversation answer for this request.
+    if (turn.chatOnly) {
+      await streamMessage(message, { attachments: pending, imageStoragePath: null, intent, turnId, audioAssetId, ...flow });
+      return;
+    }
 
     // --- build / publish intent (§2, §25, §26) ----------------------------
     // "Make it", "build this website and publish it" run the real pipeline:
@@ -1602,7 +1708,15 @@ export function ChatClient({
       priorPlan: lastAssistantContent(messages),
       hasAttachments: pending.length > 0,
     });
-    if (buildIntent.needsClarification) {
+    // Real project work asked for in a conversation mode. A chat reply cannot
+    // do it, and a reply that sounds as if it did would be untrue — so nothing
+    // is sent to the model. The request waits for one tap: run it with the
+    // Agent, or answer in chat instead. (Temporary chats keep nothing and so
+    // cannot own a project; they stay conversational.)
+    const handoffReason = !isTemporary && !attachedImage && isConversationMode(mode) && !requestsClarificationFirst(rawMessage)
+      ? agentHandoffReason(rawMessage, buildIntent, { hasProject: Boolean(agentProjectId) || agentFiles.length > 0, hasAttachments: pending.length > 0 })
+      : null;
+    if (buildIntent.needsClarification && !handoffReason) {
       setNotice(buildIntent.clarification ?? "Describe what to build and I will create, validate and (if you ask) publish it.");
       await streamMessage(message, { attachments: pending, imageStoragePath: attachedImage?.storagePath ?? null, intent, turnId, audioAssetId, ...flow,
         taskContext: mode === "agent" ? { originalRequest: rawMessage, clarifications: [], state: "CLARIFICATION_REQUIRED", projectId: agentProjectId } : null });
@@ -1615,6 +1729,10 @@ export function ChatClient({
     }
     if (mayExecuteAgent(mode, buildIntent) && shouldRunBuildPipeline(buildIntent)) {
       await runBuildTurn(message, buildIntent, turnId, pending, false, null, undefined, buildFlow);
+      return;
+    }
+    if (handoffReason) {
+      setHandoff({ turnId, message, rawMessage, intent: approvedIntent(buildIntent, handoffReason), reason: handoffReason, attachments: pending, audioAssetId, reuseUser });
       return;
     }
     await streamMessage(message, { attachments: pending, imageStoragePath: attachedImage?.storagePath ?? null, intent, turnId, audioAssetId, ...flow });
@@ -1652,6 +1770,9 @@ export function ChatClient({
     lastBuildPromptRef.current = message;
     lastBuildTaskRef.current = taskContext;
     lastBuildVisibleRef.current = visibleMessage ?? null;
+    lastBuildIntentRef.current = buildIntent;
+    lastBuildWorkspaceOnlyRef.current = workspaceOnly;
+    setHandoff(null);
     const startedAt = Date.now();
     setFailure(null);
     setProjectChoices([]);
@@ -1686,7 +1807,7 @@ export function ChatClient({
     let buildError: { code: string; message: string } | null = null;
     try {
       if (!firebaseBrowserConfigured) {
-        setFailure({ ...failureCopy("not-configured"), detail: "The MATRIX backend is not configured on this deployment yet, so nothing can be built." });
+        setFailure({ ...failureCopy("not-configured"), detail: "The QORVYNA backend is not configured on this deployment yet, so nothing can be built." });
         return;
       }
       settled = await streamBuildRun(
@@ -1732,9 +1853,9 @@ export function ChatClient({
       buildError = controller.signal.aborted
         ? { code: "", message: "Stopped before the build finished." }
         : err instanceof BuildRunError
-        ? { code: err.code, message: err.code === "PROJECT_CONTEXT_MISSING" ? "This Chat is unavailable. Open a Chat you own and retry." : err.code === "PROJECT_STORAGE_UNAVAILABLE" ? "Project storage is unavailable. No build started; retry after Firestore is restored." : `Build service rejected the request (${err.code}).` }
-        : { code: "BUILD_UNREACHABLE", message: "MATRIX could not reach the build service. Your message is safe — try again." };
-      if (!(err instanceof Error && (err.name === "AbortError" || err instanceof BuildRunError))) console.error("[MATRIX] build stream failed", err);
+        ? { code: err.code, message: err.detail ?? (err.code === "PROJECT_CONTEXT_MISSING" ? "This Chat is unavailable. Open a Chat you own and retry." : err.code === "PROJECT_STORAGE_UNAVAILABLE" ? "Project storage is unavailable. No build started; retry after Firestore is restored." : `The build service did not start this request (${err.code}).`) }
+        : { code: "BUILD_UNREACHABLE", message: "QORVYNA could not reach the build service. Your message is safe — try again." };
+      if (!(err instanceof Error && (err.name === "AbortError" || err instanceof BuildRunError))) console.error("[QORVYNA] build stream failed", err);
     } finally {
       clearIdleTimer();
       setStreaming(false);
@@ -1785,6 +1906,9 @@ export function ChatClient({
       }
     }
 
+    // How the task ended, derived from the run record — never from prose.
+    const requestError = buildError as { code: string; message: string } | null;
+    const outcome = run ? outcomeOfRun(run) : requestError ? outcomeOfRequestError(requestError.code, requestError.message) : null;
     const replyText =
       settled.reply.trim() ||
       (run?.status === "succeeded"
@@ -1793,9 +1917,9 @@ export function ChatClient({
           : liveUrl
           ? `Built and published ${run.fileCount || artifacts.length || attachmentFiles.length} project file${run.fileCount === 1 ? "" : "s"}. The live address is below.`
           : `Build and validation passed. ${run.fileCount || artifacts.length} file${run.fileCount === 1 ? "" : "s"} are ready to preview.`
-        : buildError
-          ? `${buildError.message}${buildError.code ? ` (${buildError.code})` : ""}`
-          : "MATRIX stopped before the build finished. Open Deployment details to see where it ended.");
+        : outcome && (outcome.state === "blocked" || outcome.state === "failed")
+          ? `${outcome.label}: ${outcome.summary}${outcome.nextStep ? ` ${outcome.nextStep}` : ""}`
+          : "QORVYNA stopped before the build finished. Open Deployment details to see where it ended.");
 
     commitPartial(
       replyText,
@@ -1824,13 +1948,22 @@ export function ChatClient({
     if (controller.signal.aborted && !run) return;
     if (run?.status === "failed" || buildError) {
       const detail = run?.error?.message ?? buildError?.message ?? "The build stopped before publishing.";
-      if (run?.error?.code === "PROJECT_AMBIGUOUS" || run?.error?.code === "PROJECT_CONTEXT_MISSING") {
+      // The wall may be reported by the run or by the request that never became one.
+      const stopCode = run?.error?.code ?? buildError?.code ?? "";
+      if (stopCode === "PROJECT_AMBIGUOUS" || stopCode === "PROJECT_CONTEXT_MISSING") {
         // The owner-scoped list includes every selectable project, including
         // candidates beyond the short diagnostic stored in a build run.
         void rpc<Array<{ id: string; title: string }>>("project_list")
           .then(setProjectChoices).catch(() => setProjectChoices([]));
       }
-      setFailure({ ...failureCopy("server"), title: run?.deployment?.status === "failed" ? "Publishing failed" : "Build failed", detail, retryable: true });
+      // Blocked is not failed: the same request would hit the same wall, so
+      // the wall and what removes it are named instead of offering a retry.
+      const blocked = outcome?.state === "blocked";
+      // The reply above already says what happened, and a run that reached the
+      // pipeline has its own card (state, evidence, Retry). The notice is only
+      // for a request that never became a run and can simply be sent again —
+      // saying the same thing a third time helps nobody.
+      if (!run && !blocked) setFailure({ ...failureCopy("server"), title: "Build failed", detail, retryable: true });
     }
     if (run?.status === "succeeded") explicitAgentProjectIdRef.current = null;
     if (liveUrl && run) {
@@ -1839,13 +1972,13 @@ export function ChatClient({
       // open; after it is dismissed the committed message row carries the link.
       setBuildRun(null);
       void notifyWorkDone({
-        title: "MATRIX published your build",
+        title: "QORVYNA published your build",
         body: `Live at ${liveUrl}`,
         link: liveUrl,
       });
     } else if (run?.status === "succeeded") {
       void notifyWorkDone({
-        title: "MATRIX build finished",
+        title: "QORVYNA build finished",
         body: `${run.fileCount || artifacts.length} project file(s) ready.`,
         link: projectId ? `/projects/${projectId}` : "/projects",
       });
@@ -1853,8 +1986,11 @@ export function ChatClient({
   }
 
   function retryBuild() {
+    if (streaming) return;
     const prompt = lastBuildPromptRef.current;
-    if (!prompt || streaming) return;
+    // After a reload nothing is remembered about the run, but the request is
+    // still the last user message in the thread: send that again.
+    if (!prompt) { void retry(); return; }
     // A failed CREATE may already have persisted its project. Retrying must
     // continue that ID, not create another copy in the same chat.
     if (buildRun?.projectId) explicitAgentProjectIdRef.current = buildRun.projectId;
@@ -1882,8 +2018,10 @@ export function ChatClient({
       name: index === 0 ? "hero" : `feature-${index}`,
       prompt:
         index === 0
-          ? `Editorial website hero illustration for: ${subject}. Deep obsidian background, mint-green and violet accent light, geometric, no text, no words, no logos.`
-          : `Abstract product feature illustration for: ${subject}. Dark obsidian palette with subtle mint accents, minimal vector style, no text.`,
+          // No house palette: the picture takes its colours from the subject,
+          // the same rule the Agent follows for the site itself.
+          ? `Editorial website hero illustration for: ${subject}. Colours and mood chosen to suit the subject, clean geometric composition, no text, no words, no logos.`
+          : `Product feature illustration for: ${subject}. Same palette as the hero image, minimal vector style, no text.`,
     }));
   }
 
@@ -2042,7 +2180,7 @@ export function ChatClient({
   }
 
   async function shareMessage(text: string) {
-    const outcome = await shareText(text, title || "MATRIX");
+    const outcome = await shareText(text, title || "QORVYNA");
     if (outcome === "copied") toast("Copied — paste it anywhere to share");
     else if (outcome === "failed") toast("Sharing isn't available in this browser");
   }
@@ -2061,7 +2199,7 @@ export function ChatClient({
       const url = URL.createObjectURL(new Blob([JSON.stringify({ conversation_id: id, exported_at: new Date().toISOString(), messages: rows }, null, 2)], { type: "application/json" }));
       const link = document.createElement("a");
       link.href = url;
-      link.download = `matrix-chat-${id.slice(0, 8)}.json`;
+      link.download = `qorvyna-chat-${id.slice(0, 8)}.json`;
       link.click();
       URL.revokeObjectURL(url);
     } catch {
@@ -2085,7 +2223,7 @@ export function ChatClient({
     const problems: string[] = [];
     for (const file of files) {
       if (IMAGE_TYPES.includes(file.type) || file.type.startsWith("image/")) {
-        // The models MATRIX runs read text only; nothing is uploaded.
+        // The models QORVYNA runs read text only; nothing is uploaded.
         problems.push(`${file.name}: images can't be read yet — describe it or paste the text it contains.`);
         continue;
       }
@@ -2119,7 +2257,7 @@ export function ChatClient({
 
   const actionRegistry = (index: number, message: ChatMessage, signals: ContentSignals, intent: IntentResult, artifact: ArtifactState) => {
     const key = messageKey(message, index);
-    const title = firstHeading(message.content, "MATRIX response");
+    const title = firstHeading(message.content, "QORVYNA response");
     const canRun = Boolean(agentFiles.length || agentProjectId);
     const isLatest = index === latestAssistantIndex;
     // A reply that records real execution (a build, a deployment, a pending
@@ -2135,7 +2273,7 @@ export function ChatClient({
       run: () => setWorkspaceOpen(true),
       explain: () => askFollowUp("Explain the code above step by step, then list what could go wrong."),
       save: () => {
-        if (message.metadata?.image_data_url) saveDataUrl(message.metadata.image_data_url, `matrix-image-${key.slice(-6)}.png`);
+        if (message.metadata?.image_data_url) saveDataUrl(message.metadata.image_data_url, `qorvyna-image-${key.slice(-6)}.png`);
         else if (artifact.format) void downloadBuilt(key, message.content, title, artifact.format);
       },
       editPrompt: () => {
@@ -2280,7 +2418,7 @@ export function ChatClient({
     return (
       <div key={key} className={cn(key !== settledKey && "msg-in", "msg-row flex justify-start gap-3")} data-role="assistant">
         <span className="mt-1 hidden shrink-0 sm:block" aria-hidden="true">
-          <MatrixMark className="h-5 w-5 text-ink-3" />
+          <QorvynaMark compact className="h-5 w-5" />
         </span>
         <div className="min-w-0 flex-1">
           <AssistantMessage
@@ -2301,9 +2439,9 @@ export function ChatClient({
             onCloseExportPicker={() => setExportPickerKey(null)}
             onPickFormat={(next) => {
               setExportPickerKey(null);
-              void buildArtifactFor(key, next, message.content, firstHeading(message.content, "MATRIX response"));
+              void buildArtifactFor(key, next, message.content, firstHeading(message.content, "QORVYNA response"));
             }}
-            onGenerateArtifact={() => format && void buildArtifactFor(key, format, message.content, firstHeading(message.content, "MATRIX response"))}
+            onGenerateArtifact={() => format && void buildArtifactFor(key, format, message.content, firstHeading(message.content, "QORVYNA response"))}
             onDismissArtifact={() => {
               builtRef.current.delete(key);
               setArtifacts((current) => {
@@ -2312,10 +2450,10 @@ export function ChatClient({
                 return next;
               });
             }}
-            onOpenArtifact={() => format && void openBuilt(key, message.content, firstHeading(message.content, "MATRIX response"), format)}
+            onOpenArtifact={() => format && void openBuilt(key, message.content, firstHeading(message.content, "QORVYNA response"), format)}
             onSaveArtifact={() => {
-              if (message.metadata?.image_data_url) saveDataUrl(message.metadata.image_data_url, `matrix-image-${key.slice(-6)}.png`);
-              else if (format) void downloadBuilt(key, message.content, firstHeading(message.content, "MATRIX response"), format);
+              if (message.metadata?.image_data_url) saveDataUrl(message.metadata.image_data_url, `qorvyna-image-${key.slice(-6)}.png`);
+              else if (format) void downloadBuilt(key, message.content, firstHeading(message.content, "QORVYNA response"), format);
             }}
             onCopyArtifact={() => copyMessage(extractJson(message.content) ?? message.content)}
             onOpenWorkspace={() => {
@@ -2331,6 +2469,7 @@ export function ChatClient({
             }}
             onRetryInterrupted={isLatest ? regenerate : undefined}
             onCopyVersion={copyMessage}
+            onRunWithAgent={isLatest && !isTemporary ? runLatestRequestWithAgent : undefined}
           />
         </div>
       </div>
@@ -2404,7 +2543,9 @@ export function ChatClient({
         conversation={conversationActions}
       />
 
-      <div className="relative min-h-0 flex-1">
+      {/* While the conversation is empty the stage is a size container, so the
+          welcome screen can fit itself to the room it really has. */}
+      <div className={cn("relative min-h-0 flex-1", emptyConversation && "chat-stage")}>
         <div ref={scrollAreaRef} onScroll={chatScroll.onScroll} onWheel={chatScroll.onWheel}
           onTouchStart={chatScroll.onTouchStart} onTouchMove={chatScroll.onTouchMove}
           onKeyDown={chatScroll.onKeyDown} onPointerDown={chatScroll.onPointerDown} onPointerUp={chatScroll.onPointerUp}
@@ -2424,15 +2565,15 @@ export function ChatClient({
               </div>
             ) : null}
             {emptyConversation ? (
-              <div className="flex flex-col items-center px-1 py-4 text-center sm:py-8">
+              <div className="chat-welcome flex flex-col items-center px-1 py-4 text-center sm:py-8">
                 <div className="mb-5">
-                  <span className="mb-3 inline-block" aria-hidden="true">
-                    <MatrixWordmark className="h-9 w-36 sm:h-12 sm:w-48" />
+                  <span className="chat-welcome-mark mb-3 inline-block" aria-hidden="true">
+                    <QorvynaMark className="h-14 w-14 sm:h-16 sm:w-16" />
                   </span>
                   <h1 className="text-[22px] font-semibold tracking-tight text-ink sm:text-[28px]">
                     {isTemporary ? "Temporary chat" : mode === "agent" ? "What should we build?" : locale === "bn" ? "আজ কীভাবে সাহায্য করতে পারি?" : "How can I help today?"}
                   </h1>
-                  <p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-ink-2 sm:text-sm">
+                  <p className="chat-welcome-sub mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-ink-2 sm:text-sm">
                     {isTemporary
                       ? "Nothing here enters your history, memory, summaries or search — and it is deleted after 24 hours."
                       : mode === "agent"
@@ -2443,7 +2584,7 @@ export function ChatClient({
                   </p>
                 </div>
                 {mode !== "agent" && !isTemporary ? (
-                  <div className="mb-5 hidden w-full max-w-2xl grid-cols-2 gap-2 sm:grid lg:grid-cols-4">
+                  <div className="chat-welcome-features mb-5 hidden w-full max-w-2xl grid-cols-2 gap-2 sm:grid lg:grid-cols-4">
                     {FEATURES.map((feature) => (
                       <div key={feature.title} className="rounded-[16px] border border-border bg-surface px-3 py-3 text-left">
                         <span className="text-accent">{feature.icon}</span>
@@ -2453,7 +2594,7 @@ export function ChatClient({
                     ))}
                   </div>
                 ) : null}
-                <div className="grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
+                <div className="chat-welcome-cards grid w-full max-w-xl grid-cols-1 gap-2 sm:grid-cols-2">
                   {suggestions.map((suggestion) => (
                     <button
                       key={suggestion.label}
@@ -2482,13 +2623,13 @@ export function ChatClient({
                 {streaming && !streamCommitted ? (
                   <div className="msg-in msg-row flex justify-start gap-3" data-role="assistant">
                     <span className="mt-1 hidden shrink-0 sm:block" aria-hidden="true">
-                      <MatrixMark className="h-5 w-5 text-ink-3" />
+                      <QorvynaMark compact className="h-5 w-5" />
                     </span>
                     {/* Same box as a committed assistant message, so nothing shifts when the stream completes. */}
                     <div className="min-w-0 flex-1">
                       {imageRun ? (
                         <ArtifactCard
-                          state={beginArtifact(requestArtifact(emptyArtifactState(), { type: "IMAGE", title: "Matrix image" }))}
+                          state={beginArtifact(requestArtifact(emptyArtifactState(), { type: "IMAGE", title: "QORVYNA image" }))}
                           provider="together"
                         />
                       ) : null}
@@ -2523,13 +2664,36 @@ export function ChatClient({
             {failure ? (
               <ServerProblem failure={failure} onRetry={buildRun?.status === "failed" ? retryBuild : () => void retry()} onDismiss={() => setFailure(null)} />
             ) : null}
+            {handoff ? (
+              <ExecutionHandoff
+                reason={handoff.reason}
+                request={handoff.rawMessage}
+                busy={streaming}
+                onApprove={approveHandoff}
+                onAnswerInChat={answerHandoffInChat}
+                onDismiss={dismissHandoff}
+              />
+            ) : null}
             {projectChoices.length ? (
               <div className="rounded-xl border border-border bg-surface p-4" role="group" aria-label="Choose project to edit">
-                <p className="mb-2 text-sm font-medium text-ink">Which project should MATRIX edit?</p>
+                <p className="mb-2 text-sm font-medium text-ink">Which project should QORVYNA edit?</p>
                 <div className="flex flex-wrap gap-2">
                   {projectChoices.map((choice) => (
                     <button key={choice.id} type="button" className="min-h-11 rounded-lg border border-border px-3 text-sm text-ink hover:bg-surface-2"
-                      onClick={() => { explicitAgentProjectIdRef.current = choice.id; setAgentProjectId(choice.id); setProjectChoices([]); setNotice(`Selected ${choice.title}. Press Retry to run your previous request on this project, or write a new instruction.`); }}>
+                      onClick={() => {
+                        explicitAgentProjectIdRef.current = choice.id;
+                        setAgentProjectId(choice.id);
+                        setProjectChoices([]);
+                        // The request that was blocked on this choice runs now.
+                        const prompt = lastBuildPromptRef.current;
+                        const waiting = lastBuildIntentRef.current;
+                        if (prompt && waiting && !streaming) {
+                          setFailure(null);
+                          void runBuildTurn(prompt, waiting, crypto.randomUUID(), lastAttachmentsRef.current, lastBuildWorkspaceOnlyRef.current, lastBuildTaskRef.current, lastBuildVisibleRef.current ?? undefined, { reuseUser: true });
+                        } else {
+                          setNotice(`Selected ${choice.title}. Write what to change and it will run on this project.`);
+                        }
+                      }}>
                       {choice.title} · {choice.id.slice(0, 8)}
                     </button>
                   ))}
@@ -2636,7 +2800,7 @@ export function ChatClient({
         />
 
         <p className="composer-note mx-auto mt-1.5 hidden max-w-3xl px-1 text-center text-[11px] text-ink-3 sm:block">
-          {mode === "agent" ? "Review files before preview or push" : "MATRIX may make mistakes · verify important information"}
+          {mode === "agent" ? "Review files before preview or push" : "QORVYNA may make mistakes · verify important information"}
         </p>
       </div>
 

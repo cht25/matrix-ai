@@ -163,19 +163,19 @@ describe("buildArtifact — only honest formats", () => {
 
   it("names files predictably", () => {
     expect(exportFilename("pdf", "My First Report!")).toBe("my-first-report.pdf");
-    expect(exportFilename("markdown", "  ")).toBe("matrix-response.md");
+    expect(exportFilename("markdown", "  ")).toBe("qorvyna-response.md");
     expect(toPlainText("[Link](https://example.org) and `code`")).toBe("Link and code");
   });
 });
 
 describe("zip writer", () => {
   it("produces verifiable stored entries", () => {
-    const archive = zipStore([{ name: "a/hello.txt", data: "Hello MATRIX" }], new Date("2026-01-02T03:04:05Z"));
+    const archive = zipStore([{ name: "a/hello.txt", data: "Hello QORVYNA" }], new Date("2026-01-02T03:04:05Z"));
     const entries = zipEntries(archive);
     expect(entries).toHaveLength(1);
     expect(entries[0].name).toBe("a/hello.txt");
-    expect(new TextDecoder().decode(zipRead(archive, "a/hello.txt")!)).toBe("Hello MATRIX");
-    expect(entries[0].crc).toBe(crc32(new TextEncoder().encode("Hello MATRIX")));
+    expect(new TextDecoder().decode(zipRead(archive, "a/hello.txt")!)).toBe("Hello QORVYNA");
+    expect(entries[0].crc).toBe(crc32(new TextEncoder().encode("Hello QORVYNA")));
     // The end-of-central-directory record must close the archive.
     const view = new DataView(archive.buffer);
     expect(view.getUint32(archive.length - 22, true)).toBe(0x06054b50);

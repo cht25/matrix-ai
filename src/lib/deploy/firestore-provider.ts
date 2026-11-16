@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX first-party hosting provider
+// QORVYNA first-party hosting provider
 //
 // Implements `DeploymentProvider` on top of the storage the product already
 // owns:
@@ -61,7 +61,7 @@ const byteLength = (file: ProjectFile): number =>
  */
 export class FirestoreDeploymentProvider {
   readonly id = "matrix-static";
-  readonly label = "MATRIX hosting";
+  readonly label = "QORVYNA hosting";
 
   constructor(
     private readonly d: Db,
@@ -127,7 +127,9 @@ export class FirestoreDeploymentProvider {
           ...artifacts,
           {
             path: "env.js",
-            content: `window.MATRIX_ENV = ${JSON.stringify(envPublic)};`,
+            // `MATRIX_ENV` is the pre-rename name, kept as an alias so sites
+            // written against it keep working after they are republished.
+            content: `window.QORVYNA_ENV = ${JSON.stringify(envPublic)};\nwindow.MATRIX_ENV = window.QORVYNA_ENV;`,
             language: "javascript",
             encoding: "utf8",
           },
@@ -546,7 +548,7 @@ export class FirestoreDeploymentProvider {
       status: validation.kind === "custom" ? "pending_dns" : "active",
       detail:
         validation.kind === "custom"
-          ? "Add a CNAME for this hostname to the MATRIX host, then publish https://" +
+          ? "Add a CNAME for this hostname to the QORVYNA host, then publish https://" +
             validation.hostname +
             "/.well-known/matrix-domain with the challenge token."
           : validation.kind === "preview"
@@ -676,7 +678,7 @@ export class FirestoreDeploymentProvider {
 
   /**
    * Pick the public address. An explicitly requested address is either free,
-   * already owned by this user, or a hard SLUG_TAKEN — MATRIX never silently
+   * already owned by this user, or a hard SLUG_TAKEN — QORVYNA never silently
    * publishes somewhere else than the user asked for.
    */
   private async resolveSlug(input: unknown, origin: string, projectId: string): Promise<string> {

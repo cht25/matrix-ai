@@ -1,8 +1,8 @@
 // =============================================================================
-// MATRIX project URLs (§7, §8, §19, §20)
+// QORVYNA project URLs (§7, §8, §19, §20)
 //
 // A project has one primary URL plus aliases. Every entry here maps to
-// something MATRIX hosting can really serve:
+// something QORVYNA hosting can really serve:
 //
 //   generated  →  https://<app origin>/s/<slug>          (real, live route)
 //   preview    →  /api/projects/<id>/preview              (in-app sandbox)
@@ -58,10 +58,10 @@ export const URL_ERROR_MESSAGES: Record<UrlErrorCode, { title: string; detail: s
   URL_HOST_INVALID: { title: "That hostname is not valid", detail: "Use a domain such as example.com or shop.example.com." },
   URL_PATH_NOT_SUPPORTED: { title: "Enter the domain only", detail: "Custom addresses cannot include a path, query or port. Remove everything after the domain name." },
   URL_DUPLICATE: { title: "Already added", detail: "This project already has that address." },
-  URL_RESERVED: { title: "That address is reserved", detail: "MATRIX cannot attach the platform's own hostname to a project." },
+  URL_RESERVED: { title: "That address is reserved", detail: "QORVYNA cannot attach the platform's own hostname to a project." },
   SLUG_INVALID: { title: "That address is not allowed", detail: "Use 3-40 lowercase letters, numbers or dashes, without spaces." },
   SLUG_TAKEN: { title: "Address already in use", detail: "Someone else publishes at that address. Choose another one." },
-  DOMAIN_NOT_SUPPORTED: { title: "Custom domain not connected", detail: "Add the DNS record, then MATRIX verifies the challenge file before calling it live." },
+  DOMAIN_NOT_SUPPORTED: { title: "Custom domain not connected", detail: "Add the DNS record, then QORVYNA verifies the challenge file before calling it live." },
 };
 
 /** Hostnames the platform itself owns — never attachable to a project. */

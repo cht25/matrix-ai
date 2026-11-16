@@ -69,7 +69,7 @@ export function DeploymentPanel({
     try {
       setValidation(await rpc<ValidationView>("project_validate", { project_id: projectId }));
     } catch (err) {
-      setError(describe(err, "MATRIX could not run the checks."));
+      setError(describe(err, "QORVYNA could not run the checks."));
     } finally {
       setChecking(false);
     }
@@ -382,6 +382,6 @@ export function DeploymentHistory({
 
 export function describe(err: unknown, fallback: string): string {
   const view = mapAdminError(errorCodeOf(err, fallback));
-  console.error("[MATRIX]", view.code, err);
+  console.error("[QORVYNA]", view.code, err);
   return err instanceof RpcCallError && err.code === "BUILD_FAILED" ? fallback : `${view.title} — ${view.detail}`;
 }

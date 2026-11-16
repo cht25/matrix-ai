@@ -1,10 +1,10 @@
 "use client";
 
-// MATRIX Connect — unified Device Center:
+// QORVYNA Connect — unified Device Center:
 //  1. Connected Devices: own-account QR pairing + cross-account Family QR
 //     pairing (different accounts work out of the box; all QR codes in popups).
 //  2. My Device Activity: own screen time, app usage, hidden apps, and browser
-//     history synced from MATRIX Desktop (Tauri) / Android Companion / Web.
+//     history synced from QORVYNA Desktop (Tauri) / Android Companion / Web.
 //  3. ESP32 Hardware Nodes: pair ESP32 / ESP32-S3 / ESP32-C3 / ESP8266 nodes,
 //     generate ready-to-flash Arduino .ino firmware, and control lamp + focus.
 
@@ -229,7 +229,7 @@ export function DevicesClient() {
           release_notes: data.release_notes ?? "",
           force_update: Boolean(data.force_update),
         });
-        if (showToast) toast(`Latest MATRIX Phone App: v${data.latest_version} (build ${data.latest_build ?? 1})`);
+        if (showToast) toast(`Latest QORVYNA Phone App: v${data.latest_version} (build ${data.latest_build ?? 1})`);
       }
     } catch {
       if (showToast) toast("Could not reach update server.");
@@ -341,14 +341,14 @@ export function DevicesClient() {
   const currentActivity = ownActivity[selectedActivityIdx] ?? ownActivity[0] ?? null;
 
   const generatedSketch = useMemo(() => {
-    const origin = typeof window !== "undefined" ? window.location.origin : "https://matrix-ai.example.com";
+    const origin = typeof window !== "undefined" ? window.location.origin : "https://qorvyna.example.com";
     return esp32FirmwareSource({
       endpoint: origin,
       pairingCode: espGrant?.pairing_code || "PASTE_PAIRING_CODE_HERE",
       wifiSsid: wifiSsid || "YOUR_WIFI_SSID",
       wifiPassword: wifiPassword || "YOUR_WIFI_PASSWORD",
       board: espBoard,
-      label: espLabel || "MATRIX ESP32",
+      label: espLabel || "QORVYNA ESP32",
       capabilities: espCaps,
     });
   }, [espGrant, wifiSsid, wifiPassword, espBoard, espLabel, espCaps]);
@@ -395,7 +395,7 @@ export function DevicesClient() {
       toast(`Device “${body.device?.device_name}” linked.`);
       void notifyWorkDone({
         title: "Device paired",
-        body: `${body.device?.device_name ?? "Device"} is now linked to your MATRIX account.`,
+        body: `${body.device?.device_name ?? "Device"} is now linked to your QORVYNA account.`,
         link: "/devices",
       });
       await load();
@@ -445,7 +445,7 @@ export function DevicesClient() {
       toast("This device is now linked to your family (cross-account).");
       void notifyWorkDone({
         title: "Family device linked",
-        body: "This device is now connected to your MATRIX Family.",
+        body: "This device is now connected to your QORVYNA Family.",
         link: "/devices",
       });
       await Promise.all([load(), loadFamily(), familyId ? loadFamilyDetails(familyId) : Promise.resolve()]);
@@ -498,9 +498,9 @@ export function DevicesClient() {
       }
 
       if (!payload) {
-        // A web page cannot see app usage or screen time, and MATRIX never
+        // A web page cannot see app usage or screen time, and QORVYNA never
         // substitutes made-up figures for a real device report.
-        setError("Activity reports come from the MATRIX desktop app. A browser can't measure app usage or screen time, so there is nothing to sync from here.");
+        setError("Activity reports come from the QORVYNA desktop app. A browser can't measure app usage or screen time, so there is nothing to sync from here.");
         return;
       }
 
@@ -524,7 +524,7 @@ export function DevicesClient() {
     setError("");
     try {
       const grant = await rpc<Esp32PairingGrant>("esp32_pairing_create", {
-        label: espLabel.trim() || "MATRIX ESP32",
+        label: espLabel.trim() || "QORVYNA ESP32",
         board: espBoard,
         capabilities: espCaps,
         family_id: familyId || null,
@@ -570,7 +570,7 @@ export function DevicesClient() {
     <div className="mx-auto max-w-6xl space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="eyebrow">MATRIX Connect &amp; Hardware</p>
+          <p className="eyebrow">QORVYNA Connect &amp; Hardware</p>
           <h1 className="mt-1 font-display text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Devices</h1>
           <p className="mt-1 max-w-2xl text-sm text-ink-2">
             Register this device as a Parent or a Child, approve new devices, and manage what each one can do.
@@ -593,7 +593,7 @@ export function DevicesClient() {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink">
-              <Smartphone size={16} className="text-accent" /> MATRIX Phone App &amp; OTA Updates
+              <Smartphone size={16} className="text-accent" /> QORVYNA Phone App &amp; OTA Updates
             </span>
             {phoneRelease ? (
               <Badge className="!border-accent/40 !text-accent">
@@ -615,7 +615,7 @@ export function DevicesClient() {
             href={phoneRelease?.apk_url ?? "https://github.com/cht25/matrix-ai/releases/latest/download/matrix-android.apk"}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex min-h-9 items-center gap-1.5 rounded-xl bg-accent px-3.5 text-xs font-semibold text-accent-ink hover:bg-accent-hover"
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-xl bg-accent-solid px-3.5 text-xs font-semibold text-accent-ink hover:bg-accent-solid-hover"
           >
             <Download size={14} /> Download Android APK
           </a>
@@ -629,7 +629,7 @@ export function DevicesClient() {
           onClick={() => setTab("devices")}
           className={cn(
             "inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-colors",
-            tab === "devices" ? "bg-accent text-accent-ink" : "bg-surface-2/70 text-ink-2 hover:text-ink",
+            tab === "devices" ? "bg-accent-solid text-accent-ink" : "bg-surface-2/70 text-ink-2 hover:text-ink",
           )}
         >
           <Smartphone size={15} /> Devices
@@ -639,7 +639,7 @@ export function DevicesClient() {
           onClick={() => setTab("activity")}
           className={cn(
             "inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-colors",
-            tab === "activity" ? "bg-accent text-accent-ink" : "bg-surface-2/70 text-ink-2 hover:text-ink",
+            tab === "activity" ? "bg-accent-solid text-accent-ink" : "bg-surface-2/70 text-ink-2 hover:text-ink",
           )}
         >
           <Activity size={15} /> App Usage, Hidden Apps &amp; History
@@ -649,7 +649,7 @@ export function DevicesClient() {
           onClick={() => setTab("esp32")}
           className={cn(
             "inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-colors",
-            tab === "esp32" ? "bg-accent text-accent-ink" : "bg-surface-2/70 text-ink-2 hover:text-ink",
+            tab === "esp32" ? "bg-accent-solid text-accent-ink" : "bg-surface-2/70 text-ink-2 hover:text-ink",
           )}
         >
           <Cpu size={15} /> ESP32 Hardware ({esp32Nodes.length})
@@ -763,7 +763,7 @@ export function DevicesClient() {
               <h2 className="font-semibold text-ink">My Device App Usage, Hidden Apps &amp; Browser History</h2>
               <p className="mt-1 max-w-2xl text-xs text-ink-3">
                 Inspect your own screen time, installed/foreground apps, launcher-hidden apps, and browser visits across
-                MATRIX Desktop (Tauri), MATRIX Android Companion, and Web. (To view a child&apos;s device reports, open{" "}
+                QORVYNA Desktop (Tauri), QORVYNA Android Companion, and Web. (To view a child&apos;s device reports, open{" "}
                 <strong>Family → click member</strong>.)
               </p>
             </div>
@@ -797,7 +797,7 @@ export function DevicesClient() {
             <EmptyState
               icon={<Activity size={22} />}
               title="No device activity synced yet"
-              body="Activity appears here once the MATRIX desktop app reports it. Browsers and the current Android app do not collect app usage."
+              body="Activity appears here once the QORVYNA desktop app reports it. Browsers and the current Android app do not collect app usage."
               action={
                 <Button onClick={() => void syncThisDeviceActivity()} disabled={busy === "sync-activity"}>
                   Sync this device now
@@ -1049,7 +1049,7 @@ export function DevicesClient() {
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={challenge.qr_data_url}
-              alt="MATRIX own-account pairing QR code"
+              alt="QORVYNA own-account pairing QR code"
               className="mx-auto h-60 w-60 rounded-xl bg-white p-2 shadow"
             />
             <p className="text-xs text-ink-3">
@@ -1297,7 +1297,7 @@ export function DevicesClient() {
         open={espFirmwareOpen}
         onClose={() => setEspFirmwareOpen(false)}
         title="ESP32 Arduino Firmware Generator (.ino)"
-        description="Pre-filled with your MATRIX server endpoint and single-use pairing code. Wi-Fi credentials stay in your browser and are never sent to MATRIX."
+        description="Pre-filled with your QORVYNA server endpoint and single-use pairing code. Wi-Fi credentials stay in your browser and are never sent to QORVYNA."
         size="lg"
         footer={
           <div className="flex flex-wrap justify-end gap-2">

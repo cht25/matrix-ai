@@ -13,7 +13,7 @@ export default function AppError({ error, reset }: { error: Error & { digest?: s
     // configuration is expected on misconfigured deployments — the config
     // warning is already logged once at startup; don't spam per request.
     if ((error as { code?: string }).code !== "FIREBASE_NOT_CONFIGURED") {
-      console.error("[MATRIX] Route error boundary caught an error.", error);
+      console.error("[QORVYNA] Route error boundary caught an error.", error);
     }
   }, [error]);
 

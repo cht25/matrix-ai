@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — Vercel deployment engine (server-only).
+// QORVYNA AI — Vercel deployment engine (server-only).
 //
 // All calls go to the real Vercel REST API with the server-side token
 // (VERCEL_TOKEN, optional VERCEL_TEAM_ID). The token NEVER reaches the

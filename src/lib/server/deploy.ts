@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX hosting facade (§4, §5, §7, §8, §17, §18, §21)
+// QORVYNA hosting facade (§4, §5, §7, §8, §17, §18, §21)
 //
 // This module is the server-side entry point the RPC layer calls. It keeps the
 // long-standing function names (`publishProject`, `getDeployment`, …) and now

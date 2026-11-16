@@ -18,7 +18,7 @@ const SAMPLE = {
   course: "Python Fundamentals",
   score_percent: 100,
   issued_at: "2026-09-05T10:00:00.000Z",
-  issued_by: "MATRIX — THAMJJ13.TOP White Hat Team",
+  issued_by: "QORVYNA — THAMJJ13.TOP White Hat Team",
 };
 
 export default function DevPreviewCertificatePrintPage() {

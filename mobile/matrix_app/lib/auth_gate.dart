@@ -79,7 +79,7 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Text('MATRIX', style: TextStyle(fontSize: 32, fontWeight: FontWeight.w700, letterSpacing: 2)),
+                  const Text('QORVYNA', style: TextStyle(fontSize: 32, fontWeight: FontWeight.w700, letterSpacing: 2)),
                   const SizedBox(height: 4),
                   const Text('Sign in to your AI workspace', style: TextStyle(color: Colors.grey)),
                   const SizedBox(height: 28),

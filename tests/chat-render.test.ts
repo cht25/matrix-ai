@@ -67,7 +67,7 @@ describe("test 1 & 8 — a clean conversation renders nothing else", () => {
   });
 
   it("keeps the top bar to mode, model, status and settings", () => {
-    expect(html).toContain("Matrix mode");
+    expect(html).toContain("QORVYNA mode");
     expect(html).toContain("Idle");
     expect(html).toContain("Chat settings");
     expect(html).not.toContain("Agent Mode Active");
@@ -165,7 +165,7 @@ describe("test 4 — a CSV request on tabular data", () => {
 
 describe("test 5 — an image reply exposes image actions only", () => {
   const html = render([
-    { role: "user", content: "Generate an image of a futuristic Matrix city.", created_at: at(), metadata: { intent: "IMAGE_GENERATION", artifact_type: "IMAGE" } },
+    { role: "user", content: "Generate an image of a futuristic QORVYNA city.", created_at: at(), metadata: { intent: "IMAGE_GENERATION", artifact_type: "IMAGE" } },
     {
       role: "assistant",
       content: "Image ready.",
@@ -176,7 +176,7 @@ describe("test 5 — an image reply exposes image actions only", () => {
         artifact_type: "IMAGE",
         provider: "Together",
         image_data_url: "data:image/png;base64,iVBORw0KGgo=",
-        artifact: { requested: true, type: "IMAGE", status: "ready", format: null, filename: "matrix-image.png", title: "Matrix image" },
+        artifact: { requested: true, type: "IMAGE", status: "ready", format: null, filename: "qorvyna-image.png", title: "QORVYNA image" },
       },
     },
   ]);

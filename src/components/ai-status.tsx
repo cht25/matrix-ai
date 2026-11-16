@@ -123,14 +123,16 @@ export function AiStatus({ className }: { className?: string }) {
       <span
         aria-hidden="true"
         className={cn(
-          "h-1.5 w-1.5 rounded-full",
+          "h-1.5 w-1.5 shrink-0 rounded-full",
           state === "online" && "bg-success",
           state === "unavailable" && "bg-danger",
           state === "checking" && "animate-pulse bg-ink-3",
           state === "not-configured" && "bg-warning",
         )}
       />
-      {LABEL[state]}
+      {/* Its own box, so a tight row shortens the label with an ellipsis
+          instead of cutting a letter in half. */}
+      <span className="min-w-0 truncate">{LABEL[state]}</span>
     </button>
   );
 }

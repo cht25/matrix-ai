@@ -1,4 +1,4 @@
-# MATRIX system audit
+# QORVYNA system audit
 
 Audit date: 2026-11-07. Source baseline: `f65ad2468963d78bbd8d7bd037925431be3dfa60`. Working branch: `arena/f05e0edc-matrix-ai`.
 
@@ -9,7 +9,7 @@ All 427 tracked files were inventoried. Application routes, server modules, auth
 - `npm ci --no-audit --no-fund`: passed (951 installed packages).
 - Baseline `npm test`: **587 tests / 61 files passed**. Many tests use serialized in-memory Firestore/provider doubles; these are unit/contract tests, not production integration evidence.
 - Baseline `npm run typecheck`: passed.
-- Public production page fetched successfully: MATRIX login, email/Google/Facebook sign-in and the ages 11–17 positioning are visible.
+- Public production page fetched successfully: QORVYNA login, email/Google/Facebook sign-in and the ages 11–17 positioning are visible.
 - Production `/api/health` at 2026-11-07T02:09:11Z reported Firebase/Cloudinary reachable, general/coding AI online, OpenRouter coding model `nvidia/nemotron-3-ultra-550b-a55b`, image AI not configured. This endpoint is not an end-to-end account workflow test and its reported model differs from the source's `:free` suffix.
 - No production credentials, authenticated production account, deployment identity or hardware are available. Production data was not read or modified. Exact deployed commit and private workflows cannot be established from public pages.
 

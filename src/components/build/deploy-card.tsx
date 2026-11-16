@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  Check, ChevronDown, Copy, ExternalLink, FileCode2, FolderTree, Globe2, RefreshCcw, Rocket, Terminal, X,
+  AlertTriangle, Check, ChevronDown, Copy, ExternalLink, FileCode2, FolderTree, Globe2, RefreshCcw, Rocket, Terminal, X,
 } from "lucide-react";
 import type { BuildRun } from "@/lib/deploy/stages";
 import { buildRunCopy, stageProgress } from "@/lib/deploy/stages";
@@ -59,7 +59,7 @@ export function OpenLiveSiteButton({ url, className, label = "Open live site" }:
       target="_blank"
       rel="noreferrer noopener"
       className={cn(
-        "inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-accent px-3 text-[12.5px] font-semibold text-white transition-colors hover:bg-accent-hover",
+        "inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-accent-solid px-3 text-[12.5px] font-semibold text-accent-ink transition-colors hover:bg-accent-solid-hover",
         className,
       )}
     >
@@ -80,6 +80,7 @@ export function DeploymentRow({
   onManageUrls,
   onRequestDetails,
   busy,
+  blocked = false,
 }: {
   run: BuildRun | null;
   overview?: ProjectDeploymentOverview | null;
@@ -89,6 +90,8 @@ export function DeploymentRow({
   /** Called the first time the details are expanded (lazy hydrating read). */
   onRequestDetails?: () => void;
   busy?: boolean;
+  /** The run stopped at something a retry cannot fix (missing configuration, access …). */
+  blocked?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const requested = useCallback(() => {
@@ -104,6 +107,8 @@ export function DeploymentRow({
   const urls = overview?.urls?.filter((item) => item.status === "active") ?? [];
   const liveUrl = copy.liveUrl ?? overview?.live_url ?? null;
   const failed = run.status === "failed";
+  // A blocked run did not break: it reached something that has to change first.
+  const title = blocked ? (copy.title === "Publishing failed" ? "Publishing blocked" : "Blocked") : copy.title;
 
   return (
     <div className="mt-3 max-w-xl overflow-hidden rounded-xl border border-border bg-surface">
@@ -111,18 +116,20 @@ export function DeploymentRow({
         <span
           className={cn(
             "grid h-7 w-7 shrink-0 place-items-center rounded-lg border text-[13px]",
-            copy.tone === "success"
-              ? "border-success/45 bg-success-soft text-success"
-              : copy.tone === "danger"
-                ? "border-danger/45 bg-danger-soft text-danger"
-                : "border-accent/40 bg-accent-soft text-accent",
+            blocked
+              ? "border-warning/45 bg-warning-soft text-warning"
+              : copy.tone === "success"
+                ? "border-success/45 bg-success-soft text-success"
+                : copy.tone === "danger"
+                  ? "border-danger/45 bg-danger-soft text-danger"
+                  : "border-accent/40 bg-accent-soft text-accent",
           )}
           aria-hidden="true"
         >
-          {copy.glyph === "●" ? <Spinner className="h-3.5 w-3.5" /> : copy.glyph === "✓" ? <Check size={14} /> : failed ? <X size={14} /> : <Globe2 size={13} />}
+          {copy.glyph === "●" ? <Spinner className="h-3.5 w-3.5" /> : copy.glyph === "✓" ? <Check size={14} /> : blocked ? <AlertTriangle size={13} /> : failed ? <X size={14} /> : <Globe2 size={13} />}
         </span>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[12.5px] font-semibold text-ink">{copy.title}</p>
+          <p className="truncate text-[12.5px] font-semibold text-ink">{title}</p>
           <p className="truncate text-[11px] text-ink-3">
             {liveUrl ? (
               <a href={liveUrl} target="_blank" rel="noreferrer noopener" className="font-mono text-accent hover:underline">
@@ -210,10 +217,10 @@ export function DeploymentRow({
           </div>
           {liveUrl ? (
             <p className="text-[11px] text-ink-3">
-              {pluralize(urls.length, "address")} serving this deployment · {overview?.capabilities?.label ?? "MATRIX hosting"}
+              {pluralize(urls.length, "address")} serving this deployment · {overview?.capabilities?.label ?? "QORVYNA hosting"}
             </p>
           ) : (
-            <p className="text-[11px] text-ink-3">Nothing is public yet — MATRIX only shows a link once the host reports the deployment live.</p>
+            <p className="text-[11px] text-ink-3">Nothing is public yet — QORVYNA only shows a link once the host reports the deployment live.</p>
           )}
         </div>
       ) : null}
@@ -270,15 +277,15 @@ export function DeploySuccessPopup({
     <div className="fixed inset-0 z-[95] flex items-end justify-center p-3 sm:items-center" role="dialog" aria-modal="true" aria-label="Project published">
       <button type="button" className="absolute inset-0 bg-black/55 backdrop-blur-sm" onClick={onClose} aria-label="Dismiss" tabIndex={-1} />
       <div
-        className="fade-in relative w-full max-w-md overflow-hidden rounded-2xl border border-success/35 bg-surface shadow-[0_30px_80px_-20px_rgba(0,255,163,0.25)]"
-        style={{ background: "linear-gradient(180deg, rgba(0,255,163,0.07), transparent 42%), var(--surface)" }}
+        className="fade-in relative w-full max-w-md overflow-hidden rounded-2xl border border-success/35 bg-surface shadow-[var(--shadow-pop)]"
+        style={{ background: "linear-gradient(180deg, var(--success-soft), transparent 42%), var(--surface)" }}
       >
         <div className="flex items-start gap-3 border-b border-border px-4 py-3.5">
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-success/40 bg-success-soft text-success" aria-hidden="true">
             <Check size={18} strokeWidth={2.4} />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="eyebrow text-ink-3">Matrix deploy</p>
+            <p className="eyebrow text-ink-3">QORVYNA deploy</p>
             <h2 className="truncate text-[15px] font-semibold text-ink">{run.projectTitle || "Project"} published</h2>
             <p className="mt-0.5 text-[12px] text-ink-2">Your project is now live.</p>
           </div>
@@ -319,7 +326,7 @@ export function DeploySuccessPopup({
             </div>
             <div className="rounded-lg border border-border bg-surface-2/70 px-2.5 py-1.5">
               <dt className="eyebrow text-[9.5px] text-ink-3">Hosting</dt>
-              <dd className="mt-0.5 truncate font-semibold text-ink">{run.deployment?.slug ? `/s/${run.deployment.slug}` : "MATRIX"}</dd>
+              <dd className="mt-0.5 truncate font-semibold text-ink">{run.deployment?.slug ? `/s/${run.deployment.slug}` : "QORVYNA"}</dd>
               <dd className="mt-0.5 text-[10px] text-ink-3">{run.finishedAt ? new Date(run.finishedAt).toLocaleString() : "Just now"}</dd>
             </div>
           </dl>

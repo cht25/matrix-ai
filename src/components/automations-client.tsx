@@ -1,6 +1,6 @@
 "use client";
 
-// MATRIX Automations — triggers → ordered real tool actions.
+// QORVYNA Automations — triggers → ordered real tool actions.
 //
 // Redesigned for people, not for JSON authors:
 //   · a preset gallery starts a useful workflow in one click;
@@ -88,7 +88,7 @@ const PRESETS: Array<{ name: string; description: string; trigger: string; sched
     time: "07:00",
     steps: [
       { tool: "projects.list", args: {} },
-      { tool: "notifications.create", args: { title: "Good morning", body: "Your projects were checked. Open MATRIX to see what needs attention.", link: "/projects" } },
+      { tool: "notifications.create", args: { title: "Good morning", body: "Your projects were checked. Open QORVYNA to see what needs attention.", link: "/projects" } },
     ],
   },
   {

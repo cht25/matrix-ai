@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — admin error mapper.
+// QORVYNA AI — admin error mapper.
 //
 // Internal error code  →  human readable { title, detail, retryable }.
 // Raw codes such as ROLE_INVALID / PERMISSION_DENIED must never be the primary
@@ -38,7 +38,7 @@ const MAP: Record<string, { title: string; detail: string; retryable: boolean }>
   },
   BAD_ORIGIN: {
     title: "Request blocked for security",
-    detail: "The request did not come from MATRIX. Reload the page and try again.",
+    detail: "The request did not come from QORVYNA. Reload the page and try again.",
     retryable: true,
   },
   NOT_FOUND: {
@@ -63,7 +63,7 @@ const MAP: Record<string, { title: string; detail: string; retryable: boolean }>
   },
   LOAD_FAILED: {
     title: "Unable to load data",
-    detail: "MATRIX could not reach the database. Nothing is wrong on your side.",
+    detail: "QORVYNA could not reach the database. Nothing is wrong on your side.",
     retryable: true,
   },
   BOOTSTRAP_NOT_CONFIGURED: {
@@ -84,7 +84,7 @@ const MAP: Record<string, { title: string; detail: string; retryable: boolean }>
   // --- build & deployment (§4, §7, §14, §18, §20, §32) ----------------------
   BUILD_FAILED: {
     title: "Build failed",
-    detail: "MATRIX stopped before publishing because the project did not pass its checks. Open the error details, or ask Matrix to fix it automatically.",
+    detail: "QORVYNA stopped before publishing because the project did not pass its checks. Open the error details, or ask QORVYNA to fix it automatically.",
     retryable: false,
   },
   BUILD_EMPTY: {
@@ -94,12 +94,12 @@ const MAP: Record<string, { title: string; detail: string; retryable: boolean }>
   },
   BUILD_RATE_LIMITED: {
     title: "Too many builds at once",
-    detail: "MATRIX is already building your other projects. Wait for one to finish and try again.",
+    detail: "QORVYNA is already building your other projects. Wait for one to finish and try again.",
     retryable: true,
   },
   BUILD_RUN_STALE: {
     title: "Build progress stopped",
-    detail: "MATRIX stopped receiving updates for this build, so it is shown as failed. Nothing was marked published.",
+    detail: "QORVYNA stopped receiving updates for this build, so it is shown as failed. Nothing was marked published.",
     retryable: true,
   },
   BUILD_RUN_FAILED: {
@@ -109,7 +109,7 @@ const MAP: Record<string, { title: string; detail: string; retryable: boolean }>
   },
   BUILD_INCOMPLETE: {
     title: "Build did not finish cleanly",
-    detail: "Some steps could not be confirmed, so MATRIX will not report a successful publish.",
+    detail: "Some steps could not be confirmed, so QORVYNA will not report a successful publish.",
     retryable: true,
   },
   DEPLOY_FAILED: {
@@ -119,7 +119,7 @@ const MAP: Record<string, { title: string; detail: string; retryable: boolean }>
   },
   DEPLOY_INCOMPLETE: {
     title: "Publishing unconfirmed",
-    detail: "The host did not report a live deployment, so MATRIX shows no live link.",
+    detail: "The host did not report a live deployment, so QORVYNA shows no live link.",
     retryable: true,
   },
   NO_FILES: {
@@ -129,12 +129,12 @@ const MAP: Record<string, { title: string; detail: string; retryable: boolean }>
   },
   PROJECT_REQUIRED: {
     title: "No project selected",
-    detail: "Describe what to build and MATRIX will create the project first.",
+    detail: "Describe what to build and QORVYNA will create the project first.",
     retryable: false,
   },
   NO_BUILD_REQUESTED: {
     title: "Nothing to build",
-    detail: "Say what to create (or open a project) and Matrix will build it.",
+    detail: "Say what to create (or open a project) and QORVYNA will build it.",
     retryable: false,
   },
   AI_NOT_CONFIGURED: {
@@ -154,7 +154,7 @@ const MAP: Record<string, { title: string; detail: string; retryable: boolean }>
   },
   HOSTING_NOT_CONFIGURED: {
     title: "Hosting not configured",
-    detail: "This deployment of MATRIX has no hosting provider connected, so nothing can be published yet.",
+    detail: "This deployment of QORVYNA has no hosting provider connected, so nothing can be published yet.",
     retryable: false,
   },
   INDEX_REQUIRED: {
@@ -196,14 +196,14 @@ const MAP: Record<string, { title: string; detail: string; retryable: boolean }>
   URL_INVALID: { title: "Invalid URL", detail: "Please enter a valid domain, for example myproject.example.com.", retryable: false },
   URL_PROTOCOL: { title: "Use http or https", detail: "Only http:// and https:// addresses can be added.", retryable: false },
   URL_HOST_INVALID: { title: "That hostname is not valid", detail: "Use a domain such as shop.example.com.", retryable: false },
-  URL_PATH_NOT_SUPPORTED: { title: "Enter the domain only", detail: "Remove the path, query and port — MATRIX attaches the hostname itself.", retryable: false },
+  URL_PATH_NOT_SUPPORTED: { title: "Enter the domain only", detail: "Remove the path, query and port — QORVYNA attaches the hostname itself.", retryable: false },
   URL_DUPLICATE: { title: "Already added", detail: "This project already has that address.", retryable: false },
-  URL_RESERVED: { title: "That address is reserved", detail: "MATRIX cannot attach the platform's own hostname to a project.", retryable: false },
+  URL_RESERVED: { title: "That address is reserved", detail: "QORVYNA cannot attach the platform's own hostname to a project.", retryable: false },
   URL_PRIMARY_REQUIRED: { title: "Keep one primary URL", detail: "Set another address as primary before removing this one.", retryable: false },
   URL_NOT_PRIMARY: { title: "Preview cannot be primary", detail: "Preview addresses stay secondary.", retryable: false },
   DOMAIN_INVALID: { title: "Invalid domain", detail: "Please enter a valid domain, for example app.mycompany.com.", retryable: false },
   DOMAIN_NOT_SET: { title: "No domain to verify", detail: "Add a custom domain first.", retryable: false },
-  DOMAIN_NOT_VERIFIED: { title: "Domain not verified", detail: "MATRIX cannot point the primary URL at a domain that has not verified.", retryable: false },
+  DOMAIN_NOT_VERIFIED: { title: "Domain not verified", detail: "QORVYNA cannot point the primary URL at a domain that has not verified.", retryable: false },
   DOMAIN_NOT_SUPPORTED: { title: "Custom domain not connected", detail: "Finish the DNS challenge before treating this domain as live.", retryable: false },
   CUSTOM_DOMAIN_NOT_SUPPORTED: { title: "Custom domains unavailable", detail: "The connected hosting provider does not accept custom domains.", retryable: false },
   ALIASES_NOT_SUPPORTED: { title: "Multiple URLs unavailable", detail: "The connected hosting provider only serves one address per project.", retryable: false },
@@ -221,7 +221,7 @@ export function mapAdminError(code: unknown): AdminErrorView {
   if (hit) return { ...hit, code: raw };
   if (NETWORKISH.test(raw) || raw.startsWith("HTTP_5")) {
     return {
-      title: "MATRIX is having a problem",
+      title: "QORVYNA is having a problem",
       detail: "The server could not complete this request. It has been logged — please try again shortly.",
       retryable: true,
       code: raw,
@@ -237,7 +237,7 @@ export function mapAdminError(code: unknown): AdminErrorView {
   }
   return {
     title: "Something went wrong",
-    detail: "MATRIX could not complete this action. Please try again in a moment.",
+    detail: "QORVYNA could not complete this action. Please try again in a moment.",
     retryable: true,
     code: raw,
   };

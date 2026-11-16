@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // =============================================================================
-// MATRIX AI — role catalog repair migration (safe, idempotent, non-destructive).
+// QORVYNA AI — role catalog repair migration (safe, idempotent, non-destructive).
 //
 //   node scripts/migrate-roles.mjs --dry-run   # report only, writes nothing
 //   node scripts/migrate-roles.mjs             # apply
@@ -71,7 +71,7 @@ if (!projectId || !clientEmail || !privateKey) {
 initializeApp({ projectId, credential: cert({ projectId, clientEmail, privateKey }) });
 const db = getFirestore();
 
-console.log(`\nMATRIX role migration — ${DRY ? "DRY RUN (no writes)" : "APPLYING"}\n`);
+console.log(`\nQORVYNA role migration — ${DRY ? "DRY RUN (no writes)" : "APPLYING"}\n`);
 
 // --- 1. inspect -------------------------------------------------------------
 const [rolesSnap, permsSnap, linksSnap, assignSnap] = await Promise.all([

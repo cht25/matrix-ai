@@ -59,7 +59,7 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 900 }, { name: '
     await page.getByRole('button', { name: 'Pause voice message' }).click();
     await page.getByText('Transcript · bn').click();
     await page.getByText('বাংলা English sample').first().waitFor();
-    await page.locator('textarea[aria-label="Message MATRIX"]').waitFor();
+    await page.locator('textarea[aria-label="Message QORVYNA"]').waitFor();
     // Existing dev-only gateway streams small real SSE frames (a mock provider,
     // never a replay of a completed production response).
     await page.getByRole('button', { name: 'Stop generating' }).waitFor({ state: 'hidden', timeout: 20_000 });

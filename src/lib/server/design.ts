@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — Dynamic Design Engine persistence (server-only).
+// QORVYNA AI — Dynamic Design Engine persistence (server-only).
 //
 // Approved designs are stored in Firestore:
 //   design_configs/{uid}            → the user's current applied config
@@ -107,6 +107,6 @@ export async function resetDesignConfig(d: Db, user: SessionUser): Promise<Desig
   return saveDesignConfig(d, user, {
     tokens: DEFAULT_DESIGN_TOKENS,
     source: "reset",
-    summary: "Reset to MATRIX default design",
+    summary: "Reset to QORVYNA default design",
   });
 }

@@ -7,10 +7,10 @@
 //   VERIFY what was saved → terminate → delete temporary data
 //
 // The environment is reached through the `ExecutionGateway` interface below.
-// MATRIX ships one implementation, `matrix-inline`: the session's workspace is
+// QORVYNA ships one implementation, `matrix-inline`: the session's workspace is
 // held in the memory of the request that runs it and nothing is executed
 // outside the validators/bundler. An external sandbox service plugs in by
-// implementing the same interface; MATRIX does not assume any endpoint of a
+// implementing the same interface; QORVYNA does not assume any endpoint of a
 // service it has not been given.
 //
 // Rules enforced here, whatever the gateway:

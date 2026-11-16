@@ -1,4 +1,4 @@
-// MATRIX Connect — list the account's paired devices / revoke one.
+// QORVYNA Connect — list the account's paired devices / revoke one.
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase/admin";
 import { getApiSessionUser, deviceScopeResponse } from "@/lib/firebase/device-session";

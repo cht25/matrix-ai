@@ -1,11 +1,11 @@
-# MATRIX HTTP API reference
+# QORVYNA HTTP API reference
 
 This is a source-aligned reference for the primary application routes, not a complete OpenAPI schema. Check the named route handler and Zod/action definitions for authoritative request fields and response shape before adding clients. All requests are same-origin unless the route is explicitly server-to-server.
 
 ## Authentication and request conventions
 
 - Browser: authenticated Firebase session cookie, established by the session route. Mutating browser requests must have an allowed Origin/Fetch-Metadata context.
-- Native clients: verified Firebase bearer ID token. Some device-aware routes additionally accept MATRIX device credentials with explicit scopes. Device credentials are not account/admin tokens.
+- Native clients: verified Firebase bearer ID token. Some device-aware routes additionally accept QORVYNA device credentials with explicit scopes. Device credentials are not account/admin tokens.
 - Server-to-server automation: `Authorization: Bearer <AUTOMATION_WORKER_SECRET>` only at the worker endpoint.
 - JSON errors use stable machine codes; RPC uses `{ success, data, error }`. Do not treat a 2xx result from a client-side optimistic update as durable provider/hardware success.
 - Never place API keys, session tokens, OAuth refresh tokens or service credentials in query strings.
@@ -56,7 +56,7 @@ Content-Type: application/json
 {"limit":10}
 ```
 
-Response includes `checked_at`, `attempted`, `succeeded` and per-item outcomes. The worker process must be configured with an explicit HTTPS `MATRIX_WORKER_TARGET_URL`.
+Response includes `checked_at`, `attempted`, `succeeded` and per-item outcomes. The worker process must be configured with an explicit HTTPS `QORVYNA_WORKER_TARGET_URL` (the earlier name `MATRIX_WORKER_TARGET_URL` is still read).
 
 ## Streaming
 

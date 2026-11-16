@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX build endpoint (§1, §3, §4, §14–§16, §24)
+// QORVYNA build endpoint (§1, §3, §4, §14–§16, §24)
 //
 //   POST /api/build           start a real build run, stream its progress (SSE)
 //   POST /api/build {resume_run_id}  continue a paused/interrupted run in a new
@@ -175,7 +175,7 @@ export async function POST(req: NextRequest) {
   }
 
   const d = adminDb();
-  // The Agent always runs on the single MATRIX model; any `model_id` in the
+  // The Agent always runs on the single QORVYNA model; any `model_id` in the
   // request body or a saved legacy preference is ignored.
   const runId = crypto.randomUUID().replace(/-/g, "").slice(0, 24);
   const wantsStream = (req.headers.get("accept") ?? "").includes("text/event-stream");
@@ -255,7 +255,7 @@ export async function POST(req: NextRequest) {
       }
       taskId = existing.id;
     } else {
-      const task = await createAgentTask(d, user, { title: (prompt || "MATRIX build").replace(/\s+/g, " ").slice(0, 120), goal: prompt || `Build project ${projectId ?? "new"}`, conversation_id: convId, project_id: projectId });
+      const task = await createAgentTask(d, user, { title: (prompt || "QORVYNA build").replace(/\s+/g, " ").slice(0, 120), goal: prompt || `Build project ${projectId ?? "new"}`, conversation_id: convId, project_id: projectId });
       taskId = task.id;
     }
   } catch (error) {
@@ -361,7 +361,7 @@ export async function POST(req: NextRequest) {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
-      "X-MATRIX-Request-ID": requestId,
+      "X-QORVYNA-Request-ID": requestId,
     },
   });
 }

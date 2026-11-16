@@ -25,7 +25,7 @@ vi.mock("@/lib/firebase/session", () => {
 
 import { sharedFirestoreStub } from "./helpers/firestore-stub";
 import { GET as serveSite } from "../src/app/s/[slug]/[[...path]]/route";
-import { MATRIX_MODEL_ID } from "../src/lib/ai/model";
+import { QORVYNA_MODEL_ID } from "../src/lib/ai/model";
 import { resetHealthCacheForTests } from "../src/lib/ai/provider-health";
 import { resetScheduler } from "../src/lib/ai/orchestrator/scheduler";
 import { accountStatuses, listAccounts, markRateLimited, nextAvailability, observeHeaders, parseResetDuration, resetAccountsForTests, selectAccount } from "../src/lib/ai/accounts";
@@ -91,7 +91,7 @@ function site(brand: string, note = "Each top is planed by hand and finished wit
     file("assets/mark.svg", MARK),
   ];
 }
-const asBlocks = (files: Array<{ path: string; content: string }>, lead = "Done.") => `${lead}\n\n${files.map((file) => `<<<MATRIX_FILE path="${file.path}">>>\n${file.content}\n<<<END_MATRIX_FILE>>>`).join("\n\n")}`;
+const asBlocks = (files: Array<{ path: string; content: string }>, lead = "Done.") => `${lead}\n\n${files.map((file) => `<<<QORVYNA_FILE path="${file.path}">>>\n${file.content}\n<<<END_QORVYNA_FILE>>>`).join("\n\n")}`;
 
 // ---- simulated Groq --------------------------------------------------------
 type GroqRequest = { model: string; stream: boolean; auth: string; text: string };
@@ -116,7 +116,7 @@ function installFetch(): void {
       return serveSite(new NextRequest(raw, { headers }), { params: Promise.resolve({ slug, path: rest.filter(Boolean) }) });
     }
     if (!raw.startsWith("https://api.groq.com/openai/v1")) throw new Error(`unexpected outbound request: ${raw}`);
-    if (raw.endsWith("/models")) return new Response(JSON.stringify({ data: [{ id: MATRIX_MODEL_ID, context_window: 131072 }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    if (raw.endsWith("/models")) return new Response(JSON.stringify({ data: [{ id: QORVYNA_MODEL_ID, context_window: 131072 }] }), { status: 200, headers: { "Content-Type": "application/json" } });
     const body = JSON.parse(String(init?.body)) as { model: string; stream?: boolean; messages: Array<{ role: string; content: string }> };
     const request: GroqRequest = { model: body.model, stream: body.stream === true, auth: String(new Headers(init?.headers).get("authorization")), text: body.messages.map((message) => message.content).join("\n\n") };
     groq.push(request);
@@ -322,7 +322,7 @@ describe("B. automatic repair of deliberately broken HTML and JavaScript", () =>
     expect(repairs.filter((item) => item.kind === "model").map((item) => item.outcome)).toEqual(["rejected", "accepted"]);
     expect(result.run.attempts).toBe(2);
     // The repair request carried the exact error and only the files involved.
-    const repairRequest = groq.filter((request) => request.text.includes("The MATRIX validator found the problems below"))[0];
+    const repairRequest = groq.filter((request) => request.text.includes("The QORVYNA validator found the problems below"))[0];
     expect(repairRequest.text).toMatch(/app\.js:3 — /);
     expect(repairRequest.text).toMatch(/menu\.js/);
     expect(repairRequest.text).toContain("<<<FILE app.js>>>");
@@ -468,14 +468,14 @@ describe("D. a new execution session continues the same chat, project and run", 
     const projectId = String(paused.projectId);
     if (paused.run.continuation?.phase === "repair") {
       expect(projectFiles(projectId).size).toBe(12);
-      const generationCalls = groq.filter((request) => request.text.includes("MATRIX build pipeline: emit complete")).length;
+      const generationCalls = groq.filter((request) => request.text.includes("QORVYNA build pipeline: emit complete")).length;
       responders = [() => asBlocks([{ path: "app.js", content: SCRIPT }])];
       const done = await resume(id);
       expect(done.run.status, fail(done)).toBe("succeeded");
       expect(done.projectId).toBe(projectId);
       expect(logText(done)).toContain("already saved in the project by the earlier session");
       // No further generation request: only the repair was asked for.
-      expect(groq.filter((request) => request.text.includes("MATRIX build pipeline: emit complete")).length).toBe(generationCalls);
+      expect(groq.filter((request) => request.text.includes("QORVYNA build pipeline: emit complete")).length).toBe(generationCalls);
       expect(projectFiles(projectId).get("app.js")?.trim()).toBe(SCRIPT.trim());
       expect(done.run.changes.length).toBeGreaterThanOrEqual(12);
     } else {
@@ -507,7 +507,7 @@ describe("E. Groq account rotation", () => {
   const B = key("acct_b");
   const C = key("acct_c");
   const limited = (retryAfter: string) => new Response(JSON.stringify({ error: { message: `Rate limit reached for model in organization org_x on tokens per minute (TPM): Limit 8000, Used 7900, Requested 600. Please try again in ${retryAfter}s.`, type: "tokens", code: "rate_limit_exceeded" } }), { status: 429, headers: { "Content-Type": "application/json", "retry-after": retryAfter } });
-  const ok = (auth: string) => new Response(JSON.stringify({ model: MATRIX_MODEL_ID, choices: [{ message: { content: `answer via ${auth.slice(-30, -24)}` }, finish_reason: "stop" }], usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 } }), { status: 200, headers: { "Content-Type": "application/json", "x-ratelimit-limit-requests": "14400", "x-ratelimit-remaining-requests": "14399", "x-ratelimit-limit-tokens": "8000", "x-ratelimit-remaining-tokens": "7400", "x-ratelimit-reset-tokens": "4.5s", "x-ratelimit-reset-requests": "6s" } });
+  const ok = (auth: string) => new Response(JSON.stringify({ model: QORVYNA_MODEL_ID, choices: [{ message: { content: `answer via ${auth.slice(-30, -24)}` }, finish_reason: "stop" }], usage: { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 } }), { status: 200, headers: { "Content-Type": "application/json", "x-ratelimit-limit-requests": "14400", "x-ratelimit-remaining-requests": "14399", "x-ratelimit-limit-tokens": "8000", "x-ratelimit-remaining-tokens": "7400", "x-ratelimit-reset-tokens": "4.5s", "x-ratelimit-reset-requests": "6s" } });
   let calls: string[] = [];
   let behaviour: Record<string, () => Response> = {};
   let nowMs = 1_800_000_000_000;
@@ -526,7 +526,7 @@ describe("E. Groq account rotation", () => {
       return (behaviour[auth] ?? (() => ok(auth)))();
     }) as typeof fetch;
   });
-  const ask = () => new GroqProvider(A, { pooled: true }).chat({ model: MATRIX_MODEL_ID, messages: [{ role: "user", content: "hello" }], maxTokens: 200 });
+  const ask = () => new GroqProvider(A, { pooled: true }).chat({ model: QORVYNA_MODEL_ID, messages: [{ role: "user", content: "hello" }], maxTokens: 200 });
 
   it("registers every distinct key once, from GROQ_API_KEY, numbered keys and the list", () => {
     expect(listAccounts().map((account) => account.key)).toEqual([A, B, C]);
@@ -560,9 +560,9 @@ describe("E. Groq account rotation", () => {
   it("limits come from the provider's headers: an account reported out of tokens is skipped without sending a request", async () => {
     const [a, b, c] = listAccounts();
     const exhausted = new Headers({ "x-ratelimit-limit-tokens": "8000", "x-ratelimit-remaining-tokens": "50", "x-ratelimit-reset-tokens": "30s", "x-ratelimit-limit-requests": "100", "x-ratelimit-remaining-requests": "90", "x-ratelimit-reset-requests": "30s" });
-    observeHeaders(a.id, MATRIX_MODEL_ID, exhausted);
-    observeHeaders(b.id, MATRIX_MODEL_ID, exhausted);
-    expect(selectAccount(MATRIX_MODEL_ID, 600).account?.id).toBe(c.id);
+    observeHeaders(a.id, QORVYNA_MODEL_ID, exhausted);
+    observeHeaders(b.id, QORVYNA_MODEL_ID, exhausted);
+    expect(selectAccount(QORVYNA_MODEL_ID, 600).account?.id).toBe(c.id);
     await ask();
     expect(calls).toEqual([C]);
     const view = accountStatuses().find((account) => account.id === a.id)!;
@@ -579,7 +579,7 @@ describe("E. Groq account rotation", () => {
     expect((error as AIProviderError).detail).toMatch(/all 3 connected accounts tried/);
     expect((error as AIProviderError).retryAt).toBe(nowMs + 30_000);
     expect(calls).toHaveLength(3);
-    expect(nextAvailability(MATRIX_MODEL_ID)).toBe(nowMs + 30_000);
+    expect(nextAvailability(QORVYNA_MODEL_ID)).toBe(nowMs + 30_000);
     // A second request does not touch the provider at all while every account is cooling down.
     const again = await ask().catch((cause) => cause as AIProviderError);
     expect((again as AIProviderError).type).toBe("rate_limit");
@@ -588,9 +588,9 @@ describe("E. Groq account rotation", () => {
     // Without a provider-stated wait, the pause doubles per consecutive limit.
     const [a] = listAccounts();
     resetAccountsForTests({ clock: () => nowMs });
-    expect(markRateLimited(a.id, MATRIX_MODEL_ID, null) - nowMs).toBe(30_000);
-    expect(markRateLimited(a.id, MATRIX_MODEL_ID, null) - nowMs).toBe(60_000);
-    expect(markRateLimited(a.id, MATRIX_MODEL_ID, null) - nowMs).toBe(120_000);
+    expect(markRateLimited(a.id, QORVYNA_MODEL_ID, null) - nowMs).toBe(30_000);
+    expect(markRateLimited(a.id, QORVYNA_MODEL_ID, null) - nowMs).toBe(60_000);
+    expect(markRateLimited(a.id, QORVYNA_MODEL_ID, null) - nowMs).toBe(120_000);
   });
 
   it("a rejected key is set aside and the request continues; a bad request is not retried on other accounts", async () => {
@@ -791,7 +791,7 @@ describe("J. recovery after a server restart", () => {
     expect((record.resume as { phase: string }).phase).toBe("repair");
 
     responders = [() => asBlocks([{ path: "app.js", content: SCRIPT }])];
-    const generationCalls = groq.filter((request) => request.text.includes("MATRIX build pipeline: emit complete")).length;
+    const generationCalls = groq.filter((request) => request.text.includes("QORVYNA build pipeline: emit complete")).length;
     const db = dbWithWrites();
     const recovered = await recoverInterruptedRuns(db, { providerFor: (owner) => new FirestoreDeploymentProvider(db, owner) });
     const mine = recovered.find((item) => item.runId === id);
@@ -801,7 +801,7 @@ describe("J. recovery after a server restart", () => {
     expect(after.run.segment).toBe(2);
     expect(after.resumable).toBe(false);
     expect(projectFiles(projectId).get("app.js")?.trim()).toBe(SCRIPT.trim());
-    expect(groq.filter((request) => request.text.includes("MATRIX build pipeline: emit complete")).length).toBe(generationCalls);
+    expect(groq.filter((request) => request.text.includes("QORVYNA build pipeline: emit complete")).length).toBe(generationCalls);
     // Running the job again finds nothing to do for this run.
     const again = await recoverInterruptedRuns(db, { providerFor: (owner) => new FirestoreDeploymentProvider(db, owner) });
     expect(again.find((item) => item.runId === id)).toBeUndefined();

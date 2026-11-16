@@ -21,7 +21,7 @@ export default async function ProtectedAdminLayout({ children }: { children: Rea
   try {
     allowed = await isAdmin(db(), user.uid);
   } catch (err) {
-    console.error("[MATRIX] Admin access check failed.", err);
+    console.error("[QORVYNA] Admin access check failed.", err);
     return (
       <Card className="space-y-3">
         <h1 className="font-display text-xl font-semibold text-ink">Admin panel could not load</h1>

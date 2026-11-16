@@ -108,7 +108,7 @@ export function AppReleaseSettings() {
             <Smartphone size={18} className="text-accent" /> Phone App Update System
           </h2>
           <p className="mt-1 max-w-2xl text-sm text-ink-2">
-            Controls over-the-air update prompts on the MATRIX Android phone app and mobile PWA at{" "}
+            Controls over-the-air update prompts on the QORVYNA Android phone app and mobile PWA at{" "}
             <span className="mono text-xs text-ink">https://matrix.thamjj13.top/chat</span>. Phones poll{" "}
             <span className="mono text-xs text-ink">/api/app/version</span> on launch and resume.
           </p>

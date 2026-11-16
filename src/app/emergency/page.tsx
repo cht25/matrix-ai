@@ -6,7 +6,7 @@ import {
   AlertTriangle, FileWarning, KeyRound, Link2, Lock, Shield, Smartphone, UserX, Wallet,
 } from "lucide-react";
 import { Logo } from "@/components/logo";
-import { Button, Card } from "@/components/ui";
+import { Card } from "@/components/ui";
 
 export const metadata: Metadata = { title: "I Need Help Now" };
 export const dynamic = "force-dynamic";
@@ -125,13 +125,13 @@ export default async function EmergencyPage() {
       <header className="sticky top-0 z-40 border-b border-border bg-surface/85 pt-[env(safe-area-inset-top)] backdrop-blur-xl">
         <div className="mx-auto flex h-14 max-w-4xl items-center justify-between gap-2 px-4">
           <Logo size="sm" href={signedIn ? "/chat" : "/"} />
-          <Link href={chatHref}><Button variant="outline" className="!min-h-11 !px-3 text-xs">{signedIn ? "Open chat" : "Sign in for help"}</Button></Link>
+          <Link href={chatHref} className="btn btn-outline !min-h-11 !px-3 !text-xs">{signedIn ? "Open chat" : "Sign in for help"}</Link>
         </div>
       </header>
 
       <main className="mx-auto max-w-4xl px-4 py-10">
         <div className="border border-border-strong bg-surface p-6 sm:p-8">
-          <p className="eyebrow mb-2">MATRIX · Emergency</p>
+          <p className="eyebrow mb-2">QORVYNA · Emergency</p>
           <h1 className="font-display text-2xl font-semibold tracking-tight text-ink sm:text-3xl">I Need Help Now</h1>
           <p className="mt-3 max-w-2xl text-sm leading-relaxed text-ink-2">
             Something happened online? Pick the closest situation. These are calm, immediate, defensive
@@ -158,8 +158,8 @@ export default async function EmergencyPage() {
 
         <div className="mt-10 border border-border bg-surface p-6 text-center">
           <h2 className="text-[15px] font-semibold text-ink">Not sure which one fits?</h2>
-          <p className="mt-1 text-sm text-ink-2">Ask MATRIX AI — it will walk you through what to do based on exactly what happened.</p>
-          <Link href={chatHref} className="mt-4 inline-block"><Button>Open the AI chat</Button></Link>
+          <p className="mt-1 text-sm text-ink-2">Ask QORVYNA AI — it will walk you through what to do based on exactly what happened.</p>
+          <Link href={chatHref} className="btn btn-primary mt-4">Open the AI chat</Link>
         </div>
       </main>
     </div>

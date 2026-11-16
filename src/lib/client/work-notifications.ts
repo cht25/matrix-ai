@@ -3,7 +3,7 @@
 // =============================================================================
 // Universal "Work Done" + Native Tauri / Desktop Notification Bridge.
 //
-// Whenever a task finishes in MATRIX — screenshot analysis, Agent build/deploy,
+// Whenever a task finishes in QORVYNA — screenshot analysis, Agent build/deploy,
 // automation run, family mirror/lock event, ESP32 alert, or an AI reply while
 // the window is in the background — this module delivers:
 //   1. A native OS notification through the Tauri v2 bridge when running as
@@ -67,7 +67,7 @@ export async function requestDesktopNotificationPermission(): Promise<"granted" 
   }
   if (isTauriApp()) {
     await invokeTauri("matrix_notify", {
-      title: "MATRIX notifications enabled",
+      title: "QORVYNA notifications enabled",
       body: "You will be notified whenever builds, scans, automations or device events finish.",
     });
     return "granted";
@@ -76,7 +76,7 @@ export async function requestDesktopNotificationPermission(): Promise<"granted" 
   const result = await Notification.requestPermission();
   if (result === "granted") {
     try {
-      new Notification("MATRIX notifications enabled", {
+      new Notification("QORVYNA notifications enabled", {
         body: "You will get a notification whenever work completes.",
       });
     } catch {
@@ -119,7 +119,7 @@ export async function notifyWorkDone(input: {
     try {
       const n = new Notification(input.title, {
         body: input.body,
-        tag: `matrix-${Date.now()}`,
+        tag: `qorvyna-${Date.now()}`,
       });
       if (input.link) {
         n.onclick = () => {

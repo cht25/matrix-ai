@@ -1,4 +1,4 @@
-/// MATRIX Wear OS companion entry point.
+/// QORVYNA Wear OS companion entry point.
 ///
 /// Priorities per the product brief: voice-friendly quick AI replies, short
 /// responses, device status, and approved reminders — no unsupported phone
@@ -23,10 +23,10 @@ class MatrixWearApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'MATRIX Wear',
+      title: 'QORVYNA Wear',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF3B82F6), brightness: Brightness.dark),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2563FF), brightness: Brightness.dark),
         useMaterial3: true,
       ),
       home: StreamBuilder<User?>(

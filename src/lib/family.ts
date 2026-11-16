@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — Family domain: shared role model and pure authorization logic.
+// QORVYNA AI — Family domain: shared role model and pure authorization logic.
 //
 // Account roles are SEPARATE from family membership:
 //   - account_role lives on the profile and describes platform standing
@@ -48,7 +48,7 @@ export function isChildDeviceFeature(value: unknown): value is ChildDeviceFeatur
 }
 
 export const FEATURE_LABEL: Record<ChildDeviceFeature, string> = {
-  chat_history_view: "MATRIX chat history",
+  chat_history_view: "QORVYNA chat history",
   screen_time: "Screen time",
   app_usage_view: "App usage",
   browser_history_view: "Browser history",
@@ -59,7 +59,7 @@ export const FEATURE_LABEL: Record<ChildDeviceFeature, string> = {
 };
 
 export const FEATURE_DESCRIPTION: Record<ChildDeviceFeature, string> = {
-  chat_history_view: "Read this member's MATRIX conversations.",
+  chat_history_view: "Read this member's QORVYNA conversations.",
   screen_time: "Daily screen-time totals and limits reported by the device.",
   app_usage_view: "Per-app usage time, including hidden or sideloaded apps.",
   browser_history_view: "Visited sites reported by the companion app on the device.",

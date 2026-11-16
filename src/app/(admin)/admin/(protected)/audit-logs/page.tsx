@@ -15,7 +15,7 @@ export default async function AdminAuditPage() {
   const role = await adminRoleOf(db(), user.uid).catch(() => null);
   if (codes.length === 0) redirect("/chat");
   return (
-    <AdminShell title="Audit logs" subtitle="Immutable record of every administrative action taken in MATRIX." role={role} codes={codes}>
+    <AdminShell title="Audit logs" subtitle="Immutable record of every administrative action taken in QORVYNA." role={role} codes={codes}>
       <AuditLog codes={codes} />
     </AdminShell>
   );

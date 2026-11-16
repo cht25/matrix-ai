@@ -3,7 +3,7 @@
 // Admin → AI configuration.
 //
 //   Overview  · live provider status dashboard
-//   Model     · the single MATRIX model (GPT OSS 120B) — read-only status
+//   Model     · the single QORVYNA model (GPT OSS 120B) — read-only status
 //   Accounts  · connected Groq accounts, live limits and rotation state
 //   Image     · image generation service (Together AI)
 //   Usage     · real gateway call log

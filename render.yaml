@@ -1,4 +1,4 @@
-# Render blueprint for MATRIX AI (Next.js web service, Firebase backend).
+# Render blueprint for QORVYNA AI (Next.js web service, Firebase backend).
 # If you already created the service manually you can ignore this file — just
 # make sure the same env vars below are set in Dashboard → your service →
 # Environment. See "Deploy" in README.md (Firebase App Hosting is the
@@ -42,8 +42,10 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
-      # The only language model is GPT OSS 120B on Groq (openai/gpt-oss-120b).
-      # The model ID lives in src/lib/ai/model.ts and is not configurable here.
+      # One Groq key serves every language model. The default is GPT OSS 120B
+      # (openai/gpt-oss-120b, src/lib/ai/model.ts); other registered models are
+      # used only when Groq's live model list offers them to this account.
+      # Model IDs are not configurable here.
       - key: GROQ_API_KEY
         sync: false
       # Whisper speech-to-text (same Groq key); not a language model.
@@ -63,3 +65,7 @@ services:
       # the GitHub OAuth App and NEXT_PUBLIC_APP_URL + /api/github/callback.
       - key: GITHUB_OAUTH_CALLBACK_URL
         value: https://matrix.thamjj13.top/api/github/callback
+      # Optional settings carry the product name as QORVYNA_<NAME> (for example
+      # QORVYNA_TRUST_PROXY_HEADERS, QORVYNA_ANDROID_APK_URL). The former
+      # MATRIX_<NAME> spelling is still read, so an existing service needs no
+      # change. The full list is in .env.example.

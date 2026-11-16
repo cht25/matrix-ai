@@ -1,5 +1,5 @@
 /* =============================================================================
-   MATRIX V3 — reset + base element styling.
+   QORVYNA — reset + base element styling.
    ============================================================================= */
 
 html {
@@ -21,9 +21,9 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* Background: flat dark ground + one static gradient wash + a very subtle
-   grid. No animation, no particles, no blur — the futurism comes from type,
-   spacing and contrast. */
+/* Background: flat ground + one static brand glow (electric blue and violet,
+   from the logo) + a very subtle grid. No animation, no canvas, no blur — it
+   costs one paint. Settings → Appearance sets its strength via --ambient. */
 body::before {
   content: "";
   position: fixed;
@@ -31,7 +31,12 @@ body::before {
   z-index: -2;
   pointer-events: none;
   background: var(--bg-grad);
+  opacity: var(--ambient);
 }
+html[data-ambient="off"] { --ambient: 0; }
+html[data-ambient="subtle"] { --ambient: 0.4; }
+html[data-ambient="normal"] { --ambient: 0.7; }
+html[data-ambient="heavy"] { --ambient: 1; }
 
 body::after {
   content: "";
@@ -52,20 +57,36 @@ body::after {
   body::after { display: none; }
 }
 
-h1, h2, h3, h4 {
-  font-family: var(--font-display);
-  color: var(--text);
-  letter-spacing: -0.022em;
-  line-height: 1.2;
-  margin: 0;
+/* Element defaults sit in Tailwind's `base` layer on purpose.
+
+   Unlayered CSS beats every layered rule, whatever its specificity. While these
+   resets were unlayered they silently switched off the utilities written in the
+   markup: `mt-2` on a <p>, `text-lg` or `text-danger` on a heading,
+   `text-accent` and `hover:underline` on a link. Inside the layer they are
+   defaults again: they apply when the markup says nothing, and a utility wins
+   when it does. Margins need no rule here — Tailwind's preflight already zeroes
+   them in this layer.
+
+   Type scale: page title 28px, section or card title 17px, sub-heading 15px.
+   A heading that should be larger says so with a `text-*` utility. */
+@layer base {
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    color: var(--text);
+    letter-spacing: -0.022em;
+    line-height: 1.2;
+  }
+  h1 { font-size: var(--text-2xl); font-weight: 650; }
+  h2 { font-size: var(--text-lg); font-weight: 600; }
+  h3 { font-size: var(--text-base); font-weight: 600; }
+  h4 { font-size: var(--text-sm); font-weight: 600; }
+
+  a { color: inherit; text-decoration: none; }
+
+  /* Gives the focus ring soft corners on elements that have none of their own;
+     anything with a radius keeps its shape while focused. */
+  :focus-visible { border-radius: 6px; }
 }
-h1 { font-size: var(--text-2xl); font-weight: 650; }
-h2 { font-size: var(--text-xl); font-weight: 600; }
-h3 { font-size: var(--text-lg); font-weight: 600; }
-
-p { margin: 0; }
-
-a { color: inherit; text-decoration: none; }
 
 code, kbd, samp, pre { font-family: var(--font-mono); }
 
@@ -76,10 +97,11 @@ button, a, [role="button"], summary, label { touch-action: manipulation; }
   color: var(--text);
 }
 
+/* Deliberately unlayered: the keyboard focus ring must survive an
+   `outline-none` utility, so no control can lose its focus indicator. */
 :focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
-  border-radius: 6px;
 }
 
 * {
@@ -107,32 +129,4 @@ button, a, [role="button"], summary, label { touch-action: manipulation; }
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-}
-
-/* --- MATRIX digital rain ---------------------------------------------------
-   Persistent background canvas mounted once in the root layout so it runs
-   behind every page across dark & light themes and desktop & mobile. Only
-   html[data-rain="off"] disables it (Settings → Appearance). */
-.matrix-rain {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  opacity: 0.9;
-  mix-blend-mode: screen;
-}
-
-[data-theme="light"] .matrix-rain {
-  mix-blend-mode: normal;
-  opacity: 0.72;
-}
-
-html[data-rain="off"] .matrix-rain {
-  display: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .matrix-rain { opacity: 0.55; }
 }

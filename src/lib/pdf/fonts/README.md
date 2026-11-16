@@ -1,4 +1,4 @@
-# MATRIX PDF fonts
+# QORVYNA PDF fonts
 
 These TrueType files are embedded (as subsets) into every PDF the platform
 generates. They exist because the PDF "standard 14" Type 1 fonts are Latin-1
@@ -7,12 +7,12 @@ made earlier exports come out blank or garbled.
 
 | File                        | Upstream font       | Covers                                                   |
 | --------------------------- | ------------------- | -------------------------------------------------------- |
-| `MatrixSans-Regular.ttf`    | DejaVu Sans         | Latin, Greek, Cyrillic, punctuation, arrows, maths, ✓ • → |
-| `MatrixSans-Bold.ttf`       | DejaVu Sans Bold    | as above, bold                                            |
-| `MatrixMono-Regular.ttf`    | DejaVu Sans Mono    | monospaced code and IDs                                   |
-| `MatrixMono-Bold.ttf`       | DejaVu Sans Mono Bold | as above, bold                                          |
-| `MatrixBengali-Regular.ttf` | Noto Sans Bengali   | Bengali/Bangla, including conjuncts and vowel reordering  |
-| `MatrixBengali-Bold.ttf`    | Noto Sans Bengali Bold | as above, bold                                         |
+| `QorvynaSans-Regular.ttf`    | DejaVu Sans         | Latin, Greek, Cyrillic, punctuation, arrows, maths, ✓ • → |
+| `QorvynaSans-Bold.ttf`       | DejaVu Sans Bold    | as above, bold                                            |
+| `QorvynaMono-Regular.ttf`    | DejaVu Sans Mono    | monospaced code and IDs                                   |
+| `QorvynaMono-Bold.ttf`       | DejaVu Sans Mono Bold | as above, bold                                          |
+| `QorvynaBengali-Regular.ttf` | Noto Sans Bengali   | Bengali/Bangla, including conjuncts and vowel reordering  |
+| `QorvynaBengali-Bold.ttf`    | Noto Sans Bengali Bold | as above, bold                                         |
 
 ## Licences
 

@@ -1,4 +1,4 @@
-# MATRIX security audit
+# QORVYNA security audit
 
 **Date:** 2026-11-07
 **Branch:** `arena/7e13bf1b-matrix-ai`
@@ -47,4 +47,4 @@ Some historical audit notes no longer describe current source. Current code incl
 
 ## Security boundaries
 
-MATRIX must never implement stealth screen capture, hidden browsing-history collection, OS permission bypass, unrestricted child monitoring, permanent credentials in QR payloads, arbitrary generated code execution inside the Next.js process, or user-supplied secrets pasted into ordinary chat. Privileged mutations must be server-authorized. Screen sharing and native telemetry must remain visible and revocable.
+QORVYNA must never implement stealth screen capture, hidden browsing-history collection, OS permission bypass, unrestricted child monitoring, permanent credentials in QR payloads, arbitrary generated code execution inside the Next.js process, or user-supplied secrets pasted into ordinary chat. Privileged mutations must be server-authorized. Screen sharing and native telemetry must remain visible and revocable.

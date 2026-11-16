@@ -36,7 +36,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       },
     });
   } catch (error) {
-    console.error("[MATRIX] certificate PDF failed", error);
+    console.error("[QORVYNA] certificate PDF failed", error);
     return NextResponse.json({ error: "CERTIFICATE_PDF_FAILED" }, { status: 500 });
   }
 }

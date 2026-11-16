@@ -7,6 +7,7 @@ import { TotpMultiFactorGenerator } from "firebase/auth";
 import QRCode from "qrcode";
 import { fbAuth } from "@/lib/firebase/client";
 import { rpc } from "@/lib/client/api";
+import { useDialogs } from "@/components/dialogs";
 import { PasswordInput } from "@/components/password-input";
 import { Alert, Button, Card, Field, Input, Spinner } from "@/components/ui";
 
@@ -14,6 +15,7 @@ type Factor = { uid: string; factorId: "totp" | "phone"; displayName?: string };
 
 export function SecurityPanel() {
   const router = useRouter();
+  const dialogs = useDialogs();
   const [factors, setFactors] = useState<Factor[]>([]);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -79,7 +81,7 @@ export function SecurityPanel() {
     try {
       const session = await multiFactor(user).getSession();
       const totpAssertion = await TotpMultiFactorGenerator.generateSecret(session);
-      const url = totpAssertion.generateQrCodeUrl(user.email, "MATRIX AI");
+      const url = totpAssertion.generateQrCodeUrl(user.email, "QORVYNA AI");
       const dataUrl = await QRCode.toDataURL(url, { width: 220, margin: 1 });
       setQrCode(dataUrl);
       setPendingSecret(totpAssertion);
@@ -117,7 +119,8 @@ export function SecurityPanel() {
   }
 
   async function disableMfa(factorUid: string) {
-    if (!confirm("Disable two-factor authentication? Your account becomes less secure.")) return;
+    const confirmed = await dialogs.confirm({ title: "Turn off two-factor authentication?", body: "Your password alone will be enough to sign in, which makes the account easier to break into.", confirmLabel: "Turn off" });
+    if (!confirmed) return;
     const mfa = mfaUser();
     if (!mfa) return;
     try {
@@ -189,6 +192,7 @@ export function SecurityPanel() {
         <p className="mt-1">See who's signed in to your account and revoke devices on the <a href="/security" className="font-semibold text-accent hover:underline">Security page</a>.</p>
       </Card>
       {msg ? <Alert tone={msg.tone}>{msg.text}</Alert> : null}
+      {dialogs.element}
     </div>
   );
 }
