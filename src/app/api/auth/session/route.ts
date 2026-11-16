@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
-import { createSessionCookie, SESSION_COOKIE, sessionCookieOptions } from "@/lib/firebase/session";
+import { createSessionCookie, SESSION_COOKIE, sessionCookieOptions, verifySession } from "@/lib/firebase/session";
 import { ensureUserDocuments, profileOnboardingComplete } from "@/lib/server/rpc";
 import { mutationCsrfResponse } from "@/lib/server/request-security";
 
@@ -63,6 +63,32 @@ export async function POST(req: NextRequest) {
       },
       { status: 500 },
     );
+  }
+}
+
+/**
+ * GET /api/auth/session — read-only session probe for the client auth
+ * lifecycle (src/lib/auth/lifecycle.ts). Answers whether the caller's
+ * httpOnly cookie is currently valid so the browser can tell
+ * "session already established" from "needs a mint" WITHOUT refreshing a
+ * token or creating a second session. Never returns profile contents.
+ */
+export async function GET(req: NextRequest) {
+  const cookieValue = req.cookies.get(SESSION_COOKIE)?.value;
+  if (!cookieValue) return NextResponse.json({ authenticated: false });
+  try {
+    const user = await verifySession(cookieValue);
+    let onboardingComplete = false;
+    try {
+      onboardingComplete = await profileOnboardingComplete(adminDb(), user.uid);
+    } catch {
+      /* profile read is best-effort: the cookie itself already verified */
+    }
+    return NextResponse.json({ authenticated: true, uid: user.uid, onboarding_complete: onboardingComplete });
+  } catch {
+    // Invalid/expired/revoked cookie: the client mints a fresh one when it
+    // holds a Firebase user, or treats the visitor as signed out.
+    return NextResponse.json({ authenticated: false });
   }
 }
 

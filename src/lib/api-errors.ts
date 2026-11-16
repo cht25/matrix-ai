@@ -10,6 +10,7 @@ export type ApiFailureKind =
   | "provider-auth" // model provider authentication
   | "rate-limit" // QORVYNA usage limit
   | "provider-rate-limit"
+  | "provider-quota" // provider's free daily quota exhausted (resets on its own schedule)
   | "provider-invalid-request"
   | "provider-unavailable"
   | "billing"
@@ -68,6 +69,12 @@ const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retr
     detail: "The model is temporarily rate limited by its provider. Your message is kept — wait a moment and retry.",
     retryable: true,
   },
+  "provider-quota": {
+    title: "AI quota exhausted for today",
+    detail:
+      "The free daily AI quota is used up for today (it resets at 00:00 UTC, and paid billing is never enabled automatically). No other configured provider could take over this request. Your message and project are kept — try again after the reset, or ask the administrator to add a provider key.",
+    retryable: true,
+  },
   "provider-invalid-request": {
     title: "AI request rejected",
     detail: "The model rejected this request. Your message is kept — shorten or simplify it and retry.",
@@ -114,6 +121,7 @@ const CODE_TO_KIND: Record<string, ApiFailureKind> = {
   SCAN_STORAGE_UNAVAILABLE: "storage",
   AI_PROVIDER_AUTH_FAILED: "provider-auth",
   AI_PROVIDER_RATE_LIMITED: "provider-rate-limit",
+  AI_PROVIDER_QUOTA_EXHAUSTED: "provider-quota",
   AI_PROVIDER_BILLING_REQUIRED: "billing",
   AI_INVALID_REQUEST: "provider-invalid-request",
   AI_REQUEST_TIMEOUT: "timeout",

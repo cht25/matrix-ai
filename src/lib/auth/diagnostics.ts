@@ -24,7 +24,18 @@ export type AuthStage =
   | "link-start"
   | "link-result"
   | "session-mint"
-  | "sign-out";
+  | "sign-out"
+  // Centralised post-redirect lifecycle (src/lib/auth/lifecycle.ts). Each
+  // stage of the return trip is named so a stuck login can be located from the
+  // console without guessing. Tokens are never part of any of these records.
+  | "auth-init"
+  | "persistence"
+  | "auth-state"
+  | "id-token"
+  | "session-check"
+  | "profile"
+  | "navigation"
+  | "chat-load";
 
 /** Structured, redacted view of anything a caller might hand us. */
 export type SafeAuthError = {

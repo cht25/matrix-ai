@@ -14,6 +14,8 @@ import { RpcError } from "@/lib/server/rpc";
 import * as rpc from "@/lib/server/rpc";
 import * as imageConfig from "@/lib/ai/image/config";
 import * as providerAccounts from "@/lib/ai/accounts";
+import { cloudflareCredentials } from "@/lib/ai/cloudflare";
+import { getCloudflareUsage } from "@/lib/ai/cloudflare-quota";
 import * as appUpdates from "@/lib/server/app-updates";
 import { getConversationHistoryPage } from "@/lib/server/queries";
 import * as chatMessages from "@/lib/server/chat-messages";
@@ -548,6 +550,16 @@ const ACTIONS: Record<string, Handler> = {
         latency_ms: e.data().latency_ms ?? 0,
         created_at: e.data().created_at?.toDate?.().toISOString() ?? "",
       }));
+  },
+  // Cloudflare Workers AI free-quota dashboard (actual usage when the token
+  // may read it, request counts otherwise — never token-derived estimates).
+  admin_cloudflare_quota: async (d, u) => {
+    if (!(await rpc.hasPermission(d, u.uid, "ai.view"))) throw new RpcError("PERMISSION_DENIED", 403);
+    const credentials = cloudflareCredentials();
+    const usage = await getCloudflareUsage(
+      credentials ? { accountId: credentials.accountId, apiToken: credentials.apiToken, refresh: true } : { refresh: true },
+    );
+    return { ...usage, model: credentials?.model ?? null };
   },
   // --- AI provider accounts (multiple Groq keys, rotation) --------------------
   // Keys are encrypted before they are stored and are never returned: these

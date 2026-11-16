@@ -65,6 +65,14 @@ function providerDiagnostic(error: unknown, routesTried: number): { diagnostic?:
   return { diagnostic: { provider: error.provider, model: error.model, type: error.type, status: error.status, detail: error.detail.slice(0, 180), routes_tried: routesTried } };
 }
 
+/** Human-readable reason a fallback took over (quota exhaustion is called out). */
+function fallbackReason(error: unknown, to: AIRouteTarget): string {
+  if (error instanceof AIProviderError && error.code === "CLOUDFLARE_QUOTA_EXHAUSTED") {
+    return `Cloudflare free quota exhausted for today (resets 00:00 UTC) — continuing with ${modelLabel(to.model)}`;
+  }
+  return `Continuing with ${modelLabel(to.model)}`;
+}
+
 // High ceilings so QORVYNA does not invent a product quota. Real provider
 // 429s still surface as AI_PROVIDER_RATE_LIMITED.
 const RATE_LIMITS: Record<string, { perMinute: number; perDay: number }> = {
@@ -863,7 +871,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
               onStart: (target) => { activeTarget = target; },
               onFallback: (from, to, error) => {
                 logProviderFailure(error, requestId);
-                upsertStep({ id: `fallback-${modelLabel(from.model)}`, label: `${modelLabel(from.model)} did not respond`, detail: `Continuing with ${modelLabel(to.model)}`, status: "failed", at: Date.now() });
+                upsertStep({ id: `fallback-${modelLabel(from.model)}`, label: `${modelLabel(from.model)} did not respond`, detail: fallbackReason(error, to), status: "failed", at: Date.now() });
               },
             });
           };
@@ -1068,7 +1076,10 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
       const { completed } = others.length ? await completeWithFallback(others, () => firstRequest) : { completed: null };
       if (!completed) throw error;
       logProviderFailure(error, requestId);
-      fallbackNote = `${modelLabel(targets[0].model)} did not respond`;
+      fallbackNote =
+        error instanceof AIProviderError && error.code === "CLOUDFLARE_QUOTA_EXHAUSTED"
+          ? "Cloudflare free quota exhausted for today (resets 00:00 UTC)"
+          : `${modelLabel(targets[0].model)} did not respond`;
       result = completed;
     }
     activeTarget = result.target;
@@ -1340,7 +1351,10 @@ async function handleOrchestrate(d: Db, user: SessionUser, body: Record<string, 
       continue;
     }
     try {
-      const completed = await completeWithModel(targets, {
+      // Fallback-capable: with Cloudflare configured the pool holds Cloudflare
+      // first and the existing provider second — a failed primary must not
+      // fail the section when a fallback can answer it.
+      const { completed } = await completeWithFallback(targets, () => ({
         messages: [
           ...buildModeSystemMessages(task.mode, "", undefined, { routing: routingFromTargets(targets) }),
           { role: "user", content: task.prompt },
@@ -1348,7 +1362,15 @@ async function handleOrchestrate(d: Db, user: SessionUser, body: Record<string, 
         temperature: 0.4,
         maxTokens: 1800,
         requestId,
-      });
+      }));
+      if (!completed) {
+        throw new AIProviderError({
+          provider: targets[0].provider,
+          model: targets[0].model,
+          type: "provider_unavailable",
+          detail: "no configured route answered this request",
+        });
+      }
       sections.push({ id: task.id, title: task.title, mode: task.mode, reply: stripReasoningContent(completed.response.content) });
     } catch (error) {
       sections.push({ id: task.id, title: task.title, mode: task.mode, error: providerPublicCode(error) });

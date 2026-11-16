@@ -165,7 +165,10 @@ describe("one authoritative model configuration", () => {
     expect(models.filter((model) => !model.is_default).every((model) => model.availability === "not_configured")).toBe(true);
     expect(body.pool).toEqual({ auto: true, enabled: [] });
     expect(JSON.stringify(body)).not.toContain("sk-stub-key");
-    expect(JSON.stringify(body)).not.toMatch(/glm|gemini|openrouter|anthropic|claude|nemotron/i);
+    // The Cloudflare Workers AI model is part of the registry (reported as
+    // not_configured here); its id/key/label are the only GLM spelling allowed.
+    const advertised = JSON.stringify(body).split("@cf/zai-org/glm-4.7-flash").join("").split("glm-4.7-flash").join("").split("GLM 4.7 Flash").join("");
+    expect(advertised).not.toMatch(/glm|gemini|openrouter|anthropic|claude|nemotron/i);
   });
 });
 
@@ -378,7 +381,9 @@ describe("11–12. no other model, no hidden fallback", () => {
     const { listModelStatus, resolvePool } = await import("../src/lib/ai/models/pool");
     const statuses = await listModelStatus({ refresh: true });
     expect(statuses.filter((model) => model.availability === "available").map((model) => model.model_id)).toEqual([QORVYNA_MODEL_ID]);
-    expect(statuses.filter((model) => !model.is_default).every((model) => model.availability === "unverified")).toBe(true);
+    // Unconfigured Cloudflare → not_configured; hosted extras behind the
+    // unreadable catalog → unverified. Neither may be assumed available.
+    expect(statuses.filter((model) => !model.is_default).every((model) => model.availability === "unverified" || model.availability === "not_configured")).toBe(true);
     const pool = await resolvePool(null, null);
     expect(pool.targets.map((target) => target.model)).toEqual([QORVYNA_MODEL_ID]);
     holder.current = { kind: "ok", content: "fine" };
@@ -454,10 +459,17 @@ describe("the removed integrations are gone from the codebase", () => {
 
   it("names no other model family, provider endpoint or credential anywhere in src", () => {
     const banned = /\bglm[-_ ]?\d|GLM_|ZAI_|z\.ai|bigmodel\.cn|cogview|gemini|GEMINI_|generativelanguage\.googleapis|openrouter|OPENROUTER_|anthropic|ANTHROPIC_|\bclaude\b|nemotron|OLLAMA_|deepseek-|\bgpt-4|\bgpt-5|GROQ_VISION_MODEL/i;
+    // The legacy z.ai/bigmodel GLM integration stays banned, but Cloudflare
+    // Workers AI legitimately serves a GLM model from its own catalog — that
+    // exact catalog id is the one spelling allowed anywhere in src.
+    const allowed = "@cf/zai-org/glm-4.7-flash";
+    const allowedKey = "glm-4.7-flash";
+    const allowedLabel = "GLM 4.7 Flash";
     const offenders = sources
-      // reasoning.ts documents which model families emit <think> blocks; image/config.ts
+      // reasoning.ts documents which model families emit  blocks; image/config.ts
       // explains that a legacy saved image record is ignored.
       .filter((file) => !/src\/lib\/ai\/(reasoning|image\/config)\.ts$/.test(file.path))
+      .map((file) => ({ ...file, text: file.text.split(allowed).join("").split(allowedKey).join("").split(allowedLabel).join("") }))
       .filter((file) => banned.test(file.text))
       .map((file) => `${file.path}: ${file.text.match(banned)?.[0]}`);
     expect(offenders).toEqual([]);
@@ -488,7 +500,11 @@ describe("the removed integrations are gone from the codebase", () => {
   it("deployment configs carry no credentials or model IDs for other models", () => {
     for (const file of [".env.example", "render.yaml", "apphosting.yaml"]) {
       const text = readFileSync(file, "utf8");
-      expect(text, file).not.toMatch(/GLM_|ZAI_|GEMINI_|OPENROUTER_|ANTHROPIC_|OLLAMA_|GROQ_CHAT_MODEL|GROQ_CODING_MODEL|GROQ_VISION_MODEL|glm-\d|cogview/);
+      // The Cloudflare Workers AI default model id is catalog data, not a
+      // credential and not the removed legacy GLM integration — strip only
+      // that exact spelling before applying the legacy bans.
+      const cleaned = text.split("@cf/zai-org/glm-4.7-flash").join("");
+      expect(cleaned, file).not.toMatch(/GLM_|ZAI_|GEMINI_|OPENROUTER_|ANTHROPIC_|OLLAMA_|GROQ_CHAT_MODEL|GROQ_CODING_MODEL|GROQ_VISION_MODEL|glm-\d|cogview/);
       expect(text, file).toContain("GROQ_API_KEY");
     }
   });
