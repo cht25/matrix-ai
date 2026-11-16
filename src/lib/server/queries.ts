@@ -122,6 +122,10 @@ export async function getConversation(d: Db, uid: string, id: string, limit = CH
       // grants execution authority (each request states its own mode).
       mode: (isChatMode(conv.data()!.mode) ? conv.data()!.mode : "general") as ChatMode,
       active_project_id: typeof conv.data()!.active_project_id === "string" ? conv.data()!.active_project_id as string : null,
+      agent_session_id: typeof conv.data()!.agent_session_id === "string" ? conv.data()!.agent_session_id as string : null,
+      execution_state: typeof conv.data()!.execution_state === "string" ? conv.data()!.execution_state as string : null,
+      selected_model: typeof conv.data()!.selected_model === "string" ? conv.data()!.selected_model as string : null,
+      selected_provider: typeof conv.data()!.selected_provider === "string" ? conv.data()!.selected_provider as string : null,
     },
     hasMore,
     messages: docs.map((m) => ({

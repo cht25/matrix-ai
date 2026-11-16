@@ -520,6 +520,9 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     }
   }
   const convRef = d.collection("conversations").doc(convId);
+  if (conversationId) {
+    await convRef.set({ mode, updated_at: nowTs() }, { merge: true }).catch(() => {});
+  }
   const audioAssetId = typeof body.audio_asset_id === "string" ? body.audio_asset_id.trim() : "";
   let voiceMetadata: { audio_asset_id: string; audio_duration_ms: number; audio_waveform: number[]; audio_language: string | null } | null = null;
   if (audioAssetId) {

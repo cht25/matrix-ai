@@ -54,7 +54,7 @@ import { VOICE_LANGUAGE_STORAGE_KEY, formatClock, mergeTranscript, voiceErrorMes
 import { revealReceived, type RevealMode } from "@/lib/stream-reveal";
 import { restoredPrependTop } from "@/lib/chat-scroll";
 import { cn } from "@/lib/utils";
-import type { AgentFile, TextAttachment } from "@/lib/ai/agent";
+import { languageForPath, type AgentFile, type TextAttachment } from "@/lib/ai/agent";
 import { modeMeta, suggestMode, type ChatMode, type ExplainStyle, type ModelLane, type ResponseStrategy, type StudyLevel } from "@/lib/ai/modes";
 import {
   DEFAULT_INTENT, analyzeContent, availableExportFormats, classifyResponseKind, detectIntent,
@@ -223,6 +223,8 @@ export function ChatClient({
   /** True when the conversation has messages older than `initialMessages`. */
   initialHasMore = false,
   initialProjectId = null,
+  initialExecutionState = null,
+  initialAgentSessionId = null,
   initialTitle = "",
   onConversationCreated,
 }: {
@@ -232,6 +234,8 @@ export function ChatClient({
   initialMode?: ChatMode;
   initialHasMore?: boolean;
   initialProjectId?: string | null;
+  initialExecutionState?: string | null;
+  initialAgentSessionId?: string | null;
   /** Title of a saved conversation, shown in the toolbar and its settings. */
   initialTitle?: string;
   onConversationCreated?: (id: string) => void;
@@ -335,6 +339,32 @@ export function ChatClient({
   const lastBuildIntentRef = useRef<BuildIntent | null>(null);
   const lastBuildWorkspaceOnlyRef = useRef(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+
+  // Restore live project workspace files and interrupted session notice when reopening an Agent Mode conversation.
+  useEffect(() => {
+    if (isTemporary || mode !== "agent") return;
+    let cancelled = false;
+    if (agentProjectId) {
+      void rpc<{ files: Array<{ path: string; content: string; language?: string }> }>("project_get", { id: agentProjectId })
+        .then((res) => {
+          if (cancelled || !Array.isArray(res?.files) || res.files.length === 0) return;
+          setAgentFiles(res.files.map((f) => ({
+            path: f.path,
+            content: f.content,
+            language: f.language ?? languageForPath(f.path),
+          })));
+        })
+        .catch(() => { /* project may not exist or be inaccessible; keep message artifacts */ });
+    }
+    if (initialExecutionState && ["RUNNING", "PLANNING", "EDITING", "TESTING"].includes(initialExecutionState)) {
+      setNotice(
+        `Previous agent session${initialAgentSessionId ? ` (${initialAgentSessionId.slice(0, 8)})` : ""} ended before completing (${initialExecutionState}). Your conversation and project workspace are restored — send a message to continue.`
+      );
+    }
+    return () => { cancelled = true; };
+  // Run once on mount when reopening a persisted conversation
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // --- build pipeline (real execution state, mirrored from the server) -----
   const [buildRun, setBuildRun] = useState<BuildRun | null>(null);
