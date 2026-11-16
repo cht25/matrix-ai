@@ -91,7 +91,7 @@ describe("Phase 14 — mandatory repair cases", () => {
   });
 
   it("11. Public deployment URLs use the canonical origin", () => {
-    expect(publicUrl("demo-site")).toBe("https://matrix.thamjj13.top/s/demo-site");
+    expect(publicUrl("demo-site")).toBe("https://qorvyna.thamjj13.top/s/demo-site");
   });
 
   it("12. Localhost/dev-machine URLs are never exposed as production links", () => {
@@ -152,7 +152,7 @@ describe("Phase 14 — mandatory repair cases", () => {
   it("20. Deployment success requires HTTP verification before live", async () => {
     const files = [{ path: "index.html", content: "<html><body>Verified</body></html>", language: "html" }];
     const fetchImpl = (async () => new Response(files[0].content, { status: 200 })) as typeof fetch;
-    const result = await verifyPublishedDeployment({ origin: "https://matrix.thamjj13.top", slug: "verified", files, fetchImpl });
+    const result = await verifyPublishedDeployment({ origin: "https://qorvyna.thamjj13.top", slug: "verified", files, fetchImpl });
     expect(result.ok).toBe(true);
     const provider = read("src/lib/deploy/firestore-provider.ts");
     expect(provider.indexOf("verifyPublishedDeployment")).toBeLessThan(provider.indexOf('push("activate", `Site live'));

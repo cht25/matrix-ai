@@ -16,7 +16,14 @@ import { isValidEmail } from "@/lib/utils";
 import { Alert, Button, Field, Input, Spinner } from "@/components/ui";
 import { PasswordInput } from "@/components/password-input";
 import { AuthFooterLink, AuthUnavailable, Divider, OAuthButtons } from "@/components/auth/login-screen";
-import { consumeOAuthRedirect, postAuthPath, signInWithOAuth } from "@/lib/auth/oauth";
+import {
+  consumeOAuthRedirect,
+  oauthRedirectPending,
+  postAuthPath,
+  rememberPostLoginPath,
+  startOAuthSignIn,
+  type OAuthProviderId,
+} from "@/lib/auth/oauth";
 
 export function RegisterForm() {
   const [busy, setBusy] = useState(false);
@@ -25,15 +32,23 @@ export function RegisterForm() {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  // Full-page OAuth state (see src/lib/auth/oauth.ts).
+  const [finishing, setFinishing] = useState(false);
+  const [starting, setStarting] = useState<OAuthProviderId | null>(null);
 
   useEffect(() => {
+    if (!firebaseBrowserConfigured) return;
     let cancelled = false;
+    if (oauthRedirectPending()) setFinishing(true);
     (async () => {
       const result = await consumeOAuthRedirect();
-      if (cancelled || !result) return;
-      if (result.status === "cancelled") return;
+      if (cancelled) return;
+      setFinishing(false);
+      setStarting(null);
+      if (!result || result.status === "cancelled" || result.status === "redirecting") return;
       if (result.status === "ok") {
-        window.location.href = postAuthPath(result.onboardingComplete);
+        if (result.operation === "link") return;
+        window.location.replace(postAuthPath(result.onboardingComplete));
         return;
       }
       if (result.status === "session-failed") {
@@ -41,7 +56,7 @@ export function RegisterForm() {
         setSessionRetry(true);
         return;
       }
-      if (result.status === "error") setError(result.message);
+      setError(result.message);
     })();
     return () => {
       cancelled = true;
@@ -89,25 +104,37 @@ export function RegisterForm() {
     }
   }
 
-  async function oauth(provider: "google" | "facebook") {
+  async function oauth(provider: OAuthProviderId) {
     setError(null);
     setSessionRetry(false);
-    const result = await signInWithOAuth(provider);
-    if (result.status === "cancelled" || result.status === "redirecting") return;
-    if (result.status === "ok") {
-      window.location.href = postAuthPath(result.onboardingComplete);
-      return;
-    }
+    setStarting(provider);
+    rememberPostLoginPath("/chat");
+    const result = await startOAuthSignIn(provider, { next: "/chat" });
+    if (result.status === "redirecting") return; // browser is already leaving
+    setStarting(null);
+    if (result.status === "cancelled") return;
     if (result.status === "session-failed") {
       setError(result.message);
       setSessionRetry(true);
       return;
     }
-    setError(result.message);
+    if (result.status === "error") setError(result.message);
   }
 
   if (!firebaseBrowserConfigured) {
     return <AuthUnavailable />;
+  }
+
+  if (finishing) {
+    return (
+      <div className="space-y-3 py-2 text-center" role="status" aria-live="polite">
+        <div className="flex justify-center"><Spinner /></div>
+        <p className="text-sm font-medium text-ink">Finishing sign-in…</p>
+        <p className="text-[13px] leading-relaxed text-ink-2">
+          Confirming your account and starting your QORVYNA session. This takes a moment — please don&apos;t close this tab.
+        </p>
+      </div>
+    );
   }
 
   return (
@@ -131,7 +158,15 @@ export function RegisterForm() {
         <Button type="submit" className="w-full" disabled={busy}>{busy ? <Spinner /> : "Create account"}</Button>
       </form>
       <Divider />
-      <OAuthButtons onGoogle={() => oauth("google")} onFacebook={() => oauth("facebook")} />
+      {starting ? (
+        <Alert tone="info">Redirecting to {starting === "google" ? "Google" : "Facebook"}…</Alert>
+      ) : null}
+      <OAuthButtons
+        onGoogle={() => oauth("google")}
+        onFacebook={() => oauth("facebook")}
+        redirectingTo={starting}
+        disabled={busy}
+      />
       <AuthFooterLink href="/login">Already have an account? Sign in</AuthFooterLink>
     </div>
   );

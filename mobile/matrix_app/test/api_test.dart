@@ -9,9 +9,9 @@ import 'package:matrix_app/config.dart';
 import 'package:matrix_app/update_service.dart';
 
 void main() {
-  test('MatrixConfig points to canonical https://matrix.thamjj13.top and /chat', () {
-    expect(MatrixConfig.apiBase, 'https://matrix.thamjj13.top');
-    expect(MatrixConfig.chatUri.toString(), 'https://matrix.thamjj13.top/chat');
+  test('MatrixConfig points to canonical https://qorvyna.thamjj13.top and /chat', () {
+    expect(MatrixConfig.apiBase, 'https://qorvyna.thamjj13.top');
+    expect(MatrixConfig.chatUri.toString(), 'https://qorvyna.thamjj13.top/chat');
     expect(MatrixConfig.appVersion, '1.2.0');
     expect(MatrixConfig.appBuildNumber, 3);
   });
@@ -36,7 +36,7 @@ void main() {
           'update_available': true,
           'force_update': false,
           'apk_url': 'https://github.com/cht25/matrix-ai/releases/latest/download/matrix-android.apk',
-          'chat_url': 'https://matrix.thamjj13.top/chat',
+          'chat_url': 'https://qorvyna.thamjj13.top/chat',
           'release_notes': 'OTA update',
         }),
         200,
@@ -49,7 +49,7 @@ void main() {
     expect(info.latestBuild, 3);
     expect(info.updateAvailable, isTrue);
     expect(info.forceUpdate, isFalse);
-    expect(info.chatUrl, 'https://matrix.thamjj13.top/chat');
+    expect(info.chatUrl, 'https://qorvyna.thamjj13.top/chat');
     client.close();
   });
 }

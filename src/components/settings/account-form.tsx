@@ -1,11 +1,11 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Camera, Trash2, Upload } from "lucide-react";
 import { rpc } from "@/lib/client/api";
-import { linkOAuthProvider } from "@/lib/auth/oauth";
+import { consumeOAuthNotice, startOAuthLink, type OAuthProviderId } from "@/lib/auth/oauth";
 import { clearProfileAvatar, isAllowedAvatarFile, saveProfileAvatar } from "@/lib/client/avatar";
 import { UserAvatar } from "@/components/avatar";
 import { Alert, Button, Card, Field, Input, Select, Spinner } from "@/components/ui";
@@ -33,6 +33,29 @@ export function AccountForm({ profile, countries }: { profile: Profile | null; c
   const [busy, setBusy] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
+  const [linking, setLinking] = useState<OAuthProviderId | null>(null);
+
+  // A link redirect returns here; <AuthRedirectWatcher /> recorded the outcome
+  // before reloading, so show it exactly once.
+  useEffect(() => {
+    const notice = consumeOAuthNotice();
+    if (notice) setMsg({ tone: notice.tone, text: notice.message });
+  }, []);
+
+  /**
+   * Linking uses the same full-page redirect as sign-in (no popup anywhere).
+   * The promise normally never resolves — the browser has already left for the
+   * provider — so the button stays busy until then.
+   */
+  async function linkProvider(provider: OAuthProviderId) {
+    setMsg(null);
+    setLinking(provider);
+    const result = await startOAuthLink(provider);
+    if (result.status === "redirecting") return;
+    setLinking(null);
+    if (result.status === "cancelled") return;
+    if (result.status === "error") setMsg({ tone: "danger", text: result.message });
+  }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -159,8 +182,12 @@ export function AccountForm({ profile, countries }: { profile: Profile | null; c
         <h3 className="text-sm font-semibold text-ink">Linked sign-in</h3>
         <p className="mt-1 text-xs text-ink-3">If Google/Facebook uses the same verified email as this account, link it here after signing in with email.</p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button type="button" variant="outline" onClick={() => void linkOAuthProvider("google").then((r) => setMsg(r.ok ? { tone: "success", text: "Google linked." } : { tone: "danger", text: r.message || "Cancelled." }))}>Link Google</Button>
-          <Button type="button" variant="outline" onClick={() => void linkOAuthProvider("facebook").then((r) => setMsg(r.ok ? { tone: "success", text: "Facebook linked." } : { tone: "danger", text: r.message || "Cancelled." }))}>Link Facebook</Button>
+          <Button type="button" variant="outline" disabled={linking !== null} onClick={() => void linkProvider("google")}>
+            {linking === "google" ? <Spinner /> : null} Link Google
+          </Button>
+          <Button type="button" variant="outline" disabled={linking !== null} onClick={() => void linkProvider("facebook")}>
+            {linking === "facebook" ? <Spinner /> : null} Link Facebook
+          </Button>
         </div>
       </div>
     </Card>

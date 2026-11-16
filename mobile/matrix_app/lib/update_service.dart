@@ -1,7 +1,7 @@
 // =============================================================================
 // QORVYNA Phone OTA Update Service (`GET /api/app/version`)
 //
-// Checks the canonical QORVYNA backend (`https://matrix.thamjj13.top/api/app/version`)
+// Checks the canonical QORVYNA backend (`https://qorvyna.thamjj13.top/api/app/version`)
 // on phone launch, app resume, and manual "Check for updates".
 // Supports:
 //   1. Optional update bottom sheet with release notes & one-tap APK download

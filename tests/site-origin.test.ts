@@ -29,32 +29,32 @@ async function loadSeo(appUrl?: string) {
 describe("siteOrigin() — single source of truth for public URLs", () => {
   it("returns the production domain when NEXT_PUBLIC_APP_URL is not set", async () => {
     const seo = await loadSeo(undefined);
-    expect(seo.siteOrigin()).toBe("https://matrix.thamjj13.top");
+    expect(seo.siteOrigin()).toBe("https://qorvyna.thamjj13.top");
   });
 
   it("returns the production domain when NEXT_PUBLIC_APP_URL is empty", async () => {
     const seo = await loadSeo("");
-    expect(seo.siteOrigin()).toBe("https://matrix.thamjj13.top");
+    expect(seo.siteOrigin()).toBe("https://qorvyna.thamjj13.top");
   });
 
   it("returns the production domain when NEXT_PUBLIC_APP_URL is localhost", async () => {
     const seo = await loadSeo("http://localhost:3000");
-    expect(seo.siteOrigin()).toBe("https://matrix.thamjj13.top");
+    expect(seo.siteOrigin()).toBe("https://qorvyna.thamjj13.top");
   });
 
   it("returns the production domain when NEXT_PUBLIC_APP_URL is 127.0.0.1", async () => {
     const seo = await loadSeo("http://127.0.0.1:3000");
-    expect(seo.siteOrigin()).toBe("https://matrix.thamjj13.top");
+    expect(seo.siteOrigin()).toBe("https://qorvyna.thamjj13.top");
   });
 
   it("returns the production domain when NEXT_PUBLIC_APP_URL is 0.0.0.0", async () => {
     const seo = await loadSeo("http://0.0.0.0:3000");
-    expect(seo.siteOrigin()).toBe("https://matrix.thamjj13.top");
+    expect(seo.siteOrigin()).toBe("https://qorvyna.thamjj13.top");
   });
 
   it("uses NEXT_PUBLIC_APP_URL when it is a valid production URL", async () => {
-    const seo = await loadSeo("https://matrix.thamjj13.top");
-    expect(seo.siteOrigin()).toBe("https://matrix.thamjj13.top");
+    const seo = await loadSeo("https://qorvyna.thamjj13.top");
+    expect(seo.siteOrigin()).toBe("https://qorvyna.thamjj13.top");
   });
 
   it("uses a custom domain when set via NEXT_PUBLIC_APP_URL", async () => {
@@ -78,25 +78,25 @@ describe("siteOrigin() — single source of truth for public URLs", () => {
       "https://metadata.google.internal",
     ]) {
       const seo = await loadSeo(value);
-      expect(seo.siteOrigin(), value).toBe("https://matrix.thamjj13.top");
+      expect(seo.siteOrigin(), value).toBe("https://qorvyna.thamjj13.top");
     }
   });
 
   it("requires HTTPS for configured production origins", async () => {
     vi.stubEnv("NODE_ENV", "production");
     const seo = await loadSeo("http://matrix.example.com");
-    expect(seo.siteOrigin()).toBe("https://matrix.thamjj13.top");
+    expect(seo.siteOrigin()).toBe("https://qorvyna.thamjj13.top");
   });
 
   it("uses the canonical production origin rather than localhost as the unused legacy env.appUrl fallback", async () => {
     vi.resetModules();
     const { env } = await import("../src/lib/env");
-    expect(env.appUrl).toBe("https://matrix.thamjj13.top");
+    expect(env.appUrl).toBe("https://qorvyna.thamjj13.top");
   });
 
   it("PRODUCTION_ORIGIN is the canonical matrix subdomain", async () => {
     const seo = await loadSeo(undefined);
-    expect(seo.PRODUCTION_ORIGIN).toBe("https://matrix.thamjj13.top");
+    expect(seo.PRODUCTION_ORIGIN).toBe("https://qorvyna.thamjj13.top");
   });
 
   it("never returns a localhost URL", async () => {

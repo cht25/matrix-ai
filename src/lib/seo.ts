@@ -7,8 +7,8 @@
 // production-insecure value falls back to the fixed production origin.
 // =============================================================================
 
-export const PRODUCTION_ORIGIN = "https://matrix.thamjj13.top";
-export const PRODUCTION_CHAT_URL = "https://matrix.thamjj13.top/chat";
+export const PRODUCTION_ORIGIN = "https://qorvyna.thamjj13.top";
+export const PRODUCTION_CHAT_URL = "https://qorvyna.thamjj13.top/chat";
 
 function isLocalOrPrivateHostname(input: string): boolean {
   const withoutBrackets = input.toLowerCase().replace("[", "").replace("]", "");

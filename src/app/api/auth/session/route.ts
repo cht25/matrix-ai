@@ -22,13 +22,18 @@ export async function POST(req: NextRequest) {
   } catch {
     /* fallthrough */
   }
-  if (!idToken) return NextResponse.json({ error: "ID_TOKEN_REQUIRED" }, { status: 400 });
+  if (!idToken) {
+    return NextResponse.json({ error: { code: "ID_TOKEN_REQUIRED", message: "idToken is required." } }, { status: 400 });
+  }
 
   let decoded: Awaited<ReturnType<ReturnType<typeof adminAuth>["verifyIdToken"]>>;
   try {
     decoded = await adminAuth().verifyIdToken(idToken, true);
   } catch {
-    return NextResponse.json({ error: "INVALID_TOKEN" }, { status: 401 });
+    return NextResponse.json(
+      { error: { code: "INVALID_TOKEN", message: "The Firebase ID token is invalid or expired; sign in again." } },
+      { status: 401 },
+    );
   }
 
   try {
@@ -45,8 +50,19 @@ export async function POST(req: NextRequest) {
     res.cookies.set(SESSION_COOKIE, cookie, sessionCookieOptions(req));
     return res;
   } catch (err) {
+    // Admin SDK needs the service account; the browser has already signed in,
+    // so this is a deployment problem, not a user error.
     console.error("[QORVYNA] session cookie mint failed", err);
-    return NextResponse.json({ error: "SESSION_MINT_FAILED" }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: {
+          code: "SESSION_MINT_FAILED",
+          message:
+            "The server could not create the session cookie. Check FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY on the host.",
+        },
+      },
+      { status: 500 },
+    );
   }
 }
 

@@ -2,6 +2,54 @@
 
 Notable changes to QORVYNA. Newest first.
 
+## Google sign-in: domain migration fix + full-page redirect
+
+Google Sign-In was failing on `qorvyna.thamjj13.top` with "We couldn't finish
+Google sign-in", even though the domain was listed in Firebase Authorized
+domains. Two defects caused it, and both are fixed. See
+[docs/AUTH_DOMAIN_MIGRATION.md](docs/AUTH_DOMAIN_MIGRATION.md).
+
+### Authentication
+
+- **Popup replaced by full-page redirect.** `signInWithPopup` /
+  `linkWithPopup` are gone from the active flow: sign-in uses
+  `signInWithRedirect` + `getRedirectResult`, linking uses `linkWithRedirect`.
+  This is what Firebase recommends for environments where popups fail (mobile
+  Chrome, iOS, in-app browsers, COOP/partitioned storage).
+- **Redirect results are consumed exactly once per page load** (memoised), so a
+  returning redirect can never mint two sessions or navigate twice. A new
+  "Finishing sign-in…" state covers the return trip and a "Redirecting to
+  Google…" state covers the departure; stale attempts expire after 10 minutes
+  so a spinner can never hang.
+- **The intended destination survives the round trip** (`?next=` plus a
+  sessionStorage hint across reloads), and post-login navigation uses
+  `location.replace()` so the redirect URL cannot stay in history.
+- **Session failures are no longer reported as Google failures.** A 403 from
+  the session endpoint (rejected Origin) used to surface as the generic
+  "couldn't finish Google sign-in" message; it now says the domain is not
+  allowed to create the session and names the setting to fix.
+- **`authDomain` is resolved by one shared, unit-tested module**
+  (`src/lib/firebase/web-config.ts`) instead of a silent rewrite duplicated in
+  the client and the server. Default stays `<projectId>.firebaseapp.com`; a
+  custom hostname is honoured and activates a new `/__/auth/*` reverse proxy to
+  the project's real Firebase auth handler. `src/lib/env.ts` and
+  `src/lib/env-public.ts` now share that resolver.
+- **New `QORVYNA_ALLOWED_ORIGINS`** (comma-separated exact origins) lets a
+  deployment keep the previous domain or a `www` host inside the session
+  allowlist during a migration. The 403 body now lists the allowed origins.
+- **Safe diagnostics.** `[QORVYNA auth]` logs the stage, provider, Firebase
+  error code, message and Identity Toolkit detail together with the hostname and
+  the resolved `authDomain`. Errors are read through a field allowlist, so
+  credentials, ID tokens and passwords cannot reach the log.
+- No user ids, profiles, account links or email/password flows were changed.
+
+### Domain
+
+- Production defaults moved from `matrix.thamjj13.top` to
+  `qorvyna.thamjj13.top` in `src/lib/seo.ts`, `render.yaml`,
+  `apphosting.yaml`, `.env.example`, the Tauri config and the Android app
+  config.
+
 ## QORVYNA — 2026-11-16
 
 The product is renamed from MATRIX to **QORVYNA**, the assistant tells the
