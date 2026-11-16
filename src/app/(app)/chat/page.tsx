@@ -11,6 +11,9 @@ export default async function ChatHomePage({ searchParams }: { searchParams: Pro
   const { new: fresh, mode: requestedMode } = await searchParams;
   const mode = isChatMode(requestedMode) ? requestedMode : "general";
 
+  // Startup diagnostics: the default authenticated chat screen rendered.
+  console.info(`[QORVYNA chat] history loaded`, { conversation: null, messages: 0, mode });
+
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-4xl flex-1 flex-col">
       <ChatClient key={`${fresh ?? "home"}-${mode}`} initialMessages={[]} conversationId={null} isTemporary={false} initialMode={mode} />

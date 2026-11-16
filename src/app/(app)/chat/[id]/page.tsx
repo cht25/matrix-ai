@@ -14,6 +14,15 @@ export default async function ChatPage({ params }: { params: Promise<{ id: strin
   if (!data) notFound();
   if (data.conversation.is_temporary) redirect("/temporary-chat");
 
+  // Startup diagnostics: the authenticated chat screen just loaded its
+  // history (ids and counts only — never message content or credentials).
+  console.info(`[QORVYNA chat] history loaded`, {
+    conversation: id,
+    messages: data.messages.length,
+    mode: data.conversation.mode,
+    hasMore: data.hasMore,
+  });
+
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-4xl flex-1 flex-col">
       {/* The title and the conversation's own actions live in the chat toolbar. */}

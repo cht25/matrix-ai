@@ -10,6 +10,7 @@ import "@fontsource/jetbrains-mono/500.css";
 import "./globals.css";
 import { ThemeProvider } from "@/lib/theme";
 import { LocaleProvider } from "@/lib/i18n/client";
+import { AuthLifecycleProvider } from "@/components/auth/auth-provider";
 import { BRAND, BRAND_ASSETS, BRAND_THEME } from "@/lib/brand";
 import { siteOrigin } from "@/lib/seo";
 
@@ -90,10 +91,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <ThemeProvider>
           <LocaleProvider>
-            <a href="#main" className="skip-link">
-              Skip to content
-            </a>
-            <main id="main">{children}</main>
+            {/* Starts the auth lifecycle (getRedirectResult + initial auth
+                state) at application startup on every page, so a Google
+                redirect return is processed before any screen can decide the
+                visitor is logged out. */}
+            <AuthLifecycleProvider>
+              <a href="#main" className="skip-link">
+                Skip to content
+              </a>
+              <main id="main">{children}</main>
+            </AuthLifecycleProvider>
           </LocaleProvider>
         </ThemeProvider>
       </body>

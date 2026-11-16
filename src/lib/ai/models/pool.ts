@@ -12,8 +12,9 @@ import { nowTs, type Db } from "@/lib/firebase/admin";
 import { fetchModelCatalog } from "@/lib/ai/model-catalog";
 import { QORVYNA_MODEL_BASE_URL } from "@/lib/ai/model";
 import { ensureAccounts } from "@/lib/ai/accounts";
+import { cloudflareCredentials, cloudflareConfigured, listCloudflareModels } from "@/lib/ai/cloudflare";
 import { hostedProviderKey, qorvynaModelRoute, routeForModel, type AIRouteTarget } from "@/lib/ai/config";
-import { DEFAULT_MODEL_KEY, MODEL_REGISTRY, modelById, sanitizeModelKeys, type ModelSpec } from "@/lib/ai/models/registry";
+import { CLOUDFLARE_MODEL_ID, CLOUDFLARE_MODEL_KEY, DEFAULT_MODEL_KEY, MODEL_REGISTRY, defaultModel, modelById, sanitizeModelKeys, type ModelSpec } from "@/lib/ai/models/registry";
 import { cooldownRemainingMs } from "@/lib/ai/orchestrator/scheduler";
 import type { ModelAvailability, ModelStatus, PoolPreference } from "@/lib/ai/models/types";
 
@@ -24,6 +25,7 @@ export const MAX_ACTIVE_MODELS = 4;
 const COLLECTION = "model_pools";
 
 type Catalog = { ids: Map<string, number | undefined> } | { error: string } | null;
+type IdCatalog = { ids: Set<string> } | { error: string } | null;
 
 /** Live catalog for the hosted provider. null = no hosted credential. */
 async function hostedCatalog(refresh = false): Promise<Catalog> {
@@ -37,10 +39,61 @@ async function hostedCatalog(refresh = false): Promise<Catalog> {
   }
 }
 
-function availabilityOf(spec: ModelSpec, catalog: Catalog): { availability: ModelAvailability; contextTokens: number } {
+const CLOUDFLARE_CATALOG_TTL_MS = 5 * 60_000;
+let cloudflareCatalogCache: { at: number; value: IdCatalog } | null = null;
+
+/**
+ * Live model list for this Cloudflare account (GET /ai/models/search).
+ * null = Cloudflare is not configured. A failed read is reported as
+ * `{error}` — availability then falls back to the configured default only.
+ */
+async function cloudflareCatalog(refresh = false): Promise<IdCatalog> {
+  if (!cloudflareConfigured()) return null;
+  if (!refresh && cloudflareCatalogCache && Date.now() - cloudflareCatalogCache.at < CLOUDFLARE_CATALOG_TTL_MS) {
+    return cloudflareCatalogCache.value;
+  }
+  const credentials = cloudflareCredentials();
+  if (!credentials) return null;
+  try {
+    const models = await listCloudflareModels(credentials);
+    const value: IdCatalog = { ids: new Set(models.map((model) => model.id.toLowerCase())) };
+    cloudflareCatalogCache = { at: Date.now(), value };
+    return value;
+  } catch (error) {
+    const value: IdCatalog = { error: error instanceof Error ? error.message.slice(0, 160) : "catalog request failed" };
+    cloudflareCatalogCache = { at: Date.now(), value };
+    return value;
+  }
+}
+
+/** The Cloudflare model this deployment is configured to run. */
+function configuredCloudflareModelId(): string {
+  const fromEnv = (process.env.CLOUDFLARE_DEFAULT_MODEL ?? "").trim();
+  return (fromEnv || CLOUDFLARE_MODEL_ID).toLowerCase();
+}
+
+function availabilityOf(spec: ModelSpec, catalog: Catalog, cfCatalog: IdCatalog): { availability: ModelAvailability; contextTokens: number } {
   const isDefault = spec.key === DEFAULT_MODEL_KEY;
   const route = routeForModel(spec);
   if (!route) return { availability: "not_configured", contextTokens: spec.contextTokens };
+
+  // Cloudflare specs are verified against the account's own model list —
+  // never against the Groq catalog, and never assumed.
+  if (spec.provider === "cloudflare") {
+    if (!cfCatalog) return { availability: "not_configured", contextTokens: spec.contextTokens };
+    if ("error" in cfCatalog) {
+      // The list could not be read (token without list permission, network).
+      // The model the operator explicitly configured keeps working — its own
+      // requests report real errors — nothing else is assumed available.
+      return {
+        availability: spec.id.toLowerCase() === configuredCloudflareModelId() ? "available" : "unverified",
+        contextTokens: spec.contextTokens,
+      };
+    }
+    if (!cfCatalog.ids.has(spec.id.toLowerCase())) return { availability: "not_offered", contextTokens: spec.contextTokens };
+    return { availability: "available", contextTokens: spec.contextTokens };
+  }
+
   // The default model on a dedicated endpoint is not part of the hosted catalog.
   if (isDefault && route.providerId === "gpt-oss") return { availability: "available", contextTokens: spec.contextTokens };
   if (!catalog) return { availability: "not_configured", contextTokens: spec.contextTokens };
@@ -63,10 +116,12 @@ const REASON: Record<ModelAvailability, string> = {
 
 /** Every registered model with its real, current status. No credentials. */
 export async function listModelStatus(opts: { refresh?: boolean } = {}): Promise<ModelStatus[]> {
-  const catalog = await hostedCatalog(opts.refresh);
-  const dedicated = qorvynaModelRoute()?.providerId === "gpt-oss";
+  const [catalog, cfCatalog] = await Promise.all([hostedCatalog(opts.refresh), cloudflareCatalog(opts.refresh)]);
+  // "Dedicated" describes the HOSTED route for the default model, so it must
+  // not be inferred from the primary route (which may be Cloudflare).
+  const dedicated = routeForModel(defaultModel())?.providerId === "gpt-oss";
   return MODEL_REGISTRY.map((spec) => {
-    const { availability, contextTokens } = availabilityOf(spec, catalog);
+    const { availability, contextTokens } = availabilityOf(spec, catalog, cfCatalog);
     const cooling = cooldownRemainingMs(spec.key);
     return {
       key: spec.key,

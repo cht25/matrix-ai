@@ -5,7 +5,7 @@
 // single quiet card with the primary action in brand blue and OAuth as
 // secondary actions. One column at every width, so nothing reflows on phones.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -19,13 +19,19 @@ import { describeAuthError } from "@/lib/firebase/auth-errors";
 import { MAX_AGE, MIN_AGE, isValidEmail } from "@/lib/utils";
 import {
   completeAuthenticatedSession,
-  consumeOAuthRedirect,
-  oauthRedirectPending,
   postAuthPath,
   rememberPostLoginPath,
   startOAuthSignIn,
   type OAuthProviderId,
 } from "@/lib/auth/oauth";
+import {
+  markSessionEstablished,
+  recordPostLoginNavigation,
+  resetPostLoginNavigationGuard,
+  retryAuthLifecycle,
+} from "@/lib/auth/lifecycle";
+import { useAuthLifecycle } from "@/components/auth/auth-provider";
+import { logAuthDiagnostic } from "@/lib/auth/diagnostics";
 import { BrandLockup } from "@/components/logo";
 import { BRAND, BRAND_PILLARS } from "@/lib/brand";
 import { PasswordInput } from "@/components/password-input";
@@ -177,15 +183,53 @@ export function LoginForm() {
   const [mfaCode, setMfaCode] = useState("");
 
   const [sessionRetry, setSessionRetry] = useState(false);
-  // Full-page OAuth state. `finishing` is the return trip from Google (the page
-  // has just reloaded with a result to consume); `starting` is the instant
-  // before the browser leaves for the consent screen.
-  const [finishing, setFinishing] = useState(false);
+  // Full-page OAuth: `starting` is the instant before the browser leaves for
+  // the consent screen. The return trip is owned by the centralised auth
+  // lifecycle (started at application startup by AuthLifecycleProvider) — this
+  // screen only renders its explicit states and navigates when it says READY.
   const [starting, setStarting] = useState<OAuthProviderId | null>(null);
+  const { decision, status, error: lifecycleError, retry, onboardingComplete, pendingRedirect } = useAuthLifecycle();
+
+  // Navigate exactly once, and only AFTER the lifecycle reports a completed
+  // backend session. Never during INITIALIZING — that is what used to bounce
+  // visitors back to /login before their session existed.
+  const navigatedRef = useRef(false);
+  // Set when the login↔app bounce is detected: stop navigating, show why.
+  const [loopBlocked, setLoopBlocked] = useState(false);
+  useEffect(() => {
+    if (decision !== "navigate" || navigatedRef.current || loopBlocked) return;
+    if (!recordPostLoginNavigation()) {
+      // The session we establish is not accepted by the server: stop instead
+      // of bouncing between /login and /chat for ever.
+      setLoopBlocked(true);
+      return;
+    }
+    navigatedRef.current = true;
+    const destination = postAuthPath(onboardingComplete, next);
+    logAuthDiagnostic({ stage: "navigation", method: "session", detail: { path: destination, from: "login", status } });
+    // replace(): the login URL must not stay in history, or "Back" re-enters
+    // the login screen and looks like a redirect loop.
+    window.location.replace(destination);
+  }, [decision, onboardingComplete, next, status, loopBlocked]);
 
   async function finishSignIn() {
     const session = await completeAuthenticatedSession();
+    // Reflect the established session in the shared state so every guard
+    // agrees with the navigation this screen is about to perform.
+    markSessionEstablished({ uid: session.uid, onboardingComplete: session.onboardingComplete });
+    if (!recordPostLoginNavigation()) {
+      setLoopBlocked(true);
+      setBusy(false);
+      return;
+    }
     window.location.href = postAuthPath(session.onboardingComplete, next);
+  }
+
+  function clearLoopAndRetry() {
+    resetPostLoginNavigationGuard();
+    setLoopBlocked(false);
+    navigatedRef.current = false;
+    void retryAuthLifecycle();
   }
 
   async function retrySession() {
@@ -199,43 +243,6 @@ export function LoginForm() {
       setBusy(false);
     }
   }
-
-  useEffect(() => {
-    if (!firebaseBrowserConfigured) return;
-    let cancelled = false;
-    // Show the loading state only when we know a redirect is coming back —
-    // otherwise every visit to /login would flash a spinner before the form.
-    if (oauthRedirectPending()) setFinishing(true);
-    (async () => {
-      // consumeOAuthRedirect() is memoised per page load: it can be awaited
-      // here, in <AuthRedirectWatcher /> and on /verify without ever minting a
-      // second session or draining the result twice.
-      const result = await consumeOAuthRedirect();
-      if (cancelled) return;
-      setFinishing(false);
-      setStarting(null);
-      if (!result || result.status === "cancelled" || result.status === "redirecting") return;
-      if (result.status === "ok") {
-        // A link operation belongs to Settings, never to a login navigation.
-        if (result.operation === "link") return;
-        setBusy(true);
-        // replace(): the redirect URL must not stay in history, or "Back"
-        // re-enters the login screen and looks like a redirect loop.
-        window.location.replace(postAuthPath(result.onboardingComplete, next));
-        return;
-      }
-      if (result.status === "session-failed") {
-        setError(result.message);
-        setSessionRetry(true);
-        return;
-      }
-      setError(result.message);
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -310,13 +317,18 @@ export function LoginForm() {
     return <AuthUnavailable />;
   }
 
-  if (finishing) {
+  // INITIALIZING / PROFILE_LOADING → wait (never "logged out").
+  // READY/AUTHENTICATED → the navigation effect above is taking over.
+  if ((decision === "wait" || decision === "navigate") && !loopBlocked) {
+    const finishingTrip = decision === "navigate" || pendingRedirect || status === "PROFILE_LOADING";
     return (
       <div className="space-y-3 py-2 text-center" role="status" aria-live="polite">
         <div className="flex justify-center"><Spinner /></div>
-        <p className="text-sm font-medium text-ink">Finishing sign-in…</p>
+        <p className="text-sm font-medium text-ink">{finishingTrip ? "Finishing sign-in…" : "Restoring your session…"}</p>
         <p className="text-[13px] leading-relaxed text-ink-2">
-          Confirming your account and starting your QORVYNA session. This takes a moment — please don&apos;t close this tab.
+          {finishingTrip
+            ? "Confirming your account and starting your QORVYNA session. This takes a moment — please don't close this tab."
+            : "Checking whether you are already signed in to QORVYNA."}
         </p>
       </div>
     );
@@ -338,6 +350,30 @@ export function LoginForm() {
 
   return (
     <div>
+      {/* Login ↔ app bounce detected: the loop is broken here, with an
+          explicit way out (clears the guard and re-runs initialisation). */}
+      {loopBlocked ? (
+        <div className="mb-4 space-y-2">
+          <Alert tone="danger">
+            Your sign-in could not be verified by the server, so QORVYNA stopped returning you to the dashboard to avoid a
+            redirect loop. Tap Try again — you will not create a second account.
+          </Alert>
+          <Button type="button" variant="outline" className="w-full" onClick={clearLoopAndRetry}>
+            Try again
+          </Button>
+        </div>
+      ) : null}
+      {/* A failed lifecycle stage is recoverable here — never an infinite
+          spinner: retry re-runs only the initialisation sequence, and the
+          form below stays usable (email/password sign-in is untouched). */}
+      {decision === "error" && lifecycleError ? (
+        <div className="mb-4 space-y-2">
+          <Alert tone="danger">{lifecycleError.message}</Alert>
+          <Button type="button" variant="outline" className="w-full" onClick={retry}>
+            {lifecycleError.stage === "session-mint" ? "Retry session" : "Retry sign-in"}
+          </Button>
+        </div>
+      ) : null}
       <form onSubmit={handleLogin} className="space-y-4" noValidate>
         <Field label="Email" htmlFor="email">
           <Input id="email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" required />

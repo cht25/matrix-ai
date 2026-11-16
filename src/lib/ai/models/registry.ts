@@ -32,8 +32,8 @@ export type ModelSpec = {
   label: string;
   /** One-line plain description for the picker. */
   summary: string;
-  provider: "groq";
-  providerLabel: "Groq";
+  provider: "groq" | "cloudflare";
+  providerLabel: string;
   /** The organisation that published the model's weights (not the host). */
   publisher: string;
   contextTokens: number;
@@ -51,11 +51,28 @@ export type ModelSpec = {
 
 export const DEFAULT_MODEL_KEY = "gpt-oss-120b";
 
+/**
+ * Cloudflare Workers AI (see src/lib/ai/cloudflare.ts). The id below is the
+ * exact catalog id of the default `CLOUDFLARE_DEFAULT_MODEL`; additional
+ * Cloudflare models join the registry the same way — exact id, verified
+ * against the account's live model list at runtime, never assumed.
+ */
+export const CLOUDFLARE_MODEL_KEY = "glm-4.7-flash";
+export const CLOUDFLARE_MODEL_ID = "@cf/zai-org/glm-4.7-flash";
+
 export const MODEL_REGISTRY: readonly ModelSpec[] = [
   {
     key: DEFAULT_MODEL_KEY, id: QORVYNA_MODEL_ID, label: QORVYNA_MODEL_LABEL, summary: "Strongest all-rounder for planning, code and careful answers.",
     provider: "groq", providerLabel: "Groq", publisher: QORVYNA_MODEL_PUBLISHER, contextTokens: 131_072, maxOutputTokens: 16_384, tpm: 30_000,
     strengths: ["planning", "coding", "reasoning", "review", "writing"], reasoning: "effort", streaming: true, toolCalling: true, structuredOutput: true, coordinatorRank: 1,
+  },
+  {
+    // Cloudflare Workers AI free tier — primary when CLOUDFLARE_ACCOUNT_ID +
+    // CLOUDFLARE_API_TOKEN are configured (coordinatorRank 0 leads the pool,
+    // the existing providers remain the automatic fallback).
+    key: CLOUDFLARE_MODEL_KEY, id: CLOUDFLARE_MODEL_ID, label: "GLM 4.7 Flash", summary: "Cloudflare Workers AI free-tier model for fast chat, code and structured answers.",
+    provider: "cloudflare", providerLabel: "Cloudflare", publisher: "Zhipu AI", contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 12_000,
+    strengths: ["fast", "coding", "writing", "reasoning"], reasoning: "none", streaming: true, toolCalling: true, structuredOutput: true, coordinatorRank: 0,
   },
   {
     key: "qwen3-32b", id: "qwen/qwen3-32b", label: "Qwen 3 32B", summary: "Step-by-step reasoning and code review.",

@@ -3,8 +3,8 @@
 // client only receives a small public error code. Provider response bodies are
 // never sent to the browser and are sanitized before they reach logs.
 
-/** Hosts that can serve the one QORVYNA model (and the Whisper speech service). */
-export type AIProviderName = "Groq" | "OpenAI";
+/** Hosts that can serve QORVYNA's language models (and the Whisper speech service). */
+export type AIProviderName = "Groq" | "OpenAI" | "Cloudflare";
 
 export type AIProviderErrorType =
   | "authentication"
@@ -167,6 +167,9 @@ export function providerErrorFromException(
 
 export function providerPublicCode(error: unknown): string {
   if (!(error instanceof AIProviderError)) return "AI_GATEWAY_ERROR";
+  // Cloudflare's free daily Neuron quota: a distinct, honest code so the UI
+  // can say "quota exhausted, resets 00:00 UTC" instead of a generic limit.
+  if (error.code === "CLOUDFLARE_QUOTA_EXHAUSTED") return "AI_PROVIDER_QUOTA_EXHAUSTED";
   switch (error.type) {
     case "authentication": return "AI_PROVIDER_AUTH_FAILED";
     case "rate_limit": return "AI_PROVIDER_RATE_LIMITED";

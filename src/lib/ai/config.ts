@@ -12,6 +12,7 @@ import "server-only";
 import type { Db } from "@/lib/firebase/admin";
 import { GroqProvider, type AIProvider } from "@/lib/ai/groq";
 import { createOpenAICompatibleProvider } from "@/lib/ai/openai";
+import { CloudflareProvider, cloudflareCredentials, cloudflareConfigured } from "@/lib/ai/cloudflare";
 import type { WorkloadTier } from "@/lib/ai/router";
 import type { AIProviderName } from "@/lib/ai/provider-error";
 import {
@@ -23,7 +24,7 @@ import {
   dedicatedEndpointModelId,
   isQorvynaModelId,
 } from "@/lib/ai/model";
-import { DEFAULT_MODEL_KEY, type ModelSpec } from "@/lib/ai/models/registry";
+import { DEFAULT_MODEL_KEY, modelLabel, type ModelSpec } from "@/lib/ai/models/registry";
 import { ensureAccounts, listAccounts } from "@/lib/ai/accounts";
 
 export type AIRouteTarget = {
@@ -53,21 +54,35 @@ export type QorvynaModelStatus = {
   model: string;
   label: string;
   /** Which server credential is in use. Never the credential itself. */
-  credential: "GROQ_API_KEY" | "GPT_OSS_API_KEY" | "none";
+  credential: "GROQ_API_KEY" | "GPT_OSS_API_KEY" | "CLOUDFLARE_API_TOKEN" | "none";
   endpoint: string;
 };
 
 /**
- * The one executable route, or null when no credential is installed.
+ * Cloudflare Workers AI route — null unless BOTH backend environment
+ * variables are installed (CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN).
+ * The token never leaves this server.
+ */
+export function cloudflareRoute(): AIRouteTarget | null {
+  const credentials = cloudflareCredentials();
+  if (!credentials) return null;
+  return {
+    provider: "Cloudflare",
+    providerId: "cloudflare",
+    model: credentials.model,
+    client: new CloudflareProvider(credentials),
+    tier: "high",
+  };
+}
+
+/**
+ * The Groq / dedicated-endpoint route (existing providers, unchanged).
  *
  *   GROQ_API_KEY                       → Groq, QORVYNA_MODEL_ID          (default)
  *   GPT_OSS_API_KEY + GPT_OSS_BASE_URL → the same model on a dedicated
  *                                        OpenAI-compatible endpoint
- *
- * Both serve GPT OSS 120B. Exactly one is active per deployment; the second
- * is never a fallback for the first.
  */
-export function qorvynaModelRoute(): AIRouteTarget | null {
+function hostedRoute(): AIRouteTarget | null {
   const dedicatedKey = secret(process.env.GPT_OSS_API_KEY);
   const dedicatedBase = process.env.GPT_OSS_BASE_URL?.trim() ?? "";
   if (dedicatedKey && dedicatedBase) {
@@ -91,6 +106,25 @@ export function qorvynaModelRoute(): AIRouteTarget | null {
   };
 }
 
+/** Every configured route, primary first. Empty when nothing is installed. */
+function configuredRoutes(): AIRouteTarget[] {
+  const primary = cloudflareRoute() ?? hostedRoute();
+  if (!primary) return [];
+  const routes = [primary];
+  const hosted = hostedRoute();
+  if (hosted && !(primary.providerId === hosted.providerId && primary.model === hosted.model)) routes.push(hosted);
+  return routes;
+}
+
+/**
+ * The PRIMARY executable route, or null when no credential is installed.
+ * Cloudflare Workers AI leads when it is configured; otherwise this is the
+ * existing Groq / dedicated-endpoint route exactly as before.
+ */
+export function qorvynaModelRoute(): AIRouteTarget | null {
+  return configuredRoutes()[0] ?? null;
+}
+
 /** Server credential for the hosted provider, or "" when none is installed. */
 export function hostedProviderKey(): string {
   // The first connected account: the environment key when there is one,
@@ -100,18 +134,32 @@ export function hostedProviderKey(): string {
 
 /**
  * Executable route for one registered model, or null when this deployment has
- * no credential that can serve it. The default model may be served by the
- * dedicated endpoint; every other model needs the hosted provider key.
+ * no credential that can serve it. Cloudflare specs need the Cloudflare
+ * credential; the default model is served by the hosted provider (or the
+ * dedicated endpoint); every other model needs the hosted provider key.
  */
 export function routeForModel(spec: ModelSpec): AIRouteTarget | null {
-  if (spec.key === DEFAULT_MODEL_KEY) return qorvynaModelRoute();
+  if (spec.provider === "cloudflare") return cloudflareRoute();
+  if (spec.key === DEFAULT_MODEL_KEY) return hostedRoute();
   const key = hostedProviderKey();
   if (!key) return null;
   return { provider: QORVYNA_MODEL_PROVIDER, providerId: QORVYNA_MODEL_PROVIDER_ID, model: spec.id, client: new GroqProvider(key, { pooled: true }), tier: "high", contextTokens: spec.contextTokens };
 }
 
 export function qorvynaModelStatus(): QorvynaModelStatus {
-  const route = qorvynaModelRoute();
+  const primary = qorvynaModelRoute();
+  if (primary?.providerId === "cloudflare") {
+    return {
+      configured: true,
+      provider: "Cloudflare Workers AI",
+      provider_id: "cloudflare",
+      model: primary.model,
+      label: modelLabel(primary.model),
+      credential: "CLOUDFLARE_API_TOKEN",
+      endpoint: "https://api.cloudflare.com/client/v4",
+    };
+  }
+  const route = primary;
   const dedicated = route?.providerId === "gpt-oss";
   return {
     configured: Boolean(route),
@@ -132,10 +180,12 @@ export function logAIConfiguration(): void {
   globalState[CONFIG_LOGGED] = true;
   const status = qorvynaModelStatus();
   console.info("[QORVYNA] AI configuration", {
-    architecture: "collaborative model pool — GPT OSS 120B by default; other models only when the provider catalog lists them",
+    architecture: "collaborative model pool — Cloudflare Workers AI when configured, then GPT OSS 120B; other models only when the provider catalog lists them",
     provider: status.provider,
     model: status.model,
     credential: status.configured ? "configured" : "missing",
+    cloudflare: cloudflareConfigured() ? "configured" : "not-configured",
+    fallback: configuredRoutes().length > 1 ? "enabled" : "single-provider",
   });
   // These legacy variables never select a model — say so once.
   for (const name of ["GROQ_CHAT_MODEL", "GROQ_CODING_MODEL", "GROQ_FAST_MODEL", "GPT_OSS_MODEL"] as const) {
@@ -146,11 +196,15 @@ export function logAIConfiguration(): void {
   }
 }
 
-/** The default model's route (zero or one entry). The user's pool is resolved in models/pool.ts. */
+/**
+ * Executable routes, PRIMARY FIRST, then every other configured provider as
+ * automatic fallback (Cloudflare → Groq/dedicated when both are installed).
+ * The user's pool is resolved in models/pool.ts; these are the gateway
+ * defaults for call sites that do not take a per-user pool.
+ */
 export function createAIRoutes(_coding = false): AIRouteTarget[] {
   void _coding;
-  const route = qorvynaModelRoute();
-  return route ? [route] : [];
+  return configuredRoutes();
 }
 
 export function aiProviderConfigured(_coding = false): boolean {

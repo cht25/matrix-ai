@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { rpc } from "@/lib/client/api";
 import { Card, Spinner } from "@/components/ui";
+import { CloudflareQuotaPanel } from "@/components/admin/cloudflare-quota-panel";
 
 type Row = {
   id: string;
@@ -23,6 +24,8 @@ export function AiUsagePanel() {
 
   return (
     <div className="space-y-5">
+      {/* Cloudflare Workers AI free-quota dashboard (actual usage, UTC day). */}
+      <CloudflareQuotaPanel />
       <Card>
       <h1 className="font-display text-xl font-semibold text-ink">AI usage</h1>
       <p className="mt-1 text-sm text-ink-2">Recent gateway calls. Super admins can also seed RBAC from Setup.</p>
