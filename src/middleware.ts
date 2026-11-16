@@ -21,13 +21,18 @@ import { internalLocation, isAuthPage, isPublic } from "@/lib/routing";
 
 type JwtPayload = { exp?: number; role?: string; admin?: boolean; email_verified?: boolean };
 
-/** Cheap base64url decode of the JWT payload — NO signature verification. */
+/** Cheap UTF-8-safe base64url decode of the JWT payload — NO signature verification. */
 function decodePayload(jwt: string): JwtPayload | null {
   try {
     const part = jwt.split(".")[1];
     if (!part) return null;
     const base64 = part.replace(/-/g, "+").replace(/_/g, "/");
-    return JSON.parse(atob(base64)) as JwtPayload;
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const json = new TextDecoder().decode(bytes);
+    return JSON.parse(json) as JwtPayload;
   } catch {
     return null;
   }

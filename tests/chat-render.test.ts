@@ -299,4 +299,18 @@ describe("mode tools appear only with material to act on", () => {
     expect(html).not.toContain("Research desk");
     expect(html).not.toContain("Study mode");
   });
+
+  it("renders cleanly on SSR when wrapped inside AuthLifecycleProvider", async () => {
+    const { AuthLifecycleProvider } = await import("../src/components/auth/auth-provider");
+    const html = renderToStaticMarkup(
+      createElement(AuthLifecycleProvider, null, createElement(ChatClient, {
+        initialMessages: [],
+        conversationId: null,
+        isTemporary: false,
+        initialMode: "general",
+      })),
+    );
+    expect(html).toContain("How can I help today?");
+    expect(html).not.toContain("Session check failed");
+  });
 });

@@ -88,7 +88,12 @@ export async function getSessionUser(): Promise<SessionUser | null> {
 export function sessionCookieOptions(req?: NextRequest) {
   const forwarded = req?.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
   const urlHttps = req?.nextUrl.protocol === "https:";
-  const secure = forwarded === "https" || urlHttps || (process.env.NODE_ENV === "production" && forwarded !== "http");
+  const host = (req?.headers.get("host") ?? req?.nextUrl.hostname ?? "").toLowerCase().replace(/:\d+$/, "");
+  const isLoopback = host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" || host === "[::1]";
+  const secure =
+    forwarded === "https" ||
+    urlHttps ||
+    (process.env.NODE_ENV === "production" && forwarded !== "http" && !isLoopback);
   return {
     httpOnly: true,
     secure,

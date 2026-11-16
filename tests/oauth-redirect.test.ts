@@ -296,6 +296,32 @@ describe("account linking over redirect", () => {
     expect(result.status).toBe("error");
     expect(mocks.linkWithRedirect).not.toHaveBeenCalled();
   });
+
+  it("passes cred.user to mintSessionCookie so session mint works even if auth.currentUser lags", async () => {
+    mocks.state.currentUser = null;
+    mocks.getRedirectResult.mockResolvedValue(GOOGLE_CRED);
+    const oauth = await loadOAuth();
+    const result = await oauth.consumeOAuthRedirect();
+    expect(result).toMatchObject({ status: "ok", uid: "uid-1", operation: "signIn" });
+    expect(mocks.mintSessionCookie).toHaveBeenCalledWith(GOOGLE_CRED.user, undefined);
+  });
+
+  it("emits REDIRECT_RESULT_STARTED, REDIRECT_RESULT_COMPLETED, AUTH_USER_DETECTED and AUTH_REDIRECT_ERROR safely", async () => {
+    mocks.getRedirectResult.mockResolvedValue(GOOGLE_CRED);
+    const oauth = await loadOAuth();
+    await oauth.consumeOAuthRedirect();
+    const loggedText = warn.mock.calls.map((c) => JSON.stringify(c)).join("\n");
+    expect(loggedText).toContain("REDIRECT_RESULT_STARTED");
+    expect(loggedText).toContain("REDIRECT_RESULT_COMPLETED");
+    expect(loggedText).toContain("AUTH_USER_DETECTED");
+
+    warn.mockClear();
+    mocks.getRedirectResult.mockRejectedValue(Object.assign(new Error("boom"), { code: "auth/unauthorized-domain" }));
+    const oauthErr = await loadOAuth();
+    await oauthErr.consumeOAuthRedirect();
+    const errText = warn.mock.calls.map((c) => JSON.stringify(c)).join("\n");
+    expect(errText).toContain("AUTH_REDIRECT_ERROR");
+  });
 });
 
 describe("post-login destination", () => {

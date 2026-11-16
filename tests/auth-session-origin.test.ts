@@ -10,6 +10,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isPublic } from "@/lib/routing";
 import { mutationCsrfResponse, mutationOriginAllowed, extraAllowedOrigins } from "@/lib/server/request-security";
@@ -187,5 +188,93 @@ describe("reverse-proxy wiring", () => {
     // The auth helper must be reachable without a session.
     expect(isPublic("/__/auth/handler")).toBe(true);
     expect(isPublic("/__/auth/iframe")).toBe(true);
+  });
+
+  it("recovers INVALID_TOKEN once via forced ID token refresh and fails loudly on profile_loaded: false", async () => {
+    vi.resetModules();
+    const getIdToken = vi.fn().mockResolvedValueOnce("stale-token").mockResolvedValueOnce("fresh-token");
+    vi.doMock("@/lib/firebase/client", () => ({
+      fbAuth: () => ({ currentUser: { uid: "uid-1", getIdToken } }),
+    }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { code: "INVALID_TOKEN", message: "expired" } }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true, uid: "uid-1", onboarding_complete: false, profile_loaded: false, profile_error: "PROFILE_PROVISION_FAILED" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const { mintSessionCookie, RpcCallError } = await import("@/lib/client/api");
+    const err = await mintSessionCookie().catch((e: unknown) => e);
+    expect(getIdToken).toHaveBeenNthCalledWith(1, false);
+    expect(getIdToken).toHaveBeenNthCalledWith(2, true);
+    expect(err).toBeInstanceOf(RpcCallError);
+    expect((err as { code: string }).code).toBe("PROFILE_PROVISION_FAILED");
+    vi.doUnmock("@/lib/firebase/client");
+    vi.unstubAllGlobals();
+  });
+
+  it("decodes UTF-8 non-ASCII JWT names in middleware without failing", async () => {
+    const payload = Buffer.from(
+      JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600, name: "তানজিদ" }),
+      "utf8",
+    )
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+    const jwt = `header.${payload}.sig`;
+    const { middleware } = await import("@/middleware");
+    const req = new NextRequest("https://qorvyna.thamjj13.top/login", {
+      headers: { cookie: `__session=${jwt}` },
+    });
+    const res = await middleware(req);
+    expect(res.status).toBe(307);
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/chat");
+  });
+
+  it("drops set-cookie from upstream forEach in firebase-handler proxy and clears only invalid cookies with relative Location in clear-session", async () => {
+    const proxyCode = readFileSync(
+      path.resolve(__dirname, "../src/app/api/auth/firebase-handler/[[...path]]/route.ts"),
+      "utf8",
+    );
+    expect(proxyCode).toContain('"set-cookie"');
+
+    vi.resetModules();
+    const verifySession = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("expired"))
+      .mockResolvedValueOnce({ uid: "uid-1" });
+    vi.doMock("@/lib/firebase/session", () => ({
+      SESSION_COOKIE: "__session",
+      sessionCookieOptions: () => ({ httpOnly: true, sameSite: "lax", path: "/" }),
+      verifySession,
+    }));
+    const { GET } = await import("@/app/api/auth/clear-session/route");
+
+    const invalidReq = new NextRequest("http://0.0.0.0:3000/api/auth/clear-session?next=/login", {
+      headers: { cookie: "__session=bad-token" },
+    });
+    const resInvalid = await GET(invalidReq);
+    expect(resInvalid.status).toBe(307);
+    expect(resInvalid.headers.get("location")).toBe("/login");
+    expect(resInvalid.headers.get("set-cookie")).toContain("__session=");
+    expect(resInvalid.headers.get("set-cookie")).toContain("Max-Age=0");
+
+    const validReq = new NextRequest("http://0.0.0.0:3000/api/auth/clear-session?next=/settings", {
+      headers: { cookie: "__session=good-token" },
+    });
+    const resValid = await GET(validReq);
+    expect(resValid.status).toBe(307);
+    expect(resValid.headers.get("location")).toBe("/settings");
+    expect(resValid.headers.get("set-cookie")).toBeNull();
+    vi.doUnmock("@/lib/firebase/session");
   });
 });

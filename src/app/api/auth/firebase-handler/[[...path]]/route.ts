@@ -62,6 +62,7 @@ const DROP_FROM_UPSTREAM = new Set([
   "content-length",
   "transfer-encoding",
   "connection",
+  "set-cookie",
   "x-frame-options",
   "content-security-policy",
   "content-security-policy-report-only",
@@ -117,6 +118,10 @@ async function proxy(request: NextRequest, context: Context): Promise<Response> 
   upstream.headers.forEach((value, key) => {
     if (!DROP_FROM_UPSTREAM.has(key.toLowerCase())) out.set(key, value);
   });
+  const leaf = path[path.length - 1] ?? "handler";
+  if (path.length === 0 || leaf === "handler" || leaf === "iframe") {
+    out.set("cache-control", "private, no-store, no-cache, must-revalidate");
+  }
   // The handler sets short-lived auth cookies; forward every one of them.
   const setCookies =
     typeof upstream.headers.getSetCookie === "function" ? upstream.headers.getSetCookie() : [];
