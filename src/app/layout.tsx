@@ -91,10 +91,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <ThemeProvider>
           <LocaleProvider>
-            {/* Starts the auth lifecycle (getRedirectResult + initial auth
-                state) at application startup on every page, so a Google
-                redirect return is processed before any screen can decide the
-                visitor is logged out. */}
+            {/* Starts the centralised auth lifecycle (initial auth state +
+                shared onAuthStateChanged listener + backend session check) at
+                application startup on every page. */}
             <AuthLifecycleProvider>
               <a href="#main" className="skip-link">
                 Skip to content

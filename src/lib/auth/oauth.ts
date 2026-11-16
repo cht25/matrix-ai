@@ -1,22 +1,22 @@
 "use client";
 
 // =============================================================================
-// Google / Facebook sign-in for /login and /register.
+// Google / Facebook sign-in for /login, /register, and Settings linking.
 //
-// TRANSPORT: full-page redirect only.
-//   startOAuthSignIn()  → signInWithRedirect(auth, provider)
-//   consumeOAuthRedirect() → getRedirectResult(auth), once per page load
+// TRANSPORT: popup OAuth (`signInWithPopup` / `linkWithPopup`).
+//   startOAuthSignIn() → signInWithPopup(auth, provider)
+//   startOAuthLink()   → linkWithPopup(user, provider)
 //
-// The popup transport was removed on purpose. It cannot complete on every
-// browser/profile (popup blockers, cross-origin-opener-policy, storage
-// partitioning, iOS/Android WebViews) and its failure mode is a generic "we
-// couldn't finish" message after the user already picked an account. A
-// top-level redirect is Firebase's own recommendation for those environments
-// and it is what mobile Chrome needs.
+// Cross-origin redirect OAuth breaks in modern browsers whenever `authDomain`
+// (`*.firebaseapp.com`) differs from the site origin (`qorvyna.thamjj13.top`)
+// because third-party storage partitioning drops the redirect auth event.
+// `signInWithPopup()` returns the `UserCredential` directly, updates the
+// shared Firebase `Auth` instance so `onAuthStateChanged` fires reliably, and
+// avoids cross-domain redirect state loss.
 //
-// Two separate things are reported separately, always:
-//   • the Firebase/Google step  → status "cancelled" | "error" | "redirecting"
-//   • the QORVYNA session step  → status "session-failed"
+// Two separate steps are always reported separately:
+//   • the Firebase/OAuth step → status "cancelled" | "error"
+//   • the QORVYNA session step → status "session-failed"
 // A minted Firebase user is NEVER labelled "Google failed".
 // =============================================================================
 
@@ -24,9 +24,9 @@ import {
   FacebookAuthProvider,
   GoogleAuthProvider,
   getAdditionalUserInfo,
-  getRedirectResult,
-  linkWithRedirect,
-  signInWithRedirect,
+  linkWithPopup,
+  signInWithPopup,
+  type Auth,
   type AuthProvider,
   type User,
   type UserCredential,
@@ -56,8 +56,7 @@ export type OAuthOk = {
 
 export type OAuthResult =
   | OAuthOk
-  | { status: "cancelled" }
-  | { status: "redirecting" }
+  | { status: "cancelled"; message: string; provider: OAuthProviderId }
   | { status: "session-failed"; message: string; provider: OAuthProviderId }
   | { status: "error"; message: string; provider?: OAuthProviderId };
 
@@ -68,17 +67,11 @@ const BAD_ORIGIN_FAILED =
   "You're signed in, but this domain is not allowed to create the QORVYNA session. An administrator must include this hostname in NEXT_PUBLIC_APP_URL (or QORVYNA_ALLOWED_ORIGINS) and redeploy — your account is fine.";
 
 // -----------------------------------------------------------------------------
-// Storage keys. All access is guarded: a browser with storage blocked still
-// gets a working sign-in, it just loses the "remembered destination" nicety.
+// Post-login destination storage (best-effort only; never blocks auth)
 // -----------------------------------------------------------------------------
 
 const K_NEXT = "qorvyna.oauth.next";
-const K_PENDING_REDIRECT = "qorvyna.oauth.pending-redirect";
-const K_PENDING_LINK = "qorvyna.oauth.pending-link";
-const K_NOTICE = "qorvyna.oauth.notice";
-
-/** A marker older than this is stale (abandoned tab) and must not block the UI. */
-const PENDING_MAX_AGE_MS = 10 * 60 * 1000;
+const DEST_MAX_AGE_MS = 10 * 60 * 1000;
 
 function store(): Storage | null {
   try {
@@ -115,25 +108,15 @@ function remove(key: string): void {
   }
 }
 
-// -----------------------------------------------------------------------------
-// Post-login destination
-// -----------------------------------------------------------------------------
-
-/**
- * Remember where the visitor wanted to land. Survives the round-trip to Google
- * and any reload in between; the URL's own `?next=` is still preferred when
- * present because it is what the visitor can see.
- */
 export function rememberPostLoginPath(next: string | null | undefined): void {
   if (!next || !next.startsWith("/") || next.startsWith("//")) return;
   writeJson(K_NEXT, { path: next, at: Date.now() });
 }
 
-/** The remembered destination, or null when absent/stale. */
 export function rememberedPostLoginPath(): string | null {
   const saved = readJson<{ path?: unknown; at?: unknown }>(K_NEXT);
   if (!saved || typeof saved.path !== "string" || typeof saved.at !== "number") return null;
-  if (Date.now() - saved.at > PENDING_MAX_AGE_MS) {
+  if (Date.now() - saved.at > DEST_MAX_AGE_MS) {
     remove(K_NEXT);
     return null;
   }
@@ -144,60 +127,12 @@ function clearRememberedPostLoginPath(): void {
   remove(K_NEXT);
 }
 
-/** Resolve the destination for a completed sign-in. */
+export function clearOAuthFlowMarkers(): void {
+  clearRememberedPostLoginPath();
+}
+
 export function postAuthPath(onboardingComplete: boolean, next?: string | null): string {
   return postAuthDestination(next ?? rememberedPostLoginPath());
-}
-
-// -----------------------------------------------------------------------------
-// Pending-redirect bookkeeping (drives the loading state and loop protection)
-// -----------------------------------------------------------------------------
-
-function markRedirectPending(provider: OAuthProviderId): void {
-  writeJson(K_PENDING_REDIRECT, { provider, at: Date.now() });
-}
-
-/** True while a redirect we started may still be in flight. */
-export function oauthRedirectPending(): boolean {
-  const pending = readJson<{ at?: unknown }>(K_PENDING_REDIRECT);
-  if (!pending || typeof pending.at !== "number") return false;
-  if (Date.now() - pending.at > PENDING_MAX_AGE_MS) {
-    remove(K_PENDING_REDIRECT);
-    return false;
-  }
-  return true;
-}
-
-function clearRedirectPending(): void {
-  remove(K_PENDING_REDIRECT);
-}
-
-/** Set by Settings → Linked sign-in before leaving for Google. */
-export function pendingLinkProvider(): OAuthProviderId | null {
-  const value = readJson<{ provider?: unknown; at?: unknown }>(K_PENDING_LINK);
-  if (!value || typeof value.at !== "number" || typeof value.provider !== "string") return null;
-  if (Date.now() - value.at > PENDING_MAX_AGE_MS) {
-    remove(K_PENDING_LINK);
-    return null;
-  }
-  return value.provider === "facebook" ? "facebook" : "google";
-}
-
-function clearPendingLink(): void {
-  remove(K_PENDING_LINK);
-}
-
-/** One-shot message for the screen that resumes after a redirect. */
-export function setOAuthNotice(message: string, tone: "success" | "danger"): void {
-  writeJson(K_NOTICE, { message, tone, at: Date.now() });
-}
-
-export function consumeOAuthNotice(): { message: string; tone: "success" | "danger" } | null {
-  const notice = readJson<{ message?: unknown; tone?: unknown; at?: unknown }>(K_NOTICE);
-  remove(K_NOTICE);
-  if (!notice || typeof notice.message !== "string") return null;
-  const tone = notice.tone === "success" ? "success" : "danger";
-  return { message: notice.message, tone };
 }
 
 // -----------------------------------------------------------------------------
@@ -208,30 +143,21 @@ const CANCELLED_CODES = new Set([
   "auth/popup-closed-by-user",
   "auth/cancelled-popup-request",
   "auth/user-cancelled",
-  "auth/redirect-cancelled-by-user",
   "auth/web-context-cancelled",
 ]);
 
-/** The user closed/chose not to continue — not an error worth shouting about. */
+/** The user closed/cancelled the popup before completing authentication. */
 export function isOAuthCancelled(err: unknown): boolean {
   return CANCELLED_CODES.has(errorCode(err));
 }
 
-/** No redirect was in flight: `getRedirectResult` resolved nothing. */
-function isNoAuthEvent(err: unknown): boolean {
-  const code = errorCode(err);
-  return code === "auth/no-auth-event" || code === "auth/argument-error";
-}
-
-/** Storage/cookies blocked by the browser: sign-in genuinely cannot proceed. */
 function isStorageBlocked(err: unknown): boolean {
   const code = errorCode(err);
   const text = errorText(err);
   return (
     code === "auth/web-storage-unsupported" ||
     code === "auth/third-party-cookie-blocked" ||
-    text.includes("storage-partitioned") ||
-    text.includes("cookie")
+    text.includes("storage-partitioned")
   );
 }
 
@@ -240,8 +166,17 @@ export function describeOAuthFailure(err: unknown, provider: OAuthProviderId): s
   const label = provider === "google" ? "Google" : "Facebook";
 
   if (code === "BAD_ORIGIN") return BAD_ORIGIN_FAILED;
+  if (code === "auth/popup-blocked") {
+    return "Your browser blocked the sign-in popup. Allow popups for this site and try again, or sign in with email and password.";
+  }
+  if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+    return "The sign-in popup was closed before finishing. Please try again and keep the popup open until sign-in completes.";
+  }
   if (code === "auth/account-exists-with-different-credential") {
     return "An account with this email already exists. Sign in with email and password, then link Google or Facebook in Settings.";
+  }
+  if (code === "auth/network-request-failed") {
+    return "Network problem — check your internet connection and try again.";
   }
   if (isStorageBlocked(err)) {
     return "Your browser blocked the storage this sign-in needs. Allow cookies/site data for this domain (or leave private browsing) and try again.";
@@ -310,9 +245,6 @@ function sessionFailureResult(err: unknown, provider: OAuthProviderId): OAuthRes
 function makeProvider(provider: OAuthProviderId): AuthProvider {
   if (provider === "google") {
     const p = new GoogleAuthProvider();
-    // Always show the account chooser: on a migrated domain the browser may
-    // still hold the old session hint, and "silently reuse the last account"
-    // is how people end up in the wrong profile.
     p.setCustomParameters({ prompt: "select_account" });
     p.addScope("email");
     p.addScope("profile");
@@ -325,8 +257,26 @@ function makeProvider(provider: OAuthProviderId): AuthProvider {
 }
 
 /**
- * Begin a full-page redirect to the provider's consent screen.
- * Returns `{status:"redirecting"}` in the normal case (the page is unloading).
+ * Let the shared Firebase Auth instance flush `authStateReady()` after a popup
+ * completes so `onAuthStateChanged` listeners (such as `attachStateMirror`)
+ * observe the new user cleanly before backend profile/session setup runs.
+ */
+async function confirmSharedAuthState(auth: Auth, uid: string): Promise<void> {
+  if (auth.currentUser?.uid === uid) return;
+  if (typeof (auth as { authStateReady?: () => Promise<void> }).authStateReady === "function") {
+    await Promise.race([
+      (auth as { authStateReady: () => Promise<void> }).authStateReady(),
+      new Promise<void>((resolve) => setTimeout(resolve, 1500)),
+    ]).catch(() => {
+      /* continue with verified cred.user */
+    });
+  }
+}
+
+/**
+ * Sign in via Firebase popup (`signInWithPopup`).
+ * Important: calls `signInWithPopup` without any prior `await` so browsers
+ * preserve the user-click gesture and do not trigger `auth/popup-blocked`.
  */
 export async function startOAuthSignIn(
   provider: OAuthProviderId,
@@ -334,212 +284,117 @@ export async function startOAuthSignIn(
 ): Promise<OAuthResult> {
   const auth = fbAuth();
   rememberPostLoginPath(options.next);
-  markRedirectPending(provider);
-  logAuthDiagnostic({
-    stage: "redirect-start",
-    method: "redirect",
+  logAuthEvent("POPUP_SIGN_IN_STARTED", {
+    stage: "popup-start",
+    method: "popup",
     provider,
     detail: { next: options.next ?? "" },
   });
+
+  let cred: UserCredential;
   try {
-    await signInWithRedirect(auth, makeProvider(provider));
-    return { status: "redirecting" };
+    cred = await signInWithPopup(auth, makeProvider(provider));
   } catch (err) {
-    clearRedirectPending();
-    logAuthEvent("AUTH_REDIRECT_ERROR", { stage: "redirect-start", method: "redirect", provider, error: err });
-    if (isOAuthCancelled(err)) return { status: "cancelled" };
+    if (isOAuthCancelled(err)) {
+      logAuthEvent("POPUP_SIGN_IN_COMPLETED", {
+        stage: "popup-result",
+        method: "popup",
+        provider,
+        error: err,
+        detail: { outcome: "cancelled" },
+      });
+      return { status: "cancelled", message: describeOAuthFailure(err, provider), provider };
+    }
+    logAuthEvent("AUTH_POPUP_ERROR", {
+      stage: "popup-result",
+      method: "popup",
+      provider,
+      error: err,
+      detail: { outcome: "failed" },
+    });
     return { status: "error", message: describeOAuthFailure(err, provider), provider };
   }
+
+  if (!cred || !cred.user || !cred.user.uid) {
+    const missingErr = new Error("Firebase popup did not return an authenticated user.");
+    logAuthEvent("AUTH_POPUP_ERROR", {
+      stage: "popup-result",
+      method: "popup",
+      provider,
+      error: missingErr,
+      detail: { reason: "missing_credential_user" },
+    });
+    return { status: "error", message: describeOAuthFailure(missingErr, provider), provider };
+  }
+
+  const resolvedProvider = providerFromCredential(cred) ?? provider;
+  logAuthEvent("POPUP_SIGN_IN_COMPLETED", {
+    stage: "popup-result",
+    method: "popup",
+    provider: resolvedProvider,
+    detail: {
+      outcome: "credential_received",
+      operationType: cred.operationType ?? "signIn",
+      hasUser: true,
+    },
+  });
+  logAuthEvent("AUTH_USER_DETECTED", {
+    stage: "auth-state",
+    method: "popup",
+    provider: resolvedProvider,
+    detail: { source: "popup_credential", uidPresent: true },
+  });
+
+  await confirmSharedAuthState(auth, cred.user.uid);
+  return finishSignIn(cred, resolvedProvider);
 }
 
 /**
- * Start linking a provider to the CURRENT user (Settings → Linked sign-in).
- * Same redirect transport, tagged so the return trip cannot be mistaken for a
- * fresh sign-in.
+ * Link an OAuth provider to the CURRENT signed-in user via `linkWithPopup`
+ * (Settings → Linked sign-in). Never navigates away from Settings.
  */
 export async function startOAuthLink(provider: OAuthProviderId): Promise<OAuthResult> {
   const user = fbAuth().currentUser;
   if (!user) return { status: "error", message: "Sign in first, then link this provider.", provider };
-  writeJson(K_PENDING_LINK, { provider, at: Date.now() });
-  markRedirectPending(provider);
-  logAuthDiagnostic({ stage: "link-start", method: "link", provider });
-  try {
-    await linkWithRedirect(user, makeProvider(provider));
-    return { status: "redirecting" };
-  } catch (err) {
-    clearPendingLink();
-    clearRedirectPending();
-    logAuthEvent("AUTH_REDIRECT_ERROR", { stage: "link-start", method: "link", provider, error: err });
-    if (isOAuthCancelled(err)) return { status: "cancelled" };
-    return { status: "error", message: describeOAuthFailure(err, provider), provider };
-  }
-}
 
-/**
- * Consume the pending redirect exactly once per page load.
- *
- * `getRedirectResult()` is single-shot and several screens can mount at the
- * same time (auth pages, the app shell, /verify). Sharing one promise is what
- * prevents a double session mint — and a double navigation — from racing.
- */
-let redirectConsumption: Promise<OAuthResult | null> | null = null;
-
-export function clearOAuthFlowMarkers(): void {
-  clearPendingLink();
-  clearRedirectPending();
-  clearRememberedPostLoginPath();
-  remove(K_NOTICE);
-  redirectConsumption = null;
-}
-
-export function consumeOAuthRedirect(): Promise<OAuthResult | null> {
-  if (!redirectConsumption) {
-    redirectConsumption = handleRedirectResult().catch((err: unknown) => {
-      // Never leave a marker behind on an unexpected crash: a stuck pending
-      // marker is what turns "try again" into a spinner that never resolves.
-      clearPendingLink();
-      clearRedirectPending();
-      logAuthEvent("AUTH_REDIRECT_ERROR", {
-        stage: "redirect-result",
-        method: "redirect",
-        error: err,
-        detail: { crashed: true },
-      });
-      return { status: "error", message: describeOAuthFailure(err, "google") } as OAuthResult;
-    });
-  }
-  return redirectConsumption;
-}
-
-async function handleRedirectResult(): Promise<OAuthResult | null> {
-  const auth = fbAuth();
-  const linkProvider = pendingLinkProvider();
-  const wasPending = oauthRedirectPending();
-  logAuthEvent("REDIRECT_RESULT_STARTED", {
-    stage: linkProvider ? "link-result" : "redirect-result",
-    method: linkProvider ? "link" : "redirect",
-    provider: linkProvider ?? undefined,
-    detail: { wasPending },
-  });
+  logAuthEvent("POPUP_SIGN_IN_STARTED", { stage: "link-start", method: "link", provider });
   let cred: UserCredential;
   try {
-    const result = await getRedirectResult(auth);
-    if (!result) {
-      // Nothing in flight. Drop any stale marker so the UI never hangs on a
-      // spinner from an abandoned attempt.
-      clearRedirectPending();
-      if (linkProvider) {
-        clearPendingLink();
-        logAuthEvent("REDIRECT_RESULT_COMPLETED", {
-          stage: "link-result",
-          method: "link",
-          provider: linkProvider,
-          detail: { redirect: "absent", wasPending },
-        });
-        return {
-          status: "error",
-          message: "Linking didn't complete. Please try again from Settings.",
-          provider: linkProvider,
-        };
-      }
-      logAuthEvent("REDIRECT_RESULT_COMPLETED", {
-        stage: "redirect-result",
-        method: "redirect",
-        detail: { redirect: "absent", wasPending, hasCurrentUser: Boolean(auth.currentUser) },
-      });
-      if (wasPending && !auth.currentUser) {
-        logAuthEvent("AUTH_REDIRECT_ERROR", {
-          stage: "redirect-result",
-          method: "redirect",
-          detail: { reason: "null_redirect_after_pending", hasCurrentUser: false },
-        });
-      }
-      return null;
-    }
-    cred = result;
+    cred = await linkWithPopup(user, makeProvider(provider));
   } catch (err) {
-    clearRedirectPending();
-    if (isNoAuthEvent(err)) {
-      logAuthEvent("REDIRECT_RESULT_COMPLETED", {
-        stage: "redirect-result",
-        method: "redirect",
-        detail: { redirect: "no-auth-event", wasPending },
-      });
-      return null;
-    }
     if (isOAuthCancelled(err)) {
-      clearPendingLink();
-      logAuthEvent("REDIRECT_RESULT_COMPLETED", {
-        stage: "redirect-result",
-        method: "redirect",
+      logAuthEvent("POPUP_SIGN_IN_COMPLETED", {
+        stage: "link-result",
+        method: "link",
+        provider,
         error: err,
-        detail: { redirect: "cancelled" },
+        detail: { outcome: "cancelled" },
       });
-      return { status: "cancelled" };
+      return { status: "cancelled", message: describeOAuthFailure(err, provider), provider };
     }
-    const provider = linkProvider ?? providerFromError(err);
-    logAuthEvent("AUTH_REDIRECT_ERROR", {
-      stage: linkProvider ? "link-result" : "redirect-result",
-      method: linkProvider ? "link" : "redirect",
-      provider,
-      error: err,
-      detail: { redirect: "failed" },
-    });
-    clearPendingLink();
+    logAuthEvent("AUTH_POPUP_ERROR", { stage: "link-result", method: "link", provider, error: err });
     return { status: "error", message: describeOAuthFailure(err, provider), provider };
   }
 
-  clearRedirectPending();
-  const provider = providerFromCredential(cred) ?? linkProvider ?? "google";
-  logAuthEvent("REDIRECT_RESULT_COMPLETED", {
-    stage: linkProvider ? "link-result" : "redirect-result",
-    method: linkProvider ? "link" : "redirect",
+  if (!cred || !cred.user || !cred.user.uid) {
+    const missingErr = new Error("Linking did not return an authenticated user.");
+    logAuthEvent("AUTH_POPUP_ERROR", { stage: "link-result", method: "link", provider, error: missingErr });
+    return { status: "error", message: describeOAuthFailure(missingErr, provider), provider };
+  }
+
+  try {
+    await completeAuthenticatedSession(cred.user, { forceRefresh: true });
+  } catch {
+    /* the link succeeded in Firebase; keep the active session */
+  }
+  return {
+    status: "ok",
+    uid: cred.user.uid,
+    onboardingComplete: true,
     provider,
-    detail: {
-      redirect: "consumed",
-      operationType: cred.operationType ?? "unknown",
-      hasUser: Boolean(cred.user),
-    },
-  });
-  if (cred.user) {
-    logAuthEvent("AUTH_USER_DETECTED", {
-      stage: "auth-state",
-      method: linkProvider ? "link" : "redirect",
-      provider,
-      detail: { source: "redirect_result", uidPresent: Boolean(cred.user.uid) },
-    });
-  }
-
-  // Settings → Linked sign-in return trip.
-  if (linkProvider) {
-    clearPendingLink();
-    if (cred.operationType !== "link") {
-      // The browser came back signed in instead of linking. Never attach the
-      // credential silently — the account that just signed in may not be the
-      // account whose Settings page sent us here.
-      await signOutQuietly();
-      return {
-        status: "error",
-        message: "We couldn't link that provider to your account. Sign in with your password, then link it from Settings.",
-        provider,
-      };
-    }
-    try {
-      await completeAuthenticatedSession(cred.user);
-    } catch {
-      /* the link itself succeeded; the existing cookie is still valid */
-    }
-    return {
-      status: "ok",
-      uid: cred.user.uid,
-      onboardingComplete: true,
-      provider,
-      isNewUser: false,
-      operation: "link",
-    };
-  }
-
-  return finishSignIn(cred, provider);
+    isNewUser: false,
+    operation: "link",
+  };
 }
 
 async function finishSignIn(cred: UserCredential, provider: OAuthProviderId): Promise<OAuthResult> {
@@ -553,6 +408,9 @@ async function finishSignIn(cred: UserCredential, provider: OAuthProviderId): Pr
 
   try {
     const session = await completeAuthenticatedSession(cred.user);
+    if (session.profileLoaded === false) {
+      throw Object.assign(new Error("User profile could not be loaded."), { code: "PROFILE_LOAD_FAILED" });
+    }
     clearRememberedPostLoginPath();
     return {
       status: "ok",
@@ -565,9 +423,6 @@ async function finishSignIn(cred: UserCredential, provider: OAuthProviderId): Pr
       profile: session.profile,
     };
   } catch (err) {
-    // The Firebase user exists (or was returned) — this is a session problem,
-    // and telling the user "Google failed" would be a lie that hides a
-    // deployment misconfiguration.
     return sessionFailureResult(err, provider);
   }
 }
@@ -577,19 +432,6 @@ function providerFromCredential(cred: UserCredential): OAuthProviderId | null {
   if (id.includes("facebook")) return "facebook";
   if (id.includes("google")) return "google";
   return null;
-}
-
-function providerFromError(err: unknown): OAuthProviderId {
-  return errorText(err).includes("facebook") ? "facebook" : "google";
-}
-
-async function signOutQuietly(): Promise<void> {
-  try {
-    const { signOut } = await import("firebase/auth");
-    await signOut(fbAuth());
-  } catch {
-    /* ignore */
-  }
 }
 
 function errorCode(err: unknown): string {

@@ -16,6 +16,7 @@ export type AuthErrorKind =
   | "session" // Firebase auth succeeded, the app session cookie did not
   | "origin" // the server refused the session request from this domain (CSRF)
   | "storage" // browser blocked the storage OAuth needs
+  | "popup-blocked" // browser blocked the OAuth popup window
   | "cancelled" // user closed / cancelled the flow
   | "invalid-credential"
   | "network"
@@ -53,6 +54,11 @@ export function authErrorKind(err: unknown): AuthErrorKind {
     raw.includes("storage-partitioned")
   ) {
     return "storage";
+  }
+  if (
+    raw.includes("popup-blocked")
+  ) {
+    return "popup-blocked";
   }
   if (
     raw.includes("popup-closed-by-user") ||
@@ -97,6 +103,8 @@ const COPY: Record<AuthErrorKind, string> = {
     "You're signed in, but this domain is not allowed to create the QORVYNA session. An administrator must include this hostname in NEXT_PUBLIC_APP_URL (or QORVYNA_ALLOWED_ORIGINS) and redeploy — your account is fine.",
   storage:
     "Your browser blocked the storage this sign-in needs. Allow cookies/site data for this domain (or leave private browsing) and try again.",
+  "popup-blocked":
+    "Your browser blocked the sign-in popup. Allow popups for this site and try again, or sign in with email and password.",
   cancelled: "",
   "invalid-credential": "Incorrect email or password.",
   network: "Network problem — check your connection and try again.",

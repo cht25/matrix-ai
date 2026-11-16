@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Camera, Trash2, Upload } from "lucide-react";
 import { rpc } from "@/lib/client/api";
-import { consumeOAuthNotice, startOAuthLink, type OAuthProviderId } from "@/lib/auth/oauth";
+import { startOAuthLink, type OAuthProviderId } from "@/lib/auth/oauth";
 import { clearProfileAvatar, isAllowedAvatarFile, saveProfileAvatar } from "@/lib/client/avatar";
 import { UserAvatar } from "@/components/avatar";
 import { Alert, Button, Card, Field, Input, Select, Spinner } from "@/components/ui";
@@ -35,26 +35,24 @@ export function AccountForm({ profile, countries }: { profile: Profile | null; c
   const [msg, setMsg] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const [linking, setLinking] = useState<OAuthProviderId | null>(null);
 
-  // A link redirect returns here; <AuthRedirectWatcher /> recorded the outcome
-  // before reloading, so show it exactly once.
-  useEffect(() => {
-    const notice = consumeOAuthNotice();
-    if (notice) setMsg({ tone: notice.tone, text: notice.message });
-  }, []);
-
-  /**
-   * Linking uses the same full-page redirect as sign-in (no popup anywhere).
-   * The promise normally never resolves — the browser has already left for the
-   * provider — so the button stays busy until then.
-   */
+  /** Link an OAuth provider to the current account via Firebase popup (`linkWithPopup`). */
   async function linkProvider(provider: OAuthProviderId) {
     setMsg(null);
     setLinking(provider);
     const result = await startOAuthLink(provider);
-    if (result.status === "redirecting") return;
     setLinking(null);
-    if (result.status === "cancelled") return;
-    if (result.status === "error") setMsg({ tone: "danger", text: result.message });
+    if (result.status === "ok") {
+      setMsg({ tone: "success", text: "Linked. You can now use this provider to sign in." });
+      router.refresh();
+      return;
+    }
+    if (result.status === "cancelled") {
+      setMsg({ tone: "danger", text: result.message });
+      return;
+    }
+    if (result.status === "error" || result.status === "session-failed") {
+      setMsg({ tone: "danger", text: result.message });
+    }
   }
 
   async function save(e: React.FormEvent) {

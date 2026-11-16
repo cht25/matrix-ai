@@ -18,7 +18,6 @@ import { PasswordInput } from "@/components/password-input";
 import { AuthFooterLink, AuthUnavailable, Divider, OAuthButtons } from "@/components/auth/login-screen";
 import {
   postAuthPath,
-  rememberPostLoginPath,
   startOAuthSignIn,
   type OAuthProviderId,
 } from "@/lib/auth/oauth";
@@ -34,18 +33,16 @@ import { logAuthDiagnostic } from "@/lib/auth/diagnostics";
 export function RegisterForm() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [sessionRetry, setSessionRetry] = useState(false);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  // Full-page OAuth: `starting` marks the instant before the browser leaves.
-  // The return trip is owned by the centralised auth lifecycle (see
-  // src/lib/auth/lifecycle.ts) — this screen only renders its states.
   const [starting, setStarting] = useState<OAuthProviderId | null>(null);
-  const { decision, status, error: lifecycleError, retry, onboardingComplete, pendingRedirect } = useAuthLifecycle();
+  const { decision, status, error: lifecycleError, retry, onboardingComplete } = useAuthLifecycle();
 
   // Navigate once, only after the lifecycle reports an established session —
-  // never while Firebase is still restoring or the redirect is unprocessed.
+  // never while Firebase is still restoring.
   const navigatedRef = useRef(false);
   const [loopBlocked, setLoopBlocked] = useState(false);
   useEffect(() => {
@@ -134,13 +131,30 @@ export function RegisterForm() {
 
   async function oauth(provider: OAuthProviderId) {
     setError(null);
+    setNotice(null);
     setSessionRetry(false);
     setStarting(provider);
-    rememberPostLoginPath("/chat");
     const result = await startOAuthSignIn(provider, { next: "/chat" });
-    if (result.status === "redirecting") return; // browser is already leaving
     setStarting(null);
-    if (result.status === "cancelled") return;
+    if (result.status === "ok") {
+      if (!recordPostLoginNavigation()) {
+        setLoopBlocked(true);
+        return;
+      }
+      navigatedRef.current = true;
+      markSessionEstablished({
+        uid: result.uid,
+        onboardingComplete: result.onboardingComplete,
+        profileLoaded: result.profileLoaded,
+        profile: result.profile ?? null,
+      });
+      window.location.replace(postAuthPath(result.onboardingComplete));
+      return;
+    }
+    if (result.status === "cancelled") {
+      setNotice(result.message);
+      return;
+    }
     if (result.status === "session-failed") {
       setError(result.message);
       setSessionRetry(true);
@@ -156,7 +170,7 @@ export function RegisterForm() {
   // INITIALIZING / PROFILE_LOADING → wait. READY/AUTHENTICATED → the
   // navigation effect above is taking over.
   if ((decision === "wait" || decision === "navigate") && !loopBlocked) {
-    const finishingTrip = decision === "navigate" || pendingRedirect || status === "PROFILE_LOADING";
+    const finishingTrip = decision === "navigate" || status === "PROFILE_LOADING";
     return (
       <div className="space-y-3 py-2 text-center" role="status" aria-live="polite">
         <div className="flex justify-center"><Spinner /></div>
@@ -211,12 +225,13 @@ export function RegisterForm() {
       </form>
       <Divider />
       {starting ? (
-        <Alert tone="info">Redirecting to {starting === "google" ? "Google" : "Facebook"}…</Alert>
+        <Alert tone="info">Completing sign-in with {starting === "google" ? "Google" : "Facebook"} in the popup window…</Alert>
       ) : null}
+      {notice && !error ? <Alert tone="info">{notice}</Alert> : null}
       <OAuthButtons
         onGoogle={() => oauth("google")}
         onFacebook={() => oauth("facebook")}
-        redirectingTo={starting}
+        busyProvider={starting}
         disabled={busy}
       />
       <AuthFooterLink href="/login">Already have an account? Sign in</AuthFooterLink>
