@@ -17,7 +17,15 @@ import { TotpMultiFactorGenerator } from "firebase/auth";
 import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
 import { describeAuthError } from "@/lib/firebase/auth-errors";
 import { MAX_AGE, MIN_AGE, isValidEmail } from "@/lib/utils";
-import { completeAuthenticatedSession, consumeOAuthRedirect, postAuthPath, signInWithOAuth } from "@/lib/auth/oauth";
+import {
+  completeAuthenticatedSession,
+  consumeOAuthRedirect,
+  oauthRedirectPending,
+  postAuthPath,
+  rememberPostLoginPath,
+  startOAuthSignIn,
+  type OAuthProviderId,
+} from "@/lib/auth/oauth";
 import { BrandLockup } from "@/components/logo";
 import { BRAND, BRAND_PILLARS } from "@/lib/brand";
 import { PasswordInput } from "@/components/password-input";
@@ -84,33 +92,56 @@ export function Divider() {
   );
 }
 
-export function OAuthButtons({ onGoogle, onFacebook }: { onGoogle: () => void | Promise<void>; onFacebook: () => void | Promise<void> }) {
-  const [busy, setBusy] = useState<"google" | "facebook" | null>(null);
-  async function run(which: "google" | "facebook", fn: () => void | Promise<void>) {
+/**
+ * Google / Facebook buttons.
+ *
+ * Both providers use Firebase's full-page redirect, so the moment one is
+ * clicked the browser is about to leave this page. `redirectingTo` keeps that
+ * state visible and disables the buttons so a second click cannot start a
+ * competing redirect (the classic cause of the auth-state ping-pong).
+ */
+export function OAuthButtons({
+  onGoogle,
+  onFacebook,
+  redirectingTo = null,
+  disabled = false,
+}: {
+  onGoogle: () => void | Promise<void>;
+  onFacebook: () => void | Promise<void>;
+  redirectingTo?: OAuthProviderId | null;
+  disabled?: boolean;
+}) {
+  const [busy, setBusy] = useState<OAuthProviderId | null>(null);
+  async function run(which: OAuthProviderId, fn: () => void | Promise<void>) {
     setBusy(which);
     try {
       await fn();
     } finally {
+      // After a redirect starts the browser is unloading; leaving `busy` set
+      // would be invisible anyway, but resetting keeps the form usable if the
+      // redirect was refused synchronously.
       setBusy(null);
     }
   }
+  const active = redirectingTo ?? busy;
+  const locked = disabled || redirectingTo !== null || busy !== null;
   return (
     <div className="grid grid-cols-2 gap-2.5">
       <button
         type="button"
-        disabled={busy !== null}
+        disabled={locked}
         onClick={() => { void run("google", onGoogle); }}
         className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border-strong bg-surface px-3 text-[13px] font-medium text-ink transition-colors hover:border-accent hover:text-accent disabled:opacity-60"
       >
-        {busy === "google" ? <Spinner /> : <GoogleIcon />} Google
+        {active === "google" ? <Spinner /> : <GoogleIcon />} Google
       </button>
       <button
         type="button"
-        disabled={busy !== null}
+        disabled={locked}
         onClick={() => { void run("facebook", onFacebook); }}
         className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border-strong bg-surface px-3 text-[13px] font-medium text-ink transition-colors hover:border-accent hover:text-accent disabled:opacity-60"
       >
-        {busy === "facebook" ? <Spinner /> : <FacebookIcon />} Facebook
+        {active === "facebook" ? <Spinner /> : <FacebookIcon />} Facebook
       </button>
     </div>
   );
@@ -146,6 +177,11 @@ export function LoginForm() {
   const [mfaCode, setMfaCode] = useState("");
 
   const [sessionRetry, setSessionRetry] = useState(false);
+  // Full-page OAuth state. `finishing` is the return trip from Google (the page
+  // has just reloaded with a result to consume); `starting` is the instant
+  // before the browser leaves for the consent screen.
+  const [finishing, setFinishing] = useState(false);
+  const [starting, setStarting] = useState<OAuthProviderId | null>(null);
 
   async function finishSignIn() {
     const session = await completeAuthenticatedSession();
@@ -165,14 +201,27 @@ export function LoginForm() {
   }
 
   useEffect(() => {
+    if (!firebaseBrowserConfigured) return;
     let cancelled = false;
+    // Show the loading state only when we know a redirect is coming back —
+    // otherwise every visit to /login would flash a spinner before the form.
+    if (oauthRedirectPending()) setFinishing(true);
     (async () => {
+      // consumeOAuthRedirect() is memoised per page load: it can be awaited
+      // here, in <AuthRedirectWatcher /> and on /verify without ever minting a
+      // second session or draining the result twice.
       const result = await consumeOAuthRedirect();
-      if (cancelled || !result) return;
-      if (result.status === "cancelled") return;
+      if (cancelled) return;
+      setFinishing(false);
+      setStarting(null);
+      if (!result || result.status === "cancelled" || result.status === "redirecting") return;
       if (result.status === "ok") {
+        // A link operation belongs to Settings, never to a login navigation.
+        if (result.operation === "link") return;
         setBusy(true);
-        window.location.href = postAuthPath(result.onboardingComplete, next);
+        // replace(): the redirect URL must not stay in history, or "Back"
+        // re-enters the login screen and looks like a redirect loop.
+        window.location.replace(postAuthPath(result.onboardingComplete, next));
         return;
       }
       if (result.status === "session-failed") {
@@ -180,7 +229,7 @@ export function LoginForm() {
         setSessionRetry(true);
         return;
       }
-      if (result.status === "error") setError(result.message);
+      setError(result.message);
     })();
     return () => {
       cancelled = true;
@@ -240,25 +289,37 @@ export function LoginForm() {
     }
   }
 
-  async function oauth(provider: "google" | "facebook") {
+  async function oauth(provider: OAuthProviderId) {
     setError(null);
     setSessionRetry(false);
-    const result = await signInWithOAuth(provider);
-    if (result.status === "cancelled" || result.status === "redirecting") return;
-    if (result.status === "ok") {
-      window.location.href = postAuthPath(result.onboardingComplete, next);
-      return;
-    }
+    setStarting(provider);
+    rememberPostLoginPath(next);
+    const result = await startOAuthSignIn(provider, { next });
+    if (result.status === "redirecting") return; // browser is already leaving
+    setStarting(null);
+    if (result.status === "cancelled") return;
     if (result.status === "session-failed") {
       setError(result.message);
       setSessionRetry(true);
       return;
     }
-    setError(result.message);
+    if (result.status === "error") setError(result.message);
   }
 
   if (!firebaseBrowserConfigured) {
     return <AuthUnavailable />;
+  }
+
+  if (finishing) {
+    return (
+      <div className="space-y-3 py-2 text-center" role="status" aria-live="polite">
+        <div className="flex justify-center"><Spinner /></div>
+        <p className="text-sm font-medium text-ink">Finishing sign-in…</p>
+        <p className="text-[13px] leading-relaxed text-ink-2">
+          Confirming your account and starting your QORVYNA session. This takes a moment — please don&apos;t close this tab.
+        </p>
+      </div>
+    );
   }
 
   if (mfa) {
@@ -301,7 +362,15 @@ export function LoginForm() {
       </form>
 
       <Divider />
-      <OAuthButtons onGoogle={() => oauth("google")} onFacebook={() => oauth("facebook")} />
+      {starting ? (
+        <Alert tone="info">Redirecting to {starting === "google" ? "Google" : "Facebook"}…</Alert>
+      ) : null}
+      <OAuthButtons
+        onGoogle={() => oauth("google")}
+        onFacebook={() => oauth("facebook")}
+        redirectingTo={starting}
+        disabled={busy}
+      />
       <p className="mt-6 text-center text-[13px] text-ink-2">
         Don't have an account?{" "}
         <Link href="/register" className="font-medium text-ink transition-colors hover:text-accent">

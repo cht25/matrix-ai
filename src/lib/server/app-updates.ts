@@ -64,7 +64,7 @@ export const SHIPPED_APP_RELEASE: AppReleaseRecord = {
   release_notes:
     "• Chat, Agent, website generation and coding from one workspace\n" +
     "• Compact live step timeline\n" +
-    "• Over-the-air phone update checker & direct matrix.thamjj13.top/chat sync",
+    "• Over-the-air phone update checker & direct qorvyna.thamjj13.top/chat sync",
   published_at: "2026-11-12T00:00:00.000Z",
 };
 

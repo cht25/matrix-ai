@@ -12,6 +12,21 @@ const nextConfig: NextConfig = {
   experimental: {
     serverActions: { bodySizeLimit: "8mb" },
   },
+  // Firebase's web-auth helper is normally served by
+  // <projectId>.firebaseapp.com. When a deployment deliberately sets
+  // NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN to its own hostname (see
+  // docs/AUTH_DOMAIN_MIGRATION.md), these rewrites make /__/auth/* reach the
+  // reverse proxy in src/app/api/auth/firebase-handler. With the default
+  // Firebase-hosted authDomain nothing requests these paths.
+  //
+  // NOTE: App Router folders starting with "_" are private, so the public
+  // /__/auth path cannot be a route folder itself — hence the rewrite.
+  async rewrites() {
+    return [
+      { source: "/__/auth/:path*", destination: "/api/auth/firebase-handler/:path*" },
+      { source: "/__/auth", destination: "/api/auth/firebase-handler" },
+    ];
+  },
   // PDFKit is a CommonJS/Node library with its own binary assets; bundling it
   // breaks its `fs` reads. Keep it external on the server.
   serverExternalPackages: ["pdfkit"],

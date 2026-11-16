@@ -115,7 +115,7 @@ describe("Pillar 3 — Arena-Style Compact Collapsible Steps UI", () => {
   });
 });
 
-describe("Pillars 4 & 5 — Phone-First OTA Update System, Phone App & Canonical https://matrix.thamjj13.top URL", () => {
+describe("Pillars 4 & 5 — Phone-First OTA Update System, Phone App & Canonical https://qorvyna.thamjj13.top URL", () => {
   it("compares semantic versions and evaluates optional vs mandatory phone updates accurately", () => {
     expect(compareSemver("1.0.0", "1.1.0")).toBe(-1);
     expect(compareSemver("1.1.0", "1.1.0")).toBe(0);
@@ -146,17 +146,17 @@ describe("Pillars 4 & 5 — Phone-First OTA Update System, Phone App & Canonical
   });
 
   it("serves GET /api/app/version for Android phones and validates admin release publishing", async () => {
-    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://matrix.thamjj13.top");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://qorvyna.thamjj13.top");
     const req = new NextRequest(
-      "https://matrix.thamjj13.top/api/app/version?platform=android&current_version=1.0.0&build=1",
+      "https://qorvyna.thamjj13.top/api/app/version?platform=android&current_version=1.0.0&build=1",
     );
     const res = await getAppVersion(req);
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.ok).toBe(true);
     expect(json.update_available).toBe(true);
-    expect(json.web_url).toBe("https://matrix.thamjj13.top");
-    expect(json.chat_url).toBe("https://matrix.thamjj13.top/chat");
+    expect(json.web_url).toBe("https://qorvyna.thamjj13.top");
+    expect(json.chat_url).toBe("https://qorvyna.thamjj13.top/chat");
 
     let stored: Record<string, unknown> = {};
     const mockDb = {
@@ -183,19 +183,19 @@ describe("Pillars 4 & 5 — Phone-First OTA Update System, Phone App & Canonical
     expect(saved.force_update).toBe(true);
   });
 
-  it("aligns canonical https://matrix.thamjj13.top and /chat across SEO, Phone App, Tauri, and deployment configs", () => {
+  it("aligns canonical https://qorvyna.thamjj13.top and /chat across SEO, Phone App, Tauri, and deployment configs", () => {
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "");
-    expect(PRODUCTION_ORIGIN).toBe("https://matrix.thamjj13.top");
-    expect(PRODUCTION_CHAT_URL).toBe("https://matrix.thamjj13.top/chat");
-    expect(siteOrigin()).toBe("https://matrix.thamjj13.top");
-    expect(chatOriginUrl()).toBe("https://matrix.thamjj13.top/chat");
+    expect(PRODUCTION_ORIGIN).toBe("https://qorvyna.thamjj13.top");
+    expect(PRODUCTION_CHAT_URL).toBe("https://qorvyna.thamjj13.top/chat");
+    expect(siteOrigin()).toBe("https://qorvyna.thamjj13.top");
+    expect(chatOriginUrl()).toBe("https://qorvyna.thamjj13.top/chat");
 
-    expect(read("mobile/matrix_app/lib/config.dart")).toContain("https://matrix.thamjj13.top");
+    expect(read("mobile/matrix_app/lib/config.dart")).toContain("https://qorvyna.thamjj13.top");
     expect(read("mobile/matrix_app/lib/update_service.dart")).toContain("/api/app/version");
     expect(read("mobile/matrix_app/lib/chat_screen.dart")).toContain("Worked ·");
-    expect(read("src-tauri/tauri.conf.json")).toContain("https://matrix.thamjj13.top/chat");
-    expect(read("apphosting.yaml")).toContain("https://matrix.thamjj13.top");
-    expect(read("render.yaml")).toContain("https://matrix.thamjj13.top");
+    expect(read("src-tauri/tauri.conf.json")).toContain("https://qorvyna.thamjj13.top/chat");
+    expect(read("apphosting.yaml")).toContain("https://qorvyna.thamjj13.top");
+    expect(read("render.yaml")).toContain("https://qorvyna.thamjj13.top");
     expect(read("docs/ci/android.yml")).toContain("matrix-android.apk");
   });
 });

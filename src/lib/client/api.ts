@@ -9,8 +9,13 @@
 import { fbAuth } from "@/lib/firebase/client";
 
 export class RpcCallError extends Error {
-  constructor(readonly code: string, readonly status: number) {
-    super(code);
+  /**
+   * `detail` is the server's human-readable explanation (e.g. which origins a
+   * deployment accepts). It is appended to the message so callers that render
+   * `error.message` see it, while `code` stays machine-comparable.
+   */
+  constructor(readonly code: string, readonly status: number, readonly detail?: string) {
+    super(detail && detail !== code ? `${code}: ${detail}` : code);
     this.name = "RpcCallError";
   }
 }
@@ -58,9 +63,21 @@ export async function mintSessionCookie(): Promise<SessionMint> {
     body: JSON.stringify({ idToken }),
     credentials: "same-origin",
   });
-  const data = (await res.json().catch(() => ({}))) as { error?: string; uid?: string; onboarding_complete?: boolean };
+  const data = (await res.json().catch(() => ({}))) as {
+    error?: string | { code?: string; message?: string };
+    uid?: string;
+    onboarding_complete?: boolean;
+  };
   if (!res.ok) {
-    throw new RpcCallError(data.error ?? "SESSION_MINT_FAILED", res.status);
+    // The session route answers with the standard { error: { code, message } }
+    // envelope; read both shapes so a rejected Origin keeps its real code
+    // instead of degrading into SESSION_MINT_FAILED.
+    const code =
+      typeof data.error === "string"
+        ? data.error
+        : data.error?.code ?? (res.status === 403 ? "BAD_ORIGIN" : "SESSION_MINT_FAILED");
+    const detail = typeof data.error === "object" ? data.error?.message : undefined;
+    throw new RpcCallError(code, res.status, detail);
   }
   return { ok: true, uid: data.uid ?? user.uid, onboarding_complete: data.onboarding_complete === true };
 }

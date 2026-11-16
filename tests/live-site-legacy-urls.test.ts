@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FirestoreDeploymentProvider, readStoredUrls } from "@/lib/deploy/firestore-provider";
 
-const origin = "https://matrix.thamjj13.top";
+const origin = "https://qorvyna.thamjj13.top";
 
 describe("existing published sites retain their identity but not an old localhost origin", () => {
   it("resolves generated URL entries without mutating IDs, ownership or stored data", () => {

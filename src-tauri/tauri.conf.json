@@ -7,7 +7,7 @@
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:3000/chat",
     "beforeBuildCommand": "npm run build",
-    "frontendDist": "https://matrix.thamjj13.top/chat"
+    "frontendDist": "https://qorvyna.thamjj13.top/chat"
   },
   "app": {
     "withGlobalTauri": true,
@@ -15,7 +15,7 @@
       {
         "label": "main",
         "title": "QORVYNA AI",
-        "url": "https://matrix.thamjj13.top/chat",
+        "url": "https://qorvyna.thamjj13.top/chat",
         "width": 1360,
         "height": 860,
         "minWidth": 900,

@@ -154,7 +154,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ListTile(
                 leading: const Icon(Icons.open_in_browser_rounded),
                 title: const Text('Open Web Workspace'),
-                subtitle: const Text('matrix.thamjj13.top/chat', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                subtitle: const Text('qorvyna.thamjj13.top/chat', style: TextStyle(fontSize: 11, color: Colors.white54)),
                 onTap: () {
                   Navigator.of(context).pop();
                   UpdateService.openWebChat();

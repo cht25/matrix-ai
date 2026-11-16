@@ -52,8 +52,22 @@ describe("authErrorKind", () => {
     expect(authErrorKind(fbErr("auth/network-request-failed"))).toBe("network");
   });
 
+  it("recognises a user cancellation as its own kind (not a failure to report)", () => {
+    // Deliberate: cancelling is not an error, and the UI must not print
+    // "we couldn't sign you in" when someone simply closed the consent screen.
+    expect(authErrorKind(fbErr("auth/popup-closed-by-user"))).toBe("cancelled");
+    expect(authErrorKind(fbErr("auth/user-cancelled"))).toBe("cancelled");
+    expect(authErrorKind(fbErr("auth/redirect-cancelled-by-user"))).toBe("cancelled");
+    expect(describeAuthError(fbErr("auth/user-cancelled"), "")).toBe("");
+  });
+
+  it("recognises blocked browser storage and a rejected session origin", () => {
+    expect(authErrorKind(fbErr("auth/web-storage-unsupported"))).toBe("storage");
+    expect(authErrorKind(fbErr("BAD_ORIGIN"))).toBe("origin");
+    expect(describeAuthError(fbErr("BAD_ORIGIN"), "")).toContain("not allowed to create the QORVYNA session");
+  });
+
   it("falls back to unknown for anything else (incl. non-errors)", () => {
-    expect(authErrorKind(fbErr("auth/popup-closed-by-user"))).toBe("unknown");
     expect(authErrorKind(new Error("boom"))).toBe("unknown");
     expect(authErrorKind(null)).toBe("unknown");
     expect(authErrorKind("nope")).toBe("unknown");

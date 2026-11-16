@@ -13,7 +13,10 @@ export type AuthErrorKind =
   | "domain" // host not in Authentication → Settings → Authorized domains
   | "provider" // sign-in method not enabled in the Firebase console
   | "account-exists"
-  | "session"
+  | "session" // Firebase auth succeeded, the app session cookie did not
+  | "origin" // the server refused the session request from this domain (CSRF)
+  | "storage" // browser blocked the storage OAuth needs
+  | "cancelled" // user closed / cancelled the flow
   | "invalid-credential"
   | "network"
   | "rate-limit"
@@ -41,6 +44,24 @@ export function authErrorKind(err: unknown): AuthErrorKind {
     return "config";
   }
   if (raw.includes("unauthorized-domain") || raw.includes("unauthorized_continue_uri")) return "domain";
+  // The deployment's mutation guard rejected the session request: the origin
+  // the browser used is not in the allowed list (a domain migration symptom).
+  if (raw.includes("bad_origin") || raw.includes("bad-origin")) return "origin";
+  if (
+    raw.includes("web-storage-unsupported") ||
+    raw.includes("third-party-cookie-blocked") ||
+    raw.includes("storage-partitioned")
+  ) {
+    return "storage";
+  }
+  if (
+    raw.includes("popup-closed-by-user") ||
+    raw.includes("cancelled-popup-request") ||
+    raw.includes("user-cancelled") ||
+    raw.includes("redirect-cancelled-by-user")
+  ) {
+    return "cancelled";
+  }
   if (raw.includes("operation-not-allowed")) return "provider";
   if (raw.includes("account-exists-with-different-credential") || raw.includes("credential-already-in-use")) {
     return "account-exists";
@@ -72,6 +93,11 @@ const COPY: Record<AuthErrorKind, string> = {
     "An account with this email already exists. Sign in with email and password, then link Google or Facebook in Settings.",
   session:
     "Signed in with your account, but the server could not create your session. Tap Retry session — you will not create a second account.",
+  origin:
+    "You're signed in, but this domain is not allowed to create the QORVYNA session. An administrator must include this hostname in NEXT_PUBLIC_APP_URL (or QORVYNA_ALLOWED_ORIGINS) and redeploy — your account is fine.",
+  storage:
+    "Your browser blocked the storage this sign-in needs. Allow cookies/site data for this domain (or leave private browsing) and try again.",
+  cancelled: "",
   "invalid-credential": "Incorrect email or password.",
   network: "Network problem — check your connection and try again.",
   "rate-limit": "Too many attempts. Please wait a moment and try again.",

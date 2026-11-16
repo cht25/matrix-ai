@@ -8,9 +8,10 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { applyActionCode, getRedirectResult, reload } from "firebase/auth";
+import { applyActionCode, reload } from "firebase/auth";
 import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
 import { mintSessionCookie } from "@/lib/client/api";
+import { consumeOAuthRedirect } from "@/lib/auth/oauth";
 import { AuthShell, AuthUnavailable } from "@/components/auth/login-screen";
 import { Alert } from "@/components/ui";
 
@@ -41,7 +42,8 @@ function VerifyInner() {
           return;
         } else {
           // OAuth redirect completion (or an already-signed-in visitor).
-          await getRedirectResult(auth).catch(() => {});
+          // Uses the shared consumer so a redirect is never processed twice.
+          await consumeOAuthRedirect().catch(() => {});
           const user = auth.currentUser;
           if (!user) {
             setStatus("error");

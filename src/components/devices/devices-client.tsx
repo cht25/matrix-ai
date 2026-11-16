@@ -225,7 +225,7 @@ export function DevicesClient() {
           latest_version: data.latest_version,
           latest_build: data.latest_build ?? 1,
           apk_url: data.apk_url ?? "https://github.com/cht25/matrix-ai/releases/latest/download/matrix-android.apk",
-          chat_url: data.chat_url ?? "https://matrix.thamjj13.top/chat",
+          chat_url: data.chat_url ?? "https://qorvyna.thamjj13.top/chat",
           release_notes: data.release_notes ?? "",
           force_update: Boolean(data.force_update),
         });
@@ -604,7 +604,7 @@ export function DevicesClient() {
           </div>
           <p className="mt-1 text-xs text-ink-2">
             Android app with chat, update checks and Parent/Child device registration by QR code. It connects to{" "}
-            <span className="mono text-ink">{phoneRelease?.chat_url ?? "https://matrix.thamjj13.top/chat"}</span>.
+            <span className="mono text-ink">{phoneRelease?.chat_url ?? "https://qorvyna.thamjj13.top/chat"}</span>.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

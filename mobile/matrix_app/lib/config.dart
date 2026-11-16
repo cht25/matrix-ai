@@ -1,9 +1,9 @@
 // Compile-time configuration for the QORVYNA Android phone app.
 //
-// Canonical production URL: https://matrix.thamjj13.top (chat: https://matrix.thamjj13.top/chat).
+// Canonical production URL: https://qorvyna.thamjj13.top (chat: https://qorvyna.thamjj13.top/chat).
 // Override for staging/local builds via `--dart-define`:
 //   flutter build apk --release \
-//     --dart-define=QORVYNA_API_BASE=https://matrix.thamjj13.top \
+//     --dart-define=QORVYNA_API_BASE=https://qorvyna.thamjj13.top \
 //     --dart-define=FIREBASE_API_KEY=... \
 //     --dart-define=FIREBASE_APP_ID=... \
 //     --dart-define=FIREBASE_MESSAGING_SENDER_ID=... \
@@ -17,7 +17,7 @@
 class MatrixConfig {
   static const String _legacyApiBase = String.fromEnvironment(
     'MATRIX_API_BASE',
-    defaultValue: 'https://matrix.thamjj13.top',
+    defaultValue: 'https://qorvyna.thamjj13.top',
   );
   static const String apiBase = String.fromEnvironment(
     'QORVYNA_API_BASE',

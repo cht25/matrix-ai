@@ -109,7 +109,7 @@ export function AppReleaseSettings() {
           </h2>
           <p className="mt-1 max-w-2xl text-sm text-ink-2">
             Controls over-the-air update prompts on the QORVYNA Android phone app and mobile PWA at{" "}
-            <span className="mono text-xs text-ink">https://matrix.thamjj13.top/chat</span>. Phones poll{" "}
+            <span className="mono text-xs text-ink">https://qorvyna.thamjj13.top/chat</span>. Phones poll{" "}
             <span className="mono text-xs text-ink">/api/app/version</span> on launch and resume.
           </p>
         </div>

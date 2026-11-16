@@ -24,6 +24,10 @@ export const PUBLIC_PATHS = [
   "/api/health",
   "/api/ai",
   "/s",
+  // Firebase's auth helper. Public by design: it is the page Google sends the
+  // browser to before any session exists. Served by the reverse proxy in
+  // src/app/__/auth (only when authDomain is a custom hostname).
+  "/__/auth",
 ] as const;
 
 /** Auth screens — signed-in visitors are bounced to /chat. */

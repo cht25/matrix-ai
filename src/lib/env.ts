@@ -1,5 +1,6 @@
 // Centralised env access. Server-only secrets are never exposed to the client.
 import { PRODUCTION_ORIGIN } from "@/lib/seo";
+import { resolveFirebaseWebConfig } from "@/lib/firebase/web-config";
 // Real services only: there is intentionally no demo mode. If the Firebase
 // config is missing/invalid the app renders honest configuration errors
 // instead of pretending to work.
@@ -12,12 +13,6 @@ import { PRODUCTION_ORIGIN } from "@/lib/seo";
 //   CLOUDINARY_CLOUD_NAME / CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET —
 //   uploads are server-signed and stored as private (authenticated) assets.
 
-const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY ?? "";
-const authDomain = process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? "";
-const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "";
-const messagingSenderId = process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? "";
-const appId = process.env.NEXT_PUBLIC_FIREBASE_APP_ID ?? "";
-
 // Values that ship in .env.example and mean "not really configured yet".
 const PLACEHOLDERS = ["YOUR-", "your-project", "your-api-key", "your-project-id", "example.com", "replace-with", "..."];
 
@@ -25,12 +20,27 @@ function clean(value: string): string {
   return value.trim().replace(/^["']|["']$/g, "");
 }
 
-const okApiKey = Boolean(apiKey) && !PLACEHOLDERS.some((p) => apiKey.includes(p));
-const okProjectId = Boolean(projectId) && !PLACEHOLDERS.some((p) => projectId.includes(p));
+// Browser Firebase config, resolved by the SAME module the client bundle uses
+// (src/lib/firebase/web-config.ts). Keeping one resolver means the server can
+// never disagree with the browser about the project id or the auth handler.
+const firebaseWeb = resolveFirebaseWebConfig({
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  appOrigin: process.env.NEXT_PUBLIC_APP_URL ?? PRODUCTION_ORIGIN,
+});
 
-// A usable Firebase web config needs an API key and a project id. Everything
+// A usable Firebase web config needs a real API key and project id. Everything
 // else (authDomain, appId…) has sane derived defaults but these two do not.
-const configured = okApiKey && okProjectId;
+const configured = firebaseWeb.configured;
+
+// Operator-facing configuration warnings are logged once per process, never in
+// tests, and never contain credentials.
+if (process.env.NODE_ENV !== "test" && firebaseWeb.warnings.length) {
+  for (const warning of firebaseWeb.warnings) console.warn(`[QORVYNA] Firebase config: ${warning}`);
+}
 
 // Server-side Admin SDK needs a service account (or Google Application
 // Default Credentials, e.g. on Firebase App Hosting / Cloud Run / GCE).
@@ -39,23 +49,19 @@ const serviceKeyRaw = clean(process.env.FIREBASE_PRIVATE_KEY ?? "");
 const hasServiceAccount = Boolean(serviceEmail) && !PLACEHOLDERS.some((p) => serviceEmail.includes(p)) && serviceKeyRaw.includes("PRIVATE KEY");
 const hasAdc = Boolean(process.env.GOOGLE_APPLICATION_CREDENTIALS) || process.env.FIREBASE_AUTH_EMULATOR_HOST != null;
 
-// Popup/redirect OAuth must use a Firebase-hosted authDomain
-// (*.firebaseapp.com / *.web.app). A custom host like Render is not a valid
-// auth handler and triggers “domain is not authorized for OAuth”.
-const resolvedAuthDomain = (() => {
-  const raw = clean(authDomain);
-  if (raw.endsWith(".firebaseapp.com") || raw.endsWith(".web.app")) return raw;
-  return projectId ? `${projectId}.firebaseapp.com` : raw;
-})();
-
+// Popup/redirect OAuth is served by Firebase's own auth handler. That handler
+// lives on the value of `authDomain`: either the project's Firebase-hosted
+// domain (*.firebaseapp.com / *.web.app), or — when a deployment deliberately
+// serves it itself — the site's own origin, reached through the /__/auth
+// reverse proxy in this repository. web-config.ts encodes that decision; it is
+// no longer a hardcoded rewrite, which used to silently ignore a configured
+// custom domain (and silently point the browser at the wrong origin).
 export const env = {
-  firebasePublic: {
-    apiKey,
-    authDomain: resolvedAuthDomain,
-    projectId,
-    messagingSenderId,
-    appId,
-  },
+  firebasePublic: firebaseWeb.config,
+  /** Why authDomain resolved the way it did (safe to log; no secrets). */
+  firebaseAuthDomainSource: firebaseWeb.authDomainSource,
+  firebaseAuthUsesSameOriginHandler: firebaseWeb.sameOriginAuthHandler,
+  firebaseConfigWarnings: firebaseWeb.warnings,
   // Links / emails only. Middleware never redirects here — pointing this at an
   // unbound apex (e.g. https://thamjj13.top) must not bounce the custom domain.
   // NOTE: deploy.ts, sitemap.ts and robots.ts now use siteOrigin() from seo.ts
@@ -143,7 +149,7 @@ export function isVercelConfigured(): boolean {
 export function serviceAccount(): { projectId: string; clientEmail: string; privateKey: string } | undefined {
   if (!hasServiceAccount) return undefined;
   return {
-    projectId,
+    projectId: firebaseWeb.config.projectId,
     clientEmail: serviceEmail,
     // Vercel/Render-style escaped newlines → real newlines.
     privateKey: serviceKeyRaw.replace(/\\n/g, "\n"),

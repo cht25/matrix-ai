@@ -14,6 +14,8 @@ env:
   # Client config (public by design)
   - variable: NEXT_PUBLIC_FIREBASE_API_KEY
     availability: [BUILD, RUNTIME]
+  # Keep PROJECT_ID.firebaseapp.com unless the /__/auth reverse proxy is
+  # deliberately enabled (docs/AUTH_DOMAIN_MIGRATION.md).
   - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
     availability: [BUILD, RUNTIME]
   - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
@@ -23,8 +25,11 @@ env:
   - variable: NEXT_PUBLIC_FIREBASE_APP_ID
     availability: [BUILD, RUNTIME]
   - variable: NEXT_PUBLIC_APP_URL
-    value: https://matrix.thamjj13.top
+    value: https://qorvyna.thamjj13.top
     availability: [BUILD, RUNTIME]
+  # Optional: extra exact origins allowed to create the browser session cookie.
+  - variable: QORVYNA_ALLOWED_ORIGINS
+    availability: [RUNTIME]
   # Server-only (secrets) — App Hosting resolves these from Secret Manager when
   # you pass --secretpath, or set them via the console.
   - variable: FIREBASE_CLIENT_EMAIL
@@ -65,7 +70,7 @@ env:
     availability: [RUNTIME]
     secret: GITHUB_TOKEN_ENCRYPTION_KEY
   - variable: GITHUB_OAUTH_CALLBACK_URL
-    value: https://matrix.thamjj13.top/api/github/callback
+    value: https://qorvyna.thamjj13.top/api/github/callback
     availability: [RUNTIME]
 
   # Optional settings carry the product name as QORVYNA_<NAME> (for example
