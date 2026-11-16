@@ -9,9 +9,8 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { applyActionCode, reload } from "firebase/auth";
-import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
+import { fbAuth, firebaseBrowserConfigured, waitForAuthUser } from "@/lib/firebase/client";
 import { mintSessionCookie } from "@/lib/client/api";
-import { consumeOAuthRedirect } from "@/lib/auth/oauth";
 import { AuthShell, AuthUnavailable } from "@/components/auth/login-screen";
 import { Alert } from "@/components/ui";
 
@@ -41,10 +40,7 @@ function VerifyInner() {
           window.location.replace(`/reset-password?mode=resetPassword&oobCode=${encodeURIComponent(oobCode)}`);
           return;
         } else {
-          // OAuth redirect completion (or an already-signed-in visitor).
-          // Uses the shared consumer so a redirect is never processed twice.
-          await consumeOAuthRedirect().catch(() => {});
-          const user = auth.currentUser;
+          const user = await waitForAuthUser(4000);
           if (!user) {
             setStatus("error");
             setMessage("No verification link found. Check the link from your email, or sign in.");

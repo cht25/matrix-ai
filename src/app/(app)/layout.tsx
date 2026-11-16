@@ -6,7 +6,6 @@ import { getSidebarData } from "@/lib/server/queries";
 import { AppShell } from "@/components/app-shell";
 import { RoboticsBackground } from "@/components/robotics-background";
 import { PhoneUpdateBanner } from "@/components/phone-update-banner";
-import { AuthRedirectWatcher } from "@/components/auth/auth-redirect-watcher";
 import { ServerProblemScreen } from "@/components/server-problem";
 import { isConfigured } from "@/lib/env";
 import type { SidebarConversation } from "@/lib/chat-utils";
@@ -57,8 +56,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     >
       <RoboticsBackground />
       <PhoneUpdateBanner />
-      {/* Completes an OAuth account-link redirect that returned to this page. */}
-      <AuthRedirectWatcher />
       {children}
     </AppShell>
   );

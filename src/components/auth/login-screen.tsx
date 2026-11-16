@@ -20,7 +20,6 @@ import { MAX_AGE, MIN_AGE, isValidEmail } from "@/lib/utils";
 import {
   completeAuthenticatedSession,
   postAuthPath,
-  rememberPostLoginPath,
   startOAuthSignIn,
   type OAuthProviderId,
 } from "@/lib/auth/oauth";
@@ -101,20 +100,19 @@ export function Divider() {
 /**
  * Google / Facebook buttons.
  *
- * Both providers use Firebase's full-page redirect, so the moment one is
- * clicked the browser is about to leave this page. `redirectingTo` keeps that
- * state visible and disables the buttons so a second click cannot start a
- * competing redirect (the classic cause of the auth-state ping-pong).
+ * Both providers use Firebase popup sign-in (`signInWithPopup`). `busyProvider`
+ * keeps the clicked button active and locks both buttons while the popup is
+ * open so a second click cannot trigger `auth/cancelled-popup-request`.
  */
 export function OAuthButtons({
   onGoogle,
   onFacebook,
-  redirectingTo = null,
+  busyProvider = null,
   disabled = false,
 }: {
   onGoogle: () => void | Promise<void>;
   onFacebook: () => void | Promise<void>;
-  redirectingTo?: OAuthProviderId | null;
+  busyProvider?: OAuthProviderId | null;
   disabled?: boolean;
 }) {
   const [busy, setBusy] = useState<OAuthProviderId | null>(null);
@@ -123,14 +121,11 @@ export function OAuthButtons({
     try {
       await fn();
     } finally {
-      // After a redirect starts the browser is unloading; leaving `busy` set
-      // would be invisible anyway, but resetting keeps the form usable if the
-      // redirect was refused synchronously.
       setBusy(null);
     }
   }
-  const active = redirectingTo ?? busy;
-  const locked = disabled || redirectingTo !== null || busy !== null;
+  const active = busyProvider ?? busy;
+  const locked = disabled || busyProvider !== null || busy !== null;
   return (
     <div className="grid grid-cols-2 gap-2.5">
       <button
@@ -178,17 +173,14 @@ export function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [mfa, setMfa] = useState<MultiFactorResolver | null>(null);
   const [mfaCode, setMfaCode] = useState("");
 
   const [sessionRetry, setSessionRetry] = useState(false);
-  // Full-page OAuth: `starting` is the instant before the browser leaves for
-  // the consent screen. The return trip is owned by the centralised auth
-  // lifecycle (started at application startup by AuthLifecycleProvider) — this
-  // screen only renders its explicit states and navigates when it says READY.
   const [starting, setStarting] = useState<OAuthProviderId | null>(null);
-  const { decision, status, error: lifecycleError, retry, onboardingComplete, pendingRedirect } = useAuthLifecycle();
+  const { decision, status, error: lifecycleError, retry, onboardingComplete } = useAuthLifecycle();
 
   // Navigate exactly once, and only AFTER the lifecycle reports a completed
   // backend session. Never during INITIALIZING — that is what used to bounce
@@ -314,13 +306,30 @@ export function LoginForm() {
 
   async function oauth(provider: OAuthProviderId) {
     setError(null);
+    setNotice(null);
     setSessionRetry(false);
     setStarting(provider);
-    rememberPostLoginPath(next);
     const result = await startOAuthSignIn(provider, { next });
-    if (result.status === "redirecting") return; // browser is already leaving
     setStarting(null);
-    if (result.status === "cancelled") return;
+    if (result.status === "ok") {
+      if (!recordPostLoginNavigation()) {
+        setLoopBlocked(true);
+        return;
+      }
+      navigatedRef.current = true;
+      markSessionEstablished({
+        uid: result.uid,
+        onboardingComplete: result.onboardingComplete,
+        profileLoaded: result.profileLoaded,
+        profile: result.profile ?? null,
+      });
+      window.location.replace(postAuthPath(result.onboardingComplete, next));
+      return;
+    }
+    if (result.status === "cancelled") {
+      setNotice(result.message);
+      return;
+    }
     if (result.status === "session-failed") {
       setError(result.message);
       setSessionRetry(true);
@@ -336,7 +345,7 @@ export function LoginForm() {
   // INITIALIZING / PROFILE_LOADING → wait (never "logged out").
   // READY/AUTHENTICATED → the navigation effect above is taking over.
   if ((decision === "wait" || decision === "navigate") && !loopBlocked) {
-    const finishingTrip = decision === "navigate" || pendingRedirect || status === "PROFILE_LOADING";
+    const finishingTrip = decision === "navigate" || status === "PROFILE_LOADING";
     return (
       <div className="space-y-3 py-2 text-center" role="status" aria-live="polite">
         <div className="flex justify-center"><Spinner /></div>
@@ -415,12 +424,13 @@ export function LoginForm() {
 
       <Divider />
       {starting ? (
-        <Alert tone="info">Redirecting to {starting === "google" ? "Google" : "Facebook"}…</Alert>
+        <Alert tone="info">Completing sign-in with {starting === "google" ? "Google" : "Facebook"} in the popup window…</Alert>
       ) : null}
+      {notice && !error ? <Alert tone="info">{notice}</Alert> : null}
       <OAuthButtons
         onGoogle={() => oauth("google")}
         onFacebook={() => oauth("facebook")}
-        redirectingTo={starting}
+        busyProvider={starting}
         disabled={busy}
       />
       <p className="mt-6 text-center text-[13px] text-ink-2">

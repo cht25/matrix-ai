@@ -16,18 +16,18 @@
 
 import { firebaseAuthDomain, firebaseAuthUsesSameOriginHandler, firebaseProjectId } from "@/lib/env-public";
 
-export type AuthMethod = "google" | "facebook" | "password" | "redirect" | "link" | "session";
+export type AuthMethod = "google" | "facebook" | "password" | "popup" | "link" | "session";
 export type AuthStage =
   | "start"
-  | "redirect-start"
-  | "redirect-result"
+  | "popup-start"
+  | "popup-result"
   | "link-start"
   | "link-result"
   | "session-mint"
   | "sign-out"
-  // Centralised post-redirect lifecycle (src/lib/auth/lifecycle.ts). Each
-  // stage of the return trip is named so a stuck login can be located from the
-  // console without guessing. Tokens are never part of any of these records.
+  // Centralised authentication lifecycle (src/lib/auth/lifecycle.ts). Each
+  // stage is named so a failed login can be located from the console without
+  // guessing. Tokens are never part of any of these records.
   | "auth-init"
   | "persistence"
   | "auth-state"
@@ -112,14 +112,14 @@ export function authEnvironment(): AuthEnvironment {
 
 export type AuthLifecycleEvent =
   | "FIREBASE_INITIALIZED"
-  | "REDIRECT_RESULT_STARTED"
-  | "REDIRECT_RESULT_COMPLETED"
+  | "POPUP_SIGN_IN_STARTED"
+  | "POPUP_SIGN_IN_COMPLETED"
   | "AUTH_STATE_CHANGED"
   | "AUTH_USER_DETECTED"
   | "PROFILE_LOADING"
   | "BACKEND_AUTH_CHECK"
   | "CHAT_INITIALIZATION"
-  | "AUTH_REDIRECT_ERROR";
+  | "AUTH_POPUP_ERROR";
 
 export type AuthDiagnostic = {
   event?: AuthLifecycleEvent;
@@ -181,7 +181,7 @@ export function logAuthDiagnostic(diagnostic: AuthDiagnostic): void {
       .join(" ");
     console.warn(
       `${label} code=${error?.code ?? "none"} status=${error?.status ?? "none"} host=${payload.hostname} ` +
-        `authDomain=${payload.authDomain} (${payload.authDomainSource}) redirect=${String(safeDetail.redirect ?? "n/a")}` +
+        `authDomain=${payload.authDomain} (${payload.authDomainSource})` +
         (summaryPairs ? ` ${summaryPairs}` : ""),
     );
   }
@@ -200,14 +200,14 @@ export function logAuthEvent(
 ): void {
   const stageByEvent: Record<AuthLifecycleEvent, AuthStage> = {
     FIREBASE_INITIALIZED: "auth-init",
-    REDIRECT_RESULT_STARTED: "redirect-result",
-    REDIRECT_RESULT_COMPLETED: "redirect-result",
+    POPUP_SIGN_IN_STARTED: "popup-start",
+    POPUP_SIGN_IN_COMPLETED: "popup-result",
     AUTH_STATE_CHANGED: "auth-state",
     AUTH_USER_DETECTED: "auth-state",
     PROFILE_LOADING: "profile",
     BACKEND_AUTH_CHECK: "session-check",
     CHAT_INITIALIZATION: "chat-load",
-    AUTH_REDIRECT_ERROR: "redirect-result",
+    AUTH_POPUP_ERROR: "popup-result",
   };
   logAuthDiagnostic({
     event,

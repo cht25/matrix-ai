@@ -52,9 +52,10 @@ describe("authErrorKind", () => {
     expect(authErrorKind(fbErr("auth/network-request-failed"))).toBe("network");
   });
 
-  it("recognises a user cancellation as its own kind (not a failure to report)", () => {
-    // Deliberate: cancelling is not an error, and the UI must not print
-    // "we couldn't sign you in" when someone simply closed the consent screen.
+  it("recognises popup-blocked and user cancellation cleanly", () => {
+    expect(authErrorKind(fbErr("auth/popup-blocked"))).toBe("popup-blocked");
+    expect(describeAuthError(fbErr("auth/popup-blocked"), "fallback")).toMatch(/blocked the sign-in popup/i);
+    // Deliberate: cancelling is not a server error.
     expect(authErrorKind(fbErr("auth/popup-closed-by-user"))).toBe("cancelled");
     expect(authErrorKind(fbErr("auth/user-cancelled"))).toBe("cancelled");
     expect(authErrorKind(fbErr("auth/redirect-cancelled-by-user"))).toBe("cancelled");
