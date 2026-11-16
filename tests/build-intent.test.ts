@@ -120,7 +120,7 @@ describe("planFromRequest", () => {
 
   it("falls back to a generic project when there is nothing to name", () => {
     const plan = planFromRequest("");
-    expect(plan.slug).toBe("matrix-project");
+    expect(plan.slug).toBe("qorvyna-project");
   });
 });
 

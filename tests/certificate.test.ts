@@ -11,7 +11,7 @@ const CERT: PublicCertificate = {
   display_name: "John Doe",
   score_percent: 100,
   issued_at: "2026-09-05T10:00:00.000Z",
-  issued_by: "MATRIX — THAMJJ13.TOP White Hat Team",
+  issued_by: "QORVYNA — THAMJJ13.TOP White Hat Team",
   verification_status: "valid",
 };
 
@@ -33,7 +33,7 @@ describe("certificate IDs", () => {
 });
 
 describe("certificate PDF", () => {
-  // Rendered by the shared MATRIX PDF engine: one A4 landscape page, real
+  // Rendered by the shared QORVYNA PDF engine: one A4 landscape page, real
   // embedded Unicode fonts, certificate content only.
   it("produces a structurally valid single-page A4 landscape PDF", async () => {
     const pdf = await renderCertificatePdf(CERT);
@@ -75,7 +75,7 @@ describe("certificate PDF", () => {
   });
 
   it("builds a safe download filename", () => {
-    expect(certificateFilename(CERT)).toBe("MATRIX-MTRX-CERT-2026-000123.pdf");
+    expect(certificateFilename(CERT)).toBe("QORVYNA-MTRX-CERT-2026-000123.pdf");
     expect(certificateFilename({ ...CERT, certificate_id: "../../evil" })).not.toContain("/");
   });
 });

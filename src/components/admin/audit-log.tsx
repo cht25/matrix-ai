@@ -46,7 +46,7 @@ export function AuditLog({ codes }: { codes: string[] }) {
       setItems((await rpc<Entry[]>("admin_audit_logs")) ?? []);
     } catch (err) {
       const view = mapAdminError(errorCodeOf(err, "LOAD_FAILED"));
-      console.error("[MATRIX admin] audit log load failed", view.code, err);
+      console.error("[QORVYNA admin] audit log load failed", view.code, err);
       setError(view);
     }
   }, [canView]);

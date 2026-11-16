@@ -15,7 +15,20 @@ import { Modal } from "@/components/modal";
 import { cn } from "@/lib/utils";
 
 export type ConfirmOptions = { title: string; body?: string; confirmLabel?: string; tone?: "danger" | "primary" };
-export type PromptOptions = { title: string; label: string; initial?: string; placeholder?: string; hint?: string; confirmLabel?: string };
+export type PromptOptions = {
+  title: string;
+  label: string;
+  initial?: string;
+  placeholder?: string;
+  hint?: string;
+  confirmLabel?: string;
+  /** Explains what entering the value does, above the field. */
+  body?: string;
+  /** `password` hides the value and lets a password manager fill it. */
+  inputType?: "text" | "password";
+  /** `danger` when confirming the value does something irreversible. */
+  tone?: "danger" | "primary";
+};
 
 type DialogState = ({ kind: "confirm" } & ConfirmOptions) | ({ kind: "prompt" } & PromptOptions) | null;
 
@@ -69,30 +82,35 @@ export function useDialogs(): {
       </Modal>
     );
   } else if (state?.kind === "prompt") {
+    const secret = state.inputType === "password";
     const submit = (event: FormEvent) => {
       event.preventDefault();
-      const next = value.trim();
+      // A password is sent exactly as typed; anything else is trimmed.
+      const next = secret ? value : value.trim();
       if (next) settle(next);
     };
     element = (
       <Modal open onClose={() => settle(null)} title={state.title} size="sm">
         <form onSubmit={submit} className="space-y-4">
+          {state.body ? <p className="text-sm leading-relaxed text-ink-2">{state.body}</p> : null}
           <label className="block">
             <span className="mb-1.5 block text-[13px] font-medium text-ink-2">{state.label}</span>
             <input
+              type={secret ? "password" : "text"}
               value={value}
               onChange={(event) => setValue(event.target.value)}
               placeholder={state.placeholder}
-              autoComplete="off"
+              autoComplete={secret ? "current-password" : "off"}
               autoCapitalize="off"
               spellCheck={false}
-              className="input-base w-full font-mono text-[13px]"
+              data-autofocus
+              className={cn("input-base w-full", !secret && "font-mono text-[13px]")}
             />
             {state.hint ? <span className="mt-1.5 block text-xs text-ink-3">{state.hint}</span> : null}
           </label>
           <div className="flex flex-wrap justify-end gap-2">
             <button type="button" className="btn btn-outline" onClick={() => settle(null)}>Cancel</button>
-            <button type="submit" className="btn btn-primary" disabled={!value.trim()}>{state.confirmLabel ?? "Create"}</button>
+            <button type="submit" className={cn("btn", state.tone === "danger" ? "btn-danger" : "btn-primary")} disabled={!(secret ? value : value.trim())}>{state.confirmLabel ?? "Create"}</button>
           </div>
         </form>
       </Modal>

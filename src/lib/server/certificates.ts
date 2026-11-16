@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX certificates — issuance, persistence and lookup.
+// QORVYNA certificates — issuance, persistence and lookup.
 //
 // A certificate is issued ONCE per (user, course) pair and keeps a stable,
 // human-readable, sequential public ID:
@@ -16,7 +16,7 @@ import "server-only";
 import { Db, nowTs } from "@/lib/firebase/admin";
 import { RpcError } from "@/lib/server/errors";
 
-export const CERT_ISSUER = "MATRIX — THAMJJ13.TOP White Hat Team";
+export const CERT_ISSUER = "QORVYNA — THAMJJ13.TOP White Hat Team";
 
 export type StoredCertificate = {
   certificate_id: string;
@@ -74,7 +74,7 @@ export function formatCertificateId(year: number, sequence: number): string {
   return `MTRX-CERT-${year}-${String(sequence).padStart(6, "0")}`;
 }
 
-/** True for anything shaped like a MATRIX certificate ID (incl. legacy IDs). */
+/** True for anything shaped like a QORVYNA certificate ID (incl. legacy IDs). */
 export function isCertificateIdShape(value: string): boolean {
   return /^(MTRX-CERT|MATRIX)-[A-Z0-9-]{4,40}$/i.test(value.trim());
 }
@@ -201,7 +201,7 @@ export async function issueCertificateFor(
     bestScoreForCourse(d, userId, courseId),
   ]);
   const courseTitle = String(courseDoc.data()?.title ?? "Course");
-  const displayName = String(profile.data()?.full_name ?? "").trim() || "MATRIX learner";
+  const displayName = String(profile.data()?.full_name ?? "").trim() || "QORVYNA learner";
 
   const certificateId = await nextCertificateId(d);
   const record = {

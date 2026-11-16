@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — Agent Tool Gateway (server-only).
+// QORVYNA AI — Agent Tool Gateway (server-only).
 //
 // The ONLY path from an AI/Agent request to a registered tool. For every call
 // the gateway independently re-checks authorization (RBAC permissions via the
@@ -74,7 +74,7 @@ async function auditTool(
       created_at: nowTs(),
     });
   } catch (err) {
-    console.warn("[MATRIX] tool audit write failed", err);
+    console.warn("[QORVYNA] tool audit write failed", err);
   }
 }
 
@@ -169,6 +169,6 @@ export async function recordAgentToolSelection(
       created_at: nowTs(),
     });
   } catch (err) {
-    console.warn("[MATRIX] agent tool selection audit failed", err);
+    console.warn("[QORVYNA] agent tool selection audit failed", err);
   }
 }

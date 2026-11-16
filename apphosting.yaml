@@ -40,8 +40,10 @@ env:
   - variable: CLOUDINARY_API_SECRET
     availability: [RUNTIME]
     secret: CLOUDINARY_API_SECRET
-  # The only language model is GPT OSS 120B on Groq (openai/gpt-oss-120b).
-  # The model ID lives in src/lib/ai/model.ts and is not configurable here.
+  # One Groq key serves every language model. The default is GPT OSS 120B
+  # (openai/gpt-oss-120b, src/lib/ai/model.ts); other registered models are
+  # used only when Groq's live model list offers them to this account.
+  # Model IDs are not configurable here.
   - variable: GROQ_API_KEY
     availability: [RUNTIME]
     secret: GROQ_API_KEY
@@ -65,3 +67,8 @@ env:
   - variable: GITHUB_OAUTH_CALLBACK_URL
     value: https://matrix.thamjj13.top/api/github/callback
     availability: [RUNTIME]
+
+  # Optional settings carry the product name as QORVYNA_<NAME> (for example
+  # QORVYNA_TRUST_PROXY_HEADERS, QORVYNA_ANDROID_APK_URL). The former
+  # MATRIX_<NAME> spelling is still read, so nothing has to be renamed here.
+  # The full list is in .env.example.

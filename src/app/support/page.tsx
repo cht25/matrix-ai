@@ -2,15 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { BookOpen, FileQuestion, LifeBuoy, ShieldAlert } from "lucide-react";
 import { Logo } from "@/components/logo";
-import { Button } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Support" };
 
 const TOPICS = [
   { icon: <ShieldAlert size={18} strokeWidth={1.5} />, title: "Emergency help", body: "Account hacked, OTP shared, money lost or being threatened? Get immediate defensive steps.", href: "/emergency", cta: "I Need Help Now" },
-  { icon: <BookOpen size={18} strokeWidth={1.5} />, title: "Documentation", body: "Guides for every part of MATRIX: chat, scanner, courses, certificates, privacy and more.", href: "/docs", cta: "Read the docs" },
+  { icon: <BookOpen size={18} strokeWidth={1.5} />, title: "Documentation", body: "Guides for every part of QORVYNA: chat, scanner, courses, certificates, privacy and more.", href: "/docs", cta: "Read the docs" },
   { icon: <LifeBuoy size={18} strokeWidth={1.5} />, title: "Report a scam", body: "File a private report or find the verified official reporting resource for your country.", href: "/report", cta: "Report a scam" },
-  { icon: "", title: "FAQ", body: "Common questions about accounts, age verification, the AI, memory and deletion.", href: "/docs/faq", cta: "Open the FAQ" },
+  { icon: <FileQuestion size={18} strokeWidth={1.5} />, title: "FAQ", body: "Common questions about accounts, age verification, the AI, memory and deletion.", href: "/docs/faq", cta: "Open the FAQ" },
 ];
 
 export default function SupportPage() {
@@ -25,7 +24,7 @@ export default function SupportPage() {
       <main className="mx-auto max-w-3xl px-4 py-10">
         <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Support</h1>
         <p className="mt-2 text-ink-2">
-          MATRIX support is operated by the <strong>THAMJJ13.TOP White Hat Team</strong>. For privacy reasons,
+          QORVYNA support is operated by the <strong>THAMJJ13.TOP White Hat Team</strong>. For privacy reasons,
           account-specific help is only available to signed-in users — never share passwords or codes with anyone.
         </p>
         <div className="mt-8 grid gap-4 sm:grid-cols-2">
@@ -34,7 +33,7 @@ export default function SupportPage() {
               <span className="text-ink-3" aria-hidden="true">{t.icon}</span>
               <h2 className="mt-2 font-bold text-ink">{t.title}</h2>
               <p className="mt-1 flex-1 text-sm text-ink-2">{t.body}</p>
-              <Link href={t.href} className="mt-3"><Button variant="outline" className="w-full">{t.cta} →</Button></Link>
+              <Link href={t.href} className="btn btn-outline mt-3 w-full">{t.cta} →</Link>
             </div>
           ))}
         </div>

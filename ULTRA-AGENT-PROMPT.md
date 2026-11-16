@@ -1,12 +1,12 @@
-# MATRIX AI — ULTRA Implementation Prompt
+# QORVYNA AI — ULTRA Implementation Prompt
 
-**Copy this entire document to an AI coding agent.** The agent must inspect the real repository, fix the real bugs, and implement the missing production features **in this existing Matrix AI codebase**. Do not start a new app. Do not rebrand. Do not invent a parallel stack.
+**Copy this entire document to an AI coding agent.** The agent must inspect the real repository, fix the real bugs, and implement the missing production features **in this existing QORVYNA AI codebase**. Do not start a new app. Do not rebrand. Do not invent a parallel stack.
 
 ---
 
 ## 0. Who you are and how you must work
 
-You are a senior full-stack engineer implementing production changes in **MATRIX AI**, a Next.js 15 / React 19 / TypeScript / Tailwind 4 / Firebase (Auth + Firestore) / Cloudinary / Groq + OpenRouter platform.
+You are a senior full-stack engineer implementing production changes in **QORVYNA AI**, a Next.js 15 / React 19 / TypeScript / Tailwind 4 / Firebase (Auth + Firestore) / Cloudinary / Groq + OpenRouter platform.
 
 ### Mandatory workflow
 
@@ -14,7 +14,7 @@ You are a senior full-stack engineer implementing production changes in **MATRIX
 2. **Write a short implementation plan** (phases, files, data-model changes, risks) in the PR / commit notes.
 3. **Implement for real.** Every button, form, OAuth path, publish action, admin action, and AI theme action must complete an end-to-end flow. No mock data, no dead buttons, no “coming soon” UI that looks clickable, no placeholder APIs, no fake deployments, no hardcoded demo users.
 4. **Do not break existing functionality.** Chat, Agent artifacts, GitHub review-before-push, scanner, courses, quizzes, certificates, scam library, reports, MFA, password reset, i18n, health checks, and the no-demo-mode contract must keep working.
-5. **Preserve product identity.** Keep the MATRIX visual language: monochrome (obsidian / charcoal / off-white), restrained steel-blue accent, Inter + Cormorant Garamond + Tangerine, calligraphic wordmark, CSS variables in `src/app/globals.css`, cinematic `CyberBackground`, honest error screens. Polish and extend — do not replace with a generic SaaS look.
+5. **Preserve product identity.** Keep the QORVYNA visual language: monochrome (obsidian / charcoal / off-white), restrained steel-blue accent, Inter + Cormorant Garamond + Tangerine, calligraphic wordmark, CSS variables in `src/app/globals.css`, cinematic `CyberBackground`, honest error screens. Polish and extend — do not replace with a generic SaaS look.
 6. **Ship tests** for new validation, hashing, project/file safety, theme persistence, deploy URL rules, and auth error mapping. Run `npm test` and `npm run typecheck`. Fix what you break.
 7. **Security is not optional.** Never send DOB, birth-certificate numbers, GitHub tokens, Cloudinary secrets, or provider keys to an AI model or the browser console. Never store identity numbers in plaintext. Never allow one user to read another user’s theme, files, or deployments.
 
@@ -25,13 +25,13 @@ You are a senior full-stack engineer implementing production changes in **MATRIX
 - The AI gateway (`/api/ai`) is the only path to Groq / OpenRouter. PII is redacted first.
 - Agent never auto-pushes to GitHub. Review + explicit confirm required.
 - Failures return error codes. Never fabricate an assistant reply, a deploy URL, or a quiz score.
-- MATRIX is for ages **11–17**. Age is validated server-side.
+- QORVYNA is for ages **11–17**. Age is validated server-side.
 
 ---
 
 ## 1. Mission
 
-Make MATRIX AI feel like a polished, production-ready AI product **without discarding its core concept**:
+Make QORVYNA AI feel like a polished, production-ready AI product **without discarding its core concept**:
 
 > Chat · create · learn · build · preview · publish / push with approval  
 > All-in-one assistant + cyber-safety education + dedicated software Agent.
@@ -63,7 +63,7 @@ Read these before changing anything.
 | Mutations | `src/lib/server/rpc.ts` + `src/app/api/rpc/route.ts` |
 | Images | Cloudinary signed private uploads (`security-screenshots/{uid}/`, `identity-documents/{uid}/`) |
 | AI | `/api/ai` — Groq general/vision, OpenRouter NVIDIA Nemotron 3 Ultra for coding + Agent |
-| Agent files | Parsed from `<<<MATRIX_FILE path="...">` blocks in `src/lib/ai/agent.ts`, stored on assistant message `metadata.artifacts` |
+| Agent files | Parsed from `<<<QORVYNA_FILE path="...">` blocks in `src/lib/ai/agent.ts`, stored on assistant message `metadata.artifacts` |
 | Preview | Client-only `srcDoc` iframe in `src/components/agent-workspace.tsx` (inline CSS/JS) |
 | GitHub | Encrypted OAuth token, explicit review-before-push, `src/lib/server/github.ts` |
 | Theme today | `dark` / `light` / `system` in `localStorage` key `matrix-theme` (`src/lib/theme.tsx`) |
@@ -200,7 +200,7 @@ The shell already has a mobile drawer + bottom nav + `lg:` sidebar, but:
 - Admin tables (`min-w-[720px]`) are not usable on small screens.
 - Chat composer / immersive height / bottom-nav collisions need a pass on 375px, 768px, 1024px, 1440px.
 - Empty / loading / error / success states exist in some places and are missing in others (admin load failures, GitHub repo load, onboarding).
-- Appearance panel uses emoji as icons — replace with lucide, keep the MATRIX look.
+- Appearance panel uses emoji as icons — replace with lucide, keep the QORVYNA look.
 
 ---
 
@@ -210,7 +210,7 @@ The shell already has a mobile drawer + bottom nav + `lg:` sidebar, but:
 
 Show this explanation on onboarding and in Settings, in the user’s language:
 
-> MATRIX is for people aged 11–17. We ask for your **date of birth** so we can check that you are in that age range, apply the correct guardian-consent rules for your country, and keep adult accounts out of a youth platform.
+> QORVYNA is for people aged 11–17. We ask for your **date of birth** so we can check that you are in that age range, apply the correct guardian-consent rules for your country, and keep adult accounts out of a youth platform.
 >
 > We ask for your **birth certificate number** (not a photo) so the security team can confirm you are a real person in that age range without collecting a scan of a legal document. A document image is a high-risk piece of identity data. A number can be checked and stored as a one-way hash.
 >
@@ -330,12 +330,12 @@ If the user says things like “change your theme”, “change the theme”, �
 3. Clicking **Apply** saves the template to **that user’s** `profiles.theme_id` + `user_security_settings` / `user_preferences` and updates CSS variables for that browser only.
 4. Other users are unaffected. Incognito / other account does not inherit it.
 5. Settings → Appearance lists the same templates + Dark / Light / System.
-6. “Reset to MATRIX default” is required.
+6. “Reset to QORVYNA default” is required.
 
 **Implementation notes**
 
 - Extend `:root` / `[data-theme]` with `[data-theme-template="midnight"]` etc. Templates must still support light + dark bases **or** be explicit dark/light pairs. Ship at least **6 complete templates**, for example:
-  - MATRIX Default (current tokens)
+  - QORVYNA Default (current tokens)
   - Midnight Ink
   - Ivory Editorial
   - Carbon Steel
@@ -389,7 +389,7 @@ Must support:
 - Version history: snapshot on Agent apply, on publish, and on manual “Save version”. Restore a version (creates a new snapshot first).
 - Import ZIP (server-side unzip of text + common web assets; reject zip bombs, binaries except images, path traversal). Export ZIP of the project.
 - Import/export individual files.
-- Multi-file Agent: when the user is in a project, attach the tree (paths + truncated contents) as Agent context and apply returned `MATRIX_FILE` blocks as a reviewable diff. User confirms **Apply to project**.
+- Multi-file Agent: when the user is in a project, attach the tree (paths + truncated contents) as Agent context and apply returned `QORVYNA_FILE` blocks as a reviewable diff. User confirms **Apply to project**.
 - Error detection: basic HTML/JS syntax diagnostics in the editor (honest — no fake “AI compiled this”). Optional “Ask Agent to fix” sends the current file + error text to Agent.
 - Do not claim framework builds (Next/Vite) were compiled unless you implement a real builder. Static HTML/CSS/JS is the supported publish target. If the Agent generates a React/Vite tree, preview should say so honestly and still allow file editing + GitHub push.
 
@@ -397,7 +397,7 @@ Must support:
 
 - e.g. 80 files / project, 200 KB text / file, 5 MB images / project, 20 projects / user unless you add plans. Return clear errors.
 
-### Phase 6 — Publish / host the website from MATRIX
+### Phase 6 — Publish / host the website from QORVYNA
 
 Users must be able to preview a project and publish it from the platform.
 
@@ -495,7 +495,7 @@ If a nav item exists, it must work. If you cannot finish a feature, do not add t
 Update `SYSTEM_PROMPT` / `AGENT_SYSTEM_PROMPT` and the gateway:
 
 - Theme intent → structured UI payload, e.g. message metadata `{ action: "theme_gallery" }`. The model may also answer briefly; the gallery is authoritative.
-- Agent in a project: instruct it to emit complete files with the existing `MATRIX_FILE` protocol; mention folder structure; do not claim preview/publish happened.
+- Agent in a project: instruct it to emit complete files with the existing `QORVYNA_FILE` protocol; mention folder structure; do not claim preview/publish happened.
 - When the user says “publish this”, the **UI** starts the deploy workflow; the model must not invent a URL.
 - Never request birth certificate images, IDs, OTPs, passwords.
 
@@ -611,7 +611,7 @@ A reviewer should be able to do all of the following on a configured deployment:
 
 - [ ] Phone / tablet / desktop layouts work for chat, Agent workspace, projects, admin, settings.
 - [ ] No overlapping composer vs bottom nav.
-- [ ] MATRIX visual identity intact.
+- [ ] QORVYNA visual identity intact.
 - [ ] Empty/loading/error/success states on new surfaces.
 
 ### Themes
@@ -653,7 +653,7 @@ A reviewer should be able to do all of the following on a configured deployment:
 
 ## 10. What “done” looks like
 
-MATRIX still feels like MATRIX: calligraphic mark, obsidian UI, honest errors, youth cyber-safety + all-in-one assistant.
+QORVYNA still feels like QORVYNA: calligraphic mark, obsidian UI, honest errors, youth cyber-safety + all-in-one assistant.
 
 It now also behaves like a real product:
 

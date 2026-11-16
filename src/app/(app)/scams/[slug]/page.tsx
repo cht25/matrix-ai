@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { db, getCurrentUser } from "@/lib/data";
 import { getScamArticle } from "@/lib/server/queries";
-import { Button, Card } from "@/components/ui";
+import { Card } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Scam article" };
 
@@ -39,8 +39,8 @@ export default async function ScamArticlePage({ params }: { params: Promise<{ sl
       </Card>
 
       <div className="flex flex-wrap gap-3">
-        <Link href="/report"><Button>Report a similar scam</Button></Link>
-        <Link href="/chat"><Button variant="outline">Ask MATRIX AI about it</Button></Link>
+        <Link href="/report" className="btn btn-primary">Report a similar scam</Link>
+        <Link href="/chat" className="btn btn-outline">Ask QORVYNA AI about it</Link>
       </div>
     </div>
   );

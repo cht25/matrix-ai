@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX deployment state machine
+// QORVYNA deployment state machine
 //
 // The UI is only ever allowed to paint a deployment state the backend has
 // actually reached (§32, §39). This module is the single source of truth for

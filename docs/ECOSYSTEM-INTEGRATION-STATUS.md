@@ -1,4 +1,4 @@
-# MATRIX ecosystem integration — verified scope
+# QORVYNA ecosystem integration — verified scope
 
 Date: 2026-11-06. Baseline: `11e44d4`. This document supersedes assumptions in the historical architecture audit, not its implementation history.
 
@@ -40,7 +40,7 @@ An invalid or malformed explicit Authorization header no longer silently falls b
 - QR generation uses the existing `qrcode` package. It contains no password or permanent credential.
 - Invitation creation/acceptance/revocation remain audited through the backend.
 
-For QR/email review, sign in to MATRIX before opening the invitation, or paste the displayed one-time code after sign-in. Retention of invitation fragments through every external sign-in redirect is not verified.
+For QR/email review, sign in to QORVYNA before opening the invitation, or paste the displayed one-time code after sign-in. Retention of invitation fragments through every external sign-in redirect is not verified.
 
 ### Resend
 
@@ -48,7 +48,7 @@ For QR/email review, sign in to MATRIX before opening the invitation, or paste t
 
 ```
 RESEND_API_KEY=<deployment secret>
-RESEND_FROM_EMAIL=MATRIX <verified-sender@your-domain>
+RESEND_FROM_EMAIL=QORVYNA <verified-sender@your-domain>
 ```
 
 The sender's domain must be verified in Resend. The repository had no configured sender to reuse. Email HTML escapes interpolated values; the plain text alternative includes the same disclosure. Requests use a stable idempotency key and bounded timeouts/retries for transient failures. The invitation records `email_status` and provider message ID. `accepted_by_provider` is intentionally **not** labelled delivered.

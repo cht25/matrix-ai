@@ -29,7 +29,7 @@ export async function copyText(text: string): Promise<boolean> {
   }
 }
 
-export async function shareText(text: string, title = "MATRIX"): Promise<ShareOutcome> {
+export async function shareText(text: string, title = "QORVYNA"): Promise<ShareOutcome> {
   const payload = { title, text };
   if (typeof navigator.share === "function" && (!navigator.canShare || navigator.canShare(payload))) {
     try {

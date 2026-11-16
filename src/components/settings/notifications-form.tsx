@@ -18,9 +18,9 @@ function Toggle({ label, description, checked, onChange }: { label: string; desc
         role="switch"
         aria-checked={checked}
         onClick={() => onChange(!checked)}
-        className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${checked ? "bg-accent" : "bg-surface-3"}`}
+        className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${checked ? "bg-accent-solid" : "bg-surface-3"}`}
       >
-        <span className={`absolute top-1 h-5 w-5 rounded-full bg-surface transition-all ${checked ? "left-6" : "left-1"}`} />
+        <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${checked ? "left-6" : "left-1"}`} />
       </button>
     </div>
   );

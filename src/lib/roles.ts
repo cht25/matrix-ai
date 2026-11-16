@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — CANONICAL ADMIN ROLE CATALOG (single source of truth).
+// QORVYNA AI — CANONICAL ADMIN ROLE CATALOG (single source of truth).
 //
 // Before this file existed, the admin role list was declared in FOUR places:
 //   1. seed/0007_seed.sql            → 5 roles

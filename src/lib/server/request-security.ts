@@ -1,4 +1,5 @@
 import "server-only";
+import { brandEnv } from "@/lib/brand-env";
 
 /**
  * CSRF boundary for cookie-authenticated mutations. Native clients may omit
@@ -25,7 +26,8 @@ export function mutationOriginAllowed(request: Request): boolean {
       if (["https:", "http:"].includes(url.protocol)) allowed.add(url.origin);
     } catch { /* Invalid configuration never widens the allowlist. */ }
   }
-  if (process.env.MATRIX_TRUST_PROXY_HEADERS === "true") {
+  // QORVYNA_TRUST_PROXY_HEADERS (MATRIX_TRUST_PROXY_HEADERS is still honoured).
+  if (brandEnv("TRUST_PROXY_HEADERS") === "true") {
     const host = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
     const protocol = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
     if (host && /^[a-z0-9.:-]+$/i.test(host) && (protocol === "https" || protocol === "http")) {

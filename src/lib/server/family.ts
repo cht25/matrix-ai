@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — Family backend (server-only).
+// QORVYNA AI — Family backend (server-only).
 //
 // All mutations run here through /api/rpc; Firestore rules deny every browser
 // write. Every privileged check (membership, parent role, child protection,
@@ -14,7 +14,7 @@
 //                                    by the companion app (opt-in, on-device)
 //   family_mirror_requests/{id}      consent + live session ledger
 //
-// Nothing in this module ever reads a child's MATRIX content for a parent
+// Nothing in this module ever reads a child's QORVYNA content for a parent
 // unless the membership explicitly carries that feature AND the child device
 // reported it. There is no hidden channel.
 // =============================================================================
@@ -734,7 +734,7 @@ export async function revokeMember(d: Db, user: SessionUser, input: { family_id:
     await notify(d, targetUserId, {
       type: "family",
       title: "Removed from a family",
-      body: "Your access to this MATRIX family and its supervision features ended.",
+      body: "Your access to this QORVYNA family and its supervision features ended.",
       link: "/family",
     });
   }

@@ -2,10 +2,10 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: {
-    default: "MATRIX Documentation",
-    template: "%s · MATRIX Documentation",
+    default: "QORVYNA Documentation",
+    template: "%s · QORVYNA Documentation",
   },
-  description: "Complete documentation for the MATRIX AI Cyber Safety Platform.",
+  description: "Documentation for QORVYNA: the AI assistant and Agent, projects and hosting, connected devices, automation, cyber safety tools and account security.",
 };
 
 export default function DocsLayout({ children }: { children: React.ReactNode }) {

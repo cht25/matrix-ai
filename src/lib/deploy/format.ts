@@ -48,7 +48,7 @@ export function shortUrl(url: string | null | undefined, limit = 52): string {
 }
 
 /**
- * Resolve a stored URL against the current origin. MATRIX keeps generated
+ * Resolve a stored URL against the current origin. QORVYNA keeps generated
  * addresses as `/s/<slug>` so they keep working on preview, Render and the
  * production apex without a rebuild — the browser fills in the real host.
  */

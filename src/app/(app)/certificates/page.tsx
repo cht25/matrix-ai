@@ -58,7 +58,7 @@ export default async function CertificatesPage() {
       )}
 
       <Card className="!p-4 text-sm text-ink-3">
-        Issued by <strong className="text-ink-2">MATRIX — THAMJJ13.TOP White Hat Team</strong>. Public verification
+        Issued by <strong className="text-ink-2">QORVYNA — THAMJJ13.TOP White Hat Team</strong>. Public verification
         never reveals email, phone, date of birth, birth certificate number, address or school information.
       </Card>
     </div>

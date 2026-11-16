@@ -3,7 +3,7 @@
 // client only receives a small public error code. Provider response bodies are
 // never sent to the browser and are sanitized before they reach logs.
 
-/** Hosts that can serve the one MATRIX model (and the Whisper speech service). */
+/** Hosts that can serve the one QORVYNA model (and the Whisper speech service). */
 export type AIProviderName = "Groq" | "OpenAI";
 
 export type AIProviderErrorType =
@@ -190,7 +190,7 @@ export function logProviderFailure(error: unknown, requestId?: string): void {
     requestId: requestId ?? "none",
   };
   if (error instanceof AIProviderError) {
-    console.error("[MATRIX] AI provider request failed", {
+    console.error("[QORVYNA] AI provider request failed", {
       ...record,
       provider: error.provider,
       model: error.model,
@@ -202,7 +202,7 @@ export function logProviderFailure(error: unknown, requestId?: string): void {
     });
     return;
   }
-  console.error("[MATRIX] AI provider request failed", {
+  console.error("[QORVYNA] AI provider request failed", {
     ...record,
     provider: "unknown",
     model: null,
@@ -214,7 +214,7 @@ export function logProviderFailure(error: unknown, requestId?: string): void {
 
 /** Structured record for NON-provider gateway failures (storage, config…). */
 export function logGatewayFailure(scope: string, meta: Record<string, unknown>, error: unknown): void {
-  console.error("[MATRIX] gateway failure", {
+  console.error("[QORVYNA] gateway failure", {
     event: "ai_gateway_failure",
     timestamp: new Date().toISOString(),
     route: "/api/ai",

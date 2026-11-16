@@ -6,7 +6,7 @@ import { ServerProblemScreen } from "@/components/server-problem";
 export default function RootError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   useEffect(() => {
     if ((error as { code?: string }).code !== "FIREBASE_NOT_CONFIGURED") {
-      console.error("[MATRIX] Root error boundary caught an error.", error);
+      console.error("[QORVYNA] Root error boundary caught an error.", error);
     }
   }, [error]);
 

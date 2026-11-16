@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX Phone-First App Release & OTA Update System
+// QORVYNA Phone-First App Release & OTA Update System
 //
 // Powers `GET /api/app/version` and Admin release management (`system_settings/app_releases`).
 // Supports Android companion APK updates (optional update sheet + mandatory
@@ -11,6 +11,7 @@ import type { Db } from "@/lib/firebase/admin";
 import { nowTs } from "@/lib/firebase/admin";
 import { chatOriginUrl, siteOrigin } from "@/lib/seo";
 import { RpcError } from "@/lib/server/errors";
+import { brandEnv } from "@/lib/brand-env";
 
 const COLLECTION = "system_settings";
 const DOC_ID = "app_releases";
@@ -57,11 +58,12 @@ export const SHIPPED_APP_RELEASE: AppReleaseRecord = {
   build_number: 2,
   min_supported_version: "1.0.0",
   force_update: false,
-  apk_url: process.env.MATRIX_ANDROID_APK_URL?.trim() || DEFAULT_ANDROID_APK_URL,
-  sha256: process.env.MATRIX_ANDROID_APK_SHA256?.trim() || "",
+  // QORVYNA_ANDROID_APK_URL / _SHA256 (the MATRIX_ names are still honoured).
+  apk_url: brandEnv("ANDROID_APK_URL")?.trim() || DEFAULT_ANDROID_APK_URL,
+  sha256: brandEnv("ANDROID_APK_SHA256")?.trim() || "",
   release_notes:
     "• Chat, Agent, website generation and coding from one workspace\n" +
-    "• Compact Arena-style live step timeline\n" +
+    "• Compact live step timeline\n" +
     "• Over-the-air phone update checker & direct matrix.thamjj13.top/chat sync",
   published_at: "2026-11-12T00:00:00.000Z",
 };

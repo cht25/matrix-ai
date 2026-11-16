@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX PDF engine — the single PDF generator for the whole platform.
+// QORVYNA PDF engine — the single PDF generator for the whole platform.
 //
 // Everything that produces a PDF (chat/document export, certificates, and any
 // future generator) goes through `renderPdf` here. There is exactly one place
@@ -364,11 +364,11 @@ export function renderPdf(spec: PdfDocumentSpec): Promise<Uint8Array> {
       lang: "en",
       displayTitle: true,
       info: {
-        Title: spec.title || "MATRIX document",
-        Author: spec.author || "MATRIX",
+        Title: spec.title || "QORVYNA document",
+        Author: spec.author || "QORVYNA",
         Subject: spec.subject || "",
-        Producer: "MATRIX PDF engine",
-        Creator: "MATRIX",
+        Producer: "QORVYNA PDF engine",
+        Creator: "QORVYNA",
       },
     });
 

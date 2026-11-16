@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Check, Code2, Download, Expand, FileText, GitBranch, History, ImagePlus, Link2, Minus, Plus, Save, Sparkles, Trash2, Type, Upload } from "lucide-react";
+import { useDialogs } from "@/components/dialogs";
 import { Alert, Badge, Button, Card, Field, Input, Select, Textarea } from "@/components/ui";
 import { rpc, RpcCallError } from "@/lib/client/api";
 import { EMPTY_CANVAS, type CanvasNode, type CanvasRecord, type CanvasSummary } from "@/lib/canvas";
@@ -13,6 +14,7 @@ type Version = { id: string; title: string; revision: number; created_at: string
 type Gesture = { kind: "move" | "resize" | "pan"; id?: string; x: number; y: number; originalX: number; originalY: number };
 
 export function CanvasClient({ projects }: { projects: Project[] }) {
+  const dialogs = useDialogs();
   const router = useRouter();
   const params = useSearchParams();
   const canvasId = params.get("canvas");
@@ -101,8 +103,8 @@ export function CanvasClient({ projects }: { projects: Project[] }) {
   function patchNode(id: string, patch: Partial<CanvasNode>) {
     change((current) => ({ ...current, document: { ...current.document, nodes: current.document.nodes.map((node) => node.id === id ? { ...node, ...patch } : node) } }));
   }
-  function open(id: string) {
-    if (dirty.current && !confirm("Leave this draft? Unsaved changes will be lost.")) return;
+  async function open(id: string) {
+    if (dirty.current && !(await dialogs.confirm({ title: "Leave this draft?", body: "The changes that are not saved yet will be lost.", confirmLabel: "Leave" }))) return;
     router.push(`/canvas?canvas=${encodeURIComponent(id)}`);
   }
   async function create() {
@@ -162,7 +164,7 @@ export function CanvasClient({ projects }: { projects: Project[] }) {
       const data = JSON.parse(await file.text());
       const result = await rpc<CanvasRecord>("canvas_import", { title: String(data.title || "Imported canvas").slice(0, 120), document: data.document });
       setItems((current) => [result, ...current]); router.push(`/canvas?canvas=${result.id}`);
-    } catch { setError("Import failed. Use a MATRIX canvas JSON export with valid nodes and connections."); }
+    } catch { setError("Import failed. Use a QORVYNA canvas JSON export with valid nodes and connections."); }
     finally { setBusy(false); }
   }
   async function snapshot() {
@@ -173,7 +175,7 @@ export function CanvasClient({ projects }: { projects: Project[] }) {
     finally { setBusy(false); }
   }
   async function restore(id: string) {
-    if (!record || !confirm("Restore this version? Export your current draft first if you need to keep it.")) return;
+    if (!record || !(await dialogs.confirm({ title: "Restore this version?", body: "The current draft is replaced. Export it first if you need to keep it.", confirmLabel: "Restore", tone: "primary" }))) return;
     setBusy(true);
     try { const result = await rpc<CanvasRecord>("canvas_version_restore", { id: record.id, version_id: id }); dirty.current = false; conflict.current = false; recordRef.current = result; setRecord(result); setSaveState("saved"); }
     catch { setError("Version restoration failed."); }
@@ -198,11 +200,11 @@ export function CanvasClient({ projects }: { projects: Project[] }) {
   const viewport = record?.document.viewport ?? EMPTY_CANVAS.viewport;
   return <div className="flex min-h-0 flex-1 flex-col gap-4">
     <header className="flex flex-wrap items-center justify-between gap-3">
-      <div><p className="eyebrow text-accent">Think spatially</p><h1 className="mt-1 text-2xl font-semibold tracking-tight">Canvas</h1><p className="mt-1 text-xs text-ink-2">Visual notes, code and connected ideas. Saved to your MATRIX account.</p></div>
-      <div className="flex flex-wrap gap-2"><label className={`btn-outline cursor-pointer ${busy ? "pointer-events-none opacity-50" : ""}`}><Upload size={15} /> Import<input type="file" accept="application/json,.json" className="sr-only" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void importJson(file); event.target.value = ""; }} /></label><Button onClick={() => void create()} disabled={busy}><Plus size={15} /> New canvas</Button></div>
+      <div><p className="eyebrow text-accent">Think spatially</p><h1 className="mt-1 text-2xl font-semibold tracking-tight">Canvas</h1><p className="mt-1 text-xs text-ink-2">Visual notes, code and connected ideas. Saved to your QORVYNA account.</p></div>
+      <div className="flex flex-wrap gap-2"><label className={`btn btn-outline cursor-pointer ${busy ? "pointer-events-none opacity-50" : ""}`}><Upload size={15} /> Import<input type="file" accept="application/json,.json" className="sr-only" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void importJson(file); event.target.value = ""; }} /></label><Button onClick={() => void create()} disabled={busy}><Plus size={15} /> New canvas</Button></div>
     </header>
-    {error ? <Alert tone="danger">{error}{conflict.current ? <Button variant="outline" className="ml-3" onClick={() => { if (record && confirm("Discard this local draft and reload?")) void load(record.id); }}>Reload saved canvas</Button> : saveState === "error" ? <Button variant="outline" className="ml-3" onClick={() => void persist()}>Retry save</Button> : null}</Alert> : null}
-    {items.length > 0 ? <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Saved canvases">{items.map((item) => <button type="button" key={item.id} className={`chip shrink-0 ${item.id === canvasId ? "!border-accent !text-accent" : ""}`} onClick={() => open(item.id)}>{item.title}</button>)}</div> : null}
+    {error ? <Alert tone="danger">{error}{conflict.current ? <Button variant="outline" className="ml-3" onClick={async () => { if (record && (await dialogs.confirm({ title: "Discard this local draft?", body: "The saved canvas is loaded again and your local changes are dropped.", confirmLabel: "Discard and reload" }))) void load(record.id); }}>Reload saved canvas</Button> : saveState === "error" ? <Button variant="outline" className="ml-3" onClick={() => void persist()}>Retry save</Button> : null}</Alert> : null}
+    {items.length > 0 ? <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Saved canvases">{items.map((item) => <button type="button" key={item.id} className={`chip shrink-0 ${item.id === canvasId ? "!border-accent !text-accent" : ""}`} onClick={() => void open(item.id)}>{item.title}</button>)}</div> : null}
     {!record ? <Card className="grid min-h-72 place-items-center text-center"><div><GitBranch className="mx-auto text-accent" size={32} /><h2 className="mt-4 text-lg font-semibold">Give your ideas room to grow</h2><p className="mx-auto mt-2 max-w-md text-sm text-ink-2">Create a canvas, add notes or shapes, and connect them. Drag headers to move, use the corner handle to resize, and edit directly on the board.</p><Button className="mt-5" onClick={() => void create()} disabled={busy}>Create your first canvas</Button></div></Card> : <>
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-surface p-2">
         <div className="flex flex-wrap gap-1">
@@ -229,11 +231,12 @@ export function CanvasClient({ projects }: { projects: Project[] }) {
         <aside className="space-y-3">
           <Card className="space-y-3 p-4"><Field label="Canvas title" htmlFor="canvas-title"><Input id="canvas-title" value={record.title} disabled={conflict.current} maxLength={120} onChange={(event) => change((current) => ({ ...current, title: event.target.value }))} /></Field><Field label="Linked project" htmlFor="canvas-project"><Select id="canvas-project" value={record.project_id ?? ""} disabled={conflict.current} onChange={(event) => change((current) => ({ ...current, project_id: event.target.value || null }))}><option value="">No linked project</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.title}</option>)}</Select></Field>{record.project_id ? <Link className="text-xs text-accent" href={`/projects/${record.project_id}`}>Open linked project →</Link> : null}</Card>
           <Card className="space-y-3 p-4"><h2 className="text-sm font-semibold">Selection</h2>{selected ? <><Badge>{selected.type}</Badge>{selected.type === "image" ? <Field label="Image HTTPS URL" htmlFor="image-url"><Input id="image-url" type="url" value={selected.content} onChange={(event) => patchNode(selected.id, { content: event.target.value })} /></Field> : null}<Field label="Accent color" htmlFor="node-color"><input id="node-color" type="color" value={selected.color} onChange={(event) => patchNode(selected.id, { color: event.target.value })} className="h-9 w-full cursor-pointer rounded border border-border bg-surface" /></Field><Button variant="outline" className="w-full" disabled={record.document.edges.length >= 200} onClick={() => setConnectFrom(connectFrom ? "" : selected.id)}><Link2 size={14} />{connectFrom ? "Choose target node…" : "Connect to another node"}</Button>{connectFrom ? <p className="text-xs text-ink-2">Click a different node on the board to create an arrow.</p> : null}<Button variant="danger" className="w-full" onClick={removeNode}><Trash2 size={14} /> Delete block</Button></> : <p className="text-xs leading-relaxed text-ink-2">Select a block to change its color, connect it or delete it. Drag empty space to pan.</p>}</Card>
-          <Card className="space-y-3 p-4"><h2 className="flex items-center gap-2 text-sm font-semibold"><Sparkles size={15} className="text-accent" /> Draft with MATRIX</h2><Textarea aria-label="AI canvas prompt" rows={3} value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} placeholder="Outline a plan for my school website…" maxLength={4000} /><Button variant="secondary" className="w-full" disabled={busy || !aiPrompt.trim() || conflict.current} onClick={() => void draftWithAI()}>{busy ? "Working…" : "Add AI draft as a note"}</Button><p className="text-[11px] text-ink-3">Uses your configured AI provider. The draft is added only after a successful response.</p></Card>
+          <Card className="space-y-3 p-4"><h2 className="flex items-center gap-2 text-sm font-semibold"><Sparkles size={15} className="text-accent" /> Draft with QORVYNA</h2><Textarea aria-label="AI canvas prompt" rows={3} value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} placeholder="Outline a plan for my school website…" maxLength={4000} /><Button variant="secondary" className="w-full" disabled={busy || !aiPrompt.trim() || conflict.current} onClick={() => void draftWithAI()}>{busy ? "Working…" : "Add AI draft as a note"}</Button><p className="text-[11px] text-ink-3">Uses your configured AI provider. The draft is added only after a successful response.</p></Card>
         </aside>
       </div>
-      <div className="flex flex-wrap items-center gap-2"><Button variant="outline" onClick={exportJson}><Download size={14} /> Export JSON</Button><Button variant="outline" disabled={busy || saveState === "saving"} onClick={() => void snapshot()}><Save size={14} /> Save version</Button><Button variant="outline" disabled={busy} onClick={() => { if (versions) setVersions(null); else void rpc<Version[]>("canvas_versions", { id: record.id }).then(setVersions).catch(() => setError("Could not load version history.")); }}><History size={14} /> Versions</Button><Button variant="ghost" disabled={busy} onClick={() => { if (confirm("Remove this canvas from your list? Saved versions are retained on the server.")) void rpc("canvas_delete", { id: record.id }).then(() => { dirty.current = false; setItems((current) => current.filter((item) => item.id !== record.id)); router.push("/canvas"); }).catch(() => setError("Could not remove canvas.")); }}><Trash2 size={14} /> Remove</Button><Link href="/chat?mode=agent" className="ml-auto text-xs text-accent">Open Agent <ArrowLeft size={12} className="inline rotate-180" /></Link></div>
+      <div className="flex flex-wrap items-center gap-2"><Button variant="outline" onClick={exportJson}><Download size={14} /> Export JSON</Button><Button variant="outline" disabled={busy || saveState === "saving"} onClick={() => void snapshot()}><Save size={14} /> Save version</Button><Button variant="outline" disabled={busy} onClick={() => { if (versions) setVersions(null); else void rpc<Version[]>("canvas_versions", { id: record.id }).then(setVersions).catch(() => setError("Could not load version history.")); }}><History size={14} /> Versions</Button><Button variant="ghost" disabled={busy} onClick={async () => { if (await dialogs.confirm({ title: "Remove this canvas?", body: "It leaves your list. Saved versions are kept on the server.", confirmLabel: "Remove" })) void rpc("canvas_delete", { id: record.id }).then(() => { dirty.current = false; setItems((current) => current.filter((item) => item.id !== record.id)); router.push("/canvas"); }).catch(() => setError("Could not remove canvas.")); }}><Trash2 size={14} /> Remove</Button><Link href="/chat?mode=agent" className="ml-auto text-xs text-accent">Open Agent <ArrowLeft size={12} className="inline rotate-180" /></Link></div>
       {versions ? <Card className="space-y-2 p-4"><h2 className="text-sm font-semibold">Saved versions</h2>{!versions.length ? <p className="text-xs text-ink-2">No explicit snapshots yet. Autosave keeps the current revision.</p> : versions.map((version) => <div key={version.id} className="flex items-center justify-between gap-3 border-t border-border pt-2"><span className="text-xs text-ink-2">{version.title} · revision {version.revision} · {new Date(version.created_at).toLocaleString()}</span><Button variant="outline" disabled={busy} onClick={() => void restore(version.id)}>Restore</Button></div>)}</Card> : null}
     </>}
+    {dialogs.element}
   </div>;
 }

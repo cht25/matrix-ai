@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — MATRIX Connect: secure QR device pairing (server-only).
+// QORVYNA AI — QORVYNA Connect: secure QR device pairing (server-only).
 //
 // Workflow: the account owner creates a short-lived, HMAC-signed pairing
 // challenge (rendered as a QR code). A second device scans it, authenticates,
@@ -136,7 +136,7 @@ export async function completePairing(
     deviceId = deviceRef.id;
     tx.set(deviceRef, {
       user_id: verified.ownerUid, // device belongs to the account owner, not the scanner
-      device_name: input.device_name.slice(0, 80) || "MATRIX device",
+      device_name: input.device_name.slice(0, 80) || "QORVYNA device",
       device_type: input.device_type.slice(0, 40),
       platform: input.platform.slice(0, 40),
       scopes: [...DEFAULT_DEVICE_SCOPES],

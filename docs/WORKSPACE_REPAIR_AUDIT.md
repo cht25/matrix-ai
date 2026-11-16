@@ -1,4 +1,4 @@
-# MATRIX workspace repair audit
+# QORVYNA workspace repair audit
 
 Audit date: 2026-11-07. Repository baseline: `f65ad24`, plus the existing uncommitted shared-service hardening in this branch. This audit covers the newly requested Chat/Coding/Agent/Canvas/Build/Deployment mission. The message refers to screenshots, but no image attachments were available in the conversation; the four explicit textual defect reports are treated as mandatory reproduction targets.
 
@@ -19,7 +19,7 @@ Repair: explicit per-request execution policy; only an activated Agent may enter
 
 ### 2. Generated source is dumped into chat / raw HTML appearance
 
-The Agent streaming path emits every provider delta before parsing `MATRIX_FILE` blocks. It also stores up to 60 KB of each source file in message metadata, and the workspace fetch copies whole project files back into chat metadata. The custom Markdown parser only recognizes simple word-language fences and has no filename/download contract. Unfenced HTML is consequently rendered as escaped paragraph text (safe, but not a useful code answer).
+The Agent streaming path emits every provider delta before parsing `QORVYNA_FILE` blocks. It also stores up to 60 KB of each source file in message metadata, and the workspace fetch copies whole project files back into chat metadata. The custom Markdown parser only recognizes simple word-language fences and has no filename/download contract. Unfenced HTML is consequently rendered as escaped paragraph text (safe, but not a useful code answer).
 
 Repair: buffer Agent generation server-side, emit only execution events and file summaries, persist source once in the project, and return file references rather than source-bearing chat artifacts. Coding assistance gets filename-aware fenced blocks, safe token highlighting, Copy and Download. Never inject AI HTML into the authenticated DOM.
 

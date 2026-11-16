@@ -10,7 +10,7 @@ export function isThemeIntent(input: string): boolean {
 }
 
 export const THEME_GALLERY_REPLY_EN =
-  "Here are MATRIX theme templates. Each one only applies to your account — other users keep their own look. Pick a palette below, or reset to the default.";
+  "Here are QORVYNA theme templates. Each one only applies to your account — other users keep their own look. Pick a palette below, or reset to the default.";
 
 export const THEME_GALLERY_REPLY_BN =
-  "এখানে ম্যাট্রিক্স থিম টেমপ্লেটগুলো আছে। যেটি বেছে নেবেন সেটি শুধু আপনার অ্যাকাউন্টে লাগবে। নিচে একটি প্যালেট বেছে নিন, অথবা ডিফল্টে ফিরে যান।";
+  "এখানে QORVYNA থিম টেমপ্লেটগুলো আছে। যেটি বেছে নেবেন সেটি শুধু আপনার অ্যাকাউন্টে লাগবে। নিচে একটি প্যালেট বেছে নিন, অথবা ডিফল্টে ফিরে যান।";

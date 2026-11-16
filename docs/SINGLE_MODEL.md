@@ -1,6 +1,6 @@
-# MATRIX AI runs on GPT OSS 120B only
+# QORVYNA AI runs on GPT OSS 120B only
 
-> **Superseded.** MATRIX now uses a collaborative model pool with GPT OSS 120B
+> **Superseded.** QORVYNA now uses a collaborative model pool with GPT OSS 120B
 > as the default — see `MULTI_MODEL.md`. This page is kept as the record of the
 > earlier single-model state.
 
@@ -20,7 +20,7 @@ endpoint changed.
 
 - `src/lib/ai/model.ts` — the only file that spells the model ID. Browser-safe
   constants: ID, label, provider, capabilities.
-- `src/lib/ai/config.ts` — server-only. `matrixModelRoute()` builds the single
+- `src/lib/ai/config.ts` — server-only. `qorvynaModelRoute()` builds the single
   route; `createAIRoutes`, `createAIRoutesFromDb` and `resolveExecutionRoutes`
   all return that one route (or none when no key is set).
 - `src/lib/ai/executor.ts` — `completeWithModel` / `streamWithModel`. They
@@ -41,7 +41,7 @@ Everything that generates text: chat in every mode (General, Study, Code,
 Health, Research, Creative, Orchestrator), Agent mode and its tools, and every
 stage of the build pipeline — design specification, file generation,
 continuation, repair, polish and the post-build fix pass — for both new
-projects and edits. MATRIX has no separately-named agent classes; "Website
+projects and edits. QORVYNA has no separately-named agent classes; "Website
 Builder", "Coding", "Design", "Debugging", "Project Management", "Deployment"
 and "Research" work are these modes and pipeline stages, which differ only in
 system prompt and tools.

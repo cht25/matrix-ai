@@ -92,7 +92,7 @@ export function ModelsClient({ showChatLink = true }: { showChatLink?: boolean }
           <Sparkles size={18} className={cn("mt-0.5 shrink-0", pool.auto ? "text-accent" : "text-ink-3")} />
           <div className="min-w-0">
             <h2 className="font-semibold">Auto</h2>
-            <p className="text-sm text-ink-2">MATRIX uses every available model and decides who does what. {activeCount} active now.</p>
+            <p className="text-sm text-ink-2">QORVYNA uses every available model and decides who does what. {activeCount} active now.</p>
           </div>
         </div>
         <Button variant={pool.auto ? "secondary" : "primary"} disabled={pool.auto || saving === "auto"} onClick={() => void apply({ auto: true, enabled: [] }, "auto")}>{pool.auto ? "On" : "Use Auto"}</Button>
@@ -114,7 +114,7 @@ export function ModelsClient({ showChatLink = true }: { showChatLink?: boolean }
                   <button
                     type="button" role="switch" aria-checked={on} aria-label={`Use ${model.label}`} disabled={!usable || saving === model.key}
                     onClick={() => toggle(model.key)}
-                    className={cn("relative h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50", on ? "bg-accent" : "bg-surface-2 ring-1 ring-inset ring-border")}
+                    className={cn("relative h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50", on ? "bg-accent-solid" : "bg-surface-2 ring-1 ring-inset ring-border")}
                   >
                     <span className={cn("absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-[left]", on ? "left-[22px]" : "left-0.5")} />
                   </button>
@@ -139,7 +139,7 @@ export function ModelsClient({ showChatLink = true }: { showChatLink?: boolean }
         })}
       </ul>
       <p className="text-xs text-ink-3">Availability is read from the provider&apos;s live model list for this server&apos;s account. A model that isn&apos;t listed there is never used.</p>
-      {showChatLink ? <Link href="/chat" className="btn-primary inline-flex">Open chat</Link> : null}
+      {showChatLink ? <Link href="/chat" className="btn btn-primary">Open chat</Link> : null}
     </> : null}
   </div>;
 }

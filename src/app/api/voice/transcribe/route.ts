@@ -133,7 +133,7 @@ export async function POST(req: NextRequest) {
     try {
       stored = await uploadPrivateAudio(user.uid, bytes, filename);
     } catch (error) {
-      console.error("[MATRIX] private voice upload failed", { uid: user.uid, detail: error instanceof Error ? error.message.slice(0, 120) : "unknown" });
+      console.error("[QORVYNA] private voice upload failed", { uid: user.uid, detail: error instanceof Error ? error.message.slice(0, 120) : "unknown" });
       return NextResponse.json({ error: "VOICE_UPLOAD_FAILED" }, { status: 502 });
     }
     try {
@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
       });
     } catch (error) {
       await deletePrivateAudio(stored.publicId);
-      console.error("[MATRIX] voice metadata persistence failed", { uid: user.uid, detail: error instanceof Error ? error.message.slice(0, 120) : "unknown" });
+      console.error("[QORVYNA] voice metadata persistence failed", { uid: user.uid, detail: error instanceof Error ? error.message.slice(0, 120) : "unknown" });
       return NextResponse.json({ error: "VOICE_STORAGE_FAILED" }, { status: 503 });
     }
   }

@@ -1,23 +1,108 @@
 // =============================================================================
-// MATRIX brand assets — hosted calligraphic identity.
-// The wordmark and icon are served from Cloudinary so every surface
-// (app chrome, login, certificates, favicons, manifest, OG cards) renders
-// the exact same artwork.
+// QORVYNA brand — the ONE place the product's name, voice, colours and asset
+// paths are defined.
+//
+// Every surface reads from here: page metadata, the PWA manifest, the logo
+// components, e-mail templates, the AI identity (src/lib/ai/identity.ts) and
+// the documentation. To rename the product, change a tagline or point at a new
+// icon, edit this file — nothing else carries its own copy.
+//
+// Artwork is generated, not hand-placed: `node scripts/generate-brand-assets.mjs`
+// rebuilds every logo, favicon and app icon from scripts/brand/geometry.mjs and
+// refreshes the palette below (src/lib/brand-geometry.json).
+//
+// Browser-safe: no secrets, no server imports.
 // =============================================================================
 
-/** Full calligraphic "Matrix" wordmark — black canvas, electric blue swashes. */
-export const BRAND_WORDMARK_URL =
-  "https://res.cloudinary.com/dxzbyknn/image/upload/v1787134563/ChatGPT_Image_Aug_18_2026_08_26_17_PM.png";
+import geometry from "@/lib/brand-geometry.json";
 
-/** Square brand icon — used for favicons, PWA icons and the compact mark. */
-export const BRAND_ICON_URL =
-  "https://res.cloudinary.com/dxzbyknn/image/upload/v1787134771/df570753-79df-4dbd-842a-f4bdad67c298.png";
-
-/** Signature colours sampled from the logo. */
-export const BRAND_COLORS = {
-  void: "#000104",
-  ink: "#e8eefc",
-  blue: "#1f6bff",
-  blueDeep: "#0a3bd4",
-  blueBright: "#5b9bff",
+export const BRAND = {
+  /** Product / ecosystem name, always written in capitals. */
+  name: "QORVYNA",
+  /** The assistant users talk to. */
+  aiName: "QORVYNA AI",
+  /** The assistant when it is building and deploying (Agent mode). */
+  agentName: "QORVYNA Agent",
+  tagline: "ONE INTELLIGENCE. INFINITE POSSIBILITIES.",
+  /** The tagline as its two sentences, for layouts that stack it. */
+  taglineParts: ["ONE INTELLIGENCE.", "INFINITE POSSIBILITIES."],
+  /**
+   * What the name stands for. This is the brand's own creative reading of the
+   * word — it is not a scientific term and must never be presented as one.
+   */
+  concept: "Quantum-Oriented Responsive Virtual Intelligence Network Architecture",
+  /** One sentence for titles and cards. */
+  headline: "One intelligence for AI, agents, devices, automation, cloud and code",
+  /** Search / social description. */
+  description:
+    "QORVYNA is a unified technology ecosystem: an AI assistant and coding agent that builds, validates and deploys real projects, with connected devices, automation, cloud hosting and developer tools in one workspace.",
+  shortDescription: "AI assistant, agents, connected devices, automation, cloud hosting and developer tools in one workspace.",
+  /** Who runs the service (legal / contact copy). Unchanged by the rebrand. */
+  operator: "THAMJJ13.TOP White Hat Team",
+  /** The product's previous name — only for migration notes and changelogs. */
+  formerName: "MATRIX",
 } as const;
+
+/**
+ * The ecosystem, with an honest status for each area. `live` areas exist in
+ * this product today; `planned` areas are part of the QORVYNA direction and are
+ * always labelled as such in the UI — never shown as a finished feature.
+ */
+export const BRAND_PILLARS = [
+  { id: "ai", label: "AI", detail: "Chat, study, research and writing in Bangla and English", status: "live" },
+  { id: "agents", label: "Agents", detail: "Plans, writes, validates and deploys real projects", status: "live" },
+  { id: "iot", label: "IoT", detail: "Pair and control ESP32 and companion devices", status: "live" },
+  { id: "automation", label: "Automation", detail: "Scheduled tasks that run on their own", status: "live" },
+  { id: "cloud", label: "Cloud", detail: "Hosting, versions and rollbacks for what you build", status: "live" },
+  { id: "developers", label: "Developers", detail: "Project workspace, GitHub push and exports", status: "live" },
+  { id: "robotics", label: "Robotics", detail: "Robot control builds on the device layer", status: "planned" },
+] as const;
+
+export type BrandPillar = (typeof BRAND_PILLARS)[number];
+
+/** Signature colours, taken from the supplied logo. Mirrors styles/tokens.css. */
+export const BRAND_COLORS = {
+  blue: geometry.palette.blue,
+  blueDeep: geometry.palette.blueDeep,
+  cyan: geometry.palette.cyan,
+  violet: geometry.palette.violet,
+  navy: geometry.palette.navy,
+  navyRaised: geometry.palette.navyRaised,
+  ink: geometry.palette.ink,
+  white: geometry.palette.white,
+  gray: geometry.palette.gray,
+} as const;
+
+/** Browser chrome colours (theme-color, manifest). */
+export const BRAND_THEME = {
+  dark: "#070B1E",
+  light: "#F6F8FD",
+} as const;
+
+/** Static artwork served from /public. All generated by the asset script. */
+export const BRAND_ASSETS = {
+  favicon: "/favicon.ico",
+  faviconSvg: "/favicon.svg",
+  favicon16: "/favicon-16x16.png",
+  favicon32: "/favicon-32x32.png",
+  favicon48: "/favicon-48x48.png",
+  appleTouchIcon: "/apple-touch-icon.png",
+  icon192: "/icon-192.png",
+  icon512: "/icon-512.png",
+  iconMaskable192: "/icon-maskable-192.png",
+  iconMaskable512: "/icon-maskable-512.png",
+  emblem: "/brand/qorvyna-emblem.svg",
+  emblemPng: "/brand/qorvyna-emblem.png",
+  logoDark: "/brand/qorvyna-logo-dark.svg",
+  logoLight: "/brand/qorvyna-logo-light.svg",
+  horizontalDark: "/brand/qorvyna-horizontal-dark.svg",
+  horizontalLight: "/brand/qorvyna-horizontal-light.svg",
+  socialPreview: "/brand/qorvyna-social-preview.png",
+  emailHeader: "/brand/qorvyna-email-header.png",
+  splash: "/brand/qorvyna-splash.png",
+} as const;
+
+/** "Page · QORVYNA" */
+export function brandTitle(page?: string | null): string {
+  return page ? `${page} · ${BRAND.name}` : BRAND.name;
+}

@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX voice input — shared, framework-free helpers
+// QORVYNA voice input — shared, framework-free helpers
 //
 // Voice input lives inside the chat composer (all modes, including Agent):
 //

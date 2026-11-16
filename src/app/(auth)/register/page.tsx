@@ -6,7 +6,7 @@ export const metadata: Metadata = { title: "Create account" };
 
 export default function RegisterPage() {
   return (
-    <AuthShell title="Get started" subtitle="Create your MATRIX account — then start chatting.">
+    <AuthShell title="Create your account" subtitle="A name, an email and a password. You can add a photo and profile details later in Settings.">
       <RegisterForm />
     </AuthShell>
   );

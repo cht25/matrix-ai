@@ -102,7 +102,7 @@ export async function ensureProject(
     runtime: "static",
     runtime_version: "browser",
     entry_point: "index.html",
-    build_command: "MATRIX static bundler",
+    build_command: "QORVYNA static bundler",
     output_directory: "/s/<slug>/",
     dependency_manifest: {},
     live_slug: null,
@@ -141,7 +141,7 @@ export async function ensureAgentProject(d: Db, user: SessionUser, p: { conversa
       owner_id: user.uid, title, description: "", stack: "static-web",
       conversation_id: p.conversation_id, file_count: 0, revision: 0,
       framework: "html", runtime: "static", runtime_version: "browser",
-      entry_point: "index.html", build_command: "MATRIX static bundler",
+      entry_point: "index.html", build_command: "QORVYNA static bundler",
       output_directory: "/s/<slug>/", dependency_manifest: {},
       live_slug: null, live_url: null, env_public: {}, custom_domain: "",
       custom_domain_status: "", custom_domain_token: "", archived_at: null,
@@ -167,7 +167,7 @@ export async function getProject(d: Db, user: SessionUser, projectId: string) {
       runtime: data.runtime ?? "static",
       runtime_version: data.runtime_version ?? "browser",
       entry_point: data.entry_point ?? "index.html",
-      build_command: data.build_command ?? "MATRIX static bundler",
+      build_command: data.build_command ?? "QORVYNA static bundler",
       output_directory: data.output_directory ?? "/s/<slug>/",
       dependency_manifest: data.dependency_manifest ?? {},
       live_deployment_id: data.live_deployment_id ?? null,
@@ -383,9 +383,9 @@ export async function restoreProjectVersion(d: Db, user: SessionUser, p: { proje
 /**
  * Public runtime variables (§35).
  *
- * MATRIX hosting serves static documents — a deployed project has no server
+ * QORVYNA hosting serves static documents — a deployed project has no server
  * process that could hold a secret. Anything stored here is injected into the
- * published page as `window.MATRIX_ENV`, so it is PUBLIC by construction and
+ * published page as `window.QORVYNA_ENV`, so it is PUBLIC by construction and
  * keys that look like secrets are refused outright rather than quietly stored.
  * Provider credentials and deployment tokens never pass through this path.
  */

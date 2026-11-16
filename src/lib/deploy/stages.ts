@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX build pipeline model
+// QORVYNA build pipeline model
 //
 //   USER REQUEST → INTENT → PLAN → GENERATE FILES → BUILD → VALIDATE
 //     → PUBLISH → DEPLOYMENT RESULT
@@ -36,7 +36,7 @@ export const BUILD_STAGES: BuildStageDef[] = [
   { id: "install", label: "Checking dependencies", detail: "Static hosting does not run npm install", timeoutMs: 60_000 },
   { id: "build", label: "Building", detail: "Bundle and inline project assets", timeoutMs: 120_000 },
   { id: "validate", label: "Validating", detail: "Syntax, routes, assets and build checks", timeoutMs: 60_000 },
-  { id: "publish", label: "Publishing", detail: "Upload to MATRIX hosting", timeoutMs: 120_000 },
+  { id: "publish", label: "Publishing", detail: "Upload to QORVYNA hosting", timeoutMs: 120_000 },
 ];
 
 export const BUILD_STAGE_IDS = BUILD_STAGES.map((stage) => stage.id);
@@ -115,7 +115,7 @@ export type BuildActions = {
   fix?: boolean;
 };
 
-/** The model that produced the run. Always the single MATRIX model. */
+/** The model that produced the run. Always the single QORVYNA model. */
 export type RunModelInfo = {
   provider: string;
   model: string;
@@ -398,8 +398,8 @@ export function applyStaleness(run: BuildRun, now: number): BuildRun {
     {
       code: "BUILD_RUN_STALE",
       message: active
-        ? `MATRIX stopped receiving updates during "${stageDef(active.id).label}". The build was marked failed — nothing was published by this card.`
-        : "MATRIX stopped receiving updates for this build. Nothing was published by this card.",
+        ? `QORVYNA stopped receiving updates during "${stageDef(active.id).label}". The build was marked failed — nothing was published by this card.`
+        : "QORVYNA stopped receiving updates for this build. Nothing was published by this card.",
     },
     now,
   );;
@@ -472,7 +472,7 @@ export function buildRunCopy(run: BuildRun): BuildRunCopy {
     const waiting = run.continuation?.reason === "provider_unavailable";
     return {
       title: waiting ? "Waiting for the AI provider" : "Continuing…",
-      detail: run.continuation?.message ?? "Progress is saved. MATRIX continues from where it stopped.",
+      detail: run.continuation?.message ?? "Progress is saved. QORVYNA continues from where it stopped.",
       glyph: "●", tone: "active", canOpenLive: false, liveUrl: null,
     };
   }
@@ -483,7 +483,7 @@ export function buildRunCopy(run: BuildRun): BuildRunCopy {
     const failedPublish = progress.failedId === "publish" || run.deployment?.status === "failed";
     return {
       title: failedPublish ? "Publishing failed" : "Build failed",
-      detail: run.error?.message ?? "MATRIX stopped before the deployment was live.",
+      detail: run.error?.message ?? "QORVYNA stopped before the deployment was live.",
       glyph: "✕",
       tone: "danger",
       canOpenLive: false,
@@ -491,7 +491,7 @@ export function buildRunCopy(run: BuildRun): BuildRunCopy {
     };
   }
   if (run.deployment?.status === "deploying") {
-    return { title: "Publishing...", detail: "Uploading files to MATRIX hosting.", glyph: "●", tone: "active", canOpenLive: false, liveUrl: null };
+    return { title: "Publishing...", detail: "Uploading files to QORVYNA hosting.", glyph: "●", tone: "active", canOpenLive: false, liveUrl: null };
   }
   return {
     title: "Building project",

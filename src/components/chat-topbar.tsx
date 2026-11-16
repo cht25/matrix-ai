@@ -9,7 +9,7 @@
 //   · Chat | Agent     switches mode INSIDE the same conversation.
 //   · Models           the only model control. The bar never prints a
 //                      technical model name; those live inside the selector.
-//   · ● Idle/Working   what MATRIX is doing right now.
+//   · ● Idle/Working   what QORVYNA is doing right now.
 //   · ⚙ Chat settings  everything secondary: chat style, response strategy,
 //                      response display, voice language, read-aloud, demo
 //                      mode and the conversation's own actions.
@@ -23,7 +23,7 @@ import {
   Archive, ChevronLeft, ChevronRight, Download, EyeOff, FlaskConical, Languages, MessageSquareText, MonitorPlay, Pencil,
   Settings2, SlidersHorizontal, Trash2, Type, Volume2, VolumeX,
 } from "lucide-react";
-import { MATRIX_MODES, type ChatMode, type ResponseStrategy } from "@/lib/ai/modes";
+import { QORVYNA_MODES, type ChatMode, type ResponseStrategy } from "@/lib/ai/modes";
 import { MenuItem, MenuLabel, MenuSeparator, Popover } from "@/components/popover";
 import { ConfirmModal, Modal } from "@/components/modal";
 import { ModelSelector } from "@/components/model-picker";
@@ -48,7 +48,7 @@ const REVEAL_MODES: Array<{ id: RevealMode; label: string; hint: string }> = [
 ];
 
 /** Chat styles: every mode except Agent, which has its own tab. */
-const CHAT_STYLES = MATRIX_MODES.filter((item) => item.id !== "agent");
+const CHAT_STYLES = QORVYNA_MODES.filter((item) => item.id !== "agent");
 
 const STATUS: Record<ToolbarStatus, { label: string; dot: string }> = {
   idle: { label: "Idle", dot: "bg-ink-3" },
@@ -155,7 +155,7 @@ export function ChatTopBar({
             <EyeOff size={14} aria-hidden="true" /> Temporary
           </span>
         ) : (
-          <div className="mode-switch" role="radiogroup" aria-label="Matrix mode">
+          <div className="mode-switch" role="radiogroup" aria-label="QORVYNA mode">
             <button
               type="button"
               role="radio"
@@ -327,7 +327,7 @@ export function ChatTopBar({
               </label>
               <div className="flex justify-end gap-2">
                 <button type="button" onClick={() => setRenaming(false)} className="min-h-10 rounded-lg px-3.5 text-sm font-medium text-ink-2 hover:bg-surface-2">Cancel</button>
-                <button type="submit" disabled={!renameValue.trim() || renameBusy} className="min-h-10 rounded-lg bg-accent px-4 text-sm font-semibold text-[var(--primary-contrast)] hover:bg-accent-hover disabled:opacity-50">
+                <button type="submit" disabled={!renameValue.trim() || renameBusy} className="min-h-10 rounded-lg bg-accent-solid px-4 text-sm font-semibold text-accent-ink hover:bg-accent-solid-hover disabled:opacity-50">
                   {renameBusy ? "Saving…" : "Save"}
                 </button>
               </div>

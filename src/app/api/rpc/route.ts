@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — /api/rpc: the typed server-mutation endpoint (Firebase port of
+// QORVYNA AI — /api/rpc: the typed server-mutation endpoint (Firebase port of
 // the Postgres RPC layer). Clients POST { action, ...args } with the session
 // cookie; every action re-checks authentication, ownership and RBAC — the
 // same contract the old SECURITY DEFINER functions + RLS enforced.
@@ -110,12 +110,12 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     if (err instanceof RpcError) return fail(err.code, err.status);
     if (err instanceof z.ZodError) {
-      console.warn(`[MATRIX] /api/rpc action "${action}" validation failed`, err.issues[0]?.message);
+      console.warn(`[QORVYNA] /api/rpc action "${action}" validation failed`, err.issues[0]?.message);
       return fail("BAD_REQUEST", 400);
     }
     // Never leak internal error text (stack, SQL, file paths, provider
     // details) to the browser — log server-side, return a stable code.
-    console.error(`[MATRIX] /api/rpc action "${action}" failed`, err);
+    console.error(`[QORVYNA] /api/rpc action "${action}" failed`, err);
     return fail("INTERNAL", 500);
   }
 }
@@ -174,7 +174,7 @@ const ACTIONS: Record<string, Handler> = {
   design_apply_version: (d, u, b) => design.applyDesignVersion(d, u, z.number().int().min(1).parse(b.version)),
   design_reset: (d, u) => design.resetDesignConfig(d, u),
 
-  // --- MATRIX Family (server-enforced roles & relationships) ------------------
+  // --- QORVYNA Family (server-enforced roles & relationships) ------------------
   family_create: (d, u, b) => family.createFamily(d, u, { name: z.string().min(2).max(80).parse(b.name) }),
   family_invite: (d, u, b) =>
     family.inviteMember(d, u, { family_id: z.string().min(1).parse(b.family_id), invitee_email: z.string().email().parse(b.invitee_email) }),

@@ -75,7 +75,14 @@ export function Modal({
     document.body.style.overflow = "hidden";
     document.addEventListener("keydown", handleKey);
     const timer = window.setTimeout(() => {
-      dialogRef.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
+      const root = dialogRef.current;
+      if (!root) return;
+      // Start where the user will act: an element that asks for focus, else the
+      // first control of the content (a field, or Cancel in a confirmation).
+      // The header's close button is only the fallback.
+      const nodes = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.offsetParent !== null);
+      const target = root.querySelector<HTMLElement>("[data-autofocus]") ?? nodes.find((el) => !el.closest(".modal-header")) ?? nodes[0];
+      target?.focus();
     }, 0);
     return () => {
       window.clearTimeout(timer);

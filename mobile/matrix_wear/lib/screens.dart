@@ -39,7 +39,7 @@ class _WearLoginScreenState extends State<WearLoginScreen> {
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            const Text('MATRIX', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text('QORVYNA', style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             TextField(controller: _email, decoration: const InputDecoration(labelText: 'Email'), keyboardType: TextInputType.emailAddress),
             const SizedBox(height: 8),
@@ -87,7 +87,7 @@ class _WearHomeScreenState extends State<WearHomeScreen> {
 }
 
 // ---------------------------------------------------------------------------
-// Quick chat — asks MATRIX and shows a SHORT answer (first ~300 chars), which
+// Quick chat — asks QORVYNA and shows a SHORT answer (first ~300 chars), which
 // is the right default on a watch screen.
 // ---------------------------------------------------------------------------
 class WearChat extends StatefulWidget {
@@ -123,7 +123,7 @@ class _WearChatState extends State<WearChat> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('MATRIX', style: TextStyle(fontSize: 16)), toolbarHeight: 40),
+      appBar: AppBar(title: const Text('QORVYNA', style: TextStyle(fontSize: 16)), toolbarHeight: 40),
       body: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(children: [

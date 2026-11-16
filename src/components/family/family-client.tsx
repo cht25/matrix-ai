@@ -1,6 +1,6 @@
 "use client";
 
-// MATRIX Family — clear household identity, cross-account member devices,
+// QORVYNA Family — clear household identity, cross-account member devices,
 // resendable Resend invitations + QR popups, Google Family Link–style remote
 // lock, transparent live screen-mirror (ss) viewer, and full opt-in child
 // telemetry (screen time, app usage, hidden apps, browser history).
@@ -771,7 +771,7 @@ export function FamilyClient() {
                             {member.is_me ? <Badge>You</Badge> : null}
                           </span>
                           <span className="mt-0.5 block truncate text-xs text-ink-3">
-                            {member.email || "Separate MATRIX account"}
+                            {member.email || "Separate QORVYNA account"}
                           </span>
                           <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
                             <Badge className={member.role === "parent" ? "!border-accent/40 !text-accent" : ""}>
@@ -1077,7 +1077,7 @@ export function FamilyClient() {
         open={inviteOpen}
         onClose={() => setInviteOpen(false)}
         title="Invite a family member"
-        description="Sends an email via Resend AND opens a scannable QR popup. Each member signs in with their own MATRIX account."
+        description="Sends an email via Resend AND opens a scannable QR popup. Each member signs in with their own QORVYNA account."
         size="sm"
         footer={
           <div className="flex justify-end gap-2">
@@ -1235,8 +1235,8 @@ export function FamilyClient() {
                     : "Mirroring session has ended."}
                 </p>
                 <p className="max-w-md text-xs text-ink-3">
-                  {mirrorTargetName} sees a banner at the top of MATRIX and can click{" "}
-                  <strong>Share screen (ss)</strong> (or stream automatically from MATRIX Desktop / Android Companion).
+                  {mirrorTargetName} sees a banner at the top of QORVYNA and can click{" "}
+                  <strong>Share screen (ss)</strong> (or stream automatically from QORVYNA Desktop / Android Companion).
                 </p>
               </div>
             )}
@@ -1272,7 +1272,7 @@ export function FamilyClient() {
                 <div className="min-w-0">
                   <p className="truncate font-semibold text-ink">{detail.display_name || "No display name set"}</p>
                   <p className="truncate text-xs text-ink-3">
-                    {detail.email || "Separate MATRIX account"}
+                    {detail.email || "Separate QORVYNA account"}
                     {detail.country ? ` · ${detail.country}` : ""}
                   </p>
                   <div className="mt-1 flex flex-wrap gap-1.5">
@@ -1615,7 +1615,7 @@ export function FamilyClient() {
             ) : detail.role === "child" ? (
               <p className="rounded-xl border border-dashed border-border p-3 text-xs text-ink-3">
                 No telemetry snapshot received yet. Link {detail.display_name || "the member"}&apos;s device with{" "}
-                <strong>Link device (QR)</strong> and open MATRIX Desktop or the MATRIX Android Companion app to sync
+                <strong>Link device (QR)</strong> and open QORVYNA Desktop or the QORVYNA Android Companion app to sync
                 app usage, hidden apps, and browser history.
               </p>
             ) : null}

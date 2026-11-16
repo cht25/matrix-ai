@@ -7,7 +7,7 @@ import { POST as exportPdf } from "../src/app/api/export/pdf/route";
 import { GET as devCertificatePdf } from "../src/app/api/dev-preview/certificate/pdf/route";
 import { extractPdfText, mediaBoxes, pageCount } from "./helpers/pdf-text";
 
-const BANGLA = "আমি বাংলায় পরীক্ষা করছি। এটি Matrix AI-এর একটি পরীক্ষা।";
+const BANGLA = "আমি বাংলায় পরীক্ষা করছি। এটি QORVYNA AI-এর একটি পরীক্ষা।";
 
 function jsonRequest(body: unknown) {
   return new Request("http://localhost/api/export/pdf", {
@@ -19,7 +19,7 @@ function jsonRequest(body: unknown) {
 
 describe("POST /api/export/pdf", () => {
   it("returns a real PDF containing the submitted Unicode text", async () => {
-    const res = await exportPdf(jsonRequest({ content: `# Matrix AI Platform\n\n${BANGLA}\n`, title: "Matrix AI Platform" }));
+    const res = await exportPdf(jsonRequest({ content: `# QORVYNA AI Platform\n\n${BANGLA}\n`, title: "QORVYNA AI Platform" }));
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("application/pdf");
 
@@ -29,7 +29,7 @@ describe("POST /api/export/pdf", () => {
     expect(Buffer.from(bytes).toString("latin1").startsWith("%PDF-")).toBe(true);
 
     const text = await extractPdfText(bytes);
-    expect(text).toContain("Matrix AI Platform");
+    expect(text).toContain("QORVYNA AI Platform");
     expect(text).toContain(BANGLA);
   });
 

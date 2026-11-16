@@ -1,10 +1,10 @@
 // Standalone-site bundler.
 //
-// Turns a MATRIX Agent project (a tree of HTML / CSS / JS / asset files) into
+// Turns a QORVYNA Agent project (a tree of HTML / CSS / JS / asset files) into
 // a mostly self-contained root document: local text and binary resources are
 // inlined while the output stays within Firestore's safe document budget.
 // References that do not fit remain as sibling files and resolve via <base>.
-// Public window.MATRIX_ENV values are injected into the HTML when configured.
+// Public window.QORVYNA_ENV values are injected into the HTML when configured.
 
 import type { ProjectFile } from "@/lib/projects/paths";
 import { contentTypeForPath, fileExtension } from "@/lib/projects/paths";
@@ -168,7 +168,7 @@ export function inlineHtmlDocument(
       if (!cssFile || cssFile.encoding === "base64") return full;
       const content = cssFor(cssFile).replace(/<\/style/gi, "<\\/style");
       if (!addText(content)) return full;
-      return `<style data-matrix-source="${cssFile.path}">\n${content}\n</style>`;
+      return `<style data-qorvyna-source="${cssFile.path}">\n${content}\n</style>`;
     },
   );
 
@@ -183,7 +183,7 @@ export function inlineHtmlDocument(
       const typeAttr = isModule ? ' type="module"' : "";
       const content = jsFile.content.replace(/<\/script/gi, "<\\/script");
       if (!addText(content)) return full;
-      return `<script${typeAttr} data-matrix-source="${jsFile.path}">\n${content}\n</script>`;
+      return `<script${typeAttr} data-qorvyna-source="${jsFile.path}">\n${content}\n</script>`;
     },
   );
 
@@ -222,7 +222,10 @@ export function inlineHtmlDocument(
 
   // 6. Inject public env vars for the site's JS.
   if (opts.envPublic && Object.keys(opts.envPublic).length) {
-    const envScript = `<script data-matrix-env>window.MATRIX_ENV=${jsonForInlineScript(opts.envPublic)};</script>`;
+    // Sites published before the rename read `window.MATRIX_ENV`; republishing
+    // must not break their scripts, so the old name stays as an alias of the
+    // same object (one value, two names — never a second copy).
+    const envScript = `<script data-qorvyna-env>window.QORVYNA_ENV=${jsonForInlineScript(opts.envPublic)};</script>\n<script data-qorvyna-env-alias>window.MATRIX_ENV=window.QORVYNA_ENV;</script>`;
     if (/<head\b[^>]*>/i.test(out)) {
       out = out.replace(/(<head\b[^>]*>)/i, `$1\n${envScript}`);
     } else {

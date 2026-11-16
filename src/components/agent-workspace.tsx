@@ -1,6 +1,6 @@
 "use client";
 
-// MATRIX Agent workspace — the side panel that opens after the Agent has
+// QORVYNA Agent workspace — the side panel that opens after the Agent has
 // generated project files. Rebuilt as a focused builder surface: identity
 // header, model + file-count status, and the preview / files / publish /
 // GitHub tabs provided by <ProjectWorkspace />.
@@ -56,7 +56,7 @@ export function AgentWorkspace({
       >
         <header className="agent-header flex min-h-16 shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-3 sm:px-4">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="agent-logo grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent text-white shadow-sm">
+            <span className="agent-logo grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent-solid text-accent-ink shadow-sm">
               <Code2 size={18} strokeWidth={1.9} />
             </span>
             <div className="min-w-0">

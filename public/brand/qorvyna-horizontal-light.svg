@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 646 132" width="646" height="132" role="img" aria-label="QORVYNA"><title>QORVYNA</title><g transform="translate(0 0) scale(0.2578125)"><defs>
+    <linearGradient id="e12-ring" gradientUnits="userSpaceOnUse" x1="318" y1="108" x2="150" y2="420">
+      <stop offset="0" stop-color="#22CCFF"/><stop offset=".46" stop-color="#2563FF"/><stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+    <linearGradient id="e12-tail" gradientUnits="userSpaceOnUse" x1="222" y1="262" x2="430" y2="398">
+      <stop offset="0" stop-color="#22CCFF"/><stop offset=".55" stop-color="#2563FF"/><stop offset="1" stop-color="#1437D6"/>
+    </linearGradient>
+    <linearGradient id="e12-orbit" gradientUnits="userSpaceOnUse" x1="-236" y1="0" x2="236" y2="0">
+      <stop offset="0" stop-color="#22CCFF"/><stop offset=".5" stop-color="#2563FF"/><stop offset="1" stop-color="#9D5CFF"/>
+    </linearGradient>
+    <radialGradient id="e12-body" cx=".36" cy=".32" r=".75">
+      <stop offset="0" stop-color="#D6F3FF"/><stop offset=".42" stop-color="#3FA2FF"/><stop offset="1" stop-color="#1437D6"/>
+    </radialGradient>
+    <radialGradient id="e12-halo">
+      <stop offset="0" stop-color="#5FB4FF" stop-opacity=".55"/><stop offset="1" stop-color="#5FB4FF" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="e12-far"><rect x="-300" y="-140" width="600" height="141.5"/></clipPath><clipPath id="e12-near"><rect x="-300" y="0" width="600" height="140"/></clipPath><clipPath id="e12-nearw"><rect x="-300" y="-7" width="600" height="160"/></clipPath>
+    <mask id="e12-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <rect width="512" height="512" fill="#fff"/>
+      <g transform="translate(246 252) rotate(-23)" clip-path="url(#e12-nearw)"><path d="M-236 0a236 58 0 1 0 472 0a236 58 0 1 0 -472 0ZM-192 -3.5a211 47.5 0 1 0 422 0a211 47.5 0 1 0 -422 0Z" fill-rule="evenodd" fill="#000" stroke="#000" stroke-width="12"/></g>
+    </mask>
+    <clipPath id="e12-behind"><path clip-rule="evenodd" d="M0 0H512V512H0ZM77 264a163 163 0 1 0 326 0a163 163 0 1 0 -326 0Z"/></clipPath>
+    <mask id="e12-ringcut" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <rect width="512" height="512" fill="#fff"/>
+      <path d="M212 264L300 264L438 396L350 396Z" fill="#000" stroke="#000" stroke-width="15" stroke-linejoin="miter"/>
+      <g transform="translate(246 252) rotate(-23)" clip-path="url(#e12-nearw)"><path d="M-236 0a236 58 0 1 0 472 0a236 58 0 1 0 -472 0ZM-192 -3.5a211 47.5 0 1 0 422 0a211 47.5 0 1 0 -422 0Z" fill-rule="evenodd" fill="#000" stroke="#000" stroke-width="13"/></g>
+    </mask>
+  </defs>
+  <g clip-path="url(#e12-behind)"><g transform="translate(246 252) rotate(-23)" clip-path="url(#e12-far)"><path d="M-236 0a236 58 0 1 0 472 0a236 58 0 1 0 -472 0ZM-192 -3.5a211 47.5 0 1 0 422 0a211 47.5 0 1 0 -422 0Z" fill-rule="evenodd" fill="url(#e12-orbit)"/></g></g>
+  <path d="M84 264a156 156 0 1 0 312 0a156 156 0 1 0 -312 0ZM140 264a100 100 0 1 0 200 0a100 100 0 1 0 -200 0Z" fill-rule="evenodd" fill="url(#e12-ring)" mask="url(#e12-ringcut)"/>
+  <path d="M212 264L300 264L438 396L350 396Z" fill="url(#e12-tail)" mask="url(#e12-cut)"/>
+  <g transform="translate(246 252) rotate(-23)" clip-path="url(#e12-near)"><path d="M-236 0a236 58 0 1 0 472 0a236 58 0 1 0 -472 0ZM-192 -3.5a211 47.5 0 1 0 422 0a211 47.5 0 1 0 -422 0Z" fill-rule="evenodd" fill="url(#e12-orbit)"/></g>
+  <circle cx="414" cy="143" r="40" fill="url(#e12-halo)"/>
+  <circle cx="414" cy="143" r="18" fill="url(#e12-body)"/></g><g transform="translate(150 44) scale(0.5)"><defs>
+    <linearGradient id="w13-accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22CCFF"/><stop offset="1" stop-color="#2563FF"/>
+    </linearGradient>
+    <mask id="w13-q" maskUnits="userSpaceOnUse" x="-20" y="-20" width="1016" height="140">
+      <rect x="-20" y="-20" width="1016" height="140" fill="#fff"/><path d="M40 47L97 47L156 108L92 108Z" fill="#000"/>
+    </mask>
+  </defs>
+  <path d="M42 0h54a42 42 0 0 1 42 42v16a42 42 0 0 1 -42 42h-54a42 42 0 0 1 -42 -42v-16a42 42 0 0 1 42 -42ZM42 28h54a14 14 0 0 1 14 14v16a14 14 0 0 1 -14 14h-54a14 14 0 0 1 -14 -14v-16a14 14 0 0 1 14 -14Z" fill-rule="evenodd" fill="#0B1533" mask="url(#w13-q)"/>
+  <path d="M194 0h50a42 42 0 0 1 42 42v16a42 42 0 0 1 -42 42h-50a42 42 0 0 1 -42 -42v-16a42 42 0 0 1 42 -42ZM194 28h50a14 14 0 0 1 14 14v16a14 14 0 0 1 -14 14h-50a14 14 0 0 1 -14 -14v-16a14 14 0 0 1 14 -14Z" fill-rule="evenodd" fill="#0B1533"/><path d="M300 0H382a35 35 0 0 1 0 70L420 100H384L348 70H328V100H300ZM328 28H382a7 7 0 0 1 0 14H328Z" fill-rule="evenodd" fill="#0B1533"/><path d="M430 0L462 0L495 62L528 0L560 0L512 100L478 100Z" fill-rule="evenodd" fill="#0B1533"/><path d="M564 0L597 0L628 37L659 0L692 0L642 60L642 100L614 100L614 60Z" fill-rule="evenodd" fill="#0B1533"/><path d="M700 100L700 0L730 0L796 57L796 0L824 0L824 100L794 100L728 43L728 100Z" fill-rule="evenodd" fill="#0B1533"/><path d="M836 100L890 0L922 0L976 100L943 100L906 34L869 100Z" fill-rule="evenodd" fill="#0B1533"/>
+  <path d="M54 55L90 55L142 100L106 100Z" fill="url(#w13-accent)"/><path d="M906 58L928 100L884 100Z" fill="url(#w13-accent)"/></g></svg>

@@ -2,7 +2,7 @@
 
 // Admin → AI configuration → Provider accounts.
 //
-// Several Groq accounts can be connected. MATRIX sends each request to an
+// Several Groq accounts can be connected. QORVYNA sends each request to an
 // account that has room, and moves to another one only after the provider has
 // reported a limit or an error. This panel shows what the provider last told
 // us about each account; a key is never shown again after it is saved.

@@ -2,7 +2,7 @@
 
 // Admin → AI configuration → Image generation.
 //
-// The API key travels in ONE direction only: browser → MATRIX backend. It is
+// The API key travels in ONE direction only: browser → QORVYNA backend. It is
 // never read back, never rendered, never stored in localStorage. Once saved,
 // the field is replaced by a masked "Configured" state with a Replace action.
 
@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, KeyRound, XCircle } from "lucide-react";
 import { rpc } from "@/lib/client/api";
 import { errorCodeOf } from "@/lib/admin-errors";
+import { useDialogs } from "@/components/dialogs";
 import { Alert, Button, Card, Field, Input, Select, Spinner } from "@/components/ui";
 
 type PublicConfig = {
@@ -55,6 +56,7 @@ const PROVIDER_MODELS: Record<string, Array<{ id: string; label: string }>> = {
 };
 
 export function ImageProviderSettings() {
+  const dialogs = useDialogs();
   const [config, setConfig] = useState<PublicConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [provider, setProvider] = useState("together");
@@ -121,7 +123,8 @@ export function ImageProviderSettings() {
   }
 
   async function clearKey() {
-    if (!confirm("Remove the stored API key? Image generation will stop until a new key is saved.")) return;
+    const confirmed = await dialogs.confirm({ title: "Remove the stored API key?", body: "Image generation stops for every user until a new key is saved.", confirmLabel: "Remove key" });
+    if (!confirmed) return;
     try {
       const value = await rpc<PublicConfig>("admin_image_provider_clear_key");
       setConfig(value);
@@ -151,7 +154,7 @@ export function ImageProviderSettings() {
         <p className="eyebrow">AI providers</p>
         <h2 className="mt-1 text-lg font-semibold text-ink">Image generation</h2>
         <p className="mt-1 text-sm text-ink-2">
-          MATRIX generates images with Together AI from the server. This is a media service; all language work is done by GPT OSS 120B. The API key is encrypted at rest and is
+          QORVYNA generates images with Together AI from the server. This is a media service; all language work is done by GPT OSS 120B. The API key is encrypted at rest and is
           never sent to the browser.
         </p>
       </div>
@@ -265,6 +268,7 @@ export function ImageProviderSettings() {
           {testing ? "Testing…" : "Test connection"}
         </Button>
       </div>
+      {dialogs.element}
     </Card>
   );
 }

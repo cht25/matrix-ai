@@ -5,51 +5,51 @@ import { Monitor, Moon, Sun } from "lucide-react";
 import { useTheme, type Theme } from "@/lib/theme";
 import { ThemeGallery } from "@/components/theme-gallery";
 import { Card } from "@/components/ui";
-import { applyRainSetting, readRainSetting, type RainSetting } from "@/components/matrix-rain";
+import { applyAmbientSetting, readAmbientSetting, type AmbientSetting } from "@/lib/ambient";
 import { cn } from "@/lib/utils";
 
-// Light first: it is the primary MATRIX theme. Dark is the alternative;
-// System follows the device preference.
+// Dark is the primary QORVYNA theme (the identity is drawn on deep navy);
+// light is a fully designed alternative and System follows the device.
 const OPTIONS: { id: Theme; label: string; desc: string; icon: typeof Moon }[] = [
-  { id: "light", label: "Light", desc: "Soft paper with blue-gray layers — the default", icon: Sun },
-  { id: "dark", label: "Dark", desc: "Deep navy — easy on the eyes", icon: Moon },
+  { id: "dark", label: "Dark", desc: "Deep navy — the default", icon: Moon },
+  { id: "light", label: "Light", desc: "Cool paper white with navy ink", icon: Sun },
   { id: "system", label: "System", desc: "Follow your device setting", icon: Monitor },
 ];
 
-const RAIN_OPTIONS: { id: RainSetting; label: string; desc: string }[] = [
-  { id: "off", label: "Off", desc: "No animation — flattest, fastest" },
-  { id: "subtle", label: "Subtle", desc: "Slow, faint rain" },
-  { id: "normal", label: "Normal", desc: "The classic MATRIX rain" },
-  { id: "heavy", label: "Heavy", desc: "Denser, faster — showcase mode" },
+const AMBIENT_OPTIONS: { id: AmbientSetting; label: string; desc: string }[] = [
+  { id: "off", label: "Off", desc: "Flat background" },
+  { id: "subtle", label: "Subtle", desc: "A faint hint of colour" },
+  { id: "normal", label: "Normal", desc: "The standard brand glow" },
+  { id: "heavy", label: "Vivid", desc: "Full-strength colour" },
 ];
 
 export function AppearancePanel() {
   const { theme, setTheme } = useTheme();
-  const [rain, setRain] = useState<RainSetting>("normal");
-  useEffect(() => { setRain(readRainSetting()); }, []);
-  function chooseRain(next: RainSetting) {
-    setRain(next);
-    applyRainSetting(next);
+  const [ambient, setAmbient] = useState<AmbientSetting>("normal");
+  useEffect(() => { setAmbient(readAmbientSetting()); }, []);
+  function chooseAmbient(next: AmbientSetting) {
+    setAmbient(next);
+    applyAmbientSetting(next);
   }
   return (
     <div className="space-y-4">
       <Card>
-        <h2 className="font-bold text-ink">MATRIX background</h2>
+        <h2 className="font-bold text-ink">Background glow</h2>
         <p className="mt-1 text-sm text-ink-2">
-          The digital rain plays behind every page of MATRIX across both dark and light themes. It pauses automatically
-          when the tab is hidden and scales down on compact screens to save battery.
+          A soft blue and violet glow sits behind every page. It is a still image, not an animation, so it costs no
+          battery and never slows scrolling.
         </p>
-        <div className="mt-4 grid gap-2 sm:grid-cols-4" role="radiogroup" aria-label="MATRIX background intensity">
-          {RAIN_OPTIONS.map((option) => (
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4" role="radiogroup" aria-label="Background glow strength">
+          {AMBIENT_OPTIONS.map((option) => (
             <button
               key={option.id}
               type="button"
               role="radio"
-              aria-checked={rain === option.id}
-              onClick={() => chooseRain(option.id)}
+              aria-checked={ambient === option.id}
+              onClick={() => chooseAmbient(option.id)}
               className={cn(
-                "rounded-xl border p-3 text-left transition-colors",
-                rain === option.id ? "border-accent bg-accent-soft" : "border-border hover:bg-surface-2",
+                "min-h-11 rounded-xl border p-3 text-left transition-colors",
+                ambient === option.id ? "border-accent bg-accent-soft" : "border-border hover:bg-surface-2",
               )}
             >
               <span className="block text-sm font-semibold text-ink">{option.label}</span>
@@ -87,7 +87,7 @@ export function AppearancePanel() {
       </Card>
       <Card>
         <h2 className="font-bold text-ink">Theme templates</h2>
-        <p className="mt-1 text-sm text-ink-2">Professionally designed palettes. Applying one never changes anyone else's MATRIX.</p>
+        <p className="mt-1 text-sm text-ink-2">Professionally designed palettes. Applying one never changes anyone else's QORVYNA.</p>
         <div className="mt-4">
           <ThemeGallery />
         </div>

@@ -1,9 +1,9 @@
 // =============================================================================
-// MATRIX AI — ESP32 / hardware bridge domain (client-safe).
+// QORVYNA AI — ESP32 / hardware bridge domain (client-safe).
 //
-// An ESP32 (or any small microcontroller with Wi-Fi) can be a MATRIX node:
+// An ESP32 (or any small microcontroller with Wi-Fi) can be a QORVYNA node:
 // a family check-in button, a screen-time traffic light, a "focus mode" lamp,
-// a door/desk sensor, or an alarm that raises a MATRIX notification.
+// a door/desk sensor, or an alarm that raises a QORVYNA notification.
 //
 // SECURITY CONTRACT (enforced server-side, described here so firmware authors
 // and the UI share one story):
@@ -145,7 +145,7 @@ export function esp32FirmwareSource(input: {
   const buttonPin = 4;
   const lampPin = 5;
   const sensorPin = 34;
-  const safeLabel = input.label.replace(/[^a-zA-Z0-9 _.-]/g, "").slice(0, 48) || "MATRIX node";
+  const safeLabel = input.label.replace(/[^a-zA-Z0-9 _.-]/g, "").slice(0, 48) || "QORVYNA node";
   const ssid = (input.wifiSsid || "YOUR_WIFI_SSID").replace(/["\\]/g, "");
   const wifiPass = (input.wifiPassword || "YOUR_WIFI_PASSWORD").replace(/["\\]/g, "");
   const wantsButton = has("check_in_button") || has("sos_alarm");
@@ -203,7 +203,7 @@ void applyLamp(int level) { analogWrite(PIN_LAMP, constrain(level, 0, 255)); }
     : "";
 
   return `// =============================================================================
-// MATRIX node firmware — generated ${new Date().toISOString().slice(0, 10)}
+// QORVYNA node firmware — generated ${new Date().toISOString().slice(0, 10)}
 // Board: ${board.label} (${board.chip})
 // Node:  ${safeLabel}
 //
@@ -217,7 +217,7 @@ void applyLamp(int level) { analogWrite(PIN_LAMP, constrain(level, 0, 255)); }
 // --- configuration ----------------------------------------------------------
 const char* WIFI_SSID       = "${ssid}";
 const char* WIFI_PASSWORD   = "${wifiPass}";
-const char* MATRIX_ENDPOINT = "${input.endpoint}";
+const char* QORVYNA_ENDPOINT = "${input.endpoint}";
 const char* PAIRING_CODE    = "${input.pairingCode}";
 const char* DEVICE_LABEL    = "${safeLabel}";
 const char* PROTOCOL        = "${ESP32_PROTOCOL_VERSION}";
@@ -259,7 +259,7 @@ void sendReading(const char* eventType, const char* message) {
   body += "}";
 
   HTTPClient http;
-  http.begin(String(MATRIX_ENDPOINT) + "/api/devices/esp32/report");
+  http.begin(String(QORVYNA_ENDPOINT) + "/api/devices/esp32/report");
   http.setTimeout(8000);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Authorization", String("Bearer ") + deviceToken);
@@ -271,7 +271,7 @@ void sendReading(const char* eventType, const char* message) {
 
 bool pair() {
   HTTPClient http;
-  http.begin(String(MATRIX_ENDPOINT) + "/api/devices/esp32/pair");
+  http.begin(String(QORVYNA_ENDPOINT) + "/api/devices/esp32/pair");
   http.setTimeout(8000);
   http.addHeader("Content-Type", "application/json");
   String body = "{\\"v\\":\\"";

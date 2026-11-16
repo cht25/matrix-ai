@@ -22,7 +22,7 @@ export function AdminStandaloneShell({ children }: { children: React.ReactNode }
             <ThemeToggle compact />
             <Link href="/chat" className="btn btn-outline inline-flex min-h-11 items-center gap-2 px-3 text-sm">
               <ArrowLeft aria-hidden className="h-4 w-4" />
-              <span className="hidden sm:inline">Back to MATRIX</span>
+              <span className="hidden sm:inline">Back to QORVYNA</span>
               <span className="sm:hidden">App</span>
             </Link>
           </div>

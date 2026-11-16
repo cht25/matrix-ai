@@ -1,4 +1,4 @@
-/// MATRIX AI — Android app entry point.
+/// QORVYNA AI — Android app entry point.
 ///
 /// Build with the Firebase client configuration and (optionally) the API base:
 ///   flutter build apk --release \
@@ -16,13 +16,13 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   String? startupError;
   if (!MatrixConfig.isFirebaseConfigured) {
-    startupError = 'This build has no sign-in configuration, so it cannot connect to MATRIX. '
+    startupError = 'This build has no sign-in configuration, so it cannot connect to QORVYNA. '
         'Install the official release, or rebuild with the FIREBASE_* build settings.';
   } else {
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
     } catch (_) {
-      startupError = 'MATRIX could not start sign-in on this device. Check your connection and reopen the app.';
+      startupError = 'QORVYNA could not start sign-in on this device. Check your connection and reopen the app.';
     }
   }
   runApp(MatrixApp(startupError: startupError));
@@ -35,9 +35,9 @@ class MatrixApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'MATRIX AI',
+      title: 'QORVYNA AI',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF3B82F6), brightness: Brightness.dark), useMaterial3: true),
+      theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2563FF), brightness: Brightness.dark), useMaterial3: true),
       home: startupError == null ? const AuthGate() : _StartupProblem(message: startupError!),
     );
   }
@@ -59,7 +59,7 @@ class _StartupProblem extends StatelessWidget {
               children: [
                 const Icon(Icons.error_outline, size: 44, color: Color(0xFFF59E0B)),
                 const SizedBox(height: 14),
-                const Text('MATRIX can\'t start', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                const Text('QORVYNA can\'t start', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 8),
                 Text(message, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, height: 1.45)),
                 const SizedBox(height: 10),

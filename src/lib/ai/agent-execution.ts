@@ -1,4 +1,4 @@
-import { parseAgentResponse, safeAgentPath, type AgentFile } from "@/lib/ai/agent";
+import { hasFileProtocol, parseAgentResponse, safeAgentPath, type AgentFile } from "@/lib/ai/agent";
 
 /** Task state is not inferred from the original prompt once work is underway. */
 export type AgentExecutionState = "CONVERSATION" | "CLARIFICATION_REQUIRED" | "PLANNING" | "FILE_GENERATION" | "VALIDATION" | "BUILD" | "DEPLOYMENT" | "COMPLETED" | "FAILED";
@@ -49,7 +49,7 @@ export function classifyAgentOutput(raw: string, toolCalls: Array<{ function: { 
   // an explanatory sentence remains a genuine generation failure.
   const sentences = text.replace(/\*\*/g, "").split(/(?<=[?.!])\s+/);
   const question = sentences.find((part) => /\?\s*$/.test(part.trim()) && /^(?:what|which|who|where|when|how|do|does|is|are|can|could|would|should|please|before\s+i\s+(?:start|build)|to\s+begin)/i.test(part.trim()));
-  if (question && text.length < 1100 && !/```|<<<MATRIX_FILE/.test(raw)) return { state: "CLARIFICATION_REQUIRED", reply: text, files: [] };
+  if (question && text.length < 1100 && !raw.includes("```") && !hasFileProtocol(raw)) return { state: "CLARIFICATION_REQUIRED", reply: text, files: [] };
   if (/\b(?:plan|approach|steps|propose|first,?\s+i\s+will)\b/i.test(text)) return { state: "PLANNING", reply: text, files: [] };
   return { state: "CONVERSATION", reply: text, files: [] };
 }

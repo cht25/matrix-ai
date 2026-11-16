@@ -1,4 +1,4 @@
-// MATRIX Connect — complete pairing from a scanned QR payload.
+// QORVYNA Connect — complete pairing from a scanned QR payload.
 // The scanning device must be signed in; the device is registered under the
 // challenge owner's account with scoped authorization. One-time + expiring.
 import { NextResponse } from "next/server";
@@ -36,7 +36,7 @@ export async function POST(req: Request) {
     if (error instanceof RpcError) {
       return NextResponse.json({ error: error.code }, { status: error.status });
     }
-    console.error("[MATRIX] pairing completion failed", error);
+    console.error("[QORVYNA] pairing completion failed", error);
     return NextResponse.json({ error: "PAIRING_FAILED" }, { status: 500 });
   }
 }

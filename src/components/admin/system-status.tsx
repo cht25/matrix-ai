@@ -71,7 +71,7 @@ export function useHealth() {
       setHealth((await res.json()) as Health);
       setFailed(false);
     } catch (err) {
-      console.error("[MATRIX admin] health probe failed", err);
+      console.error("[QORVYNA admin] health probe failed", err);
       setFailed(true);
     }
   }, []);
@@ -125,7 +125,7 @@ export function SystemStatusPill() {
         open={open}
         onClose={() => setOpen(false)}
         title="System health"
-        description="Live probes against the services MATRIX depends on."
+        description="Live probes against the services QORVYNA depends on."
         size="sm"
         footer={<Button variant="outline" onClick={() => void refresh()}>Re-check</Button>}
       >
@@ -163,7 +163,7 @@ export function SystemStatusPill() {
 }
 
 /**
- * MATRIX SYSTEM PULSE — compact live panel for the overview dashboard.
+ * QORVYNA SYSTEM PULSE — compact live panel for the overview dashboard.
  * Runtime values are supplied by the server (real counts); service state comes
  * from the live health probe. No placeholder numbers.
  */
@@ -176,9 +176,9 @@ export function SystemPulse({ metrics }: { metrics: { label: string; value: stri
   ] as { label: string; value: string; tone: Tone }[];
 
   return (
-    <section aria-label="Matrix system pulse" className="rounded-2xl border border-border bg-surface p-4">
+    <section aria-label="QORVYNA system pulse" className="rounded-2xl border border-border bg-surface p-4">
       <div className="flex items-center justify-between">
-        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-3">Matrix system pulse</p>
+        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-3">QORVYNA system pulse</p>
         <span className="font-mono text-[10px] text-ink-3">live</span>
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">

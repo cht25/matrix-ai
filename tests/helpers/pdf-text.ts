@@ -29,10 +29,20 @@ function findStreams(pdf: Buffer): Stream[] {
     const start = match.index + match[0].length;
     const end = raw.indexOf("endstream", start);
     if (end < 0) continue;
-    let data = pdf.subarray(start, end);
-    // Trim the EOL that precedes `endstream`.
-    while (data.length && (data[data.length - 1] === 0x0a || data[data.length - 1] === 0x0d)) {
-      data = data.subarray(0, data.length - 1);
+    // The dictionary's /Length is authoritative. Guessing the end by trimming
+    // line breaks before `endstream` corrupts any compressed stream whose own
+    // last byte happens to be 0x0A or 0x0D (the zlib checksum can end with
+    // either), which silently dropped that stream's text.
+    const declared = Number(/\/Length\s+(\d+)(?!\s+\d+\s+R)/.exec(dict)?.[1] ?? NaN);
+    let data: Buffer;
+    if (Number.isInteger(declared) && declared >= 0 && start + declared <= end) {
+      data = pdf.subarray(start, start + declared);
+    } else {
+      data = pdf.subarray(start, end);
+      // No usable /Length: trim the EOL that precedes `endstream`.
+      while (data.length && (data[data.length - 1] === 0x0a || data[data.length - 1] === 0x0d)) {
+        data = data.subarray(0, data.length - 1);
+      }
     }
     if (/\/FlateDecode/.test(dict)) {
       try {

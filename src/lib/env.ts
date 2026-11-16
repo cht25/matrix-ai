@@ -161,10 +161,10 @@ export function logMissingFirebaseConfig(): void {
   if (g[WARN_FLAG]) return;
   g[WARN_FLAG] = true;
   console.error(
-    "[MATRIX] NEXT_PUBLIC_FIREBASE_API_KEY / NEXT_PUBLIC_FIREBASE_PROJECT_ID are missing or invalid —\n" +
-      "[MATRIX] the app cannot authenticate or load data. Add the Firebase web config\n" +
-      "[MATRIX] (Firebase console → Project settings → Your apps) plus the Admin service\n" +
-      "[MATRIX] account vars (FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY) to your host's\n" +
-      "[MATRIX] environment settings and redeploy. See README.md → “Firebase setup”.",
+    "[QORVYNA] NEXT_PUBLIC_FIREBASE_API_KEY / NEXT_PUBLIC_FIREBASE_PROJECT_ID are missing or invalid —\n" +
+      "[QORVYNA] the app cannot authenticate or load data. Add the Firebase web config\n" +
+      "[QORVYNA] (Firebase console → Project settings → Your apps) plus the Admin service\n" +
+      "[QORVYNA] account vars (FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY) to your host's\n" +
+      "[QORVYNA] environment settings and redeploy. See README.md → “Firebase setup”.",
   );
 }

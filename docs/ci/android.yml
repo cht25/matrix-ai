@@ -1,4 +1,4 @@
-# Builds the MATRIX Android app (mobile/matrix_app) and publishes the APK.
+# Builds the QORVYNA Android app (mobile/matrix_app) and publishes the APK.
 #
 # Runs on: manual dispatch, tags `mobile-v*`, and pull requests / pushes that
 # touch the app. Pull requests only analyze, test and build an unsigned-by-us
@@ -11,7 +11,9 @@
 #   Required for a release-signed APK:
 #     ANDROID_KEYSTORE_BASE64 (base64 -w0 release.jks), ANDROID_KEYSTORE_PASSWORD,
 #     ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
-# Optional repository variable: MATRIX_API_BASE (default https://matrix.thamjj13.top)
+# Optional repository variable: QORVYNA_API_BASE (default https://matrix.thamjj13.top).
+#   The former name MATRIX_API_BASE is still read, so an existing repository
+#   keeps working without any change.
 #
 # Without the signing secrets the APK is signed with the debug key and is
 # named matrix-android-debugsigned.apk; it is never attached to a release.
@@ -55,7 +57,7 @@ jobs:
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-      MATRIX_API_BASE: ${{ vars.MATRIX_API_BASE || 'https://matrix.thamjj13.top' }}
+      QORVYNA_API_BASE: ${{ vars.QORVYNA_API_BASE || vars.MATRIX_API_BASE || 'https://matrix.thamjj13.top' }}
       INPUT_VERSION: ${{ inputs.app_version }}
       INPUT_BUILD: ${{ inputs.build_number }}
     steps:
@@ -127,9 +129,9 @@ jobs:
           flutter build apk --release \
             --build-name="${{ steps.cfg.outputs.version }}" \
             --build-number="${{ steps.cfg.outputs.build }}" \
-            --dart-define=MATRIX_API_BASE="$MATRIX_API_BASE" \
-            --dart-define=MATRIX_APP_VERSION="${{ steps.cfg.outputs.version }}" \
-            --dart-define=MATRIX_APP_BUILD="${{ steps.cfg.outputs.build }}" \
+            --dart-define=QORVYNA_API_BASE="$QORVYNA_API_BASE" \
+            --dart-define=QORVYNA_APP_VERSION="${{ steps.cfg.outputs.version }}" \
+            --dart-define=QORVYNA_APP_BUILD="${{ steps.cfg.outputs.build }}" \
             --dart-define=FIREBASE_API_KEY="$FIREBASE_API_KEY" \
             --dart-define=FIREBASE_APP_ID="$FIREBASE_APP_ID" \
             --dart-define=FIREBASE_MESSAGING_SENDER_ID="$FIREBASE_MESSAGING_SENDER_ID" \

@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — Agent task checkpoints (server-only).
+// QORVYNA AI — Agent task checkpoints (server-only).
 //
 // Every Agent run is a persisted task with an ordered checkpoint trail
 // (plan → inspect → edit → build/test → repair → deploy approval → verify).

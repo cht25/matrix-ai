@@ -14,16 +14,16 @@ export type ResponseStrategy = "fast" | "balanced" | "quality" | "efficient";
 export type StudyLevel = "beginner" | "school" | "college" | "university" | "professional";
 export type ExplainStyle = "simple" | "detailed" | "exam" | "intuitive" | "technical";
 
-export const MATRIX_MODES: Array<{ id: ChatMode; label: string; placeholder: string; hint: string }> = [
-  { id: "general", label: "General", placeholder: "Ask Matrix anything...", hint: "Everyday assistant" },
+export const QORVYNA_MODES: Array<{ id: ChatMode; label: string; placeholder: string; hint: string }> = [
+  { id: "general", label: "General", placeholder: "Ask QORVYNA anything...", hint: "Everyday assistant" },
   { id: "study", label: "Study", placeholder: "What would you like to learn?", hint: "Tutor, quizzes, plans" },
   { id: "code", label: "Code", placeholder: "Describe the coding problem...", hint: "Debug, refactor, explain" },
   { id: "health", label: "Health", placeholder: "Describe your health question...", hint: "General information only" },
   { id: "research", label: "Research", placeholder: "What should we investigate?", hint: "Plan, evidence, synthesis" },
   { id: "creative", label: "Creative", placeholder: "Describe what you want to create...", hint: "Writing and ideas" },
-  { id: "agent", label: "Agent", placeholder: "What task should Matrix execute?", hint: "Build and preview" },
+  { id: "agent", label: "Agent", placeholder: "What task should QORVYNA execute?", hint: "Build and preview" },
   { id: "image", label: "Image", placeholder: "Describe the image you want to create...", hint: "Together AI" },
-  { id: "orchestrator", label: "Orchestrator", placeholder: "Give Matrix a multi-part goal...", hint: "One prompt, many intelligences" },
+  { id: "orchestrator", label: "Orchestrator", placeholder: "Give QORVYNA a multi-part goal...", hint: "One prompt, many intelligences" },
 ];
 
 export const MODEL_LANES: Array<{ id: ModelLane; label: string }> = [
@@ -36,7 +36,7 @@ export const MODEL_LANES: Array<{ id: ModelLane; label: string }> = [
 ];
 
 export function isChatMode(value: unknown): value is ChatMode {
-  return MATRIX_MODES.some((m) => m.id === value);
+  return QORVYNA_MODES.some((m) => m.id === value);
 }
 
 export function isModelLane(value: unknown): value is ModelLane {
@@ -48,7 +48,7 @@ export function isStrategy(value: unknown): value is ResponseStrategy {
 }
 
 export function modeMeta(mode: ChatMode) {
-  return MATRIX_MODES.find((m) => m.id === mode) ?? MATRIX_MODES[0];
+  return QORVYNA_MODES.find((m) => m.id === mode) ?? QORVYNA_MODES[0];
 }
 
 /** Detect a *suggested* mode. Never auto-switch unless the caller opts in. */
@@ -64,7 +64,7 @@ export function suggestMode(input: string, current: ChatMode): ChatMode | null {
 }
 
 export function studySystemPrompt(level: StudyLevel, style: ExplainStyle): string {
-  return `You are MATRIX Study, a dedicated tutor. You are not a generic chatbot.
+  return `You are QORVYNA AI in Study mode: a dedicated tutor, not a generic chatbot.
 Adapt to level: ${level}. Explanation style: ${style}.
 Prioritize teaching: concept breakdown, worked examples, checks for understanding, short quizzes, flashcards, and study plans when asked.
 When the user attached notes, answer from that material first and label anything that is general knowledge as [General knowledge].
@@ -72,7 +72,7 @@ Never invent citations or exam board rules.`;
 }
 
 export function healthSystemPrompt(): string {
-  return `You are MATRIX Health, a health-information assistant.
+  return `You are QORVYNA AI in Health mode: a health-information assistant.
 You are NOT a licensed clinician and must never claim to be a doctor or give a definitive diagnosis.
 You may explain terminology, discuss common possibilities in general terms, summarize user-supplied reports, and help prepare questions for a clinician.
 For urgent or dangerous symptoms (chest pain, difficulty breathing, stroke signs, suicidal thoughts, severe bleeding), clearly recommend emergency / professional care first.
@@ -80,24 +80,24 @@ Always include: "I can provide general health information, but I can't replace a
 }
 
 export function researchSystemPrompt(): string {
-  return `You are MATRIX Research. Structure answers as:
+  return `You are QORVYNA AI in Research mode. Structure answers as:
 1) Research plan 2) What is reasonably established 3) Inferences 4) Uncertainties 5) Suggested sources to verify.
 Never claim you retrieved a live web page unless a tool result is actually present. Label [Verified information], [Inference], and [Uncertainty] explicitly. Do not invent URLs or paper titles.`;
 }
 
 export function codeSystemPrompt(): string {
-  return `You are MATRIX Code, a software engineering assistant.
+  return `You are QORVYNA AI in Code mode: a software engineering assistant.
 Workflow: analyse → locate the issue → propose a fix → explain tests.
 Give complete, runnable snippets with filenames. Do not claim you executed tests unless a sandbox result is included.
 Never print secrets, .env values, or private keys. Prefer root-cause fixes over patches that hide errors.`;
 }
 
 export function creativeSystemPrompt(): string {
-  return `You are MATRIX Creative. Help with writing, brainstorming, narrative, copy, and design language. Offer options, then a recommended direction. Keep output usable, not filler.`;
+  return `You are QORVYNA AI in Creative mode. Help with writing, brainstorming, narrative, copy, and design language. Offer options, then a recommended direction. Keep output usable, not filler.`;
 }
 
 export function orchestratorSystemPrompt(): string {
-  return `You are MATRIX Orchestrator. The user gave a multi-part goal. Produce a unified workspace result that clearly sections Study / Code / Research / Visuals as relevant. Do not claim tools ran unless results are provided.`;
+  return `You are QORVYNA AI in Orchestrator mode. The user gave a multi-part goal. Produce a unified workspace result that clearly sections Study / Code / Research / Visuals as relevant. Do not claim tools ran unless results are provided.`;
 }
 
 export function parseStudyArtifacts(text: string): { flashcards: Array<{ q: string; a: string }>; quiz: Array<{ q: string; options?: string[]; answer?: string }> } {

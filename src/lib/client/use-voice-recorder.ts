@@ -356,7 +356,7 @@ export function useVoiceRecorder(options: Options = {}): {
     } catch (error) {
       setState("idle");
       const name = error instanceof Error ? error.name : "unknown";
-      return { ok: false, message: name === "SecurityError" ? "The microphone is blocked on this page. Open MATRIX over HTTPS and allow microphone access." : voiceErrorMessage(name) };
+      return { ok: false, message: name === "SecurityError" ? "The microphone is blocked on this page. Open QORVYNA over HTTPS and allow microphone access." : voiceErrorMessage(name) };
     }
     try {
       streamRef.current = stream;

@@ -222,14 +222,14 @@ export function selectRepairTargets(files: ProjectFile[], issues: BuildIssue[], 
 export function repairInstruction(issues: ClassifiedIssue[], rejected: string | null): string {
   const lines = issues.slice(0, 14).map((issue) => `- ${issue.path || "project"}${issue.line ? `:${issue.line}` : ""} — ${issue.message}`);
   return [
-    "The MATRIX validator found the problems below in this project. Repair them in the real files.",
+    "The QORVYNA validator found the problems below in this project. Repair them in the real files.",
     "",
     "PROBLEMS:",
     ...lines,
     issues.length > 14 ? `(+${issues.length - 14} more of the same kind)` : "",
     "",
     "Rules:",
-    "- Return ONLY the files you change or create, each one COMPLETE, as MATRIX_FILE blocks.",
+    "- Return ONLY the files you change or create, each one COMPLETE, as QORVYNA_FILE blocks.",
     "- Change only what is needed to fix these problems. Keep the design, the content and every feature.",
     "- If a file is referenced but missing, either create it with real content or correct the reference to an existing file.",
     "- Close every tag, bracket, brace and string. Do not wrap file contents in Markdown fences.",

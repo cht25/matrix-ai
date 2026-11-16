@@ -113,7 +113,7 @@ export function DesignStudioClient() {
     setBusy(true);
     try {
       await rpc("design_reset");
-      toast("Reset to the MATRIX default design.");
+      toast("Reset to the QORVYNA default design.");
       await load();
     } catch (err) {
       toast(errMsg(err, "Could not reset."));
@@ -128,7 +128,7 @@ export function DesignStudioClient() {
         <h1 className="text-2xl font-display font-semibold tracking-tight text-ink sm:text-3xl">Design Studio</h1>
         <p className="mt-1 text-ink-2">
           Describe the interface you want — for example “a warm white interface with a compact sidebar, elegant typography and
-          soft borders”. MATRIX converts it to validated, accessible design tokens, shows a preview, and only applies it after
+          soft borders”. QORVYNA converts it to validated, accessible design tokens, shows a preview, and only applies it after
           you approve.
         </p>
       </div>
@@ -163,7 +163,7 @@ export function DesignStudioClient() {
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-semibold" style={{ color: preview.tokens.colors.accent }}>
-                        MATRIX preview
+                        QORVYNA preview
                       </span>
                       <Badge>{preview.tokens.mode}</Badge>
                     </div>
@@ -210,7 +210,7 @@ export function DesignStudioClient() {
             </Alert>
           ) : null}
           {versions.length === 0 ? (
-            <p className="text-sm text-ink-3">No custom designs saved yet. The MATRIX default is active.</p>
+            <p className="text-sm text-ink-3">No custom designs saved yet. The QORVYNA default is active.</p>
           ) : (
             <ul className="space-y-2">
               {versions.map((v) => (

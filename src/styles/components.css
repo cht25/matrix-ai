@@ -1,14 +1,29 @@
 /* =============================================================================
-   MATRIX V3 — component styles built on the tokens.
+   QORVYNA — component styles built on the tokens.
    Flat surfaces, hairline borders, shadows used sparingly.
    ============================================================================= */
 
+/* How this file meets Tailwind
+   ---------------------------------------------------------------------------
+   The look of a shared primitive (card, field, button, chip, eyebrow) is a
+   DEFAULT. Those rules sit in Tailwind's `components` layer, so a utility on
+   the call site wins: `<Card className="p-4">`, `chip bg-success-soft
+   text-success`, `<Input className="pl-9">`, `<Button className="text-xs">`.
+   Outside a layer they would beat every utility whatever the markup said —
+   which is how state colours and paddings written in the JSX used to vanish.
+
+   What must NOT be overridable stays outside the layer: variants
+   (`.btn-primary`), states (`:focus`, `:disabled`, `[aria-pressed]`) and
+   anything that reacts to the app's own state. */
+
 /* --- surfaces -------------------------------------------------------------- */
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: var(--space-4);
+@layer components {
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4);
+  }
 }
 
 .card-hover {
@@ -26,54 +41,44 @@
 }
 
 /* --- typography helpers ---------------------------------------------------- */
-.eyebrow {
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
+@layer components {
+  .eyebrow {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
 
-.eyebrow.flourish {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-.eyebrow.flourish::before,
-.eyebrow.flourish::after {
-  content: "";
-  width: 2rem;
-  height: 1px;
-  background: var(--border-strong);
-}
-
-/* Technical metadata: IDs, URLs, models, latency, diagnostics. Monospace is
-   deliberately scoped — never the whole UI. */
-.mono,
-.script {
-  font-family: var(--font-mono);
-  font-weight: 500;
-  letter-spacing: -0.01em;
-}
-.script { color: var(--primary); }
-
-.swash-rule {
-  height: 1px;
-  border: 0;
-  background: linear-gradient(90deg, transparent, var(--border-strong), transparent);
+  /* Technical metadata: IDs, URLs, models, latency, diagnostics. Monospace is
+     deliberately scoped — never the whole UI. */
+  .mono,
+  .script {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+  .script { color: var(--primary); }
 }
 
 /* --- form controls --------------------------------------------------------- */
-.input-base {
-  width: 100%;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  color: var(--text);
-  padding: 0.625rem 0.875rem;
-  font-family: inherit;
-  font-size: var(--text-sm);
-  transition: border-color var(--ease), box-shadow var(--ease);
+@layer components {
+  .input-base {
+    width: 100%;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text);
+    padding: 0.625rem 0.875rem;
+    font-family: inherit;
+    font-size: var(--text-sm);
+    /* One line-height for every field … */
+    line-height: 1.5;
+    transition: border-color var(--ease), box-shadow var(--ease);
+  }
+  /* … and a select, whose native box ignores it, is given the height an input
+     gets from the same padding. Side by side they are then exactly as tall. */
+  select.input-base { min-height: 2.625rem; }
 }
 .input-base::placeholder { color: var(--text-muted); }
 .input-base:focus {
@@ -87,32 +92,34 @@
 }
 
 /* --- buttons --------------------------------------------------------------- */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  min-height: var(--tap);
-  padding: 0 var(--space-4);
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  font-family: inherit;
-  font-size: var(--text-sm);
-  font-weight: 550;
-  cursor: pointer;
-  transition: background-color var(--ease), border-color var(--ease), color var(--ease), opacity var(--ease);
+@layer components {
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    min-height: var(--tap);
+    padding: 0 var(--space-4);
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    font-size: var(--text-sm);
+    font-weight: 550;
+    cursor: pointer;
+    transition: background-color var(--ease), border-color var(--ease), color var(--ease), opacity var(--ease);
+  }
+  @media (min-width: 640px) { .btn { min-height: 2.5rem; } }
 }
-@media (min-width: 640px) { .btn { min-height: 2.5rem; } }
 
 .btn:disabled,
 .btn[aria-busy="true"] { cursor: not-allowed; opacity: 0.55; }
 .btn:active:not(:disabled) { transform: translateY(0.5px); }
 
 .btn-primary {
-  background: var(--primary);
+  background: var(--primary-solid);
   color: var(--primary-contrast);
 }
-.btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+.btn-primary:hover:not(:disabled) { background: var(--primary-solid-hover); }
 
 .btn-secondary {
   background: var(--surface-2);
@@ -135,7 +142,7 @@
 .btn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
 
 .btn-danger {
-  background: var(--danger);
+  background: var(--danger-solid);
   color: #fff;
 }
 .btn-danger:hover:not(:disabled) { filter: brightness(1.08); }
@@ -156,23 +163,30 @@
 .icon-tile:hover { color: var(--text); background: var(--surface-2); }
 .icon-tile:disabled { opacity: 0.45; }
 
-.chip,
-.action-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-height: 1.75rem;
-  padding: 0 0.6rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--surface-2);
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  font-weight: 500;
-  transition: color var(--ease), background-color var(--ease), border-color var(--ease);
+@layer components {
+  .chip,
+  .action-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-height: 1.75rem;
+    padding: 0 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--surface-2);
+    color: var(--text-secondary);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    /* A chip is one line: in a scrolling row it keeps its width instead of
+       collapsing into a column of letters. */
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: color var(--ease), background-color var(--ease), border-color var(--ease);
+  }
+  /* In the layer too: a chip coloured by its state keeps that colour on hover. */
+  .chip:hover,
+  .action-chip:hover { color: var(--text); border-color: var(--border-strong); }
 }
-.chip:hover,
-.action-chip:hover { color: var(--text); border-color: var(--border-strong); }
 
 .ws-tab {
   display: inline-flex;
@@ -222,42 +236,66 @@
 }
 .suggest-card:hover { border-color: var(--border-strong); background: var(--surface-2); }
 
-.activity-panel,
-.sandbox-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+@layer components {
+  .activity-panel,
+  .sandbox-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
 }
 
 /* --- brand ----------------------------------------------------------------- */
-.brand-mark,
-.brand-wordmark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
+/* The emblem and wordmark are inline vector shapes (components/logo.tsx). The
+   wordmark's letters use the surrounding text colour, so the identity sits
+   correctly on any surface without blend modes or per-theme images. */
+@layer components {
+  /* Defaults: a call site may hide or resize either part with a utility. */
+  .brand-mark,
+  .brand-wordmark {
+    display: block;
+    flex: none;
+  }
 }
-.brand-mark-img,
-.brand-wordmark-img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  mix-blend-mode: var(--brand-blend);
-}
-[data-theme="dark"] .brand-mark-img,
-[data-theme="dark"] .brand-wordmark-img { filter: brightness(1.08) contrast(1.05); }
 
-.sidebar-brand {
+.brand-tagline {
   display: flex;
-  align-items: center;
-  min-width: 0;
-  isolation: isolate;
-  padding: 0.2rem 0.45rem 0.2rem 0.2rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
+  flex-wrap: wrap;
+  justify-content: center;
+  column-gap: 0.7em;
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1.8;
+  letter-spacing: 0.26em;
+  text-align: center;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
-[data-theme="dark"] .sidebar-brand { background: #060a11; }
+.brand-tagline > span { white-space: nowrap; }
+
+/* A hairline in the brand gradient: under lockups and section openers. */
+.brand-rule {
+  height: 2px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--brand-gradient);
+  opacity: 0.85;
+}
+
+.brand-gradient-text {
+  background: var(--brand-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@layer components {
+  .sidebar-brand {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+}
 
 /* --- accessibility --------------------------------------------------------- */
 .skip-link {
@@ -267,7 +305,7 @@
   z-index: 100;
   padding: 8px 16px;
   border-radius: var(--radius-sm);
-  background: var(--primary);
+  background: var(--primary-solid);
   color: var(--primary-contrast);
   font-weight: 600;
   transition: top var(--ease);

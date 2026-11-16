@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX document PDFs — the shared, high-level generators.
+// QORVYNA document PDFs — the shared, high-level generators.
 //
 // Everything on top of `renderPdf`:
 //   * `renderDocumentPdf` — chat exports, document exports, any Markdown-ish
@@ -197,7 +197,7 @@ export type DocumentPdfOptions = {
 
 /** A paginated A4 document from Markdown-ish content. Used for every export. */
 export function renderDocumentPdf(content: string, options: DocumentPdfOptions = {}): Promise<Uint8Array> {
-  const title = (options.title ?? "MATRIX document").trim() || "MATRIX document";
+  const title = (options.title ?? "QORVYNA document").trim() || "QORVYNA document";
 
   // If the content already opens with the same H1, drop it — otherwise the
   // document header and the first heading say the same thing twice.
@@ -218,10 +218,10 @@ export function renderDocumentPdf(content: string, options: DocumentPdfOptions =
 
   const spec: PdfDocumentSpec = {
     title,
-    author: options.author ?? "MATRIX",
+    author: options.author ?? "QORVYNA",
     size: "A4",
     margins: { top: 56, bottom: 62, left: 56, right: 56 },
-    footer: options.footer ?? "MATRIX",
+    footer: options.footer ?? "QORVYNA",
     blocks,
   };
   return renderPdf(spec);
@@ -257,7 +257,7 @@ function formatIssued(iso: string): string {
  * contain navigation, the chat UI or any other application chrome.
  */
 export function renderCertificatePdf(cert: CertificatePdfData): Promise<Uint8Array> {
-  const name = cert.display_name?.trim() || "MATRIX learner";
+  const name = cert.display_name?.trim() || "QORVYNA learner";
   const course = cert.course?.trim() || "Course";
   const score = `${Math.round(Number(cert.score_percent) || 0)}%`;
   const centre = (text: string, y: number, extra: Partial<PdfBlock> = {}): PdfBlock =>
@@ -274,7 +274,7 @@ export function renderCertificatePdf(cert: CertificatePdfData): Promise<Uint8Arr
     { type: "rect", x: 28, y: 28, width: CERT_W - 56, height: CERT_H - 56, color: "#1d2433", thickness: 1.5 },
     { type: "rect", x: 40, y: 40, width: CERT_W - 80, height: CERT_H - 80, color: "#c3c8d2", thickness: 0.6 },
 
-    centre("MATRIX", 74, { size: 27, weight: "bold", color: "#0b1220", tracking: 6 }),
+    centre("QORVYNA", 74, { size: 27, weight: "bold", color: "#0b1220", tracking: 6 }),
     centre("CERTIFICATE OF COMPLETION", 116, { size: 11, color: "#6b7280", tracking: 3.4 }),
     { type: "line", x1: 330, y1: 142, x2: 512, y2: 142, color: "#c3c8d2", thickness: 0.8 },
 
@@ -305,15 +305,15 @@ export function renderCertificatePdf(cert: CertificatePdfData): Promise<Uint8Arr
 
   blocks.push(
     { type: "line", x1: 100, y1: 452, x2: CERT_W - 100, y2: 452, color: "#e2e5ea", thickness: 0.6 },
-    centre(cert.issued_by || "MATRIX", 470, { size: 9, color: "#6b7280" }),
+    centre(cert.issued_by || "QORVYNA", 470, { size: 9, color: "#6b7280" }),
     centre(`Verify at /certificate/verify/${cert.certificate_id}`, 492, { size: 8, family: "mono", color: "#8a8f99" }),
-    centre("MATRIX", 520, { size: 10, weight: "bold", color: "#4a5261", tracking: 4 }),
+    centre("QORVYNA", 520, { size: 10, weight: "bold", color: "#4a5261", tracking: 4 }),
   );
 
   return renderPdf({
-    title: `MATRIX Certificate ${cert.certificate_id}`,
+    title: `QORVYNA Certificate ${cert.certificate_id}`,
     subject: `${course} — ${name}`,
-    author: cert.issued_by || "MATRIX",
+    author: cert.issued_by || "QORVYNA",
     size: [CERT_W, CERT_H],
     margins: { top: 40, bottom: 40, left: 40, right: 40 },
     blocks,
@@ -323,5 +323,5 @@ export function renderCertificatePdf(cert: CertificatePdfData): Promise<Uint8Arr
 /** Safe download filename for a certificate. */
 export function certificateFilename(cert: { certificate_id: string }): string {
   const id = cert.certificate_id.replace(/[^A-Za-z0-9-]/g, "") || "certificate";
-  return `MATRIX-${id}.pdf`;
+  return `QORVYNA-${id}.pdf`;
 }

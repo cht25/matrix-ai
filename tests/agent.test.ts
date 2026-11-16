@@ -18,10 +18,10 @@ describe("coding auto-detection", () => {
 
 describe("Agent artifact protocol", () => {
   it("extracts complete reviewable files and removes protocol blocks from the reply", () => {
-    const parsed = parseAgentResponse(`I created a small site.\n\n<<<MATRIX_FILE path="index.html">>>\n<h1>Hello</h1>\n<<<END_MATRIX_FILE>>>\n<<<MATRIX_FILE path="styles/app.css">>>\nh1 { color: blue; }\n<<<END_MATRIX_FILE>>>\n\nVerify it in Live Preview.`);
+    const parsed = parseAgentResponse(`I created a small site.\n\n<<<QORVYNA_FILE path="index.html">>>\n<h1>Hello</h1>\n<<<END_QORVYNA_FILE>>>\n<<<QORVYNA_FILE path="styles/app.css">>>\nh1 { color: blue; }\n<<<END_QORVYNA_FILE>>>\n\nVerify it in Live Preview.`);
     expect(parsed.reply).toContain("I created a small site");
     expect(parsed.reply).toContain("Verify it in Live Preview");
-    expect(parsed.reply).not.toContain("MATRIX_FILE");
+    expect(parsed.reply).not.toContain("QORVYNA_FILE");
     expect(parsed.files.map((file) => file.path)).toEqual(["index.html", "styles/app.css"]);
     expect(parsed.files[0].language).toBe("html");
   });
@@ -101,13 +101,13 @@ describe("Agent artifact protocol", () => {
   });
 
   it("strips dangling protocol markers from the reply", () => {
-    const parsed = parseAgentResponse("See below.\n\n<<<MATRIX_FILE path=\"index.html\">>>\n<h1>Hi</h1>\n");
-    expect(parsed.reply).not.toContain("MATRIX_FILE");
+    const parsed = parseAgentResponse("See below.\n\n<<<QORVYNA_FILE path=\"index.html\">>>\n<h1>Hi</h1>\n");
+    expect(parsed.reply).not.toContain("QORVYNA_FILE");
   });
 
-  it("detects truncated MATRIX_FILE output", () => {
-    expect(agentGenerationIncomplete('<<<MATRIX_FILE path="index.html">>>\n<html>')).toBe(true);
-    expect(agentGenerationIncomplete('<<<MATRIX_FILE path="index.html">>>\n<html></html>\n<<<END_MATRIX_FILE>>>')).toBe(false);
+  it("detects truncated QORVYNA_FILE output", () => {
+    expect(agentGenerationIncomplete('<<<QORVYNA_FILE path="index.html">>>\n<html>')).toBe(true);
+    expect(agentGenerationIncomplete('<<<QORVYNA_FILE path="index.html">>>\n<html></html>\n<<<END_QORVYNA_FILE>>>')).toBe(false);
   });
 
   it("turns a snippet into publishable files without an upload", () => {

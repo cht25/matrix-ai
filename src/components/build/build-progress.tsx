@@ -4,7 +4,7 @@
 // Live build status (§3, §13, §14, §21)
 //
 //   ┌──────────────────────────────┐
-//   │ MATRIX BUILD                 │
+//   │ QORVYNA BUILD                 │
 //   │ ✓ Planning                   │
 //   │ ● Building                   │
 //   │ 3 / 6 steps                  │
@@ -116,7 +116,7 @@ export function BuildStatusCard({
   return (
     <section
       className={cn("sandbox-card mt-2.5 max-w-xl overflow-hidden rounded-xl border border-border bg-surface", className)}
-      aria-label="Matrix build status"
+      aria-label="QORVYNA build status"
       aria-live="polite"
     >
       <header className="flex items-center gap-2.5 px-3 py-2">
@@ -286,7 +286,7 @@ export function BuildChecks({
               type="button"
               onClick={onFix}
               disabled={fixDisabled}
-              className="inline-flex min-h-8 items-center rounded-lg bg-accent px-2.5 text-[11.5px] font-semibold text-white hover:bg-accent-hover disabled:opacity-50"
+              className="inline-flex min-h-8 items-center rounded-lg bg-accent-solid px-2.5 text-[11.5px] font-semibold text-accent-ink hover:bg-accent-solid-hover disabled:opacity-50"
             >
               Fix automatically
             </button>

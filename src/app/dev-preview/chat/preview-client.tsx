@@ -9,28 +9,45 @@
 //   • "Generate an image …"     → Together AI image workflow
 //   • "Inspect … run the tests" → Agent activity, collapsed when finished
 //   • "Write a Python function" → code actions, no export clutter
+//   • "Who are you?"            → the identity answer, from the real identity module
+//   • "Update my project"       → the hand-off card; approving it starts a run
+//   • run endings               → completed, failed and blocked, each built with
+//                                 the real run-state transitions
 //
 // The mock chooses its reply with the SAME detectIntent() the UI uses, so the
-// preview exercises the real intent → capability → contextual-UI path.
-// Not reachable in production.
+// preview exercises the real intent → capability → contextual-UI path. Runs are
+// produced by the real stage helpers, so the card shows states the pipeline can
+// actually reach. Not reachable in production.
 
 import { useCallback, useEffect, useState } from "react";
 import { ChatClient } from "@/components/chat-client";
 import { ToastProvider } from "@/components/toast";
+import { identityAnswer, identityLanguage, identityQuestion } from "@/lib/ai/identity";
 import { detectIntent, selectCapability } from "@/lib/ai/intent";
+import { QORVYNA_MODEL, QORVYNA_MODEL_PROVIDER } from "@/lib/ai/model";
 import { AGENT_STAGES, computeAnalytics } from "@/lib/ai/pipeline";
+import {
+  beginStage, completeStage, createBuildRun, failRun, setChanges, setDeployment, succeedRun,
+  type BuildRun, type BuildStageId,
+} from "@/lib/deploy/stages";
 
 const SCENARIOS: Array<{ id: string; label: string; prompt: string }> = [
   { id: "t1", label: "1 · hi", prompt: "hi" },
   { id: "t2", label: "2 · Explain photosynthesis", prompt: "Explain photosynthesis." },
   { id: "t3", label: "3 · Turn this into a PDF", prompt: "Turn this answer into a PDF." },
   { id: "t4", label: "4 · CSV from this table", prompt: "Create a CSV from this table of users." },
-  { id: "t5", label: "5 · Generate an image", prompt: "Generate an image of a futuristic Matrix city." },
+  { id: "t5", label: "5 · Generate an image", prompt: "Generate an image of a futuristic QORVYNA city." },
   { id: "t6", label: "6 · Inspect project + run tests", prompt: "Inspect this project, find the bug and run the tests." },
   { id: "t7", label: "7 · Write a Python function", prompt: "Write a Python function to sort a list." },
   { id: "t8", label: "8 · Make a report (ambiguous)", prompt: "Make a report about renewable energy." },
   { id: "clarify", label: "Agent · clarification first", prompt: "Build a polished responsive website from my description. Start by asking only for the one most important missing requirement." },
   { id: "stress", label: "Long response · scroll stress", prompt: "Long response performance check" },
+  { id: "who", label: "Identity · who are you", prompt: "Who are you?" },
+  { id: "model", label: "Identity · which model", prompt: "Which AI model are you using?" },
+  { id: "handoff", label: "Hand-off · update my project", prompt: "Update my project" },
+  { id: "run-fail", label: "Run · fails", prompt: "Add a pricing page to my project (preview: fail)" },
+  { id: "run-blocked", label: "Run · blocked", prompt: "Deploy my project (preview: blocked)" },
+  { id: "claim", label: "Text only · unbacked claim", prompt: "Unbacked claim check" },
 ];
 
 const PROSE = "Photosynthesis is how green plants turn light into chemical energy. Chlorophyll in the leaves absorbs sunlight, water is drawn up from the roots and carbon dioxide enters through tiny pores called stomata. The plant uses that light energy to build glucose and releases oxygen as a by-product — which is why forests and oceans are so important to the atmosphere.";
@@ -45,7 +62,7 @@ const TABLE_REPLY = [
   "| 3 | Linus Torvalds | linus@example.com | free |",
   "| 4 | Alan Turing | alan@example.com | pro |",
   "",
-  "Ask for a CSV or Excel file and Matrix will build it from these rows.",
+  "Ask for a CSV or Excel file and QORVYNA will build it from these rows.",
 ].join("\n");
 
 const CODE_REPLY = [
@@ -87,13 +104,13 @@ const AGENT_REPLY = [
   "",
   "**Root cause** — `src/lib/session.ts` returned a stale cookie because the cache was never invalidated after sign-out.",
   "",
-  "<<<MATRIX_FILE path=\"src/lib/session.ts\">>>",
+  "<<<QORVYNA_FILE path=\"src/lib/session.ts\">>>",
   "export function readSession(): Session | null {",
   "  const raw = cache.get('session');",
   "  if (!raw) return null;",
   "  return isExpired(raw) ? null : parse(raw);",
   "}",
-  "<<<END_MATRIX_FILE>>>",
+  "<<<END_QORVYNA_FILE>>>",
   "",
   "**Checks** — `npm run typecheck` passed, 34 tests passed, lint clean.",
 ].join("\n");
@@ -102,11 +119,11 @@ function previewImage(prompt: string): string {
   const safe = prompt.replace(/[<>&]/g, "").slice(0, 70);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="640" viewBox="0 0 1024 640">
 <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-<stop offset="0%" stop-color="#0b1020"/><stop offset="55%" stop-color="#1b2a6b"/><stop offset="100%" stop-color="#00ffa3"/>
+<stop offset="0%" stop-color="#070b1e"/><stop offset="55%" stop-color="#1437d6"/><stop offset="100%" stop-color="#7c3aed"/>
 </linearGradient></defs>
 <rect width="1024" height="640" fill="url(#g)"/>
 <g fill="#0b1020" opacity="0.55">${Array.from({ length: 14 }, (_, i) => `<rect x="${40 + i * 70}" y="${260 + (i % 5) * 40}" width="46" height="${380 - (i % 5) * 40}"/>`).join("")}</g>
-<text x="48" y="86" font-family="monospace" font-size="34" fill="#e6fff7">MATRIX dev preview</text>
+<text x="48" y="86" font-family="monospace" font-size="34" fill="#f5f8ff">QORVYNA dev preview</text>
 <text x="48" y="126" font-family="monospace" font-size="20" fill="#9CA3AF">${safe}</text>
 </svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
@@ -116,6 +133,8 @@ function previewImage(prompt: string): string {
 function mockReply(message: string): string {
   const intent = detectIntent(message);
   if (/start by asking only for the one most important missing requirement/i.test(message)) return "What is the primary purpose or main message of the website?";
+  // A reply that claims project work although no run exists: the UI must label it.
+  if (/unbacked claim check/i.test(message)) return "Done — I've updated your project and deployed the new version. Everything is live now.";
   if (/long response performance check/i.test(message)) return Array.from({ length: 65 }, (_, n) =>
     `## Section ${n + 1}\n\n${PROSE}\n\n- Step one: inspect the current state.\n- Step two: preserve source files.\n\n` +
     (n % 5 === 0 ? "```typescript\nconst result = [1, 2, 3].map((value) => value * 2);\nconsole.log(result);\n```\n\n" : "")
@@ -148,18 +167,77 @@ function sse(events: Array<Record<string, unknown>>, delayMs = 140): Response {
     },
   });
   return new Response(stream, {
-    headers: { "content-type": "text/event-stream", "x-matrix-request-id": "dev-preview" },
+    headers: { "content-type": "text/event-stream", "x-qorvyna-request-id": "dev-preview" },
   });
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json", "x-matrix-request-id": "dev-preview" },
+    headers: { "content-type": "application/json", "x-qorvyna-request-id": "dev-preview" },
   });
 }
 
-/** Install a mock /api/ai transport (streaming chat, image, agent, scan). */
+/**
+ * A build run for the preview, made with the real transitions from
+ * `lib/deploy/stages`. The ending follows a marker in the prompt:
+ * "(preview: fail)" stops at the build step, "(preview: blocked)" stops at
+ * publishing because hosting is not configured, anything else completes.
+ */
+function mockBuildStream(prompt: string, publish: boolean): Response {
+  const ending = /preview:\s*fail/i.test(prompt) ? "fail" : /preview:\s*blocked/i.test(prompt) ? "blocked" : "complete";
+  const wantsPublish = publish || ending === "blocked";
+  const conversationId = "dev-preview-conversation";
+  let now = Date.now();
+  const tick = () => (now += 650);
+  let run: BuildRun = {
+    ...createBuildRun({
+      id: `dev-preview-run-${now}`, projectId: "dev-preview-project", projectTitle: "Preview project", conversationId,
+      requestId: "dev-preview", actions: { build: true, publish: wantsPublish, preview: true }, now,
+    }),
+    model: { provider: QORVYNA_MODEL_PROVIDER, model: QORVYNA_MODEL.id },
+  };
+  const events: Array<Record<string, unknown>> = [{ type: "accepted", run_id: run.id, conversation_id: conversationId }];
+  const emit = (stage?: BuildStageId) => events.push({ type: "run", stage, run });
+  const pass = (id: BuildStageId, message: string) => {
+    run = beginStage(run, id, tick()); emit(id);
+    run = completeStage(run, id, tick(), message); emit(id);
+  };
+
+  pass("plan", "Read the request and the current project files");
+  run = beginStage(run, "generate", tick()); emit("generate");
+  run = setChanges(run, [{ path: "index.html", kind: "modified" }, { path: "styles.css", kind: "modified" }, { path: "pricing.html", kind: "created" }], 7, tick());
+  run = completeStage(run, "generate", tick(), "3 files written"); emit("generate");
+  pass("install", "No dependencies to install");
+
+  let reply = "";
+  if (ending === "fail") {
+    run = beginStage(run, "build", tick()); emit("build");
+    run = failRun(run, { code: "BUILD_FAILED", message: "pricing.html links to checkout.html, which does not exist in the project." }, tick());
+    emit("build");
+  } else {
+    pass("build", "Build passed");
+    pass("validate", "6 of 6 checks passed");
+    if (!wantsPublish) {
+      run = succeedRun(run, tick());
+      reply = "The project files are updated and the checks passed. Nothing was published.";
+    } else if (ending === "blocked") {
+      run = beginStage(run, "publish", tick()); emit("publish");
+      run = failRun(run, { code: "HOSTING_NOT_CONFIGURED", message: "Publishing is not configured on this deployment." }, tick());
+    } else {
+      run = beginStage(run, "publish", tick()); emit("publish");
+      run = setDeployment(run, { id: "dev-preview-deployment", status: "live", url: `${window.location.origin}/s/preview-project`, slug: "preview-project", rollbackAvailable: true }, tick());
+      run = completeStage(run, "publish", tick(), "Published");
+      run = succeedRun(run, tick());
+      reply = "The project is updated and published.";
+    }
+    emit();
+  }
+  events.push({ type: "done", run, reply, project_id: run.projectId, conversation_id: conversationId });
+  return sse(events, 260);
+}
+
+/** Install a mock /api/ai and /api/build transport (chat, image, agent, scan, runs). */
 function useMockGateway() {
   const [ready, setReady] = useState(false);
 
@@ -168,12 +246,26 @@ function useMockGateway() {
 
     window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/api/build")) {
+        const request = JSON.parse(String(init?.body ?? "{}")) as { prompt?: string; actions?: { publish?: boolean } | null };
+        return mockBuildStream(String(request.prompt ?? ""), request.actions?.publish === true);
+      }
       if (!url.includes("/api/ai")) return real(input as RequestInfo, init);
 
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
       const message = typeof body.message === "string" ? body.message : "";
       const started = Date.now();
       const conversationId = "dev-preview-conversation";
+
+      // Identity questions: the same detector and the same answer the gateway
+      // uses, so the wording on screen is the product's, not a canned string.
+      const identityKind = body.action === "chat" ? identityQuestion(message) : null;
+      if (identityKind) {
+        return jsonResponse({
+          reply: identityAnswer(identityKind, undefined, identityLanguage(message)),
+          conversation_id: conversationId, mode: body.mode, identity: identityKind, duration_ms: Math.max(1, Date.now() - started),
+        });
+      }
 
       if (body.action === "health") return jsonResponse({ ok: true, provider: "preview" });
       if (body.action === "scan") {
@@ -242,7 +334,7 @@ export function ChatPreview() {
   const [resetKey, setResetKey] = useState(0);
 
   const runScenario = useCallback((prompt: string) => {
-    const area = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message MATRIX"]');
+    const area = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message QORVYNA"]');
     if (!area) return;
     const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
     setter?.call(area, prompt);
@@ -264,7 +356,7 @@ export function ChatPreview() {
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto pb-1">
-            <span className="eyebrow mr-1">Spec test cases</span>
+            <span className="eyebrow mr-1 shrink-0 whitespace-nowrap">Spec test cases</span>
             {SCENARIOS.map((scenario) => (
               <button
                 key={scenario.id}

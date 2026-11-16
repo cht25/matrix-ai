@@ -46,7 +46,7 @@ export function siteOrigin(): string {
   }
 }
 
-/** Authoritative public URL for the MATRIX AI chat workspace (`/chat`). */
+/** Authoritative public URL for the QORVYNA AI chat workspace (`/chat`). */
 export function chatOriginUrl(): string {
   return `${siteOrigin()}/chat`;
 }

@@ -1,7 +1,7 @@
 "use client";
 
 // =============================================================================
-// The MATRIX composer — one implementation for Chat and Agent.
+// The QORVYNA composer — one implementation for Chat and Agent.
 //
 // What the primary button is depends on what the user has prepared:
 //
@@ -264,7 +264,7 @@ export function ChatComposer(props: {
               onKeyDown={onKeyDown}
               onPaste={onPaste}
               placeholder={placeholder}
-              aria-label="Message MATRIX"
+              aria-label="Message QORVYNA"
               enterKeyHint="enter"
               autoComplete="off"
               className="composer-input min-h-10 flex-1 self-center px-1.5 py-2"
@@ -291,7 +291,7 @@ export function ChatComposer(props: {
                   </button>
                 ) : null}
                 {hasText || hasAttachments ? (
-                  <button type="submit" disabled={!canSend} aria-label={props.sendLabel} title={props.sendLabel} className={cn(ROUND, "bg-accent text-[var(--primary-contrast)] hover:bg-accent-hover disabled:opacity-45")}>
+                  <button type="submit" disabled={!canSend} aria-label={props.sendLabel} title={props.sendLabel} className={cn(ROUND, "bg-accent-solid text-accent-ink hover:bg-accent-solid-hover disabled:opacity-45")}>
                     <ArrowUp size={18} strokeWidth={2.2} aria-hidden="true" />
                   </button>
                 ) : null}

@@ -16,7 +16,7 @@ export default async function ProjectsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <p className="eyebrow flourish mb-1.5">Workspace</p>
+        <p className="eyebrow mb-1.5">Workspace</p>
         <h1 className="font-display text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Projects</h1>
         <p className="mt-1 text-sm text-ink-2">Agent-built sites, saved files, live previews and published URLs.</p>
       </div>
@@ -24,7 +24,7 @@ export default async function ProjectsPage() {
         <EmptyState
           icon={<FolderKanban size={22} />}
           title="No projects yet"
-          body="Open Agent mode, ask MATRIX to build a site, then apply the files. They will appear here."
+          body="Open Agent mode, ask QORVYNA to build a site, then apply the files. They will appear here."
           action={<Link href="/chat?mode=agent" className="mt-2 inline-flex min-h-11 items-center rounded-lg bg-ink px-4 text-sm font-medium text-bg">Start Agent</Link>}
         />
       ) : (

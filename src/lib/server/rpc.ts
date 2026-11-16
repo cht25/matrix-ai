@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — server-side RPC layer (Firebase port of supabase 0006 SQL).
+// QORVYNA AI — server-side RPC layer (Firebase port of supabase 0006 SQL).
 //
 // Every Postgres SECURITY DEFINER function is ported 1:1 to TypeScript on the
 // Admin SDK. Clients can only reach these through Next.js API routes — the
@@ -585,7 +585,7 @@ export async function reviewIdentityVerification(
       user_id: target,
       type: "security",
       title: "Identity verified",
-      body: "Your age verification was approved. Welcome to MATRIX AI!",
+      body: "Your age verification was approved. Welcome to QORVYNA AI!",
       link: "",
       read_at: null,
       created_at: nowTs(),
@@ -637,7 +637,7 @@ export async function reviewGuardianConsent(
       user_id: p.user_id,
       type: "security",
       title: "Guardian consent approved",
-      body: "A guardian approved your MATRIX AI account. Happy learning!",
+      body: "A guardian approved your QORVYNA AI account. Happy learning!",
       link: "",
       read_at: null,
       created_at: nowTs(),
@@ -715,7 +715,7 @@ export async function listAdminPermissionCodes(d: Db, uid: string): Promise<stri
       .map(normalizeAdminPermission);
     return [...new Set(codes)];
   } catch (err) {
-    console.error("[MATRIX] listAdminPermissionCodes failed", err);
+    console.error("[QORVYNA] listAdminPermissionCodes failed", err);
     return [];
   }
 }

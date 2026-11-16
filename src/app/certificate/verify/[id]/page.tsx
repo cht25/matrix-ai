@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { db } from "@/lib/data";
 import { verifyCertificateLookup } from "@/lib/server/rpc";
 import { isCertificateIdShape, type PublicCertificate } from "@/lib/server/certificates";
-import { MatrixMark, MatrixWordmark } from "@/components/logo";
+import { QorvynaMark, QorvynaWordmark } from "@/components/logo";
 import { CertificateDocument } from "@/components/certificate/certificate-document";
 import { CertificateActions } from "@/components/certificate/certificate-actions";
 import { ServerProblemScreen } from "@/components/server-problem";
@@ -25,9 +25,9 @@ export default async function CertificateVerifyPage({ params }: { params: Promis
     <div className="min-h-dvh">
       <header className="app-topbar sticky top-0 z-30">
         <div className="mx-auto flex h-14 max-w-4xl items-center justify-between px-4">
-          <span className="flex items-center gap-2.5">
-            <MatrixMark className="h-6 w-6 text-ink" />
-            <MatrixWordmark className="h-3.5 w-14 text-ink" />
+          <span className="flex items-center gap-2 text-ink">
+            <QorvynaMark className="h-7 w-7" />
+            <QorvynaWordmark className="h-[11px] w-auto" title="QORVYNA" />
           </span>
           <span className="eyebrow">Certificate verification</span>
         </div>
@@ -58,7 +58,7 @@ export default async function CertificateVerifyPage({ params }: { params: Promis
           </div>
         ) : (
           <div className="card mx-auto max-w-md space-y-3 text-center">
-            <MatrixMark className="mx-auto h-10 w-10 text-ink-3" />
+            <QorvynaMark className="mx-auto h-12 w-12" />
             <h1 className="text-xl font-semibold text-ink">Certificate not found</h1>
             <p className="text-sm text-ink-2">
               No valid certificate matches this ID. Check the ID and try again — certificate IDs look

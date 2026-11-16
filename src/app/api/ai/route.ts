@@ -1,11 +1,11 @@
 import { cancelAgentTask } from "@/lib/server/agent-tasks";
 import { classifyAgentOutput, requestsClarificationFirst, type PendingAgentTask } from "@/lib/ai/agent-execution";
 // =============================================================================
-// MATRIX AI — AI Gateway (Next.js route handler — Firebase port)
+// QORVYNA AI — AI Gateway (Next.js route handler — Firebase port)
 //
 // The ONLY way the frontend talks to an AI provider. Pipeline:
 //   Auth → rate limit → PII redaction → safety classification → prompt/RAG
-//   → the single MATRIX model, GPT OSS 120B (src/lib/ai/config.ts); the
+//   → the single QORVYNA model, GPT OSS 120B (src/lib/ai/config.ts); the
 //     request class only changes prompts, tools and limits — never the model
 //   → output validation → artifact parsing → store allowed response → return
 //
@@ -26,7 +26,7 @@ import { redactPII, containsCredentials, leakedPII } from "@/lib/ai/pii";
 import { classify } from "@/lib/ai/domain";
 import { type AIMessage, type AIProvider, type AIProviderResponse } from "@/lib/ai/groq";
 import { createAIRoutesFromDb, logAIConfiguration, type AIRouteTarget } from "@/lib/ai/config";
-import { MATRIX_MODEL_ID, MATRIX_MODEL_LABEL } from "@/lib/ai/model";
+import { QORVYNA_MODEL_ID, QORVYNA_MODEL_LABEL } from "@/lib/ai/model";
 import { completeWithModel, streamWithModel } from "@/lib/ai/executor";
 import { resolvePool } from "@/lib/ai/models/pool";
 import { modelLabel } from "@/lib/ai/models/registry";
@@ -37,12 +37,13 @@ import { stripReasoningContent } from "@/lib/ai/reasoning";
 import { formatAttachmentContext, isCodingRequest, safeAgentPath, type AgentFile, type ChatMode, type TextAttachment } from "@/lib/ai/agent";
 import type { WorkingStep } from "@/lib/chat-messages";
 import { detectBuildIntent, shouldRunBuildPipeline } from "@/lib/ai/build-intent";
-import { requestChatMode } from "@/lib/ai/execution-policy";
+import { requestChatMode, agentHandoffReason, isConversationMode } from "@/lib/ai/execution-policy";
 import { isReplaceableReply, nextReplyVersions, type ReplyVersion } from "@/lib/server/chat-messages";
 import { computeAnalytics } from "@/lib/ai/pipeline";
 import { generateImage, imageErrorCode } from "@/lib/ai/image/generate";
 import { isImageGenerationConfigured } from "@/lib/ai/image/config";
 import { buildModeSystemMessages, validateOutput, buildSummaryPrompt } from "@/lib/ai/prompts";
+import { identityAnswer, identityLanguage, identityQuestion, personaInPlay, routingFromTargets } from "@/lib/ai/identity";
 import { isModelLane, isStrategy, type ExplainStyle, type StudyLevel } from "@/lib/ai/modes";
 import { decideRoute, planOrchestrator } from "@/lib/ai/router";
 import { isThemeIntent, THEME_GALLERY_REPLY_BN, THEME_GALLERY_REPLY_EN } from "@/lib/theme-intent";
@@ -64,7 +65,7 @@ function providerDiagnostic(error: unknown, routesTried: number): { diagnostic?:
   return { diagnostic: { provider: error.provider, model: error.model, type: error.type, status: error.status, detail: error.detail.slice(0, 180), routes_tried: routesTried } };
 }
 
-// High ceilings so MATRIX does not invent a product quota. Real provider
+// High ceilings so QORVYNA does not invent a product quota. Real provider
 // 429s still surface as AI_PROVIDER_RATE_LIMITED.
 const RATE_LIMITS: Record<string, { perMinute: number; perDay: number }> = {
   chat: { perMinute: 120, perDay: 5000 },
@@ -77,7 +78,7 @@ type Db = ReturnType<typeof adminDb>;
 function json(obj: unknown, status = 200, requestId?: string) {
   return NextResponse.json(obj, {
     status,
-    headers: requestId ? { "X-MATRIX-Request-ID": requestId } : undefined,
+    headers: requestId ? { "X-QORVYNA-Request-ID": requestId } : undefined,
   });
 }
 
@@ -107,7 +108,7 @@ async function claimRequest(d: Db, userId: string, requestId: string): Promise<b
     const code = String((error as { code?: unknown })?.code ?? "").toLowerCase();
     if (code.includes("already") || code === "6") return false;
     // An idempotency log outage must not make the AI gateway unavailable.
-    console.error("[MATRIX] AI request de-duplication check failed; continuing.", { requestId, code: code || "unknown" });
+    console.error("[QORVYNA] AI request de-duplication check failed; continuing.", { requestId, code: code || "unknown" });
     return true;
   }
 }
@@ -161,7 +162,7 @@ async function checkRateLimit(d: Db, userId: string, kind: "chat" | "scan" | "su
     if (day >= perDay) return { ok: false, message: "RATE_LIMITED_DAY" };
     return { ok: true };
   } catch (err) {
-    console.error("[MATRIX] Rate-limit check failed — allowing the request.", err);
+    console.error("[QORVYNA] Rate-limit check failed — allowing the request.", err);
     return { ok: true };
   }
 }
@@ -181,7 +182,7 @@ async function logUsage(d: Db, userId: string, model: string, requestType: strin
   } catch (error) {
     // Observability must not turn a successful provider response into a chat
     // failure. Keep the diagnostic small and do not log request contents.
-    console.error("[MATRIX] AI usage log write failed.", { requestId: requestId ?? "none", error: error instanceof Error ? error.message.slice(0, 120) : "unknown" });
+    console.error("[QORVYNA] AI usage log write failed.", { requestId: requestId ?? "none", error: error instanceof Error ? error.message.slice(0, 120) : "unknown" });
   }
 }
 
@@ -529,11 +530,11 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     if (saved.transcription_status !== "complete" || !saved.transcript || saved.transcript.trim() !== message) return json({ error: "AUDIO_TRANSCRIPT_MISMATCH" }, 409, requestId);
     voiceMetadata = { audio_asset_id: audioAssetId, audio_duration_ms: Number(saved.duration_ms ?? 0), audio_waveform: Array.isArray(saved.waveform) ? saved.waveform.slice(0, 64) : [], audio_language: saved.detected_language ?? null };
   }
-  // GPT OSS 120B is a text model and MATRIX routes to no other model, so an
+  // GPT OSS 120B is a text model and QORVYNA routes to no other model, so an
   // attached image cannot be read. Say so before anything is stored, rather
   // than sending pixels to a model that would ignore or reject them.
   if (typeof body.image_storage_path === "string" && body.image_storage_path.trim()) {
-    return json({ error: "VISION_NOT_SUPPORTED", detail: `${MATRIX_MODEL_LABEL} cannot read images. Remove the image and describe it in text, or paste the text it contains.` }, 422, requestId);
+    return json({ error: "VISION_NOT_SUPPORTED", detail: `${QORVYNA_MODEL_LABEL} cannot read images. Remove the image and describe it in text, or paste the text it contains.` }, 422, requestId);
   }
   const chatImageDataUrl: string | undefined = undefined;
   let activeProjectId: string | null = null;
@@ -627,7 +628,10 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     const latestTask = recent.find((doc) => doc.data().role === "assistant" && doc.data().metadata?.agent_task)?.data().metadata?.agent_task as PendingAgentTask | undefined;
     clarificationFollowup = latestTask?.state === "CLARIFICATION_REQUIRED" && latestTask.originalRequest === taskContext.originalRequest;
   }
-  const agentExecutionRequired = mode === "agent" && (shouldRunBuildPipeline(detectBuildIntent(message, { agentMode: true, hasAttachments: attachments.length > 0 })) || isCodingRequest(message, attachments));
+  // The same detector the browser uses. A request that is real work never gets
+  // a conversational reply in Agent mode: it is sent back to be executed.
+  const requestIntent = detectBuildIntent(message, { mode, agentMode: mode === "agent", hasAttachments: attachments.length > 0, projectFileCount: activeProjectId ? 1 : 0 });
+  const agentExecutionRequired = mode === "agent" && (shouldRunBuildPipeline(requestIntent) || isCodingRequest(message, attachments));
   if (agentExecutionRequired && !clarificationFirst && !clarificationFollowup) {
     return json({ error: "AGENT_RUNTIME_REQUIRED", detail: "Executable Agent work must use /api/build so files, task state, validation and deployment are persisted together.", conversation_id: convId, project_id: activeProjectId, ...(userMessageId ? { user_message_id: userMessageId } : {}) }, 409, requestId);
   }
@@ -639,11 +643,14 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const pool = await resolvePool(d, user.uid, body.models && typeof body.models === "object" ? body.models as { auto?: boolean; enabled?: unknown } : null);
   const poolTargets = pool.targets;
   const targets = poolTargets.slice(0, 1);
-  const selectedModel = targets[0]?.model ?? MATRIX_MODEL_ID;
+  const selectedModel = targets[0]?.model ?? QORVYNA_MODEL_ID;
   if (!targets.length) {
     await logUsage(d, user.uid, "none", "chat", {}, Date.now() - started, "error", requestId);
     return json({ error: useAgentPolicy ? "CODING_MODEL_NOT_CONFIGURED" : "AI_GATEWAY_NOT_CONFIGURED", conversation_id: convId, ...(userMessageId ? { user_message_id: userMessageId } : {}) }, 503, requestId);
   }
+  // The models this request can really be answered by (coordinator first).
+  // Every prompt below describes exactly this routing when asked about it.
+  const routing = routingFromTargets(poolTargets);
 
   // Context: summary + recent messages + safe memory + RAG.
   // Every read is best-effort: the assistant answers with less context rather
@@ -692,6 +699,39 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     while (history.length && history[history.length - 1]?.role === "assistant") history.pop();
     while (history.length && history[history.length - 1]?.role === "user") history.pop();
   }
+  // --- identity questions ------------------------------------------------------
+  // "Who are you?" and "Which model are you?" have one correct answer, and it
+  // is known right here: the product identity and the routing resolved above.
+  // A standalone identity question is answered from that — never from the
+  // underlying model's memory of its own name. Anything less clear-cut (a
+  // longer message, a role-play the user set up) goes to the model, whose
+  // system prompt carries the same identity facts.
+  const identityKind = !regenerate && !taskContext && !attachments.length && !personaInPlay(history) ? identityQuestion(message) : null;
+  if (identityKind) {
+    const reply = identityAnswer(identityKind, routing, identityLanguage(message, preferredLanguage));
+    let identityMessageId: string | null = null;
+    let degraded = conversationPersistDegraded;
+    try {
+      identityMessageId = (await convRef.collection("messages").add({
+        role: "assistant", content: reply,
+        // No `model` here on purpose: this text came from the product's own
+        // identity record, not from a model call.
+        metadata: { mode, source: "identity", identity: identityKind, duration_ms: Math.max(1, Date.now() - started) },
+        created_at: nowTs(),
+      })).id;
+      await convRef.set({ updated_at: nowTs() }, { merge: true });
+    } catch (error) {
+      degraded = true;
+      logGatewayFailure("persist_identity_reply", { requestId, conversationId: convId }, error);
+    }
+    return json({
+      reply, conversation_id: convId, mode, identity: identityKind, duration_ms: Math.max(1, Date.now() - started),
+      ...(identityMessageId ? { message_id: identityMessageId } : {}),
+      ...(userMessageId ? { user_message_id: userMessageId } : {}),
+      ...(degraded ? { storage_degraded: true } : {}),
+    }, 200, requestId);
+  }
+
   const memories = mode === "health" || mode === "code" ? "" : await loadSafeMemories(d, user.uid);
   if (memories) history.push({ role: "system", content: "Safe context about the user (never repeat back verbatim):\n" + memories });
 
@@ -703,7 +743,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   const attachmentContext = formatAttachmentContext(safeAttachments);
 
   const messages: AIMessage[] = [
-    ...buildModeSystemMessages(mode, rag, preferredLanguage, { studyLevel, explainStyle }),
+    ...buildModeSystemMessages(mode, rag, preferredLanguage, { studyLevel, explainStyle, routing }),
     ...(taskContext?.state === "CLARIFICATION_REQUIRED" && requestsClarificationFirst(taskContext.originalRequest) && !taskContext.clarifications.length
       ? [{ role: "system" as const, content: "The user explicitly requested a clarification before any implementation. Ask exactly one essential missing requirement as a natural question. Do not produce files, claim a build, or publish yet." }]
       : []),
@@ -711,7 +751,13 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
     ...(attachmentContext ? [{ role: "system" as const, content: attachmentContext }] : []),
     ...(codingDetected && mode === "general" ? [{
       role: "system" as const,
-      content: "A coding task was automatically detected and is being handled by MATRIX coding routing. Give accurate, complete code and filenames, but do not emit MATRIX_FILE artifact blocks: live preview and GitHub push are available only in Agent mode.",
+      content: "A coding task was automatically detected and is being handled by QORVYNA coding routing. Give accurate, complete code and filenames, but do not emit QORVYNA_FILE artifact blocks: live preview and GitHub push are available only in Agent mode.",
+    }] : []),
+    // The request is real project work, but this turn is a conversation
+    // answer (the user chose that, or this client cannot run the Agent).
+    ...(isConversationMode(mode) && agentHandoffReason(message, requestIntent, { hasProject: Boolean(activeProjectId), hasAttachments: attachments.length > 0 }) ? [{
+      role: "system" as const,
+      content: "The user is asking for work on a real project, but this turn is a chat answer only: this reply does not change, build or publish anything. Give the help as text or code. State once, plainly, that nothing has been changed yet and that running the request in Agent mode applies it for real. Do not write that you made, applied, built, deployed or published anything.",
     }] : []),
     { role: "user", content: redaction.redacted },
   ];
@@ -981,7 +1027,7 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache, no-transform",
         "X-Accel-Buffering": "no",
-        "X-MATRIX-Request-ID": requestId,
+        "X-QORVYNA-Request-ID": requestId,
       },
     });
   }
@@ -1256,7 +1302,7 @@ async function handleImage(d: Db, user: SessionUser, body: Record<string, unknow
     }, 200, requestId);
   } catch (error) {
     const code = imageErrorCode(error);
-    console.error("[MATRIX] image generation failed", code, error);
+    console.error("[QORVYNA] image generation failed", code, error);
     await logUsage(d, user.uid, "image", "image", {}, Date.now() - started, "error", requestId);
     return json({ error: code, conversation_id: convId, image_status: "failed" }, code === "IMAGE_NOT_CONFIGURED" ? 503 : 502, requestId);
   }
@@ -1293,7 +1339,7 @@ async function handleOrchestrate(d: Db, user: SessionUser, body: Record<string, 
     try {
       const completed = await completeWithModel(targets, {
         messages: [
-          ...buildModeSystemMessages(task.mode, "", undefined),
+          ...buildModeSystemMessages(task.mode, "", undefined, { routing: routingFromTargets(targets) }),
           { role: "user", content: task.prompt },
         ],
         temperature: 0.4,
@@ -1340,13 +1386,13 @@ async function handleOrchestrate(d: Db, user: SessionUser, body: Record<string, 
 // Scan action (screenshot analysis, spec §14)
 // ---------------------------------------------------------------------------
 async function handleScan(_d: Db, _user: SessionUser, body: Record<string, unknown>) {
-  // Screenshot analysis needs a model that can read images. MATRIX runs only
+  // Screenshot analysis needs a model that can read images. QORVYNA runs only
   // GPT OSS 120B, a text model, and never routes to another model — so this
   // is reported honestly instead of being answered by a different model.
   void _d; void _user;
   return json({
     error: "VISION_NOT_SUPPORTED",
-    detail: `${MATRIX_MODEL_LABEL} cannot read images. Paste the text from the screenshot into the chat or the scanner's text box instead.`,
+    detail: `${QORVYNA_MODEL_LABEL} cannot read images. Paste the text from the screenshot into the chat or the scanner's text box instead.`,
   }, 422, requestIdFrom(body));
 }
 

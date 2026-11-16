@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX deployment provider abstraction (§32, §33)
+// QORVYNA deployment provider abstraction (§32, §33)
 //
 //   DeploymentProvider
 //        ↓ build()      validate + bundle the project

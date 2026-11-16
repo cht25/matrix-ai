@@ -10,9 +10,9 @@
 import "server-only";
 import { nowTs, type Db } from "@/lib/firebase/admin";
 import { fetchModelCatalog } from "@/lib/ai/model-catalog";
-import { MATRIX_MODEL_BASE_URL } from "@/lib/ai/model";
+import { QORVYNA_MODEL_BASE_URL } from "@/lib/ai/model";
 import { ensureAccounts } from "@/lib/ai/accounts";
-import { hostedProviderKey, matrixModelRoute, routeForModel, type AIRouteTarget } from "@/lib/ai/config";
+import { hostedProviderKey, qorvynaModelRoute, routeForModel, type AIRouteTarget } from "@/lib/ai/config";
 import { DEFAULT_MODEL_KEY, MODEL_REGISTRY, modelById, sanitizeModelKeys, type ModelSpec } from "@/lib/ai/models/registry";
 import { cooldownRemainingMs } from "@/lib/ai/orchestrator/scheduler";
 import type { ModelAvailability, ModelStatus, PoolPreference } from "@/lib/ai/models/types";
@@ -30,7 +30,7 @@ async function hostedCatalog(refresh = false): Promise<Catalog> {
   const key = hostedProviderKey();
   if (!key) return null;
   try {
-    const result = await fetchModelCatalog({ baseUrl: MATRIX_MODEL_BASE_URL, apiKey: key, provider: "Groq", refresh });
+    const result = await fetchModelCatalog({ baseUrl: QORVYNA_MODEL_BASE_URL, apiKey: key, provider: "Groq", refresh });
     return { ids: new Map(result.models.map((model) => [model.id.toLowerCase(), model.contextTokens])) };
   } catch (error) {
     return { error: error instanceof Error ? error.message.slice(0, 160) : "catalog request failed" };
@@ -64,7 +64,7 @@ const REASON: Record<ModelAvailability, string> = {
 /** Every registered model with its real, current status. No credentials. */
 export async function listModelStatus(opts: { refresh?: boolean } = {}): Promise<ModelStatus[]> {
   const catalog = await hostedCatalog(opts.refresh);
-  const dedicated = matrixModelRoute()?.providerId === "gpt-oss";
+  const dedicated = qorvynaModelRoute()?.providerId === "gpt-oss";
   return MODEL_REGISTRY.map((spec) => {
     const { availability, contextTokens } = availabilityOf(spec, catalog);
     const cooling = cooldownRemainingMs(spec.key);
@@ -152,7 +152,7 @@ export async function resolvePool(d: Db | null, uid: string | null, override?: {
   // If none of the user's chosen models can run, continue with the default
   // model rather than failing the request — and say so via `skipped`.
   if (!targets.length && !preference.auto) {
-    const fallback = matrixModelRoute();
+    const fallback = qorvynaModelRoute();
     if (fallback) targets.push(fallback);
   }
   return { targets: targets.slice(0, MAX_ACTIVE_MODELS), auto: preference.auto, skipped };

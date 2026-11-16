@@ -39,7 +39,7 @@ export function ThemeGallery({ compact = false }: { compact?: boolean }) {
         })}
       </div>
       <Button type="button" variant="outline" onClick={() => setTemplate("default" as ThemeTemplateId)}>
-        Reset to MATRIX default
+        Reset to QORVYNA default
       </Button>
     </div>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-// Client-side helpers for the Firebase + Cloudinary-backed MATRIX backend.
+// Client-side helpers for the Firebase + Cloudinary-backed QORVYNA backend.
 // All mutations go through /api/rpc (server-verified, audited). Image uploads
 // go DIRECTLY to Cloudinary using a server-signed grant (folder + public_id +
 // timestamp are baked into the signature), and are stored as private

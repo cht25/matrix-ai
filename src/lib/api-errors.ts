@@ -6,16 +6,16 @@ export type ApiFailureKind =
   | "not-configured"
   | "network"
   | "timeout"
-  | "auth" // MATRIX session authentication
+  | "auth" // QORVYNA session authentication
   | "provider-auth" // model provider authentication
-  | "rate-limit" // MATRIX usage limit
+  | "rate-limit" // QORVYNA usage limit
   | "provider-rate-limit"
   | "provider-invalid-request"
   | "provider-unavailable"
   | "billing"
   | "invalid-request"
   | "vision-unsupported" // the model cannot read images
-  | "storage" // MATRIX backend (Firestore) unavailable — NOT an AI problem
+  | "storage" // QORVYNA backend (Firestore) unavailable — NOT an AI problem
   | "server";
 
 export type ApiFailure = {
@@ -29,7 +29,7 @@ export type ApiFailure = {
 const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retryable: boolean; action?: "sign-in" }> = {
   storage: {
     title: "Chat storage unavailable",
-    detail: "MATRIX's chat database is temporarily unreachable, so this message cannot be saved or answered right now. Nothing is wrong on your side — please try again shortly.",
+    detail: "QORVYNA's chat database is temporarily unreachable, so this message cannot be saved or answered right now. Nothing is wrong on your side — please try again shortly.",
     retryable: true,
   },
   "not-configured": {
@@ -39,7 +39,7 @@ const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retr
   },
   network: {
     title: "Connection problem",
-    detail: "MATRIX could not connect to the service. Check your internet connection and try again in a moment.",
+    detail: "QORVYNA could not connect to the service. Check your internet connection and try again in a moment.",
     retryable: true,
   },
   timeout: {
@@ -49,18 +49,18 @@ const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retr
   },
   auth: {
     title: "Authentication failed",
-    detail: "Your MATRIX session is no longer valid. Sign in again to continue.",
+    detail: "Your QORVYNA session is no longer valid. Sign in again to continue.",
     retryable: false,
     action: "sign-in",
   },
   "provider-auth": {
     title: "AI provider authentication failed",
-    detail: "MATRIX could not authenticate with the model provider. Your message is kept. The administrator needs to check the API key; you can retry once it is fixed.",
+    detail: "QORVYNA could not authenticate with the model provider. Your message is kept. The administrator needs to check the API key; you can retry once it is fixed.",
     retryable: true,
   },
   "rate-limit": {
     title: "Slow down",
-    detail: "You've reached the MATRIX message limit for now. Take a short break, then retry.",
+    detail: "You've reached the QORVYNA message limit for now. Take a short break, then retry.",
     retryable: true,
   },
   "provider-rate-limit": {
@@ -90,12 +90,12 @@ const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retr
   },
   "vision-unsupported": {
     title: "Images are not supported",
-    detail: "MATRIX's models are text models and cannot read images. Remove the image and describe it, or paste the text it contains.",
+    detail: "QORVYNA's models are text models and cannot read images. Remove the image and describe it, or paste the text it contains.",
     retryable: false,
   },
   server: {
     title: "Server problem",
-    detail: "Something went wrong on MATRIX's server while handling this request. The error has been logged. Please try again in a moment.",
+    detail: "Something went wrong on QORVYNA's server while handling this request. The error has been logged. Please try again in a moment.",
     retryable: true,
   },
 };

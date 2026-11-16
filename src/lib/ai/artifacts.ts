@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX artifact + execution state
+// QORVYNA artifact + execution state
 //
 // Artifacts follow a strict lifecycle (product spec §18):
 //
@@ -46,7 +46,7 @@ export function emptyArtifactState(): ArtifactState {
     status: null,
     format: null,
     label: "",
-    title: "MATRIX response",
+    title: "QORVYNA response",
     filename: null,
     error: null,
     requestedAt: null,
@@ -86,10 +86,10 @@ export function artifactFilename(type: ArtifactType, title: string): string | nu
   const format = artifactToFormat(type);
   if (!format) {
     // Non-document artifacts still need a sensible download name.
-    if (type === "IMAGE") return "matrix-image.png";
+    if (type === "IMAGE") return "qorvyna-image.png";
     return null;
   }
-  const base = slugify(title) || "matrix-response";
+  const base = slugify(title) || "qorvyna-response";
   const ext = format === "markdown" ? "md" : format === "docx" ? "docx" : format;
   return `${base}.${ext}`;
 }
@@ -118,7 +118,7 @@ export function requestArtifact(state: ArtifactState, request: ArtifactRequest):
   // still real lifecycle subjects.
   if (type === "NONE") return state;
   if (state.requested && state.status !== "failed") return state;
-  const title = (request.title ?? "MATRIX response").trim() || "MATRIX response";
+  const title = (request.title ?? "QORVYNA response").trim() || "QORVYNA response";
   return {
     ...emptyArtifactState(),
     requested: true,
@@ -344,8 +344,8 @@ export function fromSnapshot(snapshot: ArtifactSnapshot | null | undefined): Art
     status: snapshot.status ?? "requested",
     format: snapshot.format ?? artifactToFormat(snapshot.type),
     label: artifactLabel(snapshot.type),
-    title: snapshot.title || "MATRIX response",
-    filename: snapshot.filename ?? artifactFilename(snapshot.type, snapshot.title || "MATRIX response"),
+    title: snapshot.title || "QORVYNA response",
+    filename: snapshot.filename ?? artifactFilename(snapshot.type, snapshot.title || "QORVYNA response"),
   };
 }
 

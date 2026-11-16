@@ -1,9 +1,9 @@
 export type ThemeMode = "dark" | "light" | "system";
 export type ThemeTemplateId = "default" | "midnight" | "ivory" | "carbon" | "aurora" | "forest";
 
-// LIGHT is the primary product theme: fresh installs, signed-out visitors and
-// anyone who never saved a preference all start here. Dark is the optional
-// secondary theme; "system" follows the device.
+// DARK is the primary product theme: fresh installs, signed-out visitors and
+// anyone who never saved a preference all start here. Light is a fully
+// designed alternative; "system" follows the device.
 export const DEFAULT_THEME: ThemeMode = "dark";
 
 export type ThemeSwatch = {
@@ -24,10 +24,11 @@ export type ThemeTemplate = {
 export const THEME_TEMPLATES: ThemeTemplate[] = [
   {
     id: "default",
-    name: "MATRIX Default",
-    description: "Obsidian ground, steel-blue calligraphy — the original identity.",
-    dark: { bg: "#070b14", surface: "#0d1424", ink: "#f8fafc", accent: "#3b82f6" },
-    light: { bg: "#f6f8fc", surface: "#ffffff", ink: "#0f172a", accent: "#2563eb" },
+    name: "QORVYNA",
+    description: "Deep navy with the electric blue and violet of the QORVYNA mark.",
+    // Mirrors the default blocks in styles/tokens.css (bg, surface, text, fill).
+    dark: { bg: "#070b1a", surface: "#0d1326", ink: "#f5f8ff", accent: "#2563ff" },
+    light: { bg: "#f6f8fd", surface: "#ffffff", ink: "#0b1533", accent: "#2563ff" },
   },
   {
     id: "midnight",

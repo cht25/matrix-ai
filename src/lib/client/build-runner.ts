@@ -1,7 +1,7 @@
 "use client";
 
 // =============================================================================
-// MATRIX build client (§2, §3, §4, §24)
+// QORVYNA build client (§2, §3, §4, §24)
 //
 // One code path for the UI: start a run, follow the real events, and fall back
 // to polling the persisted run if the stream drops. The client never derives
@@ -176,7 +176,7 @@ async function streamSegment(body: Record<string, unknown>, handlers: BuildStrea
           handlers.onRun?.(run);
         }
       }).catch(() => {
-        handlers.onError?.("BUILD_STREAM_INTERRUPTED", "MATRIX lost the live build feed. Refresh the project to see its real state.");
+        handlers.onError?.("BUILD_STREAM_INTERRUPTED", "QORVYNA lost the live build feed. Refresh the project to see its real state.");
       });
       controller.abort();
     }, IDLE_TIMEOUT_MS);
@@ -192,8 +192,9 @@ async function streamSegment(body: Record<string, unknown>, handlers: BuildStrea
       body: JSON.stringify(body),
     });
     if (!res.ok || !res.body) {
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new BuildRunError(data.error ?? `BUILD_HTTP_${res.status}`);
+      const data = (await res.json().catch(() => ({}))) as { error?: string; detail?: unknown };
+      // Keep the server's own explanation: it says WHY nothing was started.
+      throw new BuildRunError(data.error ?? `BUILD_HTTP_${res.status}`, typeof data.detail === "string" && data.detail.trim() ? data.detail.trim() : null, res.status);
     }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -285,7 +286,7 @@ export async function readLatestBuildRun(projectId: string): Promise<BuildRun | 
 }
 
 export class BuildRunError extends Error {
-  constructor(readonly code: string) {
+  constructor(readonly code: string, readonly detail: string | null = null, readonly status: number | null = null) {
     super(code);
     this.name = "BuildRunError";
   }

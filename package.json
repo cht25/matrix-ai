@@ -1,8 +1,8 @@
 {
-  "name": "matrix-ai",
+  "name": "qorvyna",
   "version": "1.0.0",
   "private": true,
-  "description": "MATRIX AI — AI Cyber Safety & Cybersecurity Education Platform for ages 11–17. Operated by THAMJJ13.TOP White Hat Team. Built on Firebase (Auth, Firestore, Storage) + Next.js.",
+  "description": "QORVYNA — one intelligence for AI, agents, connected devices, automation, cloud hosting and developer tools. Next.js + Firebase (Auth, Firestore). Operated by THAMJJ13.TOP White Hat Team.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:browser": "node scripts/browser-smoke.mjs",
+    "brand:assets": "node scripts/generate-brand-assets.mjs",
     "worker:automations": "node scripts/automation-worker.mjs",
     "seed": "node scripts/seed.mjs",
     "seed:dry-run": "node scripts/seed.mjs --dry-run",

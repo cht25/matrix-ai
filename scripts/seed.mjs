@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // =============================================================================
-// MATRIX AI — Firestore seed (port of supabase/migrations/0007_seed.sql).
+// QORVYNA AI — Firestore seed (port of supabase/migrations/0007_seed.sql).
 //
 //   node scripts/seed.mjs            seed Firestore
 //   node scripts/seed.mjs --dry-run  parse + print counts only

@@ -57,8 +57,15 @@ export function Field({ label, htmlFor, hint, children }: { label: string; htmlF
   );
 }
 
+/** Any padding utility (`p-4`, `sm:px-6`, `!p-0` …) passed by the caller. */
+const PADDING_UTILITY = /(?:^|\s)(?:[a-z0-9-]+:)*!?p[xytblrse]?-/;
+
+/**
+ * A surface. Its padding is 20px unless the caller passes a padding utility,
+ * which then replaces the default instead of competing with it.
+ */
 export function Card({ className, children, id }: { className?: string; children: ReactNode; id?: string }) {
-  return <div id={id} className={cn("card p-5", className)}>{children}</div>;
+  return <div id={id} className={cn("card", !PADDING_UTILITY.test(className ?? "") && "p-5", className)}>{children}</div>;
 }
 
 export function Badge({ className, children }: { className?: string; children: ReactNode }) {

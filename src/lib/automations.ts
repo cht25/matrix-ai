@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — Automations: shared model (client-safe, no server imports).
+// QORVYNA AI — Automations: shared model (client-safe, no server imports).
 //
 // An automation = trigger + ordered actions. Actions reference REGISTERED
 // tool ids from the unified tool registry; execution always goes through the

@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — registered tools. Each handler is a thin, ownership-checked
+// QORVYNA AI — registered tools. Each handler is a thin, ownership-checked
 // wrapper over a REAL server module; nothing here is mocked. A tool whose
 // integration is not configured returns an honest error — never fake data.
 // =============================================================================
@@ -25,7 +25,7 @@ function asUser(ctx: ToolContext): SessionUser {
 // --- projects ---------------------------------------------------------------
 toolRegistry.register({
   id: "projects.list",
-  description: "List the signed-in user's own MATRIX projects.",
+  description: "List the signed-in user's own QORVYNA projects.",
   category: "projects",
   risk: RiskTier.LOW,
   requiredPermissions: [],
@@ -132,10 +132,10 @@ toolRegistry.register({
   },
 });
 
-// --- devices (MATRIX Connect) -------------------------------------------------
+// --- devices (QORVYNA Connect) -------------------------------------------------
 toolRegistry.register({
   id: "devices.list",
-  description: "List devices linked to the signed-in user's account via MATRIX Connect QR pairing.",
+  description: "List devices linked to the signed-in user's account via QORVYNA Connect QR pairing.",
   category: "devices",
   risk: RiskTier.LOW,
   requiredPermissions: [],

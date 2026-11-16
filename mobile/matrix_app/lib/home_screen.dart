@@ -67,7 +67,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         await UpdateService.showUpdateSheet(context, info);
       } else if (manual) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('MATRIX v${MatrixConfig.appVersion} is up to date.')),
+          SnackBar(content: Text('QORVYNA v${MatrixConfig.appVersion} is up to date.')),
         );
       }
     } finally {
@@ -95,7 +95,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 Text(
                   _forcedUpdate!.releaseNotes.isNotEmpty
                       ? _forcedUpdate!.releaseNotes
-                      : 'Please install the latest MATRIX Android release to continue.',
+                      : 'Please install the latest QORVYNA Android release to continue.',
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: Colors.white70, height: 1.45),
                 ),
@@ -118,7 +118,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         title: Text(_tabs[_index].label),
       ),
       drawer: Drawer(
-        backgroundColor: const Color(0xFF101013),
+        backgroundColor: const Color(0xFF0A1028),
         child: SafeArea(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -130,17 +130,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   children: [
                     Row(
                       children: [
-                        const Text('MATRIX AI', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                        const Text('QORVYNA AI', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                         const SizedBox(width: 8),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF143524),
+                            color: const Color(0xFF14235C),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: const Text(
                             'v${MatrixConfig.appVersion}',
-                            style: TextStyle(fontSize: 10.5, color: Color(0xFF4ADE80)),
+                            style: TextStyle(fontSize: 10.5, color: Color(0xFF6EA0FF)),
                           ),
                         ),
                       ],
@@ -186,7 +186,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       body: IndexedStack(index: _index, children: [for (final t in _tabs) t.page]),
       bottomNavigationBar: NavigationBar(
-        backgroundColor: const Color(0xFF101013),
+        backgroundColor: const Color(0xFF0A1028),
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),
         destinations: [

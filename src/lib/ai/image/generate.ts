@@ -1,4 +1,4 @@
-// The single entry point every MATRIX feature uses to generate an image.
+// The single entry point every QORVYNA feature uses to generate an image.
 // Resolves the admin-configured provider + credentials, then delegates.
 
 import "server-only";

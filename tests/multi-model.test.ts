@@ -20,7 +20,7 @@ vi.mock("@/lib/firebase/session", () => {
 import { POST } from "../src/app/api/ai/route";
 import { GET as getModels, PUT as putModels } from "../src/app/api/models/route";
 import { sharedFirestoreStub } from "./helpers/firestore-stub";
-import { MATRIX_MODEL_ID } from "../src/lib/ai/model";
+import { QORVYNA_MODEL_ID } from "../src/lib/ai/model";
 import { MODEL_REGISTRY, modelById, modelByKey, modelTpm, sanitizeModelKeys, isRegisteredModelId } from "../src/lib/ai/models/registry";
 import { listModelStatus, resolvePool, setPoolPreference, MAX_ACTIVE_MODELS } from "../src/lib/ai/models/pool";
 import { classifyTask, executionWaves, isSimpleRequest, planCollaboration, wantsSeparateAnswers } from "../src/lib/ai/orchestrator/plan";
@@ -44,7 +44,7 @@ const usage = { promptTokens: 10, completionTokens: 5, totalTokens: 15 };
 
 const noClient = {} as AIProvider;
 const target = (model: string): AIRouteTarget => ({ provider: "Groq", providerId: "groq", model, client: noClient, tier: "high" });
-const POOL3 = [target(MATRIX_MODEL_ID), target(QWEN), target(LLAMA)];
+const POOL3 = [target(QORVYNA_MODEL_ID), target(QWEN), target(LLAMA)];
 const QUESTION = "Explain step by step why quicksort is O(n log n) on average and when it degrades, in detail.";
 const CODE = "Write a TypeScript function that debounces another function and explain the edge cases.";
 
@@ -71,7 +71,7 @@ describe("model registry", () => {
   it("has unique keys and IDs, a default, and resolves both spellings of the default ID", () => {
     expect(new Set(MODEL_REGISTRY.map((model) => model.key)).size).toBe(MODEL_REGISTRY.length);
     expect(new Set(MODEL_REGISTRY.map((model) => model.id)).size).toBe(MODEL_REGISTRY.length);
-    expect(modelById(MATRIX_MODEL_ID)?.key).toBe("gpt-oss-120b");
+    expect(modelById(QORVYNA_MODEL_ID)?.key).toBe("gpt-oss-120b");
     expect(modelById("gpt-oss-120b")?.key).toBe("gpt-oss-120b");
     expect(isRegisteredModelId("made-up-model")).toBe(false);
     expect(sanitizeModelKeys(["qwen3-32b", "nope", "qwen3-32b", 3])).toEqual(["qwen3-32b"]);
@@ -79,13 +79,16 @@ describe("model registry", () => {
   it("allows a per-deployment TPM override and ignores nonsense", () => {
     const spec = modelByKey("qwen3-32b")!;
     expect(modelTpm(spec, {})).toBe(spec.tpm);
+    expect(modelTpm(spec, { QORVYNA_MODEL_TPM_QWEN3_32B: "50000" })).toBe(50000);
+    expect(modelTpm(spec, { QORVYNA_MODEL_TPM_QWEN3_32B: "abc" })).toBe(spec.tpm);
+    // The pre-rename variable name still works, and the new one wins over it.
     expect(modelTpm(spec, { MATRIX_MODEL_TPM_QWEN3_32B: "50000" })).toBe(50000);
-    expect(modelTpm(spec, { MATRIX_MODEL_TPM_QWEN3_32B: "abc" })).toBe(spec.tpm);
+    expect(modelTpm(spec, { MATRIX_MODEL_TPM_QWEN3_32B: "50000", QORVYNA_MODEL_TPM_QWEN3_32B: "20000" })).toBe(20000);
   });
   it("the provider client requests hidden reasoning and JSON only from models that support them", () => {
     const build = (model: string, extra: Record<string, unknown> = {}) =>
       (new GroqProvider("k") as unknown as { buildBody: (req: unknown, stream: boolean) => Record<string, unknown> }).buildBody({ model, messages: [{ role: "user", content: "hi" }], ...extra }, false);
-    expect(build(MATRIX_MODEL_ID)).toMatchObject({ reasoning_format: "hidden", reasoning_effort: "low" });
+    expect(build(QORVYNA_MODEL_ID)).toMatchObject({ reasoning_format: "hidden", reasoning_effort: "low" });
     expect(build(QWEN).reasoning_format).toBe("hidden");
     expect(build(QWEN).reasoning_effort).toBeUndefined();
     expect(build(LLAMA).reasoning_format).toBeUndefined();
@@ -160,7 +163,7 @@ describe("task decomposition", () => {
 // ---------------------------------------------------------------------------
 describe("context selection", () => {
   const history: AIMessage[] = [
-    { role: "system", content: "You are MATRIX." },
+    { role: "system", content: "You are QORVYNA." },
     ...Array.from({ length: 40 }, (_, i): AIMessage => ({ role: i % 2 ? "assistant" : "user", content: `turn ${i} ` + "detail ".repeat(120) })),
     { role: "user", content: "FINAL QUESTION about turn 3" },
   ];
@@ -232,7 +235,7 @@ describe("TPM-aware scheduling", () => {
 // ---------------------------------------------------------------------------
 describe("orchestrated execution", () => {
   const conversation: AIMessage[] = [
-    { role: "system", content: "You are MATRIX." },
+    { role: "system", content: "You are QORVYNA." },
     { role: "user", content: "My project is called Orchard." },
     { role: "assistant", content: "Noted: Orchard." },
     { role: "user", content: QUESTION },
@@ -289,7 +292,7 @@ describe("orchestrated execution", () => {
     const fake = fakeComplete({ fail: { [QWEN]: unavailable(QWEN), [LLAMA]: unavailable(LLAMA) } });
     const plan = planCollaboration({ message: QUESTION, pool: POOL3 });
     const result = await runCollaboration({ plan, pool: POOL3, messages: conversation, complete: fake.complete });
-    expect(result.results.every((item) => item.status === "done" && item.model === MATRIX_MODEL_ID)).toBe(true);
+    expect(result.results.every((item) => item.status === "done" && item.model === QORVYNA_MODEL_ID)).toBe(true);
   });
 
   it("when no model can do a task it is reported as failed — no output is invented", async () => {
@@ -317,7 +320,7 @@ describe("orchestrated execution", () => {
   it("token limits: a task too large for one model's budget goes to a model that can take it", async () => {
     const fake = fakeComplete();
     const big: AIMessage[] = [{ role: "user", content: "x".repeat(4 * 40_000) }]; // ≈40k tokens
-    const { completed, attempts } = await completeWithFallback([target(QWEN), target(MATRIX_MODEL_ID)], () => ({ messages: big, maxTokens: 500 }), { complete: fake.complete });
+    const { completed, attempts } = await completeWithFallback([target(QWEN), target(QORVYNA_MODEL_ID)], () => ({ messages: big, maxTokens: 500 }), { complete: fake.complete });
     expect(attempts[0]).toMatchObject({ model: QWEN, outcome: "skipped" });
     // The default model's budget is also smaller than 40k, so it too is deferred —
     // and then the request is sent anyway rather than being refused outright.
@@ -328,7 +331,7 @@ describe("orchestrated execution", () => {
   it("specialist context is cut to each model's budget", async () => {
     const fake = fakeComplete();
     const long: AIMessage[] = [
-      { role: "system", content: "You are MATRIX." },
+      { role: "system", content: "You are QORVYNA." },
       ...Array.from({ length: 60 }, (_, i): AIMessage => ({ role: i % 2 ? "assistant" : "user", content: `turn ${i} ` + "word ".repeat(400) })),
       { role: "user", content: QUESTION },
     ];
@@ -344,9 +347,9 @@ describe("orchestrated execution", () => {
   it("completeWithRole gives review work to a different model than the author when one exists", async () => {
     const fake = fakeComplete();
     const reviewed = await completeWithRole(POOL3, ["review", "coding"], { messages: [{ role: "user", content: "review this" }] }, { complete: fake.complete, avoid: 0 });
-    expect(reviewed.completed?.target.model).not.toBe(MATRIX_MODEL_ID);
+    expect(reviewed.completed?.target.model).not.toBe(QORVYNA_MODEL_ID);
     const alone = await completeWithRole(POOL3.slice(0, 1), ["review"], { messages: [{ role: "user", content: "review this" }] }, { complete: fake.complete, avoid: 0 });
-    expect(alone.completed?.target.model).toBe(MATRIX_MODEL_ID);
+    expect(alone.completed?.target.model).toBe(QORVYNA_MODEL_ID);
   });
 });
 
@@ -395,16 +398,16 @@ describe("final answer fallback", () => {
   it("moves to the next model when the lead fails before any text", async () => {
     const swaps: string[] = [];
     let text = "";
-    for await (const item of streamWithFallback(POOL3, { messages: [] }, { stream: streamOf({ [MATRIX_MODEL_ID]: "fail" }), onFallback: (from, to) => swaps.push(`${from.model}->${to.model}`) })) text += item.delta;
+    for await (const item of streamWithFallback(POOL3, { messages: [] }, { stream: streamOf({ [QORVYNA_MODEL_ID]: "fail" }), onFallback: (from, to) => swaps.push(`${from.model}->${to.model}`) })) text += item.delta;
     expect(text).toBe(`hello from ${QWEN}`);
-    expect(swaps).toEqual([`${MATRIX_MODEL_ID}->${QWEN}`]);
+    expect(swaps).toEqual([`${QORVYNA_MODEL_ID}->${QWEN}`]);
   });
   it("never restarts on another model once text has been shown", async () => {
     let text = "";
     await expect((async () => {
-      for await (const item of streamWithFallback(POOL3, { messages: [] }, { stream: streamOf({ [MATRIX_MODEL_ID]: "die" }) })) text += item.delta;
+      for await (const item of streamWithFallback(POOL3, { messages: [] }, { stream: streamOf({ [QORVYNA_MODEL_ID]: "die" }) })) text += item.delta;
     })()).rejects.toBeInstanceOf(AIProviderError);
-    expect(text).toBe(`hello from ${MATRIX_MODEL_ID}`);
+    expect(text).toBe(`hello from ${QORVYNA_MODEL_ID}`);
   });
   it("reports the real error when every model fails", async () => {
     const all = Object.fromEntries(POOL3.map((route) => [route.model, "fail" as const]));
@@ -424,7 +427,7 @@ describe("gateway end to end", () => {
   beforeEach(() => {
     stub.clearFaults();
     resetHealthCacheForTests();
-    catalog = [MATRIX_MODEL_ID, QWEN, LLAMA];
+    catalog = [QORVYNA_MODEL_ID, QWEN, LLAMA];
     failing = new Set();
     requests = [];
     streamText = null;
@@ -466,7 +469,7 @@ describe("gateway end to end", () => {
   const put = (body: unknown) => putModels(new Request("http://localhost:3000/api/models", { method: "PUT", headers: { "Content-Type": "application/json", Origin: "http://localhost:3000", Host: "localhost:3000" }, body: JSON.stringify(body) }));
 
   it("availability comes from the live catalog: unlisted models are not offered and cannot be enabled", async () => {
-    catalog = [MATRIX_MODEL_ID, QWEN];
+    catalog = [QORVYNA_MODEL_ID, QWEN];
     const statuses = await listModelStatus({ refresh: true });
     const by = Object.fromEntries(statuses.map((model) => [model.key, model.availability]));
     expect(by).toMatchObject({ "gpt-oss-120b": "available", "qwen3-32b": "available", "llama-3.3-70b": "not_offered", "gpt-oss-20b": "not_offered" });
@@ -489,20 +492,20 @@ describe("gateway end to end", () => {
     expect((await put({ auto: "yes" })).status).toBe(400);
     // The saved selection is what the gateway uses.
     const pool = await resolvePool(stub as unknown as Db, "multi-model-user");
-    expect(pool.targets.map((item) => item.model)).toEqual([MATRIX_MODEL_ID, QWEN]);
+    expect(pool.targets.map((item) => item.model)).toEqual([QORVYNA_MODEL_ID, QWEN]);
   });
 
   it("three models produce ONE answer: two specialists in parallel, then the coordinator's synthesis", async () => {
     const res = await chat(QUESTION);
     expect(res.status).toBe(200);
     expect(res.done).toBe(true);
-    expect(res.reply).toBe(`FINAL ANSWER by ${MATRIX_MODEL_ID}`);
+    expect(res.reply).toBe(`FINAL ANSWER by ${QORVYNA_MODEL_ID}`);
     expect(res.reply).not.toContain("SPECIALIST NOTES");
     const specialists = requests.filter((request) => !request.stream);
     expect(specialists.map((request) => request.model).sort()).toEqual([LLAMA, QWEN].sort());
     const final = requests.filter((request) => request.stream);
     expect(final).toHaveLength(1);
-    expect(final[0].model).toBe(MATRIX_MODEL_ID);
+    expect(final[0].model).toBe(QORVYNA_MODEL_ID);
     // The coordinator inspects both outputs.
     const brief = final[0].messages.find((message) => message.role === "system" && message.content.includes("### Analyst"))!;
     expect(brief.content).toContain(`SPECIALIST NOTES by ${QWEN}`);
@@ -518,7 +521,7 @@ describe("gateway end to end", () => {
 
   it("one enabled model: a single request, no collaboration", async () => {
     const res = await chat(QUESTION, { models: { auto: false, enabled: ["gpt-oss-120b"] } });
-    expect(res.reply).toBe(`FINAL ANSWER by ${MATRIX_MODEL_ID}`);
+    expect(res.reply).toBe(`FINAL ANSWER by ${QORVYNA_MODEL_ID}`);
     expect(requests).toHaveLength(1);
     expect(res.steps.find((step) => step.id === "route")?.label).toBe("Using GPT OSS 120B");
   });
@@ -526,7 +529,7 @@ describe("gateway end to end", () => {
   it("two enabled models: one specialist plus the synthesis", async () => {
     const res = await chat(QUESTION, { models: { auto: false, enabled: ["gpt-oss-120b", "llama-3.3-70b"] } });
     expect(res.done).toBe(true);
-    expect(requests.map((request) => `${request.model}:${request.stream}`)).toEqual([`${LLAMA}:false`, `${MATRIX_MODEL_ID}:true`]);
+    expect(requests.map((request) => `${request.model}:${request.stream}`)).toEqual([`${LLAMA}:false`, `${QORVYNA_MODEL_ID}:true`]);
   });
 
   it("a short question uses one model even with three enabled", async () => {
@@ -538,14 +541,14 @@ describe("gateway end to end", () => {
     failing = new Set([QWEN]);
     const res = await chat(QUESTION);
     expect(res.done).toBe(true);
-    expect(res.reply).toBe(`FINAL ANSWER by ${MATRIX_MODEL_ID}`);
+    expect(res.reply).toBe(`FINAL ANSWER by ${QORVYNA_MODEL_ID}`);
     const step = res.steps.find((item) => item.id === "task-analysis")!;
     expect(step.status).toBe("done");
     expect(step.detail).toMatch(/Qwen 3 32B failed/);
   });
 
   it("when the lead model is down, the next model writes the answer and the swap is shown", async () => {
-    failing = new Set([MATRIX_MODEL_ID]);
+    failing = new Set([QORVYNA_MODEL_ID]);
     const res = await chat(QUESTION);
     expect(res.done).toBe(true);
     expect(res.reply).toBe(`FINAL ANSWER by ${LLAMA}`); // next coordinator by rank
@@ -553,7 +556,7 @@ describe("gateway end to end", () => {
   });
 
   it("when every model is down the user gets a real error and no invented reply", async () => {
-    failing = new Set([MATRIX_MODEL_ID, QWEN, LLAMA]);
+    failing = new Set([QORVYNA_MODEL_ID, QWEN, LLAMA]);
     const res = await chat(QUESTION);
     expect(res.done).toBe(false);
     expect(res.reply).toBe("");
@@ -561,10 +564,10 @@ describe("gateway end to end", () => {
   });
 
   it("a client cannot force a model that is not available", async () => {
-    catalog = [MATRIX_MODEL_ID];
+    catalog = [QORVYNA_MODEL_ID];
     const res = await chat(QUESTION, { models: { auto: false, enabled: ["qwen3-32b"] }, model: "made-up", provider: "elsewhere" });
     expect(res.done).toBe(true);
-    expect(requests.map((request) => request.model)).toEqual([MATRIX_MODEL_ID]);
+    expect(requests.map((request) => request.model)).toEqual([QORVYNA_MODEL_ID]);
     expect(res.steps.some((step) => step.label === "Qwen 3 32B is not available")).toBe(true);
   });
 
@@ -572,7 +575,7 @@ describe("gateway end to end", () => {
     const res = await chat("Show separate answers from each model: explain recursion in programming with an example please.");
     expect(res.done).toBe(true);
     expect(requests.every((request) => !request.stream)).toBe(true);
-    expect(requests.map((request) => request.model).sort()).toEqual([MATRIX_MODEL_ID, QWEN, LLAMA].sort());
+    expect(requests.map((request) => request.model).sort()).toEqual([QORVYNA_MODEL_ID, QWEN, LLAMA].sort());
     for (const label of ["GPT OSS 120B", "Qwen 3 32B", "Llama 3.3 70B"]) expect(res.reply).toContain(`### ${label}`);
     expect(res.reply).toContain(`SPECIALIST NOTES by ${QWEN}`);
   });
@@ -599,7 +602,7 @@ describe("gateway end to end", () => {
 <main><section id="menu"><h2>Today's menu</h2><div class="menu"><article class="card"><h3>Country sourdough</h3><p>48-hour ferment, crackling crust.</p></article><article class="card"><h3>Cardamom buns</h3><p>Soft, fragrant and glazed.</p></article><article class="card"><h3>Seeded rye</h3><p>Dense, nutty and good for a week.</p></article></div></section>
 <section id="contact"><h2>Find us</h2><p>12 Mill Lane. Open Tuesday to Sunday, 7am to 3pm.</p><p><a href="mailto:hello@rise.example">hello@rise.example</a></p></section></main>
 <footer><p>Rise Bakery</p></footer></body></html>`;
-    streamText = () => `I built the bakery site.\n\n<<<MATRIX_FILE path="index.html">>>\n${page.replaceAll("Rise", name)}\n<<<END_MATRIX_FILE>>>`;
+    streamText = () => `I built the bakery site.\n\n<<<QORVYNA_FILE path="index.html">>>\n${page.replaceAll("Rise", name)}\n<<<END_QORVYNA_FILE>>>`;
     const db = dbWithWrites();
     return runBuildPipeline({
       d: db, user: buildUser, provider: new FirestoreDeploymentProvider(db, buildUser), runId, requestId: `${runId}-req`,
@@ -612,26 +615,26 @@ describe("gateway end to end", () => {
     const result = await build("mm-build-1", "Rise");
     expect(result.run.error, JSON.stringify(result.run.error)).toBeFalsy();
     expect(result.run.status).toBe("succeeded");
-    expect(result.run.model).toMatchObject({ model: MATRIX_MODEL_ID });
+    expect(result.run.model).toMatchObject({ model: QORVYNA_MODEL_ID });
     const log = JSON.stringify(result.run);
     expect(log).toContain("Model team: GPT OSS 120B, Llama 3.3 70B, Qwen 3 32B");
     // Only code-capable registered models were asked, and all for the same project.
-    expect(requests.every((request) => [MATRIX_MODEL_ID, QWEN, LLAMA].includes(request.model))).toBe(true);
+    expect(requests.every((request) => [QORVYNA_MODEL_ID, QWEN, LLAMA].includes(request.model))).toBe(true);
   });
 
   it("Agent build: when the lead model is down another model writes the files and the run still succeeds", async () => {
-    failing = new Set([MATRIX_MODEL_ID]);
+    failing = new Set([QORVYNA_MODEL_ID]);
     const result = await build("mm-build-2", "Hearth");
     expect(result.run.error, JSON.stringify(result.run.error)).toBeFalsy();
     expect(result.run.status).toBe("succeeded");
-    expect(result.run.model?.model).not.toBe(MATRIX_MODEL_ID);
+    expect(result.run.model?.model).not.toBe(QORVYNA_MODEL_ID);
     expect(JSON.stringify(result.run)).toMatch(/GPT OSS 120B could not take the implement stage \(provider_unavailable\); continuing with the next model/);
     const written = [...stub._state.docs.entries()].filter(([key, value]) => /\/files\//.test(key) && key.includes(String(result.projectId)) && String((value as { content?: string }).content ?? "").includes("Hearth Bakery"));
     expect(written.length).toBeGreaterThanOrEqual(1);
   });
 
   it("Agent build: when every model is down nothing is written and the failure is reported", async () => {
-    failing = new Set([MATRIX_MODEL_ID, QWEN, LLAMA]);
+    failing = new Set([QORVYNA_MODEL_ID, QWEN, LLAMA]);
     const filesBefore = [...stub._state.docs.keys()].filter((key) => key.includes("/files/")).length;
     const result = await build("mm-build-3", "Crumb");
     // Nothing is written and nothing is claimed; the request is kept and

@@ -62,7 +62,7 @@ export function githubResultPath(returnPath: string, status: string): string {
   return `${url.pathname}${url.search}`;
 }
 
-/** Bind the state cookie to the signed-in MATRIX user. The key never enters
+/** Bind the state cookie to the signed-in QORVYNA user. The key never enters
  * the browser; a session swap during the ten-minute OAuth roundtrip fails. */
 export function githubOwnerBinding(state: string, uid: string, key: string): string {
   return createHmac("sha256", key).update(`${state}:${uid}`).digest("base64url");

@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — ESP32 / hardware bridge server registry (server-only).
+// QORVYNA AI — ESP32 / hardware bridge server registry (server-only).
 //
 // Collections:
 //   esp32_pairings/{id}   single-use 15m pairing codes (SHA-256 hashed)
@@ -90,7 +90,7 @@ export async function createEsp32Pairing(
   const capabilities: Esp32Capability[] = Array.isArray(input.capabilities)
     ? input.capabilities.filter(isEsp32Capability)
     : ["check_in_button", "screen_time_lamp"];
-  const label = (input.label ?? "").trim().slice(0, 64) || "MATRIX ESP32 node";
+  const label = (input.label ?? "").trim().slice(0, 64) || "QORVYNA ESP32 node";
   const familyId = typeof input.family_id === "string" && input.family_id.trim() ? input.family_id.trim().slice(0, 120) : null;
 
   const code = crypto.randomBytes(18).toString("base64url");
@@ -151,7 +151,7 @@ export async function completeEsp32Pairing(
         : "esp32-devkit";
     nodeLabel =
       (typeof input.label === "string" && input.label.trim() ? input.label.trim().slice(0, 64) : "") ||
-      String(data.label ?? "MATRIX ESP32 node");
+      String(data.label ?? "QORVYNA ESP32 node");
 
     const nodeRef = d.collection(NODES).doc();
     const now = nowTs();
@@ -181,7 +181,7 @@ export async function completeEsp32Pairing(
       user_id: ownerUid,
       type: "device",
       title: `ESP32 node paired: ${nodeLabel}`,
-      body: "Your hardware node is online and connected to MATRIX.",
+      body: "Your hardware node is online and connected to QORVYNA.",
       link: "/devices",
       read_at: null,
       created_at: nowTs(),

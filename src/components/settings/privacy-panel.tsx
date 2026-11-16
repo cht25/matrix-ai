@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { rpc, signOutEverywhere } from "@/lib/client/api";
+import { useDialogs } from "@/components/dialogs";
 import { Alert, Button, Card } from "@/components/ui";
 
 type Memory = { id: string; memory: string; source: string; created_at: string };
@@ -13,6 +14,7 @@ export function PrivacyPanel({ settings, memories }: { settings: { memory_enable
   const [historyEnabled, setHistoryEnabled] = useState(settings?.chat_history_enabled ?? true);
   const [msg, setMsg] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const dialogs = useDialogs();
 
   async function toggle(update: { memory_enabled?: boolean; chat_history_enabled?: boolean }) {
     await rpc("settings_update", update).catch(() => {});
@@ -25,7 +27,8 @@ export function PrivacyPanel({ settings, memories }: { settings: { memory_enable
   }
 
   async function clearAllMemories() {
-    if (!confirm("Clear all saved memories? This can't be undone.")) return;
+    const confirmed = await dialogs.confirm({ title: "Clear all saved memories?", body: "Everything QORVYNA AI remembers about you is deleted for good. It starts again from nothing.", confirmLabel: "Clear memories" });
+    if (!confirmed) return;
     await rpc("memory_delete", { all: true }).catch(() => {});
     router.refresh();
   }
@@ -45,7 +48,7 @@ export function PrivacyPanel({ settings, memories }: { settings: { memory_enable
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `matrix-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `qorvyna-export-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
       setMsg({ tone: "success", text: "Your export is downloading." });
@@ -55,8 +58,20 @@ export function PrivacyPanel({ settings, memories }: { settings: { memory_enable
   }
 
   async function requestDeletion() {
-    if (!confirm("This will permanently delete your account, conversations, memories, certificates and files. Continue?")) return;
-    const password = prompt("Re-authenticate: enter your password to confirm deletion.");
+    const confirmed = await dialogs.confirm({
+      title: "Delete your account?",
+      body: "Your account, conversations, memories, certificates and files are deleted permanently. This cannot be undone.",
+      confirmLabel: "Continue",
+    });
+    if (!confirmed) return;
+    const password = await dialogs.prompt({
+      title: "Confirm with your password",
+      body: "Enter your password to prove it is you. The account is deleted as soon as you confirm.",
+      label: "Password",
+      inputType: "password",
+      confirmLabel: "Delete account",
+      tone: "danger",
+    });
     if (!password) return;
     setBusy(true);
     try {
@@ -91,7 +106,7 @@ export function PrivacyPanel({ settings, memories }: { settings: { memory_enable
           <div>
             <h2 className="font-bold text-ink">AI memory</h2>
             <p className="mt-1 text-sm text-ink-3">
-              MATRIX AI can remember safe facts like "you are a beginner" to personalise help.
+              QORVYNA AI can remember safe facts like "you are a beginner" to personalise help.
               It never stores passwords, codes, IDs or contact details.
             </p>
           </div>
@@ -99,9 +114,9 @@ export function PrivacyPanel({ settings, memories }: { settings: { memory_enable
             role="switch"
             aria-checked={memoryEnabled}
             onClick={() => { setMemoryEnabled(!memoryEnabled); void toggle({ memory_enabled: !memoryEnabled }); }}
-            className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${memoryEnabled ? "bg-accent" : "bg-surface-3"}`}
+            className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${memoryEnabled ? "bg-accent-solid" : "bg-surface-3"}`}
           >
-            <span className={`absolute top-1 h-5 w-5 rounded-full bg-surface transition-all ${memoryEnabled ? "left-6" : "left-1"}`} />
+            <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${memoryEnabled ? "left-6" : "left-1"}`} />
           </button>
         </div>
       </Card>
@@ -116,9 +131,9 @@ export function PrivacyPanel({ settings, memories }: { settings: { memory_enable
             role="switch"
             aria-checked={historyEnabled}
             onClick={() => { setHistoryEnabled(!historyEnabled); void toggle({ chat_history_enabled: !historyEnabled }); }}
-            className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${historyEnabled ? "bg-accent" : "bg-surface-3"}`}
+            className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${historyEnabled ? "bg-accent-solid" : "bg-surface-3"}`}
           >
-            <span className={`absolute top-1 h-5 w-5 rounded-full bg-surface transition-all ${historyEnabled ? "left-6" : "left-1"}`} />
+            <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${historyEnabled ? "left-6" : "left-1"}`} />
           </button>
         </div>
       </Card>
@@ -163,6 +178,7 @@ export function PrivacyPanel({ settings, memories }: { settings: { memory_enable
       </Card>
 
       {msg ? <Alert tone={msg.tone}>{msg.text}</Alert> : null}
+      {dialogs.element}
     </div>
   );
 }

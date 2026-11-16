@@ -1,4 +1,4 @@
-# MATRIX architecture
+# QORVYNA architecture
 
 ## Source-of-truth architecture (audited baseline)
 
@@ -25,7 +25,7 @@ The website, not Flutter, is the primary product. The edge middleware performs r
 2. **Persistence:** Firestore documents/subcollections, server writes, timestamps at storage and ISO timestamps at API boundaries. Optimistic concurrency/transactions protect competing mutations.
 3. **AI:** Provider adapters implement a common transport. Model selection must resolve against a server-known, account-verified catalog; credentials never enter client bundles. Provider fallback must be explicit and must not turn a failed action into a successful answer.
 4. **Execution:** Model output is data, not authority. Tools revalidate arguments and authorization. Side effects require explicit approval/consent. Generated untrusted code must not run in the Next.js server process.
-5. **Devices:** MATRIX Connect account devices and physical MQTT actuators are different entities. A paired phone is not an ESP32. Hardware state becomes confirmed only after an authenticated device acknowledgement.
+5. **Devices:** QORVYNA Connect account devices and physical MQTT actuators are different entities. A paired phone is not an ESP32. Hardware state becomes confirmed only after an authenticated device acknowledgement.
 6. **Workers:** Browser timers are not a production scheduler. Durable due records and leased claims belong in Firestore; a separately deployed authenticated worker executes them. Scale-to-zero web hosting alone cannot guarantee scheduled execution.
 
 ## Target extensions (not claims of baseline completion)

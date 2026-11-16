@@ -46,7 +46,7 @@ is static analysis only — it does not render the page in a browser.
 > Supersedes the multi-provider routing and fallback that first shipped with
 > this overhaul. See `docs/SINGLE_MODEL.md` for the full description.
 
-MATRIX runs on one language model, GPT OSS 120B (`openai/gpt-oss-120b` on
+QORVYNA runs on one language model, GPT OSS 120B (`openai/gpt-oss-120b` on
 Groq). The ID is defined once in `src/lib/ai/model.ts`; `src/lib/ai/config.ts`
 builds the single server-side route. There is no model selector, no ranking and
 no fallback. A transient failure is retried once on the same model; after that

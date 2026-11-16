@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — Tauri v2 Desktop & Companion Core
+// QORVYNA AI — Tauri v2 Desktop & Companion Core
 //
 // Exposes:
 //   1. `matrix_notify(title, body)` — native OS notifications whenever any AI
@@ -8,7 +8,7 @@
 //   2. `matrix_collect_device_activity()` — opt-in companion telemetry (app
 //      usage minutes, hidden/background executables, and system uptime) for
 //      both own-device inspection and consented Family supervision.
-//   3. System tray icon so MATRIX stays reachable in the background and never
+//   3. System tray icon so QORVYNA stays reachable in the background and never
 //      misses a completed task alert.
 // =============================================================================
 
@@ -66,7 +66,7 @@ fn matrix_collect_device_activity() -> Result<CompanionActivityPayload, String> 
     sys.refresh_processes(ProcessesToUpdate::All, true);
 
     let now_iso = Utc::now().to_rfc3339();
-    let host = System::host_name().unwrap_or_else(|| "MATRIX-Desktop".to_string());
+    let host = System::host_name().unwrap_or_else(|| "QORVYNA-Desktop".to_string());
     let os_name = System::name()
         .unwrap_or_else(|| std::env::consts::OS.to_string())
         .to_lowercase();
@@ -138,14 +138,14 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            let show_item = MenuItem::with_id(app, "show", "Open MATRIX AI", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit MATRIX AI", true, None::<&str>)?;
+            let show_item = MenuItem::with_id(app, "show", "Open QORVYNA AI", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit QORVYNA AI", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
             if let Some(icon) = app.default_window_icon().cloned() {
                 let _tray = TrayIconBuilder::new()
                     .icon(icon)
-                    .tooltip("MATRIX AI")
+                    .tooltip("QORVYNA AI")
                     .menu(&menu)
                     .on_menu_event(|app, event| match event.id.as_ref() {
                         "show" => {
@@ -168,5 +168,5 @@ pub fn run() {
             matrix_collect_device_activity
         ])
         .run(tauri::generate_context!())
-        .expect("error while running MATRIX AI Tauri application");
+        .expect("error while running QORVYNA AI Tauri application");
 }

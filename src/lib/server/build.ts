@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX build pipeline (§1)
+// QORVYNA build pipeline (§1)
 //
 //   PLAN → GENERATE FILES → DEPENDENCIES → BUILD → VALIDATE → AUTO-FIX → PUBLISH
 //
@@ -27,13 +27,14 @@ import { AIConfigurationError, type AIRouteTarget } from "@/lib/ai/config";
 import { resolvePool } from "@/lib/ai/models/pool";
 import { modelById, modelLabel, type ModelStrength } from "@/lib/ai/models/registry";
 import { completeWithRole } from "@/lib/ai/orchestrator/run";
-import { MATRIX_MODEL_LABEL } from "@/lib/ai/model";
+import { QORVYNA_MODEL_LABEL } from "@/lib/ai/model";
 import {
   classifyDesignRevision, createDesignSpec, designFingerprint, designPlanPrompt, formatDesignSpecForPrompt, isWebsiteRequest,
   mergeModelDesignSpec, parseStoredDesignSpec, reviseDesignSpec, serializeDesignSpec, type DesignRevision, type SiteDesignSpec,
 } from "@/lib/design/site-spec";
 import { designQualityCheck, significantDesignIssues } from "@/lib/deploy/design-quality";
-import { AGENT_SYSTEM_PROMPT } from "@/lib/ai/prompts";
+import { agentSystemPrompt } from "@/lib/ai/prompts";
+import { routingFromTargets } from "@/lib/ai/identity";
 import { agentGenerationIncomplete, formatProjectFilesForContext, parseAgentResponse, shouldWithholdProjectFile } from "@/lib/ai/agent";
 import { classifyAgentOutput, transitionAgentExecution, type AgentExecutionState, type PendingAgentTask } from "@/lib/ai/agent-execution";
 import { planFromRequest, type BuildIntent } from "@/lib/ai/build-intent";
@@ -314,9 +315,9 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     // ---------------------------------------------------------------- plan --
     await begin("plan", "Resolving project, entry page and public address.");
     if (nonStatic && (input.actions.publish || input.actions.preview)) {
-      return await abort("RUNTIME_NOT_SUPPORTED", "MATRIX hosting supports static HTML/CSS/JavaScript only. This request needs an isolated runtime/build provider; no preview or deployment was attempted. Ask to save the source without preview/publishing, or connect a compatible host.", "plan");
+      return await abort("RUNTIME_NOT_SUPPORTED", "QORVYNA hosting supports static HTML/CSS/JavaScript only. This request needs an isolated runtime/build provider; no preview or deployment was attempted. Ask to save the source without preview/publishing, or connect a compatible host.", "plan");
     }
-    const plan = planFromRequest(input.prompt || "MATRIX project");
+    const plan = planFromRequest(input.prompt || "QORVYNA project");
     const resolution = await resolveProjectContext(d, user, {
       projectId: input.projectId, workspaceProjectId: input.workspaceProjectId,
       conversationId: input.conversationId, prompt: input.prompt, hasAttachments: Boolean(input.attachments?.length),
@@ -383,7 +384,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       mode: resolution.mode, projectRoot: `projects/${projectId}/files`,
       sourceRevision, manifest: Array.isArray(projectRecord.file_manifest)
         ? projectRecord.file_manifest : before.map((file) => ({ path: file.path })),
-      build: { framework: String(projectRecord.framework ?? "html"), command: String(projectRecord.build_command ?? "MATRIX static bundler"), entry: String(projectRecord.entry_point ?? "none") },
+      build: { framework: String(projectRecord.framework ?? "html"), command: String(projectRecord.build_command ?? "QORVYNA static bundler"), entry: String(projectRecord.entry_point ?? "none") },
       deployment: { id: projectRecord.live_deployment_id ?? null, slug: projectRecord.live_slug ?? null, environment: input.environment ?? "production" },
     };
     const existingProjectContext = [
@@ -415,6 +416,8 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       team = capable.length ? capable : resolved.targets.slice(0, 1);
       return team;
     };
+    // The Agent prompt names the models that are really doing this run.
+    const agentPrompt = (): string => agentSystemPrompt(team?.length ? routingFromTargets(team) : undefined);
     type TeamStage = "design" | "implement" | "repair" | "review";
     const STAGE_NEEDS: Record<TeamStage, readonly ModelStrength[]> = {
       design: ["planning", "writing"],
@@ -460,7 +463,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       if (!routes.length) {
         return await abort(
           "AI_NOT_CONFIGURED",
-          `${MATRIX_MODEL_LABEL} is not configured on this deployment (GROQ_API_KEY is missing), so MATRIX cannot generate project files. Nothing was changed.`,
+          `${QORVYNA_MODEL_LABEL} is not configured on this deployment (GROQ_API_KEY is missing), so QORVYNA cannot generate project files. Nothing was changed.`,
           "generate",
         );
       }
@@ -534,21 +537,21 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
           ? `DESIGN REVISION of the existing project. Existing files: ${before.map((file) => file.path).join(", ")}. Change these aspects, everywhere they are defined, so the difference is clearly visible: ${changedAspects.join(", ")}. Leave the rest of the design, the content and the behaviour as they are. Return ONLY the files you change, complete.`
           : `EDIT of the existing project. Existing files: ${before.map((file) => file.path).join(", ")}. Make exactly the requested change in the real files shown. Return ONLY the files you change, complete; do not recreate or restyle unrelated files.`;
       const messages: AIMessage[] = [
-        { role: "system", content: AGENT_SYSTEM_PROMPT },
+        { role: "system", content: agentPrompt() },
         {
           role: "system",
           content: workspaceOnly
             ? [
-                "MATRIX Code workspace: return complete, requested source files using the appropriate language and safe relative paths. Do not force index.html unless the user asked for a website or web page.",
+                "QORVYNA Code workspace: return complete, requested source files using the appropriate language and safe relative paths. Do not force index.html unless the user asked for a website or web page.",
                 `Project title: ${String(projectRecord.title ?? plan.title)}.`,
                 before.length ? `Existing project files: ${before.map((file) => file.path).join(", ")}. Preserve the existing stack and conventions; return every changed file in full and avoid unrelated rewrites.` : "This is a new project. Choose sensible filenames and a minimal, conventional structure for the requested language or framework.",
                 input.attachments?.length
                   ? `The user attached these files as the source of truth: ${input.attachments.map((item) => item.path).join(", ")}. Keep their behaviour; do not invent contents for them.`
                   : "",
-                "Return complete files with the MATRIX_FILE protocol. Do not claim commands, tests, builds, or previews were run. Never include secrets or unsafe paths.",
+                "Return complete files with the QORVYNA_FILE protocol. Do not claim commands, tests, builds, or previews were run. Never include secrets or unsafe paths.",
               ].filter(Boolean).join("\n")
             : [
-                "MATRIX build pipeline: emit complete, publishable files only.",
+                "QORVYNA build pipeline: emit complete, publishable files only.",
                 `Project title: ${String(projectRecord.title ?? plan.title)}. ${isEdit ? "The entry page stays index.html at the project root." : "Entry page must be index.html at the project root."}`,
                 isEdit ? editInstruction : "CREATE MODE. This is a new project: design it for this brief from scratch.",
                 isEdit ? "Never return a file whose content is identical to the saved file, and never say a file changed unless you return its new content. The pipeline compares your files with the saved ones and reports only real differences." : "",
@@ -603,7 +606,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
             messages: [
               ...messages,
               { role: "assistant", content: raw },
-              { role: "user", content: "Your previous response was cut off. Return complete MATRIX_FILE block(s) for the requested project. Do not claim completion until every file is closed with <<<END_MATRIX_FILE>>> and do not repeat file content already provided." },
+              { role: "user", content: "Your previous response was cut off. Return complete QORVYNA_FILE block(s) for the requested project. Do not claim completion until every file is closed with <<<END_QORVYNA_FILE>>> and do not repeat file content already provided." },
             ],
             temperature: 0.1,
             maxTokens: 16384,
@@ -638,7 +641,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         await emit("generate");
         try {
           const retry = await completeAs("implement", {
-            messages: [...messages, { role: "assistant", content: raw }, { role: "user", content: "The task is ready for implementation. Return actual complete project files (MATRIX_FILE blocks or filename-tagged code fences), not a summary of the work. If an essential detail is missing, ask one specific question instead." }],
+            messages: [...messages, { role: "assistant", content: raw }, { role: "user", content: "The task is ready for implementation. Return actual complete project files (QORVYNA_FILE blocks or filename-tagged code fences), not a summary of the work. If an essential detail is missing, ask one specific question instead." }],
             temperature: 0.1, maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline, requestId: input.requestId ? `${input.requestId}-files` : undefined,
           });
           useModel(retry);
@@ -669,11 +672,11 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       }
       const sensitiveOutput = parsed.files.find((file) => shouldWithholdProjectFile(file.path, file.content, "utf8"));
       if (sensitiveOutput) {
-        return await abort("AI_OUTPUT_SENSITIVE_FILE", "The generated output included a secret-bearing or sensitive file. MATRIX saved none of the generated files; move secrets to server-side configuration and retry.", "generate");
+        return await abort("AI_OUTPUT_SENSITIVE_FILE", "The generated output included a secret-bearing or sensitive file. QORVYNA saved none of the generated files; move secrets to server-side configuration and retry.", "generate");
       }
       const withheldOverwrite = parsed.files.find((file) => withheldExistingPaths.has(file.path.toLowerCase()));
       if (withheldOverwrite) {
-        return await abort("AI_OUTPUT_WITHHELD_FILE", "The requested change targets an existing file withheld from the provider for safety or size. MATRIX saved no generated files; attach a safe, complete copy or remove the secret from that file first.", "generate");
+        return await abort("AI_OUTPUT_WITHHELD_FILE", "The requested change targets an existing file withheld from the provider for safety or size. QORVYNA saved no generated files; attach a safe, complete copy or remove the secret from that file first.", "generate");
       }
       // ---------------------------------------------- real-change check --
       // An edit is only an edit if saved content differs. Files returned
@@ -689,7 +692,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         await emit("generate");
         try {
           const retry = await completeAs("implement", {
-            messages: [...messages, { role: "assistant", content: raw.slice(0, 6000) }, { role: "user", content: `Your files did not change the saved project${wantsDesignChange ? "'s design" : ""}. Apply the request to the real files now: "${input.prompt.slice(0, 600)}". Return the complete new content of every file that must change${wantsDesignChange ? " (the HTML pages and stylesheet that define the look)" : ""} as MATRIX_FILE blocks. The result must differ from the saved content.` }],
+            messages: [...messages, { role: "assistant", content: raw.slice(0, 6000) }, { role: "user", content: `Your files did not change the saved project${wantsDesignChange ? "'s design" : ""}. Apply the request to the real files now: "${input.prompt.slice(0, 600)}". Return the complete new content of every file that must change${wantsDesignChange ? " (the HTML pages and stylesheet that define the look)" : ""} as QORVYNA_FILE blocks. The result must differ from the saved content.` }],
             temperature: Math.max(0.5, generationTemperature), maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline,
             requestId: input.requestId ? `${input.requestId}-change` : undefined,
           });
@@ -835,7 +838,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         const context = request.targets.map((file) => `<<<FILE ${file.path}>>>\n${file.content}\n<<<END FILE>>>`).join("\n\n");
         const fix = await completeAs("repair", {
           messages: [
-            { role: "system", content: AGENT_SYSTEM_PROMPT },
+            { role: "system", content: agentPrompt() },
             { role: "user", content: `Files that need repair (complete current source):\n\n${context}${request.otherPaths.length ? `\n\nOther files in the project (unchanged, do not return them): ${request.otherPaths.slice(0, 80).join(", ")}` : ""}` },
             { role: "user", content: `${request.instruction}\n\nOriginal request, for intent only: "${input.prompt.slice(0, 500)}"` },
           ],
@@ -931,9 +934,9 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
         const routes = await getTeam();
         const polish = routes.length ? await completeAs("review", {
           messages: [
-            { role: "system", content: AGENT_SYSTEM_PROMPT },
+            { role: "system", content: agentPrompt() },
             { role: "user", content: sourceContext(files, "") },
-            { role: "user", content: `A design review of this project found the problems below. Fix them in the real files and return ONLY the files you change, complete, as MATRIX_FILE blocks. Keep the existing design, content and behaviour otherwise.\n\n${formatIssues(designProblems, 10)}` },
+            { role: "user", content: `A design review of this project found the problems below. Fix them in the real files and return ONLY the files you change, complete, as QORVYNA_FILE blocks. Keep the existing design, content and behaviour otherwise.\n\n${formatIssues(designProblems, 10)}` },
           ],
           temperature: 0.2, maxTokens: 16384, aggregateStream: true, deadlineAt: aiDeadline, requestId: input.requestId ? `${input.requestId}-polish` : undefined,
         }) : null;
@@ -1028,7 +1031,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       return done(run);
     }
 
-    await begin("publish", "Publishing to MATRIX hosting.");
+    await begin("publish", "Publishing to QORVYNA hosting.");
     try {
       const deployment = await provider.deploy({
         projectId,
@@ -1061,7 +1064,7 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       run = setPreviewUrl(run, previewUrl, now());
       run = succeedRun(run, now());
       if (run.status !== "succeeded") {
-        return await abort("BUILD_INCOMPLETE", "MATRIX could not mark every build step complete, so this deployment is not reported as successful.", "publish");
+        return await abort("BUILD_INCOMPLETE", "QORVYNA could not mark every build step complete, so this deployment is not reported as successful.", "publish");
       }
       await emit("publish");
       return done(run);
@@ -1133,7 +1136,7 @@ async function persistBuildMessage(
       : run.status === "paused"
       ? `${run.continuation?.message ?? "This request is paused and will continue."}`
       : run.status === "failed"
-      ? `MATRIX stopped during ${summary.detail.toLowerCase()} — nothing else was changed.`
+      ? `QORVYNA stopped during ${summary.detail.toLowerCase()} — nothing else was changed.`
       : `Build finished. ${run.fileCount} project file${run.fileCount === 1 ? "" : "s"} ready.`);
   const text = summary.canOpenLive
     ? `${body}\n\nLive: ${run.deployment?.url ?? ""}`.trim()
@@ -1212,7 +1215,7 @@ function publishFailureCopy(code: string, error: unknown): string {
     case "DEPLOY_VERIFY_FAILED":
       return `The new release could not be verified over HTTP; the previous live version remains active. ${error instanceof RpcError ? error.detail ?? "Check deployment logs for the failed URL and response." : "Check deployment logs."}`;
     case "HOSTING_NOT_CONFIGURED":
-      return "This deployment of MATRIX has no hosting backend configured, so nothing was published. Ask the operator to connect a DeploymentProvider.";
+      return "This deployment of QORVYNA has no hosting backend configured, so nothing was published. Ask the operator to connect a DeploymentProvider.";
     default:
       return `Publishing failed: ${fallback}`;
   }

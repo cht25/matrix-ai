@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — Dynamic Design Engine: validated design tokens.
+// QORVYNA AI — Dynamic Design Engine: validated design tokens.
 //
 // Users describe a design in natural language; the engine maps it to a
 // STRICTLY VALIDATED token set. Arbitrary CSS/JavaScript is impossible by

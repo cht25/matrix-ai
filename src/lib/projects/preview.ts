@@ -41,7 +41,7 @@ export function buildPreviewHtml(files: ProjectFile[]): { html: string; availabl
     if (/^https?:\/\//i.test(href) || href.startsWith("//")) return full;
     const css = find(href);
     if (!css || css.encoding === "base64") return full;
-    return `<style data-matrix-source="${normaliseRef(href)}">\n${css.content.replace(/<\/style/gi, "<\\/style")}\n</style>`;
+    return `<style data-qorvyna-source="${normaliseRef(href)}">\n${css.content.replace(/<\/style/gi, "<\\/style")}\n</style>`;
   });
 
   // Replace script tags with inlined <script>
@@ -51,7 +51,7 @@ export function buildPreviewHtml(files: ProjectFile[]): { html: string; availabl
     if (!js || js.encoding === "base64") return full;
     const isModule = /type=["']module["']/i.test(before) || /type=["']module["']/i.test(after);
     const typeAttr = isModule ? ' type="module"' : "";
-    return `<script${typeAttr} data-matrix-source="${normaliseRef(src)}">\n${js.content.replace(/<\/script/gi, "<\\/script")}\n</script>`;
+    return `<script${typeAttr} data-qorvyna-source="${normaliseRef(src)}">\n${js.content.replace(/<\/script/gi, "<\\/script")}\n</script>`;
   });
 
   // Replace image/asset references with base64/data URIs

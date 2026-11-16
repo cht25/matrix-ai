@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX — Website Design Intelligence (design-planning stage of the Agent)
+// QORVYNA — Website Design Intelligence (design-planning stage of the Agent)
 //
 // The Agent used to hand every website request to the coding model with a
 // prompt that said nothing about visual design, so each model fell back to its

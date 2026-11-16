@@ -100,13 +100,13 @@ export function QuizClient({
           course: issued.course || courseTitle || "Course",
           score_percent: issued.score_percent,
           issued_at: issued.issued_at,
-          issued_by: "MATRIX — THAMJJ13.TOP White Hat Team",
+          issued_by: "QORVYNA — THAMJJ13.TOP White Hat Team",
         },
       });
       router.refresh();
     } catch (err) {
       const code = errorCodeOf(err, "CERTIFICATE_FAILED");
-      console.error("[MATRIX] certificate claim failed", code, err);
+      console.error("[QORVYNA] certificate claim failed", code, err);
       // Never surface raw codes, "undefined", "null" or a bare 500.
       const message = code.startsWith("NOT_ELIGIBLE")
         ? `Not eligible yet — ${code.replace(/^NOT_ELIGIBLE:\s*/, "").trim() || "finish the remaining lessons and quizzes first"}.`
@@ -295,6 +295,6 @@ export function QuizClient({
 /** Internal code -> human sentence. The raw code stays in the console only. */
 function friendly(err: unknown, fallback: string): string {
   const view = mapAdminError(errorCodeOf(err, fallback));
-  console.error("[MATRIX]", view.code, err);
+  console.error("[QORVYNA]", view.code, err);
   return `${view.title} — ${view.detail}`;
 }

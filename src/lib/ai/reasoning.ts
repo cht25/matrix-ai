@@ -3,7 +3,7 @@
 // Some reasoning models (DeepSeek, Qwen3, GPT-OSS, and a few
 // OpenAI-compatible mirrors of those models) return their "thinking" either in
 // a separate `reasoning_content` / `reasoning` field or — for endpoints that do
-// not separate it — inline inside `content`. MATRIX is an education assistant,
+// not separate it — inline inside `content`. QORVYNA is an education assistant,
 // so the raw chain-of-thought is never meant to be shown to the user. We scrub
 // it server-side (never as a fallback that depends on the client) and let the
 // client render a calm animated "thinking" indicator instead.
@@ -209,11 +209,11 @@ export function stripReasoningContent(input: string): string {
   for (const [pattern, replacement] of delimited) out = out.replace(pattern, replacement);
 
   // Leading reasoning preamble headed by an explicit marker, followed by a
-  // clear answer boundary (a heading, MATRIX_FILE protocol, or a blank line
+  // clear answer boundary (a heading, QORVYNA_FILE protocol, or a blank line
   // then content). Only strips when the marker is on its own line so we never
   // eat ordinary sentences that merely mention "thinking".
   out = out.replace(
-    /^\s*(?:#{1,4}\s*|\*\*|\*|>)?\s*(?:thinking|reasoning|analysis)\s*:?\*{0,2}\s*\n+\s*[\s\S]*?\n\n(?=(?:#{1,4}\s|\*\*|<<<MATRIX_FILE|[A-Za-z0-9]))/im,
+    /^\s*(?:#{1,4}\s*|\*\*|\*|>)?\s*(?:thinking|reasoning|analysis)\s*:?\*{0,2}\s*\n+\s*[\s\S]*?\n\n(?=(?:#{1,4}\s|\*\*|<<<(?:QORVYNA|MATRIX)_FILE|[A-Za-z0-9]))/im,
     "",
   );
 

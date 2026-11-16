@@ -19,7 +19,7 @@ const WEB_DEV_OR_HIGH_LOAD_RE =
 /**
  * Classifies whether a request belongs on the heavier workload class (coding, web
  * development, architecture, deep reasoning, attachments, or heavy multi-part
- * workloads) vs. a lightweight response strategy; both run on the single MATRIX model; the class only tunes limits and prompts.
+ * workloads) vs. a lightweight response strategy; both run on the single QORVYNA model; the class only tunes limits and prompts.
  */
 export function isHighLoadRequest(message: string, attachments: TextAttachment[] = []): boolean {
   if (attachments.length > 0) return true;

@@ -12,7 +12,7 @@ import { applyActionCode, getRedirectResult, reload } from "firebase/auth";
 import { fbAuth, firebaseBrowserConfigured } from "@/lib/firebase/client";
 import { mintSessionCookie } from "@/lib/client/api";
 import { AuthShell, AuthUnavailable } from "@/components/auth/login-screen";
-import { Alert, Button } from "@/components/ui";
+import { Alert } from "@/components/ui";
 
 function VerifyInner() {
   const router = useRouter();
@@ -51,7 +51,7 @@ function VerifyInner() {
         }
         await mintSessionCookie().catch(() => {});
         setStatus("done");
-        setMessage("Your email is verified. Welcome to MATRIX!");
+        setMessage("Your email is verified. Welcome to QORVYNA!");
         setTimeout(() => router.push(next), 1100);
       } catch {
         setStatus("error");
@@ -68,7 +68,7 @@ function VerifyInner() {
       {status === "error" && (
         <div className="space-y-4">
           <Alert tone="danger">{message}</Alert>
-          <Link href="/login"><Button variant="outline" className="w-full">Go to sign in</Button></Link>
+          <Link href="/login" className="btn btn-outline w-full">Go to sign in</Link>
         </div>
       )}
     </AuthShell>

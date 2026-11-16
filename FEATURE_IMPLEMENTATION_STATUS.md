@@ -1,4 +1,4 @@
-# MATRIX feature implementation status
+# QORVYNA feature implementation status
 
 **Status date:** 2026-11-07. “Implemented” means source exists; it does not imply live production verification. Tests in this checkout are mostly unit/contract tests and do not establish third-party credentials or physical hardware behavior.
 

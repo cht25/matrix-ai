@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 import { siteOrigin } from "@/lib/seo";
 
 // =============================================================================
-// MATRIX robots.txt — served by Next.js at /robots.txt.
+// QORVYNA robots.txt — served by Next.js at /robots.txt.
 //
 // Points crawlers at the sitemap and keeps authenticated / private surfaces
 // out of the index. The public pages (homepage, docs, courses, scam library,

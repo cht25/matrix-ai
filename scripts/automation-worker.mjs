@@ -6,9 +6,11 @@ if (!secret || secret.length < 32) {
   console.error('AUTOMATION_WORKER_SECRET must contain at least 32 characters.');
   process.exit(1);
 }
-const targetInput = process.env.MATRIX_WORKER_TARGET_URL?.trim();
+// QORVYNA_WORKER_TARGET_URL is the setting; MATRIX_WORKER_TARGET_URL (the name
+// before the product was renamed) is still read so existing workers keep running.
+const targetInput = (process.env.QORVYNA_WORKER_TARGET_URL?.trim() || process.env.MATRIX_WORKER_TARGET_URL?.trim());
 if (!targetInput) {
-  console.error('MATRIX_WORKER_TARGET_URL must be set to the deployed MATRIX application URL.');
+  console.error('QORVYNA_WORKER_TARGET_URL must be set to the deployed QORVYNA application URL. (The earlier name MATRIX_WORKER_TARGET_URL is also accepted.)');
   process.exit(1);
 }
 const targetOrigin = new URL(targetInput);
@@ -27,7 +29,7 @@ function isPrivateHost(input) {
 }
 const developmentHttp = process.env.NODE_ENV === 'development' && targetOrigin.protocol === 'http:' && isPrivateHost(targetOrigin.hostname);
 if (targetOrigin.username || targetOrigin.password || targetOrigin.search || targetOrigin.hash || isPrivateHost(targetOrigin.hostname) && !developmentHttp || (targetOrigin.protocol !== 'https:' && !developmentHttp)) {
-  console.error('MATRIX_WORKER_TARGET_URL must be a valid HTTPS origin (HTTP localhost is development-only).');
+  console.error('QORVYNA_WORKER_TARGET_URL must be a valid HTTPS origin (HTTP localhost is development-only).');
   process.exit(1);
 }
 const target = new URL('/api/jobs/automations', targetOrigin.origin);

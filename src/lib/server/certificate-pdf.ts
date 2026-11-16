@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX certificate PDF.
+// QORVYNA certificate PDF.
 //
 // This module is now a thin adapter over the ONE shared PDF engine
 // (`lib/pdf/engine` via `lib/pdf/documents`). It used to contain a bespoke

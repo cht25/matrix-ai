@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // =============================================================================
-// MATRIX AI — production end-to-end probe.
+// QORVYNA AI — production end-to-end probe.
 //
 // Performs the EXACT request flow a browser performs, against any deployment:
 //   1. GET  /api/health                    — service baseline (live probes)
@@ -11,9 +11,9 @@
 //   6. POST /api/ai chat (non-streaming)   — real AI request
 //   7. POST /api/ai chat mode=agent        — real Agent-mode AI request
 //
-// Prints MATRIX's own JSON/SSE responses, including the REAL error codes the
+// Prints QORVYNA's own JSON/SSE responses, including the REAL error codes the
 // browser maps to user-visible messages (AI_PROVIDER_AUTH_FAILED,
-// CHAT_STORAGE_UNAVAILABLE, …) plus the X-MATRIX-Request-ID correlation id to
+// CHAT_STORAGE_UNAVAILABLE, …) plus the X-QORVYNA-Request-ID correlation id to
 // grep server logs with. Never prints cookies or tokens.
 //
 // Usage:
@@ -59,7 +59,7 @@ function log(label, value) {
 }
 
 async function main() {
-  console.log(`MATRIX production AI probe — target: ${BASE}`);
+  console.log(`QORVYNA production AI probe — target: ${BASE}`);
 
   const health = await curl("GET", "/api/health", { timeoutMs: 45000 });
   log(`1. GET /api/health -> ${health.status} ${health.contentType}`, health.text.slice(0, 800));
@@ -91,7 +91,7 @@ async function main() {
     let parsed = await signUp({ returnSecureToken: true });
     let kind = "anonymous";
     if (!parsed.idToken) {
-      const email = `matrix-probe-${RUN}@example.com`;
+      const email = `qorvyna-probe-${RUN}@example.com`;
       parsed = await signUp({ email, password: `Px-${randomUUID().slice(0, 12)}!aA`, returnSecureToken: true });
       kind = `password ${email}`;
     }
@@ -115,13 +115,13 @@ async function main() {
 
   const chat = await curl("POST", "/api/ai", {
     body: { action: "chat", message: "Reply with exactly: PROBE-OK", is_temporary: true, stream: true, request_id: `probe-${RUN}-chat` },
-    cookieFile: `/tmp/matrix-probe-${RUN}.txt`, timeoutMs: 150000,
+    cookieFile: `/tmp/qorvyna-probe-${RUN}.txt`, timeoutMs: 150000,
   });
   log(`5. POST /api/ai chat (streaming, like the browser) -> ${chat.status} ${chat.contentType}`, chat.text.slice(0, 1200));
 
   const chatPlain = await curl("POST", "/api/ai", {
     body: { action: "chat", message: "Reply with exactly: PROBE-OK", is_temporary: true, request_id: `probe-${RUN}-plain` },
-    cookieFile: `/tmp/matrix-probe-${RUN}.txt`, timeoutMs: 150000,
+    cookieFile: `/tmp/qorvyna-probe-${RUN}.txt`, timeoutMs: 150000,
   });
   log(`6. POST /api/ai chat (non-streaming) -> ${chatPlain.status}`, chatPlain.text.slice(0, 800));
 
@@ -129,7 +129,7 @@ async function main() {
   // so the Agent probe must NOT set is_temporary.
   const agent = await curl("POST", "/api/ai", {
     body: { action: "chat", mode: "agent", message: "Reply with exactly: AGENT-OK", request_id: `probe-${RUN}-agent` },
-    cookieFile: `/tmp/matrix-probe-${RUN}.txt`, timeoutMs: 240000,
+    cookieFile: `/tmp/qorvyna-probe-${RUN}.txt`, timeoutMs: 240000,
   });
   log(`7. POST /api/ai chat mode=agent -> ${agent.status}`, agent.text.slice(0, 1200));
 
@@ -141,7 +141,7 @@ async function main() {
   console.log("  • {error:\"CHAT_STORAGE_UNAVAILABLE\"}     → Firestore (chat storage) is failing, not the AI.");
   console.log("  • {error:\"AI_PROVIDER_RATE_LIMITED\"}     → provider quota/rate limit.");
   console.log("  • Any error → grep server logs for the event name or the request id from");
-  console.log("    the X-MATRIX-Request-ID header; entries are structured JSON, no secrets.");
+  console.log("    the X-QORVYNA-Request-ID header; entries are structured JSON, no secrets.");
 }
 
 main().catch((e) => {

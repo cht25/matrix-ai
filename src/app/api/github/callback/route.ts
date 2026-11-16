@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
         Accept: "application/vnd.github+json",
         Authorization: `Bearer ${tokenData.access_token}`,
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "MATRIX-AI-Agent",
+        "User-Agent": "QORVYNA-AI-Agent",
       },
       signal: AbortSignal.timeout(10_000),
     });
@@ -90,7 +90,7 @@ export async function GET(req: NextRequest) {
     return finish(urls.origin, "connected", destination);
   } catch {
     // Never log OAuth codes or access tokens.
-    console.error("[MATRIX] GitHub OAuth callback failed during exchange or persistence.");
+    console.error("[QORVYNA] GitHub OAuth callback failed during exchange or persistence.");
     return finish(urls.origin, "failed", destination);
   }
 }

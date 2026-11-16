@@ -204,7 +204,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         const Text(
-                          'MATRIX AI',
+                          'QORVYNA AI',
                           style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
                         ),
                         const SizedBox(height: 6),
@@ -237,7 +237,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                         constraints: const BoxConstraints(maxWidth: 520),
                         decoration: BoxDecoration(
-                          color: isUser ? const Color(0xFF143524) : const Color(0xFF141418),
+                          color: isUser ? const Color(0xFF14235C) : const Color(0xFF0D1433),
                           borderRadius: BorderRadius.circular(14),
                         ),
                         child: Column(
@@ -295,7 +295,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     textInputAction: TextInputAction.send,
                     onSubmitted: (_) => _send(),
                     decoration: InputDecoration(
-                      hintText: _mode == 'image' ? 'Describe an image…' : 'Message MATRIX…',
+                      hintText: _mode == 'image' ? 'Describe an image…' : 'Message QORVYNA…',
                     ),
                   ),
                 ),
@@ -322,7 +322,7 @@ class _CompactLiveStepPill extends StatelessWidget {
       margin: const EdgeInsets.symmetric(vertical: 6),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
       decoration: BoxDecoration(
-        color: const Color(0xFF141418),
+        color: const Color(0xFF0D1433),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: Colors.white12),
       ),
@@ -365,7 +365,7 @@ class _CompactStepsAccordionState extends State<_CompactStepsAccordion> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-              color: const Color(0xFF1C1C22),
+              color: const Color(0xFF141C3D),
               borderRadius: BorderRadius.circular(8),
               border: Border.all(color: Colors.white10),
             ),

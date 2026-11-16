@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX AI — Unified Tool Registry (server-side, ARMx-inspired).
+// QORVYNA AI — Unified Tool Registry (server-side, ARMx-inspired).
 //
 // Every capability the AI may invoke is one registered ToolSpec. A model may
 // only *request* a tool by id with arguments; the registry validates the
@@ -15,7 +15,7 @@ import { z, type ZodTypeAny } from "zod";
 
 /**
  * Minimal zod-v3 → JSON Schema converter for model-facing tool schemas.
- * Supports the constructs MATRIX tool inputs use (objects, strings, numbers,
+ * Supports the constructs QORVYNA tool inputs use (objects, strings, numbers,
  * enums, arrays, optionals, defaults). Keeps the registry on zod v3 like the
  * rest of the codebase.
  */

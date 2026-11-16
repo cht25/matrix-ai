@@ -54,7 +54,7 @@ export function UsersTab({ codes }: { codes: string[] }) {
       if (cat) setCatalog(cat);
     } catch (err) {
       const view = mapAdminError(errorCodeOf(err, "LOAD_FAILED"));
-      console.error("[MATRIX admin] loading users failed", view.code, err);
+      console.error("[QORVYNA admin] loading users failed", view.code, err);
       setError(view);
     }
   }, [canView]);
@@ -93,7 +93,7 @@ export function UsersTab({ codes }: { codes: string[] }) {
       setToast({ tone: "success", text: `Role updated for ${user.full_name || user.email}.` });
     } catch (err) {
       const view = mapAdminError(errorCodeOf(err, "ROLE_UPDATE_FAILED"));
-      console.error("[MATRIX admin] role update failed", view.code, err);
+      console.error("[QORVYNA admin] role update failed", view.code, err);
       setToast({ tone: "danger", text: `${view.title} — ${view.detail}` });
     } finally {
       setBusy(null);
@@ -109,7 +109,7 @@ export function UsersTab({ codes }: { codes: string[] }) {
       setToast({ tone: "success", text: `${user.full_name || user.email} ${disabled ? "suspended" : "reactivated"}.` });
     } catch (err) {
       const view = mapAdminError(errorCodeOf(err, "SUSPEND_FAILED"));
-      console.error("[MATRIX admin] suspend failed", view.code, err);
+      console.error("[QORVYNA admin] suspend failed", view.code, err);
       setToast({ tone: "danger", text: `${view.title} — ${view.detail}` });
     } finally {
       setBusy(null);
@@ -125,7 +125,7 @@ export function UsersTab({ codes }: { codes: string[] }) {
     const csv = [head, ...rows].map((r) => r.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     const a = document.createElement("a");
-    a.href = url; a.download = `matrix-users-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+    a.href = url; a.download = `qorvyna-users-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
     URL.revokeObjectURL(url);
   }
 
@@ -152,16 +152,16 @@ export function UsersTab({ codes }: { codes: string[] }) {
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search users by name, email or country…"
               aria-label="Search users"
-              className="!pl-9"
+              className="h-10 !pl-9"
             />
           </div>
           <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
-            <Select aria-label="Filter by role" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="!min-h-10 text-sm">
+            <Select aria-label="Filter by role" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="!min-h-10 text-sm sm:w-auto">
               <option value="all">All roles</option>
               <option value={NO_ROLE}>Standard user</option>
               {(catalog?.roles ?? []).map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
             </Select>
-            <Select aria-label="Filter by status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="!min-h-10 text-sm">
+            <Select aria-label="Filter by status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="!min-h-10 text-sm sm:w-auto">
               <option value="all">All statuses</option>
               <option value="active">Active</option>
               <option value="suspended">Suspended</option>

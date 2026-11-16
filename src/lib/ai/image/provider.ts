@@ -1,7 +1,7 @@
 // =============================================================================
 // Image generation provider abstraction.
 //
-// The rest of MATRIX talks to `ImageProvider` only — never to Together AI
+// The rest of QORVYNA talks to `ImageProvider` only — never to Together AI
 // directly — so a second provider can be added by implementing this interface
 // and registering it in image/registry.ts. No provider name is hard-coded in
 // the UI; the admin picks one from the registry.

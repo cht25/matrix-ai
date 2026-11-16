@@ -51,9 +51,9 @@ class _PairingScreenState extends State<PairingScreen> {
       case 'PAIRING_USED':
         return 'That code was already used. Ask the Parent device for a new one.';
       case 'PAIRING_INVALID':
-        return 'That is not a valid MATRIX pairing code.';
+        return 'That is not a valid QORVYNA pairing code.';
       case 'PAIRING_ACCOUNT_MISMATCH':
-        return 'That code belongs to a different MATRIX account. Sign in to the same account on both devices.';
+        return 'That code belongs to a different QORVYNA account. Sign in to the same account on both devices.';
       case 'PAIRING_RATE_LIMITED':
         return 'Too many attempts. Wait a few minutes and try again.';
       case 'UNAUTHENTICATED':
@@ -83,7 +83,7 @@ class _PairingScreenState extends State<PairingScreen> {
       return;
     }
     if (!raw.startsWith('matrix-pairing:v1.')) {
-      setState(() => _message = 'That QR code is not a MATRIX pairing code.');
+      setState(() => _message = 'That QR code is not a QORVYNA pairing code.');
       return;
     }
     await _request(qrPayload: raw);
@@ -100,7 +100,7 @@ class _PairingScreenState extends State<PairingScreen> {
       if (!mounted) return;
       setState(() {
         _phase = _Phase.connected;
-        _message = 'This phone is linked to your MATRIX Family.';
+        _message = 'This phone is linked to your QORVYNA Family.';
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -232,7 +232,7 @@ class _PairingScreenState extends State<PairingScreen> {
           const SizedBox(height: 12),
           Text(
             denied
-                ? 'Camera access is off. Allow the camera for MATRIX in Android settings, or type the pairing code below.'
+                ? 'Camera access is off. Allow the camera for QORVYNA in Android settings, or type the pairing code below.'
                 : 'The camera could not be started. Type the pairing code below instead.',
             textAlign: TextAlign.center,
             style: const TextStyle(color: Colors.white70),
@@ -297,7 +297,7 @@ class _PairingScreenState extends State<PairingScreen> {
         ),
         const SizedBox(height: 12),
         const Text(
-          'Both devices must be signed in to the same MATRIX account. Nothing is shared until the Parent approves.',
+          'Both devices must be signed in to the same QORVYNA account. Nothing is shared until the Parent approves.',
           textAlign: TextAlign.center,
           style: TextStyle(color: Colors.white54, fontSize: 12),
         ),
@@ -338,7 +338,7 @@ class _PairingScreenState extends State<PairingScreen> {
           color: Colors.white70,
           busy: true,
           title: 'Waiting for the Parent to approve',
-          body: 'Open MATRIX on the Parent device and approve "$_deviceName".',
+          body: 'Open QORVYNA on the Parent device and approve "$_deviceName".',
           actions: [TextButton(onPressed: _restart, child: const Text('Cancel'))],
         );
       case _Phase.connected:

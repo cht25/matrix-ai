@@ -2,7 +2,7 @@
 
 // Theme system: light (primary/default) · dark · system + per-user template
 // palettes. New visitors, fresh installs and signed-out guests all start in
-// the LIGHT theme — it is the reference implementation of the MATRIX design.
+// the LIGHT theme — it is the reference implementation of the QORVYNA design.
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Monitor, Moon, Sun } from "lucide-react";
 import { rpc } from "@/lib/client/api";
@@ -112,7 +112,11 @@ const ORDER: Theme[] = ["light", "dark", "system"];
 const LABELS: Record<Theme, string> = { light: "Light", dark: "Dark", system: "System" };
 const ICONS: Record<Theme, typeof Sun> = { light: Sun, dark: Moon, system: Monitor };
 
-export function ThemeToggle({ compact = false }: { compact?: boolean }) {
+/**
+ * `compact` shows the icon only. `ghost` drops the border and fill so the
+ * toggle sits beside other icon buttons in a toolbar without standing out.
+ */
+export function ThemeToggle({ compact = false, ghost = false }: { compact?: boolean; ghost?: boolean }) {
   const { theme, setTheme } = useTheme();
   const next = ORDER[(ORDER.indexOf(theme) + 1) % ORDER.length];
   const Icon = ICONS[theme];
@@ -122,7 +126,9 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
       onClick={() => setTheme(next)}
       aria-label={`Theme: ${LABELS[theme]}. Switch to ${LABELS[next]}.`}
       title={`Theme: ${LABELS[theme]} — click to switch to ${LABELS[next]}`}
-      className="inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-border bg-surface px-3 text-sm font-medium text-ink-2 transition-colors duration-150 ease-out hover:border-border-strong hover:bg-surface-2 hover:text-ink"
+      className={ghost
+        ? "grid h-10 w-10 place-items-center rounded-lg text-ink-2 transition-colors duration-150 ease-out hover:bg-surface-2 hover:text-ink"
+        : "inline-flex min-h-11 items-center justify-center gap-2 rounded-[10px] border border-border bg-surface px-3 text-sm font-medium text-ink-2 transition-colors duration-150 ease-out hover:border-border-strong hover:bg-surface-2 hover:text-ink"}
     >
       <Icon size={15} strokeWidth={1.75} aria-hidden="true" />
       {!compact ? LABELS[theme] : null}

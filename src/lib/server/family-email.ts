@@ -66,16 +66,16 @@ export async function sendFamilyInvitation(input: {
   const delivery = configured();
   if (!delivery) return { status: "not_configured" };
   const url = familyInvitationUrl(input.token);
-  const familyName = escapeEmailHtml(input.familyName?.trim() || "a MATRIX family");
+  const familyName = escapeEmailHtml(input.familyName?.trim() || "a QORVYNA family");
   const inviter = escapeEmailHtml(input.inviterName?.trim() || "A parent");
   const expires = escapeEmailHtml(new Date(input.expiresAt).toUTCString());
-  const subject = input.resent ? "Reminder · your MATRIX family invitation" : "Your MATRIX family invitation";
-  const text = `${input.inviterName ?? "A parent"} invited you to join ${input.familyName ?? "a MATRIX family"}.\n\nReview and explicitly accept: ${url}\n\nSign in with ${input.email}. This link stays valid until ${expires} and can be used once. Joining does not enable device monitoring; every supervision feature is separate and revocable.\n\nIf this was unexpected, ignore this email.`;
-  const html = `<div style="background:#0b0f16;color:#f8fafc;padding:32px;font-family:Inter,Arial,sans-serif;border-radius:16px;max-width:560px">
-  <p style="letter-spacing:.18em;font-size:11px;color:#7dd3fc;margin:0 0 8px">MATRIX · FAMILY</p>
+  const subject = input.resent ? "Reminder · your QORVYNA family invitation" : "Your QORVYNA family invitation";
+  const text = `${input.inviterName ?? "A parent"} invited you to join ${input.familyName ?? "a QORVYNA family"}.\n\nReview and explicitly accept: ${url}\n\nSign in with ${input.email}. This link stays valid until ${expires} and can be used once. Joining does not enable device monitoring; every supervision feature is separate and revocable.\n\nIf this was unexpected, ignore this email.`;
+  const html = `<div style="background:#070b1e;color:#f5f8ff;padding:32px;font-family:Inter,Arial,sans-serif;border-radius:16px;max-width:560px">
+  <p style="letter-spacing:.18em;font-size:11px;color:#22ccff;margin:0 0 8px">QORVYNA · FAMILY</p>
   <h1 style="margin:0 0 12px;font-size:24px">${input.resent ? "Reminder: " : ""}You're invited to ${familyName}</h1>
-  <p style="color:#cbd5e1;line-height:1.6;margin:0 0 20px">${inviter} invited you to a MATRIX family. Joining is your choice: device supervision features are separate, always visible on the device, and revocable at any time.</p>
-  <p style="margin:0 0 24px"><a href="${escapeEmailHtml(url)}" style="display:inline-block;background:#38bdf8;color:#04121f;font-weight:600;padding:12px 22px;border-radius:10px;text-decoration:none">Review invitation</a></p>
+  <p style="color:#cbd5e1;line-height:1.6;margin:0 0 20px">${inviter} invited you to a QORVYNA family. Joining is your choice: device supervision features are separate, always visible on the device, and revocable at any time.</p>
+  <p style="margin:0 0 24px"><a href="${escapeEmailHtml(url)}" style="display:inline-block;background:#2563ff;color:#ffffff;font-weight:600;padding:12px 22px;border-radius:10px;text-decoration:none">Review invitation</a></p>
   <p style="color:#94a3b8;font-size:13px;line-height:1.6;margin:0 0 8px">Sign in with <strong>${escapeEmailHtml(input.email)}</strong>. Single use · valid until ${expires}.</p>
   <p style="color:#64748b;font-size:12px;margin:0">If you were not expecting this, ignore the email — nothing happens until you accept.</p>
 </div>`;
@@ -109,14 +109,14 @@ export async function sendFamilyNotice(input: {
     delivery,
     idempotencyKey: `family-notice/${input.kind}/${input.id}`,
     to: input.email,
-    subject: `MATRIX family · ${input.title}`,
+    subject: `QORVYNA family · ${input.title}`,
     text: `${input.title}\n\n${input.body}${input.link ? `\n\n${input.link}` : ""}`,
-    html: `<div style="background:#0b0f16;color:#f8fafc;padding:32px;font-family:Inter,Arial,sans-serif;border-radius:16px;max-width:560px">
-  <p style="letter-spacing:.18em;font-size:11px;color:#7dd3fc;margin:0 0 8px">MATRIX · FAMILY</p>
+    html: `<div style="background:#070b1e;color:#f5f8ff;padding:32px;font-family:Inter,Arial,sans-serif;border-radius:16px;max-width:560px">
+  <p style="letter-spacing:.18em;font-size:11px;color:#22ccff;margin:0 0 8px">QORVYNA · FAMILY</p>
   <h1 style="margin:0 0 12px;font-size:22px">${escapeEmailHtml(input.title)}</h1>
   <p style="color:#cbd5e1;line-height:1.6;margin:0 0 18px">${body}</p>
-  ${link ? `<p style="margin:0"><a href="${link}" style="color:#38bdf8">Open MATRIX</a></p>` : ""}
-  <p style="color:#64748b;font-size:12px;margin:20px 0 0">You receive this because you are a member of a MATRIX family. Manage notifications in Family settings.</p>
+  ${link ? `<p style="margin:0"><a href="${link}" style="color:#6ea0ff">Open QORVYNA</a></p>` : ""}
+  <p style="color:#64748b;font-size:12px;margin:20px 0 0">You receive this because you are a member of a QORVYNA family. Manage notifications in Family settings.</p>
 </div>`,
   });
 }

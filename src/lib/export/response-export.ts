@@ -1,5 +1,5 @@
 // =============================================================================
-// MATRIX response exporters — real files, built in the browser.
+// QORVYNA response exporters — real files, built in the browser.
 //
 // Every format here is genuinely produced (PDF pages, zipped OOXML for DOCX and
 // XLSX, CSV from detected tabular data, JSON from detected structured data).
@@ -44,7 +44,7 @@ export function slugifyTitle(title: string): string {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "")
-      .slice(0, 48) || "matrix-response"
+      .slice(0, 48) || "qorvyna-response"
   );
 }
 
@@ -66,7 +66,7 @@ export function toPlainText(markdown: string): string {
     .trim();
 }
 
-export function exportMarkdown(content: string, title = "MATRIX response"): string {
+export function exportMarkdown(content: string, title = "QORVYNA response"): string {
   return `# ${title}\n\n${content.trim()}\n`;
 }
 
@@ -182,8 +182,8 @@ function isNumericCell(value: string): boolean {
 }
 
 /** A real .xlsx package (stored ZIP + SpreadsheetML worksheet). */
-export function exportXlsxBytes(rows: string[][], sheetName = "Matrix"): Uint8Array<ArrayBuffer> {
-  const name = sheetName.replace(/[\\/*?:\[\]]/g, "").slice(0, 31) || "Matrix";
+export function exportXlsxBytes(rows: string[][], sheetName = "QORVYNA"): Uint8Array<ArrayBuffer> {
+  const name = sheetName.replace(/[\\/*?:\[\]]/g, "").slice(0, 31) || "QORVYNA";
   const sheetRows = rows
     .map((row, rowIndex) => {
       const cells = row
@@ -260,7 +260,7 @@ function inlineMarkdownToText(text: string): string {
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)");
 }
 
-export function exportDocxBytes(markdown: string, title = "MATRIX response"): Uint8Array<ArrayBuffer> {
+export function exportDocxBytes(markdown: string, title = "QORVYNA response"): Uint8Array<ArrayBuffer> {
   const body = docParagraphs(markdown, title)
     .map((paragraph) => {
       const numbering = paragraph.style === "bullet" ? '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>' : "";
@@ -291,7 +291,7 @@ export function exportDocxBytes(markdown: string, title = "MATRIX response"): Ui
 }
 
 // ---------------------------------------------------------------------------
-// PDF — produced by the one shared MATRIX PDF engine
+// PDF — produced by the one shared QORVYNA PDF engine
 // ---------------------------------------------------------------------------
 //
 // PDFs are NOT built in the browser. Real Unicode output needs embedded
@@ -302,7 +302,7 @@ export function exportDocxBytes(markdown: string, title = "MATRIX response"): Ui
 //
 // This helper posts the content to `/api/export/pdf` and returns the bytes.
 
-export async function requestPdfBytes(content: string, title = "MATRIX"): Promise<Uint8Array<ArrayBuffer>> {
+export async function requestPdfBytes(content: string, title = "QORVYNA"): Promise<Uint8Array<ArrayBuffer>> {
   const res = await fetch("/api/export/pdf", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -348,7 +348,7 @@ export function extractJson(content: string): string | null {
  * Async because PDFs are rendered by the shared server-side engine (embedded
  * Unicode fonts + OpenType shaping); every other format is built locally.
  */
-export async function buildArtifact(format: ExportFormat, content: string, title = "MATRIX response"): Promise<BuiltArtifact | null> {
+export async function buildArtifact(format: ExportFormat, content: string, title = "QORVYNA response"): Promise<BuiltArtifact | null> {
   const filename = exportFilename(format, title);
   const mime = EXPORT_MIME[format];
   const source = content ?? "";
@@ -372,7 +372,7 @@ export async function buildArtifact(format: ExportFormat, content: string, title
       const extracted = extractJson(source);
       const text =
         extracted ??
-        exportJson({ title, content: toPlainText(source), exported_at: new Date().toISOString(), source: "matrix-response" });
+        exportJson({ title, content: toPlainText(source), exported_at: new Date().toISOString(), source: "qorvyna-response" });
       return { filename, mime, data: text, preview: text };
     }
     case "csv": {

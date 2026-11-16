@@ -1,4 +1,4 @@
-# MATRIX implementation roadmap
+# QORVYNA implementation roadmap
 
 ## Operating rules
 
