@@ -26,6 +26,7 @@ import * as design from "@/lib/server/design";
 import * as family from "@/lib/server/family";
 import * as pairing from "@/lib/server/pairing";
 import * as deviceLinks from "@/lib/server/device-links";
+import * as adminDevices from "@/lib/server/admin-devices";
 import * as hub from "@/lib/server/device-hub";
 import QRCode from "qrcode";
 import * as esp32 from "@/lib/server/esp32";
@@ -871,6 +872,25 @@ const ACTIONS: Record<string, Handler> = {
   // The website renders the sidebar on the server via getSidebarData(); the
   // Tauri build has no server, so it needs these three reads over the same
   // data source and the same ownership rules.
+  // --- admin device dashboard (Phase 7) — RBAC re-checked in the module -------
+  admin_devices_list: (d, u, b) =>
+    adminDevices.listAdminDevices(d, u, {
+      search: str(b.search).slice(0, 120),
+      status: str(b.status).slice(0, 30),
+      platform: str(b.platform).slice(0, 40),
+      online_only: bool(b.online_only),
+      limit: Number(b.limit) || 200,
+    }),
+  admin_device_detail: (d, u, b) => adminDevices.adminDeviceDetail(d, u, z.string().min(1).max(128).parse(b.device_id)),
+  admin_device_moderate: (d, u, b) =>
+    adminDevices.moderateDevice(d, u, {
+      device_id: z.string().min(1).max(128).parse(b.device_id),
+      action: z.enum(["disable", "enable", "block", "unblock", "revoke"]).parse(b.action),
+      reason: str(b.reason).slice(0, 400),
+    }),
+  admin_pairing_history: (d, u, b) => adminDevices.adminPairingHistory(d, u, Number(b.limit) || 100),
+  admin_device_policy: (d) => adminDevices.adminDevicePolicySummary(d),
+
   conversation_list: async (d, u) => {
     const sidebar = await getSidebarData(d, u.uid);
     return { conversations: sidebar.conversations, profile: { name: sidebar.profileName, avatar: sidebar.profileAvatar }, isAdmin: sidebar.isAdmin };
