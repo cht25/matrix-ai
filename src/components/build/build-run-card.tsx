@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BuildRun, BuildRunSnapshot } from "@/lib/deploy/stages";
-import { runFromSnapshot } from "@/lib/deploy/stages";
+import { runFromSnapshot, runLiveness } from "@/lib/deploy/stages";
 import { normalizeStatus } from "@/lib/deploy/status";
 import { readBuildRun, resumeBuildRun } from "@/lib/client/build-runner";
 import { DeploymentRow } from "@/components/build/deploy-card";
@@ -26,7 +26,8 @@ import { outcomeOfRun } from "@/lib/ai/task-outcome";
 import type { ProjectDeploymentOverview } from "@/lib/deploy/provider";
 
 const POLL_MS = 3_000;
-const MAX_POLLS = 60;
+/** While a live stream is open the card still re-reads, just less often. */
+const LIVE_POLL_MS = 12_000;
 
 export type ChatDeploymentMeta = {
   id: string;
@@ -90,23 +91,26 @@ export function BuildRunCard({
     if (next) setStored(next);
   }, [runId]);
 
-  // Poll only while the stored state is genuinely in flight.
+  // Poll while the stored state is genuinely in flight.
+  //
+  // A live run passed down from the chat is NOT a reason to stop reading: the
+  // event stream can drop (idle timeout, restart, sleeping laptop) while the
+  // card keeps its last snapshot, which is exactly how a card used to sit on
+  // "Running" forever. The stored document is the only authority, so it is
+  // polled either way — slowly while a stream is open, quickly when it is not.
   useEffect(() => {
     if (!runId || !run || (run.status !== "running" && run.status !== "requested" && run.status !== "paused")) return;
     if (resuming) return; // the resume stream is the source
-    if (liveRun && (liveRun.status === "running" || liveRun.status === "requested")) return; // the stream is the source
+    const streaming = Boolean(liveRun && busy && (liveRun.status === "running" || liveRun.status === "requested"));
     const timer = setInterval(async () => {
-      if (polls.current++ > MAX_POLLS) {
-        clearInterval(timer);
-        return;
-      }
+      polls.current += 1;
       const next = await readBuildRun(runId);
       if (!next) return;
       setStored(next);
-      if (next.status === "succeeded" || next.status === "failed" || next.status === "awaiting_input" || next.status === "cancelled") clearInterval(timer);
-    }, POLL_MS);
+      if (next.status !== "running" && next.status !== "requested" && next.status !== "paused") clearInterval(timer);
+    }, streaming ? LIVE_POLL_MS : POLL_MS);
     return () => clearInterval(timer);
-  }, [runId, run?.status, liveRun, resuming]);
+  }, [runId, run?.status, liveRun, busy, resuming]);
 
   const hydrate = useCallback(() => {
     if (hydrated || stored || !runId) return;

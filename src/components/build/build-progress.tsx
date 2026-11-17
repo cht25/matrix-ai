@@ -19,7 +19,7 @@ import { useState } from "react";
 import { Activity, ChevronDown, FileDiff, Terminal } from "lucide-react";
 import type { BuildCheck } from "@/lib/deploy/validate";
 import type { BuildRun, BuildStageId, FileChange, StageState } from "@/lib/deploy/stages";
-import { changeCounts, stageDef, stageProgress } from "@/lib/deploy/stages";
+import { changeCounts, runLiveness, stageDef, stageProgress } from "@/lib/deploy/stages";
 import { RelativeDeployTimeText, TimeOfDayText } from "@/components/local-time";
 import { cn } from "@/lib/utils";
 import { Progress, Spinner } from "@/components/ui";
@@ -90,6 +90,34 @@ export function RunContinuityNote({ run }: { run: BuildRun }) {
         </ol>
       ) : null}
     </div>
+  );
+}
+
+
+/**
+ * How long the worker has been silent, in plain words.
+ *
+ * "Running" on its own is a claim; this line is the evidence behind it. A run
+ * that has stopped reporting says so, with the limit that will fail it, so the
+ * state can never be an infinite spinner with no explanation.
+ */
+export function RunLivenessNote({ run }: { run: BuildRun }) {
+  const liveness = runLiveness(run, Date.now());
+  if (!liveness.inFlight) return null;
+  const silent = Math.round(liveness.silentMs / 1000);
+  const limit = Math.round(liveness.limitMs / 1000);
+  if (silent < 15) return null;
+  const warning = liveness.stale || silent > limit * 0.75;
+  return (
+    <p
+      className={cn("px-3 pb-2 text-[11px] leading-snug", warning ? "text-warning" : "text-ink-3")}
+      role="status"
+      aria-live="polite"
+    >
+      {liveness.stale
+        ? `${stageDef(liveness.stageId ?? "generate").label} stopped responding ${silent}s ago and is past its ${limit}s limit — this run is being marked failed, nothing was published.`
+        : `Waiting on the build worker — last update ${silent}s ago (limit ${limit}s for this step).`}
+    </p>
   );
 }
 
@@ -167,6 +195,7 @@ export function BuildStatusCard({
       <div className="px-3 pb-2">
         <Progress value={progress.percent} />
       </div>
+      <RunLivenessNote run={run} />
       <RunContinuityNote run={run} />
 
       {showDetails ? (

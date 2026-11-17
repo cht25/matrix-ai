@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminAuth, adminDb, nowTs } from "@/lib/firebase/admin";
 import { verifySession, type SessionUser } from "@/lib/firebase/session";
 import { FirestoreDeploymentProvider } from "@/lib/deploy/firestore-provider";
-import { runBuildPipeline, latestBuildRunForProject, readBuildRun, type ImageAssetRequest } from "@/lib/server/build";
+import { closeBuildRun, runBuildPipeline, latestBuildRunForProject, readBuildRun, type ImageAssetRequest } from "@/lib/server/build";
 import { sendableVoiceAsset } from "@/lib/server/voice-assets";
 import { cancelAgentTask, createAgentTask, getAgentTask } from "@/lib/server/agent-tasks";
 import { toFirestoreRun } from "@/lib/deploy/run-store";
@@ -287,7 +287,15 @@ export async function POST(req: NextRequest) {
       attachments: parseAttachments(body),
       isTemporary,
       maxFixAttempts: typeof body.max_fix_attempts === "number" ? Math.max(0, Math.min(8, body.max_fix_attempts)) : undefined,
-    }).catch((error) => logGatewayFailure("build_run", { requestId, runId }, error));
+    }).catch(async (error) => {
+      logGatewayFailure("build_run", { requestId, runId }, error);
+      // The request that owned this run is gone: without this the stored run
+      // would read "Running" forever in every surface.
+      await closeBuildRun(d, runId, {
+        code: error instanceof RpcError ? error.code : "BUILD_RUN_FAILED",
+        message: error instanceof Error && error.message ? error.message.slice(0, 400) : "The build worker stopped before it could finish. Nothing was published.",
+      }).catch(() => undefined);
+    });
     return json({ run_id: runId, task_id: taskId, conversation_id: convId, status: "queued" }, 202);
   }
 
@@ -344,7 +352,12 @@ export async function POST(req: NextRequest) {
         });
       } catch (error) {
         const code = error instanceof RpcError ? error.code : "BUILD_RUN_FAILED";
-        send({ type: "error", code, message: error instanceof Error ? error.message.slice(0, 240) : "The build stopped." });
+        const message = error instanceof Error && error.message ? error.message.slice(0, 240) : "The build stopped.";
+        // Close the stored run before telling the browser: a stream that ends
+        // on an error must never leave the run looking alive.
+        const closed = await closeBuildRun(d, runId, { code, message }).catch(() => null);
+        send({ type: "error", code, message });
+        if (closed) send({ type: "done", run: closed, reply: "", project_id: closed.projectId, conversation_id: convId, deployment: null });
       } finally {
         try {
           controller.enqueue(encoder.encode("data: [DONE]\n\n"));
@@ -386,7 +399,13 @@ async function resumeResponse(req: NextRequest, user: SessionUser, runId: string
   const { state } = prepared;
   const run = runBuildPipeline;
   if (!wantsStream) {
-    void run(prepared.input).catch((error) => logGatewayFailure("build_resume", { runId }, error));
+    void run(prepared.input).catch(async (error) => {
+      logGatewayFailure("build_resume", { runId }, error);
+      await closeBuildRun(d, runId, {
+        code: error instanceof RpcError ? error.code : "BUILD_RUN_FAILED",
+        message: error instanceof Error && error.message ? error.message.slice(0, 400) : "The build worker stopped before it could finish.",
+      }).catch(() => undefined);
+    });
     return json({ run_id: runId, task_id: state.taskId, conversation_id: state.conversationId, project_id: state.projectId, status: "resumed", segment: state.segment + 1 }, 202);
   }
   const stream = new ReadableStream<Uint8Array>({
@@ -405,7 +424,12 @@ async function resumeResponse(req: NextRequest, user: SessionUser, runId: string
         });
       } catch (error) {
         const code = error instanceof RpcError ? error.code : "BUILD_RUN_FAILED";
-        send({ type: "error", code, message: error instanceof Error ? error.message.slice(0, 240) : "The build stopped." });
+        const message = error instanceof Error && error.message ? error.message.slice(0, 240) : "The build stopped.";
+        // Close the stored run before telling the browser: a stream that ends
+        // on an error must never leave the run looking alive.
+        const closed = await closeBuildRun(d, runId, { code, message }).catch(() => null);
+        send({ type: "error", code, message });
+        if (closed) send({ type: "done", run: closed, reply: "", project_id: closed.projectId, conversation_id: state.conversationId, deployment: null });
       } finally {
         try { controller.enqueue(encoder.encode("data: [DONE]\n\n")); controller.close(); } catch { /* already closed */ }
       }

@@ -58,11 +58,13 @@ import { clearDraft, enqueueOutboxMessage, listOutboxMessages, loadDraft, remove
 import {
   VOICE_LANGUAGE_STORAGE_KEY,
   VOICE_MODE_STORAGE_KEY,
+  createVoiceTurnLedger,
   formatClock,
   mergeTranscript,
   normalizeVoiceInputMode,
   voiceErrorMessage,
   voiceLanguage,
+  voiceStopIntent,
   type VoiceInputMode,
 } from "@/lib/voice-input";
 import { revealReceived, type RevealMode } from "@/lib/stream-reveal";
@@ -423,6 +425,12 @@ export function ChatClient({
   const [dictationRetry, setDictationRetry] = useState<{ clip: VoiceClip; message: string } | null>(null);
   /** This session's recordings by turn id: local playback, retry, attachments. */
   const voiceDraftsRef = useRef<Map<string, { clip: VoiceClip; attachments: PendingAttachment[]; assetId: string | null }>>(new Map());
+  /**
+   * Turns whose voice message has already been dispatched. One recording is
+   * one message: a double click, a retry button that is still mounted or a
+   * slow transcription can never send the same turn twice.
+   */
+  const sentVoiceTurnsRef = useRef(createVoiceTurnLedger());
   const recorder = useVoiceRecorder({
     language: voiceLang,
     silenceStopMs: voiceMode === "hands_free" ? 1400 : null,
@@ -496,6 +504,7 @@ export function ChatClient({
     transcribeAbortRef.current?.abort();
     for (const draft of voiceDraftsRef.current.values()) URL.revokeObjectURL(draft.clip.url);
     voiceDraftsRef.current.clear();
+    sentVoiceTurnsRef.current.clear();
   }, []);
   useEffect(() => { localeRef.current = locale; }, [locale]);
 
@@ -1194,6 +1203,8 @@ export function ChatClient({
   async function sendVoiceMessage(turnId: string) {
     const draft = voiceDraftsRef.current.get(turnId);
     if (!draft || voiceAbortRef.current || requestInFlightRef.current) return;
+    // Already dispatched for this recording: nothing is sent twice.
+    if (!sentVoiceTurnsRef.current.claim(turnId)) return;
     const controller = new AbortController();
     voiceAbortRef.current = controller;
     setVoiceSending(true);
@@ -1223,7 +1234,20 @@ export function ChatClient({
       ...(assetId ? { audio_asset_id: assetId } : {}),
     });
     // The transcript is the request; the recording stays attached to it.
-    await send(undefined, transcript, { voice: { turnId, assetId, attachments: draft.attachments } });
+    // The turn is marked before the send so a second trigger is ignored, and
+    // released again if the send itself failed (the bubble then offers Retry).
+    try {
+      await send(undefined, transcript, { voice: { turnId, assetId, attachments: draft.attachments } });
+    } catch (error) {
+      sentVoiceTurnsRef.current.release(turnId);
+      throw error;
+    }
+    const dispatched = lastTurnRef.current?.turnId === turnId;
+    const failed = messagesRef.current.some((item) => item.role === "user" && item.metadata?.turn_id === turnId && item.metadata?.send_failed);
+    if (!dispatched || failed) {
+      // The message never reached the thread: allow a retry of the same turn.
+      sentVoiceTurnsRef.current.release(turnId);
+    }
   }
 
   function discardVoice(turnId: string) {
@@ -1235,6 +1259,7 @@ export function ChatClient({
       if (draft.assetId) void fetch(`/api/voice/audio/${encodeURIComponent(draft.assetId)}`, { method: "DELETE", credentials: "same-origin" }).catch(() => {});
       voiceDraftsRef.current.delete(turnId);
     }
+    sentVoiceTurnsRef.current.release(turnId);
     setMessages((current) => current.filter((message) => !(message.role === "user" && message.metadata?.turn_id === turnId)));
   }
 
@@ -2664,7 +2689,7 @@ export function ChatClient({
     if (message.role === "user") {
       const turn = message.metadata?.turn_id;
       const isVoice = Boolean(message.metadata?.audio_asset_id || message.metadata?.local_audio_url);
-      const hasDraft = Boolean(turn && voiceDraftsRef.current.has(turn));
+      const hasDraft = Boolean(turn && voiceDraftsRef.current.has(turn) && !sentVoiceTurnsRef.current.has(turn));
       return (
         <UserMessage
           key={key}
@@ -3118,8 +3143,8 @@ export function ChatClient({
           onStartVoice={() => void startVoice()}
           onCancelVoice={cancelVoice}
           onPauseVoice={() => (recorder.state === "paused" ? recorder.resume() : recorder.pause())}
-          onStopVoice={() => void finishVoice(voiceModeRef.current === "hands_free" ? "hands_free_send" : "transcribe")}
-          onSendAudioClip={() => void finishVoice("send")}
+          onStopVoice={() => void finishVoice(voiceStopIntent(voiceModeRef.current))}
+          onDictateOnly={() => void finishVoice("transcribe")}
           transcribing={transcribing}
           onCancelTranscribe={() => transcribeAbortRef.current?.abort()}
           webSearch={webSearch}

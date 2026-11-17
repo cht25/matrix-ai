@@ -2,11 +2,12 @@
 
 // Voice UI that lives INSIDE the chat composer (Chat and Agent share it).
 //
-// Mode A (Default — Voice-to-Text Dictation):
-//   [✕ Cancel]  ● 0:07  ▂▅▃▆▂▅▇▃▂  [■ Done]
-//   Stop/Done transcribes the speech into editable text inside the composer
-//   (never auto-sends). Optional [Clip] sends a playable audio message if
-//   desired.
+// Mode A (Default — Voice message):
+//   [✕ Cancel]  ● 0:07  ▂▅▃▆▂▅▇▃▂  [Aa Text] [➤ Send]
+//   Stop → Send finalizes the recording, transcribes it and submits the turn
+//   ONCE. The conversation shows the audio bubble with playback and the
+//   transcript; no second click on Send is needed. [Aa Text] is the opt-out
+//   that puts the transcript in the composer for editing instead.
 //
 // Mode B (Opt-in — Hands-free Conversation):
 //   VAD automatically detects pause-after-speech, transcribes, and sends as text.
@@ -60,8 +61,8 @@ export function VoiceRecordingPanel(props: {
   onPause: () => void;
   /** Primary stop action (Mode A: transcribe to composer; Mode B: send turn). */
   onStop: () => void;
-  /** Optional explicit audio clip send (when user wants a stored voice message). */
-  onSendAudioClip?: () => void;
+  /** Opt-out: transcribe into the message box instead of sending. */
+  onDictateOnly?: () => void;
 }) {
   const isHandsFree = props.voiceMode === "hands_free";
   const status = props.requesting ? "Waiting for the microphone" : props.paused ? "Paused" : isHandsFree ? "Hands-free listening" : "Listening";
@@ -82,7 +83,7 @@ export function VoiceRecordingPanel(props: {
         {props.hasWaveform ? (
           <canvas ref={props.canvasRef} aria-label="Live microphone level" role="img" className="h-9 min-w-0 flex-1 text-danger" />
         ) : (
-          <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-3">Listening — speaking turns directly into text.</span>
+          <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-3">Listening — Send transcribes and sends this as one message.</span>
         )}
 
         <VoiceLanguageSelect value={props.language} onChange={props.onLanguage} className="hidden border-0 bg-transparent md:inline-flex" />
@@ -93,17 +94,17 @@ export function VoiceRecordingPanel(props: {
           </button>
         ) : null}
 
-        {props.hasWaveform && props.onSendAudioClip && !isHandsFree ? (
+        {props.hasWaveform && props.onDictateOnly && !isHandsFree ? (
           <button
             type="button"
-            onClick={props.onSendAudioClip}
+            onClick={props.onDictateOnly}
             disabled={props.requesting}
-            aria-label="Send as voice message clip"
-            title="Send as playable voice clip instead of editing text"
+            aria-label="Stop and transcribe into the message box without sending"
+            title="Only transcribe — put the words in the message box instead of sending"
             className="hidden h-11 shrink-0 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-40 sm:inline-flex"
           >
             <AudioLines size={16} strokeWidth={1.8} aria-hidden="true" />
-            <span>Clip</span>
+            <span>Text</span>
           </button>
         ) : null}
 
@@ -111,15 +112,15 @@ export function VoiceRecordingPanel(props: {
           type="button"
           onClick={props.onStop}
           disabled={props.requesting}
-          aria-label={isHandsFree ? "Stop and send voice turn" : "Stop recording and transcribe to composer"}
-          title={isHandsFree ? "Send voice turn" : "Finish & transcribe to text"}
+          aria-label={isHandsFree ? "Stop and send voice turn" : "Stop, transcribe and send this voice message"}
+          title={isHandsFree ? "Send voice turn" : "Send voice message"}
           className={cn(
             "inline-flex h-11 shrink-0 items-center gap-2 rounded-full px-3.5 text-[13px] font-semibold text-white transition-[filter] hover:brightness-110 disabled:opacity-50 sm:px-4",
-            isHandsFree ? "bg-accent-solid text-accent-ink" : "bg-danger",
+            "bg-accent-solid text-accent-ink"
           )}
         >
           {isHandsFree ? <Square size={13} fill="currentColor" aria-hidden="true" /> : <Check size={15} strokeWidth={2.4} aria-hidden="true" />}
-          <span>{isHandsFree ? "Send" : "Done"}</span>
+          <span>Send</span>
         </button>
       </div>
 
@@ -145,7 +146,7 @@ export function VoiceTranscribing({ onCancel }: { onCancel: () => void }) {
     <div className="flex min-h-9 items-center justify-between gap-2 px-3 text-[13px] text-ink-2" role="status" aria-live="polite">
       <span className="flex min-w-0 items-center gap-2">
         <Loader2 size={14} className="shrink-0 animate-spin text-accent" aria-hidden="true" />
-        <span className="truncate">Transcribing speech…</span>
+        <span className="truncate">Transcribing — your message sends automatically when it is ready…</span>
       </span>
       <button type="button" onClick={onCancel} className="min-h-9 shrink-0 rounded-lg px-2 text-[12px] font-medium text-ink-3 hover:text-ink">Cancel</button>
     </div>

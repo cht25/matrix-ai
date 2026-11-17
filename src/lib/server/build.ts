@@ -45,7 +45,7 @@ import { bindConversationProject, resolveProjectContext } from "@/lib/server/pro
 import { appendCheckpoint, bindBuildTask, syncBuildTask, type CheckpointStep } from "@/lib/server/agent-tasks";
 import { PROJECT_LIMITS, type ProjectFile } from "@/lib/projects/paths";
 import {
-  applyStaleness, beginStage, buildRunCopy, cancelRun, completeStage, createBuildRun, failRun, failStage,
+  LEASE_SLACK_MS, applyStaleness, beginStage, buildRunCopy, cancelRun, completeStage, createBuildRun, failRun, failStage, runLiveness,
   setDeployment, setChanges, setPreviewUrl, setValidation, skipStage, stageProgress, succeedRun,
   summarizeChanges, bumpAttempt, pauseRun, reopenRun, MAX_RUN_SEGMENTS,
   toRunSnapshot,
@@ -737,7 +737,23 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
       });
       executionState = transitionAgentExecution(executionState, "files_saved");
       sourceRevision = applied.revision;
+      // Re-read project storage before reporting a file count: the number the
+      // card shows must be files that really exist there, not files the model
+      // said it wrote.
       files = await loadProjectFiles(d, projectId);
+      const storedPaths = new Set(files.map((file) => file.path));
+      const missing = effective.filter((file) => !storedPaths.has(file.path)).map((file) => file.path);
+      if (missing.length) {
+        note("generate", "warn", `${missing.length} generated file${missing.length === 1 ? " was" : "s were"} not found in project storage after the write: ${missing.slice(0, 6).join(", ")}${missing.length > 6 ? "…" : ""}. They are not counted.`);
+        await emit("generate");
+      }
+      if (!files.length) {
+        return await abort("FILES_NOT_STORED", "Project storage returned no files after the agent's write, so no files are reported. Nothing was validated or published; retry once storage is reachable.", "generate");
+      }
+      if (!isEdit && effective.length && files.length < effective.length) {
+        note("generate", "warn", `File count reflects storage (${files.length}) rather than the provider's claim (${effective.length}).`);
+        await emit("generate");
+      }
       sessionFiles = files;
       if (session) await heartbeatExecutionSession(d, session);
       // From here on a later session must never regenerate: the files exist.
@@ -1291,13 +1307,64 @@ async function generateImageAssets(
 // ---------------------------------------------------------------------------
 
 async function persist(d: Db, runId: string, run: BuildRun, ownerId?: string): Promise<void> {
+  // The heartbeat is what separates "still working" from "the worker died":
+  // it is written on every state change, and the lease it defines is exactly
+  // the active stage's budget plus one idle slot.
+  const liveness = runLiveness(run, Date.now());
+  const heartbeatAt = run.status === "running" || run.status === "requested" ? Date.now() : run.heartbeatAt ?? null;
+  const stored: BuildRun = { ...run, heartbeatAt };
   await d
     .collection("build_runs")
     .doc(runId)
     // The owner is written with the run. Without it the stored run cannot be
     // read back, cancelled, counted against the concurrency limit or resumed.
-    .set({ ...(ownerId ? { owner_id: ownerId } : {}), project_id: run.projectId ?? null, conversation_id: run.conversationId ?? null, run: toFirestoreRun(run), resumable: (run.status === "paused" && run.continuation?.available === true) || run.status === "running" || run.status === "requested", updated_at: nowTs() }, { merge: true })
+    .set({
+      ...(ownerId ? { owner_id: ownerId } : {}),
+      project_id: run.projectId ?? null,
+      conversation_id: run.conversationId ?? null,
+      run: toFirestoreRun(stored),
+      resumable: (run.status === "paused" && run.continuation?.available === true) || run.status === "running" || run.status === "requested",
+      heartbeat_at: heartbeatAt,
+      lease_expires_at: liveness.inFlight ? heartbeatAt! + liveness.limitMs + LEASE_SLACK_MS : null,
+      updated_at: nowTs(),
+    }, { merge: true })
     .catch(() => { throw new RpcError("PROJECT_STORAGE_UNAVAILABLE", 503, "Build state could not be saved. No further file operations were started."); });
+}
+
+/**
+ * Persist the terminal state of a run whose worker died or threw.
+ *
+ * There is exactly one copy of a run's truth — the Firestore document — so if
+ * the request that owns it disappears without writing a terminal state, every
+ * surface (chat card, project dashboard, deployment panel) keeps reading
+ * "Running" forever. This is the function that closes that hole, and it is
+ * idempotent: it never overwrites a terminal state, and a second call is a
+ * no-op.
+ */
+export async function closeBuildRun(
+  d: Db,
+  runId: string,
+  failure: { code: string; message: string },
+): Promise<BuildRun | null> {
+  const ref = d.collection("build_runs").doc(runId);
+  const snap = await ref.get().catch(() => null);
+  if (!snap?.exists) return null;
+  const stored = runFromFirestore(snap.data()?.run, Date.now());
+  if (!stored) return null;
+  if (stored.status === "succeeded" || stored.status === "failed" || stored.status === "cancelled" || stored.status === "awaiting_input") return stored;
+  const active = stored.stages.find((stage) => stage.state === "running");
+  const failed = failRun(
+    active ? failStage(stored, active.id, Date.now(), failure.message) : stored,
+    failure,
+    Date.now(),
+  );
+  const closed: BuildRun = {
+    ...failed,
+    // Files that were really saved stay saved, so the run can be continued.
+    continuation: { available: true, reason: "interrupted", phase: "generate", retryAt: null, message: "The build worker stopped. The files saved so far are in the project — Continue picks up from there." },
+  };
+  await persist(d, runId, closed, snap.data()?.owner_id).catch(() => undefined);
+  return closed;
 }
 
 export async function startBuildRun(
@@ -1354,7 +1421,18 @@ export async function readBuildRun(d: Db, user: SessionUser, runId: string, now 
   const data = doc.data() ?? {};
   if (data.owner_id !== user.uid) return null;
   const run = runFromFirestore(data.run, now);
-  return run ? applyStaleness(run, now) : null;
+  return run ? reconcileRun(d, runId, run, data.owner_id, now) : null;
+}
+
+/**
+ * A read is also the moment a dead run is noticed. The verdict is stored so
+ * that every reader agrees — a silent worker must never read as "Running".
+ */
+export async function reconcileRun(d: Db, runId: string, run: BuildRun, ownerId: unknown, now: number): Promise<BuildRun> {
+  const judged = applyStaleness(run, now);
+  if (judged.status === run.status) return run;
+  await persist(d, runId, judged, typeof ownerId === "string" ? ownerId : undefined).catch(() => undefined);
+  return judged;
 }
 
 export async function latestBuildRunForProject(d: Db, user: SessionUser, projectId: string, now = Date.now()): Promise<BuildRun | null> {
@@ -1364,7 +1442,7 @@ export async function latestBuildRunForProject(d: Db, user: SessionUser, project
     .sort((a, b) => String(b.data().updated_at?.toDate?.()?.toISOString?.() ?? "").localeCompare(String(a.data().updated_at?.toDate?.()?.toISOString?.() ?? "")));
   if (!mine.length) return null;
   const run = runFromFirestore(mine[0].data().run, now);
-  return run ? applyStaleness(run, now) : null;
+  return run ? reconcileRun(d, mine[0].id, run, mine[0].data().owner_id, now) : null;
 }
 
 export { stageProgress };

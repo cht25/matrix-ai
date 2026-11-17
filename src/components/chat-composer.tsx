@@ -10,6 +10,7 @@
 //   one or more attachments           →  [🎤] [➤]        Send plus a separate Voice
 //   a request is running              →  [■]             Stop generating
 //   recording                         →  the recording panel replaces the field
+//                                       (Send = transcribe + send once)
 //
 // Enter sends and Shift+Enter adds a line on a hardware keyboard. On a touch
 // keyboard Enter adds a line (there is no Shift+Enter there) and the Send
@@ -78,7 +79,7 @@ export function ChatComposer(props: {
   onCancelVoice: () => void;
   onPauseVoice: () => void;
   onStopVoice: () => void;
-  onSendAudioClip?: () => void;
+  onDictateOnly?: () => void;
   transcribing: boolean;
   onCancelTranscribe: () => void;
 
@@ -180,7 +181,7 @@ export function ChatComposer(props: {
           onCancel={props.onCancelVoice}
           onPause={props.onPauseVoice}
           onStop={props.onStopVoice}
-          onSendAudioClip={props.onSendAudioClip}
+          onDictateOnly={props.onDictateOnly}
         />
       ) : (
         <>
