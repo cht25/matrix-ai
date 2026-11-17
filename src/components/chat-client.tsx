@@ -54,7 +54,17 @@ import type { ChatAction } from "@/components/response-actions";
 import { MAX_AUDIO_BYTES, MIN_RECORDING_MS, useVoiceRecorder, type VoiceCapture, type VoiceClip } from "@/lib/client/use-voice-recorder";
 import { useKeyboardInset } from "@/lib/client/use-keyboard-inset";
 import { copyText, shareText } from "@/lib/client/share";
-import { VOICE_LANGUAGE_STORAGE_KEY, formatClock, mergeTranscript, voiceErrorMessage, voiceLanguage } from "@/lib/voice-input";
+import { clearDraft, enqueueOutboxMessage, listOutboxMessages, loadDraft, removeOutboxMessage, saveCachedConversation, saveDraft } from "@/lib/client/offline-store";
+import {
+  VOICE_LANGUAGE_STORAGE_KEY,
+  VOICE_MODE_STORAGE_KEY,
+  formatClock,
+  mergeTranscript,
+  normalizeVoiceInputMode,
+  voiceErrorMessage,
+  voiceLanguage,
+  type VoiceInputMode,
+} from "@/lib/voice-input";
 import { revealReceived, type RevealMode } from "@/lib/stream-reveal";
 import { restoredPrependTop } from "@/lib/chat-scroll";
 import { cn } from "@/lib/utils";
@@ -394,9 +404,11 @@ export function ChatClient({
   const [autoSpeak, setAutoSpeak] = useState(true);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
 
-  // --- voice messages: a recording sent as audio (see "Voice messages") -------
+  // --- voice messages: dictation (Mode A default) + hands-free (Mode B) ---
   const [voiceLang, setVoiceLangState] = useState("auto");
   const voiceLangRef = useRef("auto");
+  const [voiceMode, setVoiceModeState] = useState<VoiceInputMode>("dictate");
+  const voiceModeRef = useRef<VoiceInputMode>("dictate");
   /** A voice message is uploading / being transcribed before it is sent. */
   const [voiceSending, setVoiceSending] = useState(false);
   const voiceAbortRef = useRef<AbortController | null>(null);
@@ -409,11 +421,16 @@ export function ChatClient({
   const voiceDraftsRef = useRef<Map<string, { clip: VoiceClip; attachments: PendingAttachment[]; assetId: string | null }>>(new Map());
   const recorder = useVoiceRecorder({
     language: voiceLang,
-    // The recording ended by itself. Nothing is sent without the user: it is
-    // kept in the conversation, ready to send or discard.
-    onAutoStop: (capture, reason) => handleVoiceCapture(capture, "hold", reason === "limit"
-      ? "Recording stopped at the 10-minute limit."
-      : "The microphone was disconnected before you finished."),
+    silenceStopMs: voiceMode === "hands_free" ? 1400 : null,
+    onAutoStop: (capture, reason) => {
+      if (reason === "silence" && voiceModeRef.current === "hands_free") {
+        handleVoiceCapture(capture, "hands_free_send");
+        return;
+      }
+      handleVoiceCapture(capture, "hold", reason === "limit"
+        ? "Recording stopped at the 10-minute limit."
+        : "The microphone was disconnected before you finished.");
+    },
   });
   /** Anything in flight: the composer's primary button becomes Stop. */
   const busy = streaming || voiceSending;
@@ -421,7 +438,9 @@ export function ChatClient({
     try {
       const saved = window.localStorage.getItem(VOICE_LANGUAGE_STORAGE_KEY);
       if (saved) { const code = voiceLanguage(saved).code; voiceLangRef.current = code; setVoiceLangState(code); }
-    } catch { /* private mode: the default (auto-detect) is used */ }
+      const savedMode = window.localStorage.getItem(VOICE_MODE_STORAGE_KEY);
+      if (savedMode) { const nextMode = normalizeVoiceInputMode(savedMode); voiceModeRef.current = nextMode; setVoiceModeState(nextMode); }
+    } catch { /* private mode: defaults are used */ }
   }, []);
   const generatedAudioRef = useRef<HTMLAudioElement | null>(null);
   const generatedAudioUrlRef = useRef<string | null>(null);
@@ -509,8 +528,15 @@ export function ChatClient({
         try {
           const saved = window.sessionStorage.getItem(draftKey);
           if (saved) setInput((current) => current || saved);
+          else {
+            void loadDraft(draftKey).then((idbDraft) => {
+              if (idbDraft) setInput((current) => current || idbDraft);
+            });
+          }
         } catch {
-          /* storage unavailable: nothing to restore */
+          void loadDraft(draftKey).then((idbDraft) => {
+            if (idbDraft) setInput((current) => current || idbDraft);
+          });
         }
       }
     };
@@ -587,9 +613,56 @@ export function ChatClient({
         if (input.trim()) window.sessionStorage.setItem(draftKey, input.slice(0, 12_000));
         else window.sessionStorage.removeItem(draftKey);
       } catch { /* storage unavailable */ }
+      if (!isTemporary) {
+        if (input.trim()) void saveDraft(draftKey, input.slice(0, 12_000));
+        else void clearDraft(draftKey);
+      }
     }, 250);
     return () => window.clearTimeout(handle);
-  }, [input, draftKey]);
+  }, [input, draftKey, isTemporary]);
+
+  useEffect(() => {
+    if (isTemporary || !convId || !messages.length) return;
+    const handle = window.setTimeout(() => {
+      void saveCachedConversation({
+        id: convId,
+        title: title || "Conversation",
+        mode,
+        updatedAt: Date.now(),
+        messages: messages.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          created_at: m.created_at ?? new Date().toISOString(),
+        })),
+      });
+    }, 600);
+    return () => window.clearTimeout(handle);
+  }, [convId, isTemporary, messages, mode, title]);
+
+  useEffect(() => {
+    if (isTemporary || typeof window === "undefined") return;
+    const handleOnline = async () => {
+      const queued = await listOutboxMessages();
+      const matching = queued.filter((item) => item.conversationId === convIdRef.current);
+      if (!matching.length) return;
+      const failedSet = new Set(
+        messagesRef.current
+          .filter((m) => m.role === "user" && m.metadata?.send_failed)
+          .map((m) => m.content),
+      );
+      let stillPending = 0;
+      for (const entry of matching) {
+        if (failedSet.has(entry.text)) stillPending += 1;
+        else await removeOutboxMessage(entry.id);
+      }
+      if (stillPending > 0) {
+        setNotice(`Back online — ${stillPending} offline message${stillPending > 1 ? "s" : ""} saved. Tap Retry on the message to send.`);
+      }
+    };
+    window.addEventListener("online", handleOnline);
+    return () => window.removeEventListener("online", handleOnline);
+  }, [isTemporary]);
 
   const chatScroll = useChatScroll(scrollAreaRef, scrollContentRef, `${messages.length}:${buildRun?.updatedAt ?? 0}:${liveSteps.length}:${streamCommitted}:${editingKey ?? ""}`);
 
@@ -983,6 +1056,13 @@ export function ChatClient({
     try { window.localStorage.setItem(VOICE_LANGUAGE_STORAGE_KEY, next); } catch { /* not persisted */ }
   }
 
+  function changeVoiceMode(next: VoiceInputMode) {
+    const normalized = normalizeVoiceInputMode(next);
+    voiceModeRef.current = normalized;
+    setVoiceModeState(normalized);
+    try { window.localStorage.setItem(VOICE_MODE_STORAGE_KEY, normalized); } catch { /* not persisted */ }
+  }
+
   /** Put recognised words into the composer as ordinary, editable text. */
   function placeTranscript(text: string) {
     setInput((current) => mergeTranscript(current, text));
@@ -1042,8 +1122,8 @@ export function ChatClient({
     if (!started.ok) setComposerError(started.message);
   }
 
-  /** Stop → send as a voice message. Transcribe → words into the composer. */
-  async function finishVoice(intent: "send" | "transcribe") {
+  /** Mode A: Stop → transcribe into composer. Mode B: transcribe & send. Clip: voice message. */
+  async function finishVoice(intent: "send" | "transcribe" | "hands_free_send") {
     handleVoiceCapture(await recorder.stop(), intent);
   }
 
@@ -1052,17 +1132,26 @@ export function ChatClient({
     setNotice("Recording discarded. Nothing was sent.");
   }
 
-  function handleVoiceCapture(capture: VoiceCapture | null, intent: "send" | "transcribe" | "hold", holdReason?: string) {
+  function handleVoiceCapture(capture: VoiceCapture | null, intent: "send" | "transcribe" | "hands_free_send" | "hold", holdReason?: string) {
     if (!capture) { setComposerError("No audio was captured. Check the microphone and try again."); return; }
-    // A browser without a recorder can only give words: they go to the composer.
-    if (capture.kind === "transcript") { placeTranscript(capture.text); return; }
+    // A browser without a recorder can only give words.
+    if (capture.kind === "transcript") {
+      if (intent === "hands_free_send") void send(undefined, capture.text);
+      else placeTranscript(capture.text);
+      return;
+    }
     const clip = capture.clip;
     if (clip.durationMs < MIN_RECORDING_MS) { URL.revokeObjectURL(clip.url); setComposerError("That recording was too short. Record a little longer."); return; }
+    if (!clip.hadSpeech && !clip.heard) {
+      URL.revokeObjectURL(clip.url);
+      setComposerError(voiceErrorMessage("SILENT_RECORDING"));
+      return;
+    }
     if (clip.blob.size > MAX_AUDIO_BYTES) { URL.revokeObjectURL(clip.url); setComposerError("That recording is too large to send. Record a shorter message."); return; }
     if (intent === "transcribe") { void transcribeToComposer(clip); return; }
+    if (intent === "hands_free_send") { void transcribeAndSendTurn(clip); return; }
 
-    // The recording joins the conversation at once — playable immediately —
-    // together with whatever was attached in the composer.
+    // Explicit audio clip message (`Clip` button): playable in conversation.
     const turnId = crypto.randomUUID();
     const pending = attachments;
     voiceDraftsRef.current.set(turnId, { clip, attachments: pending, assetId: null });
@@ -1141,7 +1230,7 @@ export function ChatClient({
     setMessages((current) => current.filter((message) => !(message.role === "user" && message.metadata?.turn_id === turnId)));
   }
 
-  /** The separate Transcribe action: words into the composer, nothing sent. */
+  /** Mode A (default): transcribe into editable composer text — never auto-sends. */
   async function transcribeToComposer(clip: VoiceClip) {
     if (transcribing) return;
     const controller = new AbortController();
@@ -1157,6 +1246,29 @@ export function ChatClient({
     if (result.aborted) { URL.revokeObjectURL(clip.url); setNotice("Transcription cancelled."); return; }
     // Nothing is lost: the recording waits here until it is retried or discarded.
     setDictationRetry({ clip, message: result.message });
+  }
+
+  /** Mode B (opt-in Hands-free): transcribe and immediately send as text. */
+  async function transcribeAndSendTurn(clip: VoiceClip) {
+    if (transcribing || busy) return;
+    const controller = new AbortController();
+    transcribeAbortRef.current = controller;
+    setTranscribing(true);
+    setDictationRetry(null);
+    setComposerError(null);
+    const result = await requestTranscript(clip, { store: false, signal: controller.signal });
+    transcribeAbortRef.current = null;
+    setTranscribing(false);
+    const spoken = result.ok ? result.transcript : (!result.aborted && clip.heard ? clip.heard : "");
+    if (spoken) {
+      URL.revokeObjectURL(clip.url);
+      const combined = mergeTranscript(input, spoken);
+      setInput("");
+      await send(undefined, combined);
+      return;
+    }
+    if (!result.ok && result.aborted) { URL.revokeObjectURL(clip.url); setNotice("Hands-free turn cancelled."); return; }
+    setDictationRetry({ clip, message: result.ok ? voiceErrorMessage("NO_SPEECH_DETECTED") : result.message });
   }
 
   async function streamMessage(
@@ -1277,6 +1389,15 @@ export function ChatClient({
     const noteStored = (userMessageId?: unknown) => {
       userStored = true;
       if (lastTurnRef.current?.turnId === turnId) lastTurnRef.current.stored = true;
+      if (!isTemporary) {
+        void listOutboxMessages().then((queued) =>
+          Promise.all(
+            queued
+              .filter((entry) => entry.conversationId === convIdRef.current && entry.text === message)
+              .map((entry) => removeOutboxMessage(entry.id)),
+          ),
+        );
+      }
       if (typeof userMessageId !== "string" || !userMessageId || storedUserId === userMessageId) return;
       storedUserId = userMessageId;
       setMessages((current) => patchTurnMessage(current, "user", turnId, (item) => ({ ...item, id: userMessageId, metadata: { ...item.metadata, send_failed: undefined } })));
@@ -1779,6 +1900,14 @@ export function ChatClient({
     }
     // Sending is a deliberate act: the conversation follows the new turn.
     chatScroll.follow();
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      if (!isTemporary) {
+        void enqueueOutboxMessage({ conversationId: convIdRef.current, text: message, mode });
+      }
+      setMessages((current) => patchTurnMessage(current, "user", turnId, (item) => ({ ...item, metadata: { ...item.metadata, send_failed: true } })));
+      setNotice("You're offline — your message was saved locally. Reconnect and tap Retry.");
+      return;
+    }
     const hinted = suggestMode(rawMessage, mode);
     if (hinted && hinted !== effectiveMode(intent, mode)) setModeHint(hinted);
     if (mode === "orchestrator") setGraphNodes(planOrchestrator(rawMessage).map((task) => ({ id: task.id, title: task.title, status: "running" as const })));
@@ -2672,6 +2801,8 @@ export function ChatClient({
         onRevealModeChange={changeRevealMode}
         voiceLang={voiceLang}
         onVoiceLangChange={setVoiceLang}
+        voiceMode={voiceMode}
+        onVoiceModeChange={changeVoiceMode}
         status={toolbarStatus}
         locked={isTemporary}
         autoSpeak={autoSpeak}
@@ -2940,14 +3071,18 @@ export function ChatClient({
           recorderState={recorder.state}
           recorderElapsedMs={recorder.elapsedMs}
           recorderHasWaveform={recorder.hasWaveform}
+          recorderLiveText={recorder.liveText}
+          recorderSpeechDetected={recorder.speechDetected}
           recorderCanvasRef={recorder.canvasRef}
           voiceLanguage={voiceLang}
           onVoiceLanguage={setVoiceLang}
+          voiceMode={voiceMode}
+          onExitHandsFree={() => changeVoiceMode("dictate")}
           onStartVoice={() => void startVoice()}
           onCancelVoice={cancelVoice}
           onPauseVoice={() => (recorder.state === "paused" ? recorder.resume() : recorder.pause())}
-          onStopVoice={() => void finishVoice("send")}
-          onTranscribeVoice={() => void finishVoice("transcribe")}
+          onStopVoice={() => void finishVoice(voiceModeRef.current === "hands_free" ? "hands_free_send" : "transcribe")}
+          onSendAudioClip={() => void finishVoice("send")}
           transcribing={transcribing}
           onCancelTranscribe={() => transcribeAbortRef.current?.abort()}
           webSearch={webSearch}

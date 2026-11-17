@@ -11,6 +11,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/lib/theme";
 import { LocaleProvider } from "@/lib/i18n/client";
 import { AuthLifecycleProvider } from "@/components/auth/auth-provider";
+import { PwaManager } from "@/components/pwa-manager";
 import { BRAND, BRAND_ASSETS, BRAND_THEME } from "@/lib/brand";
 import { siteOrigin } from "@/lib/seo";
 
@@ -95,6 +96,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 shared onAuthStateChanged listener + backend session check) at
                 application startup on every page. */}
             <AuthLifecycleProvider>
+              <PwaManager />
               <a href="#main" className="skip-link">
                 Skip to content
               </a>

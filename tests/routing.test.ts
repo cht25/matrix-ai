@@ -30,6 +30,8 @@ describe("isPublic", () => {
     expect(isPublic("/scams/phishing")).toBe(true);
     expect(isPublic("/certificate/verify/abc")).toBe(true);
     expect(isPublic("/s/my-site")).toBe(true);
+    expect(isPublic("/offline")).toBe(true);
+    expect(isPublic("/api/ping")).toBe(true);
   });
 
   it("does not treat app routes as public", () => {
@@ -69,8 +71,10 @@ describe("middleware static-asset exclusions", () => {
   const literal = source.match(/matcher:\s*\[\s*("(?:[^"\\]|\\.)*")/)?.[1] ?? '""';
   const matcher = new RegExp(`^${JSON.parse(literal)}$`);
 
-  it("excludes .html files (Google site verification) from auth redirects", () => {
+  it("excludes .html files (Google site verification) and sw.js from auth redirects", () => {
     expect(matcher.test("/google2c32b414ac39f412.html")).toBe(false);
+    expect(matcher.test("/sw.js")).toBe(false);
+    expect(matcher.test("/site.webmanifest")).toBe(false);
   });
 
   it("still guards page routes", () => {

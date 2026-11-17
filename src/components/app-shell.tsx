@@ -26,27 +26,12 @@ import { UserAvatar } from "@/components/avatar";
 import { MobileNav } from "@/components/mobile-nav";
 import { groupConversations, groupConversationsUtc, groupLabel, formatTime, type SidebarConversation } from "@/lib/chat-utils";
 import { useHydrated } from "@/lib/client/use-hydrated";
+import { useConnectivity } from "@/lib/client/connectivity";
 import { useI18n } from "@/lib/i18n/client";
 import { cn } from "@/lib/utils";
 import { PRIMARY_NAV, navigationActive } from "@/lib/navigation";
 
 type ShellUser = { email: string; fullName: string; avatarUrl?: string };
-
-function useOnline() {
-  const [online, setOnline] = useState(true);
-  useEffect(() => {
-    setOnline(navigator.onLine);
-    const on = () => setOnline(true);
-    const off = () => setOnline(false);
-    window.addEventListener("online", on);
-    window.addEventListener("offline", off);
-    return () => {
-      window.removeEventListener("online", on);
-      window.removeEventListener("offline", off);
-    };
-  }, []);
-  return online;
-}
 
 function isImmersivePath(pathname: string) {
   return pathname === "/chat" || pathname.startsWith("/chat/") || pathname.startsWith("/temporary-chat") || pathname.startsWith("/projects/");
@@ -412,7 +397,7 @@ export function AppShell({
   children: ReactNode;
 }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const online = useOnline();
+  const { online, reconnecting, retry } = useConnectivity();
   const pathname = usePathname();
   const { t } = useI18n();
   const immersive = isImmersivePath(pathname);
@@ -466,10 +451,24 @@ export function AppShell({
 
         {!online ? (
           <div
-            className="fixed inset-x-0 top-[calc(var(--app-header)+env(safe-area-inset-top))] z-[60] border-b border-danger/40 bg-danger-soft px-4 py-2 text-center text-sm font-medium text-danger lg:top-0"
+            className="fixed inset-x-0 top-[calc(var(--app-header)+env(safe-area-inset-top))] z-[60] flex flex-wrap items-center justify-center gap-3 border-b border-danger/40 bg-danger-soft px-4 py-2 text-center text-sm font-medium text-danger lg:top-0"
             role="status"
           >
-            You&apos;re offline — reconnecting…
+            <span>{reconnecting ? "Checking connection…" : "You're offline — server unavailable."}</span>
+            <button
+              type="button"
+              onClick={() => void retry()}
+              disabled={reconnecting}
+              className="rounded-md border border-danger/40 bg-surface px-2.5 py-0.5 text-xs font-semibold text-ink hover:bg-surface-2 disabled:opacity-50"
+            >
+              {reconnecting ? "Checking…" : "Retry"}
+            </button>
+            <Link
+              href="/offline"
+              className="text-xs font-semibold underline underline-offset-2 hover:opacity-80"
+            >
+              Offline chats
+            </Link>
           </div>
         ) : null}
 

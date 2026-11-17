@@ -54,12 +54,64 @@ try {
     }
     checks.push(`${viewport.name}: ${configured ? "login inputs and registration navigation" : "honest unconfigured-auth state and retry control"}, responsive layout`);
   }
+
+  // Real browser check for /offline route + offline toggle recovery
+  currentViewport = 'offline';
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`${base}/offline`, { waitUntil: 'networkidle' });
+  assert.match(await page.locator('body').innerText(), /Cached conversations on this device/);
+  await context.setOffline(true);
+  await page.getByRole('button', { name: /Retry/i }).click();
+  await page.waitForTimeout(350);
+  assert.match(await page.locator('body').innerText(), /You're offline right now/);
+  await context.setOffline(false);
+  await page.getByRole('button', { name: /Retry/i }).click();
+  await page.waitForTimeout(450);
+  assert.match(await page.locator('body').innerText(), /You are back online/);
+  checks.push('/offline: verified real offline state toggle and /api/ping recovery in browser');
+
   await context.close();
   for (const [path, status] of [['/api/models', 401], ['/api/devices', 401]]) {
     const response = await fetch(`${base}${path}`, { redirect: 'manual' });
     assert.equal(response.status, status, `${path} must reject unauthenticated requests`);
     checks.push(`${path}: real HTTP ${status}`);
   }
+  const modelTestSameOrigin = await fetch(`${base}/api/models/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: base },
+    body: JSON.stringify({ model_key: 'glm-4.7-flash' }),
+  });
+  assert.equal(modelTestSameOrigin.status, 401, 'Same-origin /api/models/test must require authentication');
+  checks.push('/api/models/test (same-origin): real HTTP 401');
+
+  const modelTestCrossOrigin = await fetch(`${base}/api/models/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://attacker.example' },
+    body: JSON.stringify({ model_key: 'glm-4.7-flash' }),
+  });
+  assert.equal(modelTestCrossOrigin.status, 403, '/api/models/test must reject cross-origin CSRF');
+  checks.push('/api/models/test (cross-origin): real HTTP 403');
+
+  const ping = await fetch(`${base}/api/ping`);
+  assert.equal(ping.status, 200);
+  const pingBody = await ping.json();
+  assert.equal(pingBody.ok, true);
+  assert.equal(pingBody.version, '1.2.0');
+  checks.push(`/api/ping: HTTP 200 v${pingBody.version}`);
+
+  const sw = await fetch(`${base}/sw.js`);
+  assert.equal(sw.status, 200);
+  const swText = await sw.text();
+  assert.match(swText, /\/offline/);
+  checks.push('/sw.js: HTTP 200 with offline cache shell');
+
+  const appVer = await fetch(`${base}/api/app/version?platform=android&current_version=1.0.0&build=1`);
+  assert.equal(appVer.status, 200);
+  const appVerBody = await appVer.json();
+  assert.equal(appVerBody.latest_version, '1.2.0');
+  assert.equal(appVerBody.update_available, true);
+  checks.push(`/api/app/version: HTTP 200 latest=v${appVerBody.latest_version}`);
+
   const csrf = await fetch(`${base}/api/auth/session`, { method: 'DELETE', headers: { Origin: 'https://attacker.example' } });
   assert.equal(csrf.status, 403);
   checks.push('cross-origin session deletion: real HTTP 403');

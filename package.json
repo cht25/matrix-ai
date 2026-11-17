@@ -1,6 +1,6 @@
 {
   "name": "qorvyna",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "private": true,
   "description": "QORVYNA — one intelligence for AI, agents, connected devices, automation, cloud hosting and developer tools. Next.js + Firebase (Auth, Firestore). Operated by THAMJJ13.TOP White Hat Team.",
   "scripts": {

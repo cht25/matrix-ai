@@ -4,11 +4,17 @@ import { adminDb, nowTs } from "@/lib/firebase/admin";
 import { getSessionUser } from "@/lib/firebase/session";
 import { isCloudinaryConfigured } from "@/lib/env";
 import { isOwnedChatAudioPath, matchesAudioContainer } from "@/lib/ai/audio";
+import { cloudflareCredentials } from "@/lib/ai/cloudflare";
 import { AIProviderError, logProviderFailure, providerPublicCode, providerErrorFromResponse } from "@/lib/ai/provider-error";
 import { deletePrivateAudio, downloadPrivateAudio, uploadPrivateAudio } from "@/lib/server/cloudinary";
 import { mutationCsrfResponse } from "@/lib/server/request-security";
 import { cleanupStaleVoiceDrafts } from "@/lib/server/voice-cleanup";
-import { normalizeDetectedLanguage, whisperLanguageHint } from "@/lib/voice-input";
+import {
+  isLikelyWhisperHallucination,
+  normalizeDetectedLanguage,
+  whisperLanguageHint,
+  type WhisperSegmentLike,
+} from "@/lib/voice-input";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +28,7 @@ const ALLOWED_AUDIO_TYPES = new Set([
 
 function providerStatus(error: unknown): number {
   if (error instanceof AIProviderError) {
+    if (error.type === "empty_response") return 422;
     if (error.type === "authentication") return 503;
     if (error.type === "timeout") return 504;
     if (error.type === "invalid_request") return 400;
@@ -35,6 +42,13 @@ function keyPresent(v: string | undefined): string {
   return s && !s.endsWith("...") && !s.startsWith("YOUR-") && !s.startsWith("replace-with") ? s : "";
 }
 
+type Transcription = {
+  transcript: string;
+  model: string;
+  provider: string;
+  usage: Record<string, unknown>;
+};
+
 async function transcribeViaOpenAICompatible(opts: {
   baseUrl: string;
   apiKey: string;
@@ -46,12 +60,10 @@ async function transcribeViaOpenAICompatible(opts: {
   /** ISO-639-1 hint; empty = let the model detect the language. */
   language?: string;
   signal?: AbortSignal;
-}): Promise<{ transcript: string; model: string; provider: string; usage: Record<string, unknown> }> {
+}): Promise<Transcription> {
   const fd = new FormData();
   fd.append("file", new Blob([new Uint8Array(opts.bytes)], { type: opts.mimeType }), opts.filename);
   fd.append("model", opts.model);
-  // Without a hint Whisper detects the spoken language (including
-  // code-switching). A hint is sent only when the user chose a language.
   if (opts.language) fd.append("language", opts.language);
   fd.append("response_format", "verbose_json");
   const res = await fetch(`${opts.baseUrl.replace(/\/+$/, "")}/audio/transcriptions`, {
@@ -64,12 +76,78 @@ async function transcribeViaOpenAICompatible(opts: {
     const detail = await res.text().catch(() => "");
     throw providerErrorFromResponse(opts.providerLabel, opts.model, res, detail);
   }
-  const data = (await res.json()) as { text?: string; language?: string };
+  const data = (await res.json()) as {
+    text?: string;
+    language?: string;
+    segments?: WhisperSegmentLike[];
+  };
   const transcript = typeof data.text === "string" ? data.text.trim() : "";
-  if (!transcript) {
-    throw new AIProviderError({ provider: opts.providerLabel, model: opts.model, type: "empty_response", detail: "Empty transcription result" });
+  if (!transcript || isLikelyWhisperHallucination(transcript, data.segments)) {
+    throw new AIProviderError({
+      provider: opts.providerLabel,
+      model: opts.model,
+      type: "empty_response",
+      detail: "No clear speech detected",
+    });
   }
-  return { transcript, model: opts.model, provider: opts.providerLabel, usage: { detected_language: normalizeDetectedLanguage(data.language) ?? (opts.language || null) } };
+  return {
+    transcript,
+    model: opts.model,
+    provider: opts.providerLabel,
+    usage: { detected_language: normalizeDetectedLanguage(data.language) ?? (opts.language || null) },
+  };
+}
+
+async function transcribeViaCloudflareWhisper(opts: {
+  accountId: string;
+  apiToken: string;
+  model: string;
+  bytes: Buffer;
+  language?: string;
+  signal?: AbortSignal;
+}): Promise<Transcription> {
+  const endpoint = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(opts.accountId)}/ai/run/${opts.model}`;
+  const payload: Record<string, unknown> = {
+    audio: opts.bytes.toString("base64"),
+  };
+  if (opts.language) payload.language = opts.language;
+
+  const res = await fetch(endpoint, {
+    method: "POST",
+    redirect: "error",
+    headers: {
+      Authorization: `Bearer ${opts.apiToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+    signal: opts.signal ?? AbortSignal.timeout(60_000),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw providerErrorFromResponse("Cloudflare", opts.model, res, detail);
+  }
+  const raw = (await res.json()) as {
+    result?: { text?: string; transcription_info?: { language?: string }; segments?: WhisperSegmentLike[] };
+    text?: string;
+  };
+  const body = raw.result ?? raw;
+  const transcript = typeof body.text === "string" ? body.text.trim() : "";
+  const segments = raw.result?.segments;
+  if (!transcript || isLikelyWhisperHallucination(transcript, segments)) {
+    throw new AIProviderError({
+      provider: "Cloudflare",
+      model: opts.model,
+      type: "empty_response",
+      detail: "No clear speech detected",
+    });
+  }
+  const detectedRaw = raw.result?.transcription_info?.language;
+  return {
+    transcript,
+    model: opts.model,
+    provider: "Cloudflare",
+    usage: { detected_language: normalizeDetectedLanguage(detectedRaw) ?? (opts.language || null) },
+  };
 }
 
 export async function POST(req: NextRequest) {
@@ -80,17 +158,12 @@ export async function POST(req: NextRequest) {
 
   const groqKey = keyPresent(process.env.GROQ_API_KEY);
   const openaiKey = keyPresent(process.env.OPENAI_API_KEY);
-  // Speech-to-text is a speech service (Whisper), separate from the language
-  // model. The transcript it returns is then sent to GPT OSS 120B as text.
-  const hasProvider = Boolean(groqKey || openaiKey);
+  const cfCreds = cloudflareCredentials();
+  const hasProvider = Boolean(groqKey || openaiKey || cfCreds);
   if (!hasProvider) return NextResponse.json({ error: "VOICE_TRANSCRIPTION_NOT_CONFIGURED" }, { status: 503 });
 
   const form = await req.formData().catch(() => null);
   const languageHint = whisperLanguageHint(typeof form?.get("language") === "string" ? String(form.get("language")) : "");
-  // Dictation (composer voice input) only needs the words. The recording is
-  // kept as a private, playable voice message when storage is configured and
-  // the client asked for it; otherwise it is transcribed and discarded.
-  // Previously a deployment without Cloudinary could not use voice at all.
   const wantsStorage = String(form?.get("store") ?? "1") !== "0";
   const storageReady = isCloudinaryConfigured();
   const persist = wantsStorage && storageReady;
@@ -157,19 +230,69 @@ export async function POST(req: NextRequest) {
   let usedModel = "whisper-large-v3-turbo";
 
   try {
-    // Every configured speech provider is tried in order. One provider being
-    // rate-limited or rejecting a container must not fail voice input while
-    // another configured provider can transcribe the same audio.
-    type Transcription = { transcript: string; model: string; provider: string; usage: Record<string, unknown> };
     const attempts: Array<{ model: string; run: () => Promise<Transcription> }> = [];
     if (groqKey) {
       const model = process.env.GROQ_AUDIO_MODEL?.trim() || "whisper-large-v3-turbo";
-      attempts.push({ model, run: () => transcribeViaOpenAICompatible({ baseUrl: "https://api.groq.com/openai/v1", apiKey: groqKey, providerLabel: "Groq", model, bytes, filename, mimeType, language: languageHint, signal: req.signal }) });
+      attempts.push({
+        model,
+        run: () => transcribeViaOpenAICompatible({
+          baseUrl: "https://api.groq.com/openai/v1",
+          apiKey: groqKey,
+          providerLabel: "Groq",
+          model,
+          bytes,
+          filename,
+          mimeType,
+          language: languageHint,
+          signal: req.signal,
+        }),
+      });
     }
     if (openaiKey) {
       const model = process.env.OPENAI_AUDIO_MODEL?.trim() || "whisper-1";
-      attempts.push({ model, run: () => transcribeViaOpenAICompatible({ baseUrl: process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1", apiKey: openaiKey, providerLabel: "OpenAI", model, bytes, filename, mimeType, language: languageHint, signal: req.signal }) });
+      attempts.push({
+        model,
+        run: () => transcribeViaOpenAICompatible({
+          baseUrl: process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1",
+          apiKey: openaiKey,
+          providerLabel: "OpenAI",
+          model,
+          bytes,
+          filename,
+          mimeType,
+          language: languageHint,
+          signal: req.signal,
+        }),
+      });
     }
+    if (cfCreds) {
+      const cfModel = process.env.CLOUDFLARE_AUDIO_MODEL?.trim() || "@cf/openai/whisper-large-v3-turbo";
+      attempts.push({
+        model: cfModel,
+        run: () => transcribeViaCloudflareWhisper({
+          accountId: cfCreds.accountId,
+          apiToken: cfCreds.apiToken,
+          model: cfModel,
+          bytes,
+          language: languageHint,
+          signal: req.signal,
+        }),
+      });
+      if (cfModel !== "@cf/openai/whisper") {
+        attempts.push({
+          model: "@cf/openai/whisper",
+          run: () => transcribeViaCloudflareWhisper({
+            accountId: cfCreds.accountId,
+            apiToken: cfCreds.apiToken,
+            model: "@cf/openai/whisper",
+            bytes,
+            language: languageHint,
+            signal: req.signal,
+          }),
+        });
+      }
+    }
+
     let out: Transcription | null = null;
     let lastError: unknown = null;
     for (const attempt of attempts) {
@@ -220,8 +343,13 @@ export async function POST(req: NextRequest) {
       status: "error",
       created_at: nowTs(),
     }).catch(() => {});
+    const isEmpty = error instanceof AIProviderError && error.type === "empty_response";
     return NextResponse.json(
-      { error: providerPublicCode(error), audio_asset_id: audioRef ? id : null, playback_url: audioRef ? `/api/voice/audio/${id}` : null },
+      {
+        error: isEmpty ? "NO_SPEECH_DETECTED" : providerPublicCode(error),
+        audio_asset_id: audioRef ? id : null,
+        playback_url: audioRef ? `/api/voice/audio/${id}` : null,
+      },
       { status: providerStatus(error), headers: { "Cache-Control": "private, no-store" } },
     );
   }

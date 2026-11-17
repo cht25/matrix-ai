@@ -12,6 +12,7 @@ import { nowTs } from "@/lib/firebase/admin";
 import { chatOriginUrl, siteOrigin } from "@/lib/seo";
 import { RpcError } from "@/lib/server/errors";
 import { brandEnv } from "@/lib/brand-env";
+import { APP_BUILD_NUMBER, APP_VERSION } from "@/lib/version";
 
 const COLLECTION = "system_settings";
 const DOC_ID = "app_releases";
@@ -54,8 +55,8 @@ export const DEFAULT_ANDROID_APK_URL =
   "https://github.com/cht25/matrix-ai/releases/latest/download/matrix-android.apk";
 
 export const SHIPPED_APP_RELEASE: AppReleaseRecord = {
-  version: "1.1.0",
-  build_number: 2,
+  version: APP_VERSION,
+  build_number: APP_BUILD_NUMBER,
   min_supported_version: "1.0.0",
   force_update: false,
   // QORVYNA_ANDROID_APK_URL / _SHA256 (the MATRIX_ names are still honoured).
@@ -63,9 +64,9 @@ export const SHIPPED_APP_RELEASE: AppReleaseRecord = {
   sha256: brandEnv("ANDROID_APK_SHA256")?.trim() || "",
   release_notes:
     "• Chat, Agent, website generation and coding from one workspace\n" +
-    "• Compact live step timeline\n" +
-    "• Over-the-air phone update checker & direct qorvyna.thamjj13.top/chat sync",
-  published_at: "2026-11-12T00:00:00.000Z",
+    "• Multi-model AI pool (Cloudflare GLM 4.7 Flash + GPT OSS 120B)\n" +
+    "• Reliable multilingual Voice STT, real offline cache & OTA sync",
+  published_at: "2026-11-16T00:00:00.000Z",
 };
 
 const SEMVER_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;

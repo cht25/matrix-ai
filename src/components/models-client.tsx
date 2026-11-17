@@ -1,13 +1,14 @@
 "use client";
 
-// Model settings: every registered model with its real configuration and
-// current availability, and the switches for the user's active pool.
+// Model settings: every registered model with its real configuration,
+// current availability, diagnostic state, and live connectivity probe.
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Check, RefreshCw, Sparkles, X } from "lucide-react";
-import { Alert, Badge, Button, Card } from "@/components/ui";
+import { Activity, Check, RefreshCw, Sparkles, X } from "lucide-react";
+import { Alert, Badge, Button, Card, Spinner } from "@/components/ui";
+import { LocalDateTimeText } from "@/components/local-time";
 import { cn } from "@/lib/utils";
-import { onModelPoolChange, saveModelPool } from "@/components/model-picker";
+import { onModelPoolChange, saveModelPool, testModelConnection, visualStateForModel } from "@/components/model-picker";
 import { STRENGTH_LABEL, type ModelStatus, type PoolPreference } from "@/lib/ai/models/types";
 
 type DefaultModel = { health: "online" | "unavailable" | "not-configured" | "unchecked"; error: string | null; checked_at: string };
@@ -29,6 +30,8 @@ export function ModelsClient({ showChatLink = true }: { showChatLink?: boolean }
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState("");
+  const [testingKey, setTestingKey] = useState("");
+  const [testFeedback, setTestFeedback] = useState<Record<string, { ok: boolean; text: string }>>({});
   const [error, setError] = useState("");
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -68,6 +71,38 @@ export function ModelsClient({ showChatLink = true }: { showChatLink?: boolean }
     void apply(next.length ? { auto: false, enabled: next } : { auto: true, enabled: [] }, key);
   }
 
+  async function runConnectionTest(model: ModelStatus) {
+    if (testingKey) return;
+    setTestingKey(model.key);
+    setError("");
+    try {
+      const res = await testModelConnection(model.key);
+      if (res.model) {
+        setData((current) =>
+          current
+            ? { ...current, models: current.models.map((item) => (item.key === res.model!.key ? res.model! : item)) }
+            : current,
+        );
+      }
+      setTestFeedback((current) => ({
+        ...current,
+        [model.key]: {
+          ok: res.ok,
+          text: res.ok
+            ? `Connection verified in ${res.latency_ms}ms (${res.status_label}).`
+            : `${res.status_label}: ${res.detail}`,
+        },
+      }));
+    } catch {
+      setTestFeedback((current) => ({
+        ...current,
+        [model.key]: { ok: false, text: "Connectivity check failed to run." },
+      }));
+    } finally {
+      setTestingKey("");
+    }
+  }
+
   const health = data?.model.health;
   return <div className="mx-auto max-w-3xl space-y-6">
     <header className="flex flex-wrap items-start justify-between gap-4">
@@ -76,7 +111,7 @@ export function ModelsClient({ showChatLink = true }: { showChatLink?: boolean }
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">Models</h1>
         <p className="mt-2 max-w-2xl text-sm text-ink-2">Choose which models work on your requests in Chat and Agent. When more than one is on, each takes a different part of the job and you get one combined answer.</p>
       </div>
-      <Button variant="outline" onClick={() => void load()} disabled={loading}><RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Check again</Button>
+      <Button variant="outline" onClick={() => void load()} disabled={loading}><RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Refresh status</Button>
     </header>
     <div aria-live="polite" className="space-y-2 empty:hidden">
       {error ? <Alert tone="danger">{error}</Alert> : null}
@@ -102,6 +137,9 @@ export function ModelsClient({ showChatLink = true }: { showChatLink?: boolean }
         {data.models.map((model) => {
           const usable = model.availability === "available";
           const on = usable && (pool.auto || pool.enabled.includes(model.key));
+          const isTesting = testingKey === model.key;
+          const visual = visualStateForModel(model, isTesting);
+          const feedback = testFeedback[model.key];
           return <li key={model.key}>
             <Card className="space-y-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -109,8 +147,26 @@ export function ModelsClient({ showChatLink = true }: { showChatLink?: boolean }
                   <h2 className="flex flex-wrap items-center gap-2 text-lg font-semibold">{model.label}{model.is_default ? <Badge>Default</Badge> : null}</h2>
                   <p className="mt-0.5 text-sm text-ink-2">{model.summary}</p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Badge className={usable ? "!border-success/40 !text-success" : "!border-warning/40 !text-warning"}>{usable ? "Available" : "Not available"}</Badge>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge className={cn(
+                    isTesting ? "!border-accent/40 !text-accent"
+                      : usable ? "!border-success/40 !text-success"
+                      : model.status_code === "invalid_credentials" || model.status_code === "permission_denied" ? "!border-danger/40 !text-danger"
+                      : "!border-warning/40 !text-warning",
+                  )}>
+                    <span className={cn("mr-1.5 inline-block h-1.5 w-1.5 rounded-full", visual.dot)} aria-hidden="true" />
+                    {visual.label}
+                  </Badge>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void runConnectionTest(model)}
+                    disabled={Boolean(testingKey)}
+                    className="!min-h-8 !px-2.5 !py-1 text-xs"
+                  >
+                    {isTesting ? <Spinner /> : <Activity size={13} />}
+                    {isTesting ? "Testing…" : "Test connection"}
+                  </Button>
                   <button
                     type="button" role="switch" aria-checked={on} aria-label={`Use ${model.label}`} disabled={!usable || saving === model.key}
                     onClick={() => toggle(model.key)}
@@ -120,7 +176,17 @@ export function ModelsClient({ showChatLink = true }: { showChatLink?: boolean }
                   </button>
                 </div>
               </div>
-              {!usable || model.reason !== "Ready" ? <p className="text-sm text-warning">{model.reason}</p> : null}
+              {feedback ? (
+                <p className={cn("text-xs font-medium", feedback.ok ? "text-success" : "text-danger")} role="status">
+                  {feedback.text}
+                </p>
+              ) : null}
+              {!usable || (model.reason && model.reason !== "Ready") ? (
+                <p className="text-sm text-warning">
+                  {model.reason}
+                  {model.diagnostic_hint ? <span className="block text-xs text-ink-3">{model.diagnostic_hint}</span> : null}
+                </p>
+              ) : null}
               <div className="flex flex-wrap gap-1.5">{model.strengths.map((strength) => <Badge key={strength}>{STRENGTH_LABEL[strength]}</Badge>)}</div>
               <ul className="flex flex-wrap gap-x-4 gap-y-1">
                 <Capability on={model.streaming} label="Streaming" />
@@ -133,12 +199,23 @@ export function ModelsClient({ showChatLink = true }: { showChatLink?: boolean }
                 <div className="min-w-0"><dt className="inline">Model ID: </dt><dd className="inline break-all font-mono text-ink-2">{model.model_id}</dd></div>
                 <div><dt className="inline">Context window: </dt><dd className="inline text-ink-2">{model.context_tokens.toLocaleString("en-US")} tokens</dd></div>
                 <div><dt className="inline">Longest reply: </dt><dd className="inline text-ink-2">{model.max_output_tokens.toLocaleString("en-US")} tokens</dd></div>
+                <div><dt className="inline">Supported modes: </dt><dd className="inline text-ink-2">{model.supported_modes?.join(", ") || "chat, agent"}</dd></div>
+                <div>
+                  <dt className="inline">Last verified: </dt>
+                  <dd className="inline text-ink-2">{model.last_tested_at ? <LocalDateTimeText value={model.last_tested_at} /> : "Not tested yet"}</dd>
+                </div>
+                {model.last_error ? (
+                  <div className="sm:col-span-2">
+                    <dt className="inline">Last error: </dt>
+                    <dd className="inline text-danger">{model.last_error.code}{model.last_error.status ? ` (${model.last_error.status})` : ""} — {model.last_error.message}</dd>
+                  </div>
+                ) : null}
               </dl>
             </Card>
           </li>;
         })}
       </ul>
-      <p className="text-xs text-ink-3">Availability is read from the provider&apos;s live model list for this server&apos;s account. A model that isn&apos;t listed there is never used.</p>
+      <p className="text-xs text-ink-3">Availability is checked against the provider&apos;s live model list and server connectivity tests. Temporary upstream errors do not permanently disable models.</p>
       {showChatLink ? <Link href="/chat" className="btn btn-primary">Open chat</Link> : null}
     </> : null}
   </div>;

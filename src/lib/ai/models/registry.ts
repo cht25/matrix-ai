@@ -45,9 +45,13 @@ export type ModelSpec = {
   streaming: boolean;
   toolCalling: boolean;
   structuredOutput: boolean;
+  /** Chat / Agent modes this model supports. */
+  supportedModes: readonly string[];
   /** Lower = preferred coordinator (plans, reviews, writes the final answer). */
   coordinatorRank: number;
 };
+
+const ALL_CHAT_MODES = ["general", "code", "study", "research", "health", "orchestrator", "agent"] as const;
 
 export const DEFAULT_MODEL_KEY = "gpt-oss-120b";
 
@@ -64,7 +68,7 @@ export const MODEL_REGISTRY: readonly ModelSpec[] = [
   {
     key: DEFAULT_MODEL_KEY, id: QORVYNA_MODEL_ID, label: QORVYNA_MODEL_LABEL, summary: "Strongest all-rounder for planning, code and careful answers.",
     provider: "groq", providerLabel: "Groq", publisher: QORVYNA_MODEL_PUBLISHER, contextTokens: 131_072, maxOutputTokens: 16_384, tpm: 30_000,
-    strengths: ["planning", "coding", "reasoning", "review", "writing"], reasoning: "effort", streaming: true, toolCalling: true, structuredOutput: true, coordinatorRank: 1,
+    strengths: ["planning", "coding", "reasoning", "review", "writing"], reasoning: "effort", streaming: true, toolCalling: true, structuredOutput: true, supportedModes: ALL_CHAT_MODES, coordinatorRank: 1,
   },
   {
     // Cloudflare Workers AI free tier — primary when CLOUDFLARE_ACCOUNT_ID +
@@ -72,27 +76,27 @@ export const MODEL_REGISTRY: readonly ModelSpec[] = [
     // the existing providers remain the automatic fallback).
     key: CLOUDFLARE_MODEL_KEY, id: CLOUDFLARE_MODEL_ID, label: "GLM 4.7 Flash", summary: "Cloudflare Workers AI free-tier model for fast chat, code and structured answers.",
     provider: "cloudflare", providerLabel: "Cloudflare", publisher: "Zhipu AI", contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 12_000,
-    strengths: ["fast", "coding", "writing", "reasoning"], reasoning: "none", streaming: true, toolCalling: true, structuredOutput: true, coordinatorRank: 0,
+    strengths: ["fast", "coding", "writing", "reasoning"], reasoning: "none", streaming: true, toolCalling: true, structuredOutput: true, supportedModes: ALL_CHAT_MODES, coordinatorRank: 0,
   },
   {
     key: "qwen3-32b", id: "qwen/qwen3-32b", label: "Qwen 3 32B", summary: "Step-by-step reasoning and code review.",
     provider: "groq", providerLabel: "Groq", publisher: "Alibaba Cloud", contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 12_000,
-    strengths: ["reasoning", "coding", "review"], reasoning: "format", streaming: true, toolCalling: true, structuredOutput: true, coordinatorRank: 3,
+    strengths: ["reasoning", "coding", "review"], reasoning: "format", streaming: true, toolCalling: true, structuredOutput: true, supportedModes: ALL_CHAT_MODES, coordinatorRank: 3,
   },
   {
     key: "llama-3.3-70b", id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", summary: "Clear writing, research summaries and second opinions.",
     provider: "groq", providerLabel: "Groq", publisher: "Meta", contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 12_000,
-    strengths: ["writing", "research", "review", "coding"], reasoning: "none", streaming: true, toolCalling: true, structuredOutput: true, coordinatorRank: 2,
+    strengths: ["writing", "research", "review", "coding"], reasoning: "none", streaming: true, toolCalling: true, structuredOutput: true, supportedModes: ALL_CHAT_MODES, coordinatorRank: 2,
   },
   {
     key: "gpt-oss-20b", id: "openai/gpt-oss-20b", label: "GPT OSS 20B", summary: "Quick drafts and small code tasks.",
     provider: "groq", providerLabel: "Groq", publisher: QORVYNA_MODEL_PUBLISHER, contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 12_000,
-    strengths: ["fast", "coding", "planning"], reasoning: "effort", streaming: true, toolCalling: true, structuredOutput: true, coordinatorRank: 4,
+    strengths: ["fast", "coding", "planning"], reasoning: "effort", streaming: true, toolCalling: true, structuredOutput: true, supportedModes: ALL_CHAT_MODES, coordinatorRank: 4,
   },
   {
     key: "llama-3.1-8b", id: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant", summary: "Very fast checks and short summaries.",
     provider: "groq", providerLabel: "Groq", publisher: "Meta", contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 6_000,
-    strengths: ["fast", "writing"], reasoning: "none", streaming: true, toolCalling: true, structuredOutput: true, coordinatorRank: 5,
+    strengths: ["fast", "writing"], reasoning: "none", streaming: true, toolCalling: true, structuredOutput: true, supportedModes: ALL_CHAT_MODES, coordinatorRank: 5,
   },
 ];
 

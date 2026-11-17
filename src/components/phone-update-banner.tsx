@@ -11,10 +11,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Download, RefreshCw, Smartphone, X } from "lucide-react";
+import { APP_BUILD_NUMBER, APP_VERSION } from "@/lib/version";
 
 const STORAGE_SEEN_KEY = "matrix:seen_app_release";
-const SHIPPED_CLIENT_VERSION = "1.1.0";
-const SHIPPED_CLIENT_BUILD = 2;
+const SHIPPED_CLIENT_VERSION = APP_VERSION;
+const SHIPPED_CLIENT_BUILD = APP_BUILD_NUMBER;
 
 type UpdateCheckPayload = {
   latest_version?: string;

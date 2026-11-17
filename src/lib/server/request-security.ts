@@ -62,7 +62,15 @@ export function extraAllowedOrigins(): string[] {
 export function allowedMutationOrigins(request: Request): string[] {
   const allowed = new Set<string>();
   try {
-    allowed.add(new URL(request.url).origin);
+    const reqUrl = new URL(request.url);
+    allowed.add(reqUrl.origin);
+    // When bound to wildcard 0.0.0.0 locally, Node/Next reports 0.0.0.0 in
+    // request.url while browsers address loopback (localhost / 127.0.0.1).
+    if (reqUrl.hostname === "0.0.0.0") {
+      const portSuffix = reqUrl.port ? `:${reqUrl.port}` : "";
+      allowed.add(`${reqUrl.protocol}//127.0.0.1${portSuffix}`);
+      allowed.add(`${reqUrl.protocol}//localhost${portSuffix}`);
+    }
   } catch {
     /* unparseable request URL: fall through to configuration only */
   }

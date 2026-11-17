@@ -1,22 +1,21 @@
 // =============================================================================
 // QORVYNA voice input — shared, framework-free helpers
 //
-// Voice input lives inside the chat composer (all modes, including Agent):
+// Default flow (Mode A — Voice-to-Text Dictation, Chat & Agent):
+//   mic → live waveform + timer + optional preview → stop → transcript appears
+//   in the composer as editable text → the user reviews/edits → Send.
 //
-//   mic → live waveform + timer → stop → transcript appears in the composer
-//   as editable text → the user reviews/edits → Send.
+// Opt-in flow (Mode B — Hands-free Voice Conversation):
+//   mic → VAD silence end-of-turn → transcribe → auto-send as text → AI reply
+//   → optional spoken read-aloud.
 //
 // Two engines produce the transcript:
-//   • browser  — the Web Speech API (`SpeechRecognition`), where the browser
-//                has it and a specific language is selected. Instant, free,
-//                shows words while the user is still talking.
-//   • server   — the recorded audio is sent to /api/voice/transcribe
-//                (Whisper via Groq → OpenAI). Detects the spoken
-//                language automatically and works on every browser that can
-//                record audio (Safari iOS, Firefox, Android WebViews).
+//   • browser  — Web Speech API (`SpeechRecognition`) where supported &
+//                specific language selected. Instant, free, live preview.
+//   • server   — recorded audio sent to /api/voice/transcribe
+//                (Groq Whisper → OpenAI Whisper → Cloudflare Workers AI Whisper).
 //
-// `chooseVoiceEngine` decides; whichever engine fails, the other is the
-// fallback. Pure module: unit tested without a DOM.
+// Pure module: unit tested without a DOM.
 // =============================================================================
 
 export type VoiceLanguage = {
@@ -29,6 +28,10 @@ export type VoiceLanguage = {
   whisper: string;
   rtl?: boolean;
 };
+
+export type VoiceInputMode = "dictate" | "hands_free";
+
+export const VOICE_MODE_STORAGE_KEY = "matrix.voice.mode";
 
 export const VOICE_LANGUAGES: VoiceLanguage[] = [
   { code: "auto", label: "Auto-detect", native: "Auto", whisper: "" },
@@ -60,6 +63,10 @@ export const VOICE_LANGUAGE_STORAGE_KEY = "matrix.voice.language";
 
 export function voiceLanguage(code: string | null | undefined): VoiceLanguage {
   return VOICE_LANGUAGES.find((language) => language.code === code) ?? VOICE_LANGUAGES[0];
+}
+
+export function normalizeVoiceInputMode(value: unknown): VoiceInputMode {
+  return value === "hands_free" ? "hands_free" : "dictate";
 }
 
 /**
@@ -117,15 +124,6 @@ export type VoiceEnvironment = {
 
 /**
  * Which engine captures this recording?
- *
- *  • Auto-detect needs the server: the Web Speech API cannot detect a
- *    language, it only transcribes the one it is told to expect.
- *  • On phones the recogniser takes the microphone exclusively, so recording
- *    (waveform + server fallback) and recognising at once is unreliable.
- *  • No recorder at all (old WebViews) → browser recognition is all there is.
- *
- * `live` means browser recognition runs alongside the recorder to show words
- * as they are spoken; the recording is still kept as the fallback.
  */
 export function chooseVoiceEngine(language: string, env: VoiceEnvironment): { engine: VoiceEngine | null; live: boolean; reason: string } {
   if (!env.mediaRecorder && !env.speechRecognition) return { engine: null, live: false, reason: "This browser can neither record audio nor recognise speech." };
@@ -151,6 +149,103 @@ export function formatClock(totalSeconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+export const MIN_SPEECH_RMS_LEVEL = 6;
+
+/**
+ * Checks recorded meter energy (0–100 scale) so pure silence or muted
+ * microphones never hit Whisper and generate phantom captions.
+ * When `levels` has fewer than 3 samples (e.g. AudioContext blocked/unavailable),
+ * trusts `durationMs` alone so recording still works on strict devices.
+ */
+export function hasMeaningfulSpeechAudio(
+  levels: number[],
+  durationMs: number,
+  threshold = MIN_SPEECH_RMS_LEVEL,
+): { ok: boolean; peak: number; avg: number; activeRatio: number } {
+  if (durationMs < 400) return { ok: false, peak: 0, avg: 0, activeRatio: 0 };
+  if (levels.length < 3) return { ok: true, peak: 100, avg: 50, activeRatio: 1 };
+  let peak = 0;
+  let sum = 0;
+  let active = 0;
+  for (const level of levels) {
+    if (level > peak) peak = level;
+    sum += level;
+    if (level >= threshold) active += 1;
+  }
+  const avg = sum / levels.length;
+  const activeRatio = active / levels.length;
+  return {
+    ok: peak >= threshold && (active >= 2 || activeRatio >= 0.06),
+    peak,
+    avg,
+    activeRatio,
+  };
+}
+
+export type WhisperSegmentLike = {
+  no_speech_prob?: number;
+  avg_logprob?: number;
+  text?: string;
+};
+
+const STRICT_SILENCE_HALLUCINATIONS = new Set([
+  "thank you for watching",
+  "thanks for watching",
+  "subtitles by",
+  "captions by",
+  "transcribed by",
+  "amara org",
+  "mbc 뉴스",
+  "mbc news",
+  "please subscribe",
+  "like and subscribe",
+]);
+
+const NO_SPEECH_SOFT_HALLUCINATIONS = new Set([
+  "thank you",
+  "thanks",
+  "you",
+  "bye",
+  "bye bye",
+  "mbc",
+  "subtitle",
+  "subtitles",
+]);
+
+/**
+ * Rejects empty/punctuation-only outputs and Whisper silence hallucinations.
+ * Preserves legitimate short utterances unless `segments` shows high
+ * `no_speech_prob` (> 0.85) or the output is a known YouTube caption phantom.
+ */
+export function isLikelyWhisperHallucination(
+  text: string,
+  segments?: WhisperSegmentLike[] | null,
+): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+  // Punctuation / music symbol only (no letters or digits in any script).
+  const stripped = trimmed.replace(/[\s\p{P}\p{S}]/gu, "");
+  if (!stripped) return true;
+
+  const normalized = trimmed
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (STRICT_SILENCE_HALLUCINATIONS.has(normalized)) return true;
+
+  if (Array.isArray(segments) && segments.length > 0) {
+    const withProb = segments.filter((seg) => typeof seg?.no_speech_prob === "number");
+    if (withProb.length > 0 && withProb.every((seg) => (seg.no_speech_prob ?? 0) > 0.85)) {
+      if (NO_SPEECH_SOFT_HALLUCINATIONS.has(normalized) || normalized.length <= 32) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 /** User-facing copy for capture/transcription failures. */
 export function voiceErrorMessage(code: string): string {
   switch (code) {
@@ -165,7 +260,9 @@ export function voiceErrorMessage(code: string): string {
       return "The microphone is in use by another app. Close it and try again.";
     case "no-speech":
     case "EMPTY_TRANSCRIPT":
-      return "No speech was detected. Speak a little closer to the microphone and try again.";
+    case "NO_SPEECH_DETECTED":
+    case "SILENT_RECORDING":
+      return "No clear speech was detected. Speak closer to the microphone and try again.";
     case "network":
       return "Speech recognition needs a connection. Check your network and try again.";
     case "language-not-supported":

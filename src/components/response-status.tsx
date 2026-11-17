@@ -15,6 +15,15 @@ import type { ChatMode } from "@/lib/ai/modes";
 import type { WorkingStep } from "@/lib/chat-messages";
 import { cn } from "@/lib/utils";
 import { QORVYNA_MODEL_LABEL, isQorvynaModelId } from "@/lib/ai/model";
+import { modelLabel } from "@/lib/ai/models/registry";
+
+function displayModelBadge(model?: string | null, provider?: string | null, tier?: "high" | "low" | null): string | null {
+  if (model) {
+    const label = isQorvynaModelId(model) ? QORVYNA_MODEL_LABEL : modelLabel(model);
+    return provider ? `${provider} · ${label}` : label;
+  }
+  return provider || (tier ? QORVYNA_MODEL_LABEL : null);
+}
 
 function useElapsed(active: boolean) {
   const [elapsed, setElapsed] = useState(0);
@@ -100,7 +109,7 @@ export function ResponseProgress({
   const activeStep = [...steps].reverse().find((s) => s.status === "running") ?? steps[steps.length - 1];
   const label = activeStep ? activeStep.label : statusCopy(mode, streamStatus);
   const hasSteps = steps.length > 0;
-  const badge = isQorvynaModelId(model) ? QORVYNA_MODEL_LABEL : provider || (tier ? QORVYNA_MODEL_LABEL : null);
+  const badge = displayModelBadge(model, provider, tier);
 
   return (
     <div className={cn("mb-2 max-w-xl", className)} role="status" aria-live="polite">
@@ -166,7 +175,7 @@ export function CompactStepsPill({
   const totalMs = typeof durationMs === "number" && durationMs > 0
     ? durationMs
     : steps.reduce((acc, s) => acc + (s.durationMs ?? 0), 0);
-  const badge = isQorvynaModelId(model) ? QORVYNA_MODEL_LABEL : provider || null;
+  const badge = displayModelBadge(model, provider, null);
 
   return (
     <div className={cn("mb-2 max-w-xl", className)}>

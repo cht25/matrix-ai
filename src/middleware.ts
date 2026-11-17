@@ -87,6 +87,6 @@ export const config = {
   // `.html` is excluded too: Google Search Console fetches its verification
   // file (public/google….html) logged out — a 307 to /login fails the check.
   matcher: [
-    "/((?!api/|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|webmanifest|json|txt|xml|html|woff2?)$).*)",
+    "/((?!api/|_next/static|_next/image|favicon.ico|sw\\.js|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|webmanifest|json|txt|xml|html|woff2?)$).*)",
   ],
 };

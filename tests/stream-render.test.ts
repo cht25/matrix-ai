@@ -53,17 +53,17 @@ describe("stable streaming render", () => {
     expect(source).toContain('key !== settledKey && "msg-in"');
   });
 
-  it("Stop sends a voice message; Transcribe only fills the composer", () => {
+  it("Default voice mode (Mode A) transcribes into the composer without auto-sending; Hands-free / Clip support sending", () => {
     const source = readFileSync("src/components/chat-client.tsx", "utf8");
     // One composer for every mode, Agent included.
     expect(source).toContain("<ChatComposer");
-    expect(source).toContain('onStopVoice={() => void finishVoice("send")}');
-    expect(source).toContain('onTranscribeVoice={() => void finishVoice("transcribe")}');
-    // Stop → the recording is sent as a voice message without another click.
+    expect(source).toContain('onStopVoice={() => void finishVoice(voiceModeRef.current === "hands_free" ? "hands_free_send" : "transcribe")}');
+    expect(source).toContain('onSendAudioClip={() => void finishVoice("send")}');
+    // Optional audio clip → the recording is sent as a voice message.
     const sendFn = source.slice(source.indexOf("async function sendVoiceMessage"), source.indexOf("function discardVoice"));
     expect(sendFn).toMatch(/await send\(undefined, transcript, \{ voice:/);
-    // Transcribe → editable text in the composer, and nothing is sent.
-    const dictate = source.slice(source.indexOf("async function transcribeToComposer"), source.indexOf("async function streamMessage"));
+    // Mode A default (transcribeToComposer) → editable text in the composer, and nothing is auto-sent.
+    const dictate = source.slice(source.indexOf("async function transcribeToComposer"), source.indexOf("async function transcribeAndSendTurn"));
     expect(dictate).toContain("placeTranscript(");
     expect(dictate).not.toMatch(/\bsend\(/);
   });
