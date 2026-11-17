@@ -201,6 +201,8 @@ export async function openPermissionSettings(id: PermissionId): Promise<boolean>
 // ---------------------------------------------------------------------------
 
 export type AssistantState = {
+  /** Where this state came from — the UI shows platform-specific controls only. */
+  platform: "android" | "desktop";
   /** Whether this device can run a wake word at all. */
   wakeWordSupported: boolean;
   wakeWordEnabled: boolean;
@@ -208,6 +210,10 @@ export type AssistantState = {
   overlaySupported: boolean;
   /** True when QORVYNA is currently the system's default assistant. */
   defaultAssistant: boolean;
+  /** Enrolled wake-phrase samples on this device (0 when none). */
+  wakeSamples: number;
+  /** Samples needed before "Hey QORVYNA" can match. */
+  wakeRequired: number;
   /** Human explanation — shown verbatim, never a promise of more. */
   note: string;
 };
@@ -235,6 +241,48 @@ export async function showAssistantPopup(): Promise<boolean> {
 export async function hideAssistantPopup(): Promise<boolean> {
   const result = await invoke<{ shown?: boolean }>("qorvyna_assistant_popup", { action: "hide" });
   return result?.shown === false;
+}
+
+/** Toggle the floating assistant and report whether it is now on screen. */
+export async function toggleAssistantPopup(): Promise<boolean> {
+  const result = await invoke<{ shown?: boolean }>("qorvyna_assistant_popup", { action: "toggle" });
+  return result?.shown === true;
+}
+
+/** Record one wake-phrase sample (Android; ~3 s). Resolves with fresh state. */
+export async function enrolWakeWordSample(): Promise<
+  (AssistantState & { detail?: string }) | null
+> {
+  return invoke<AssistantState & { detail?: string }>("qorvyna_wake_word_enrol");
+}
+
+/** Delete every enrolled wake-phrase sample and stop listening. */
+export async function clearWakeWordSamples(): Promise<
+  (AssistantState & { detail?: string }) | null
+> {
+  return invoke<AssistantState & { detail?: string }>("qorvyna_wake_word_clear");
+}
+
+/** Open the OS page for the overlay grant or the digital-assistant role. */
+export async function openAssistantSettings(
+  which: "overlay" | "assistant",
+): Promise<{ opened: boolean; detail?: string } | null> {
+  return invoke<{ opened: boolean; detail?: string }>("qorvyna_assistant_settings", { which });
+}
+
+/**
+ * True exactly once per wake-phrase hit / bubble tap. The flag is stored by the
+ * Android service and cleared on read, so one hit starts at most one turn.
+ */
+export async function takePendingAssistantTurn(): Promise<boolean> {
+  const pending = await invoke<boolean>("qorvyna_assistant_take_pending");
+  return pending === true;
+}
+
+/** Bring the full app forward and dismiss the floating assistant window. */
+export async function openAssistantMain(): Promise<boolean> {
+  const result = await invoke<{ opened?: boolean }>("qorvyna_assistant_open_main");
+  return result?.opened === true;
 }
 
 // ---------------------------------------------------------------------------

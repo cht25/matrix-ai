@@ -344,6 +344,34 @@ powershell -ExecutionPolicy Bypass -File .\build-windows.ps1 -SkipInstall
 `bundle.targets` in `tauri.conf.json` is `"all"`, but only Windows bundlers can
 run on Windows: `nsis` (setup `.exe`) and `msi`.
 
+### 6.1 The floating assistant (`Ctrl+Shift+Space`)
+
+The installed app has a real system assistant. On Windows it is a second Tauri
+window (`label = "assistant"`) created from the **same** bundled frontend
+(`index.html?window=assistant` → `src/native/assistant-popup.tsx`), so it shares
+the theme, the signed-in session and `/api/ai` with the main window. It is
+frameless, always on top, hidden from the taskbar, 400 × 540 and created lazily
+on the first hotkey press, then reused.
+
+How to check it after installing:
+
+1. Press `Ctrl+Shift+Space` while another app is focused — the popup appears
+   and immediately starts listening.
+2. Speak; the transcript is sent **once** (`input_source: "voice"`), the reply
+   is shown and read aloud.
+3. Press `Ctrl+Shift+Space` again (or `Esc` / the ✕) to hide it; the second
+   press opens a new turn without rebuilding the window.
+4. "Open app" / "Full app" brings the main window forward
+   (`qorvyna_assistant_open_main`).
+
+If the window cannot be created (headless session, broken GPU context) the
+hotkey falls back to the in-app Jarvis bar instead of doing nothing. The tray
+menu entry "Speak to QORVYNA" also still exists.
+
+The wake phrase ("Hey QORVYNA") is **Android-only** on purpose: a desktop build
+does not ship an always-listening model, so the assistant state reports
+`wakeWordSupported: false` there rather than pretending.
+
 ---
 
 ## 7. Android APK build
@@ -359,12 +387,24 @@ npm run android:init
 `scripts.android:init` = `tauri android init && node
 scripts/native/patch-android-manifest.mjs`.
 
-The second command is **not optional**: it merges the
-`QorvynaNotificationListenerService` declaration into the generated manifest at
+The second command is **not optional**: it copies the Kotlin sources from
+`src-tauri/android/app/src/main/kotlin/` into the generated app module and
+merges every declaration they need into
 `src-tauri/gen/android/app/src/main/AndroidManifest.xml`. That folder is
-generated, so the patch is a script (idempotent — running it twice leaves one
-declaration). Declaring the service grants no access; the user must enable it in
-Android settings.
+generated, so the patch is a script (idempotent — running it twice changes
+nothing). It adds:
+
+- `QorvynaNotificationListenerService` (notification forwarding);
+- `QorvynaAssistantService` with `android:foregroundServiceType="microphone"`
+  (floating bubble + on-device wake phrase);
+- `AssistActivity` with the `android.intent.action.ASSIST` intent filter, which
+  is what makes QORVYNA selectable as the digital assistant;
+- `SYSTEM_ALERT_WINDOW`, `RECORD_AUDIO`, `FOREGROUND_SERVICE`,
+  `FOREGROUND_SERVICE_MICROPHONE` and `POST_NOTIFICATIONS`.
+
+**Declaring a permission grants nothing.** Every one of these still has to be
+allowed by the user on the device, and the app reports the real state through
+`qorvyna_assistant_state` either way.
 
 ### 7.2 Build
 
@@ -387,6 +427,34 @@ powershell -ExecutionPolicy Bypass -File .\build-android-apk.ps1
 powershell -ExecutionPolicy Bypass -File .\build-android-apk.ps1 -Debug
 powershell -ExecutionPolicy Bypass -File .\build-android-apk.ps1 -Target aarch64
 ```
+
+### 7.3 Enabling the Android assistant on the device
+
+Open **Settings → Assistant** inside QORVYNA (voice settings → "System
+assistant"). The panel reads the state from the Kotlin service; nothing is
+assumed:
+
+1. **Floating bubble** — "Allow over other apps" opens the system page
+   (`Settings.ACTION_MANAGE_OVERLAY_PERMISSION`), then "Show bubble" starts the
+   foreground service. The bubble is draggable; a tap starts a voice turn.
+2. **Wake phrase "Hey QORVYNA"** — press "Record phrase" and say it clearly;
+   the same screen reports `n/2` samples. The engine is on the device
+   (`QorvynaWakeWord.kt`: MFCC + banded DTW against the enrolled templates),
+   there is no network call and no vendor model to download. Audio is kept in
+   app-private `SharedPreferences`, and "Forget phrase" deletes it.
+   The status only turns `ready` after two samples.
+3. **Digital assistant role** — "Choose QORVYNA" opens
+   `Settings.ACTION_VOICE_INPUT_SETTINGS`; picking QORVYNA there makes the
+   system gesture (long-press home / power button) launch `AssistActivity`.
+4. On the next launch, `qorvyna_assistant_state` reports
+   `overlaySupported`, `wakeWordSupported` and `defaultAssistant` from the
+   platform — a grant that has not happened stays `false`.
+
+Foreground service limits: Android 14+ requires the microphone service type
+(declared), a visible notification (posted) and the microphone permission
+(requested when recording starts). Some OEM builds additionally require
+"Autostart" or battery-optimisation exemptions before the service survives a
+swipe-away; QORVYNA reports that as a missing state instead of hiding it.
 
 ---
 
@@ -562,6 +630,18 @@ environment):**
   generated Gradle project and is documented, not executed.
 - The PowerShell scripts parse-checked and were reviewed line by line, but they
   have not been run on Windows.
+- The assistant itself: no Windows host and no Android device were available.
+  What *was* executed here: the shared frontend build (`npm run build`), the
+  native bundle, `npm run typecheck`, the full vitest suite, and
+  `patch-android-manifest.mjs` against a synthetic `gen/android` tree (verified
+  idempotent). The Rust sources were **not** compiled (no Rust toolchain in this
+  sandbox) and the Kotlin sources were **not** compiled (no JDK/Android SDK), so
+  the popup window, the bubble, the ASSIST role and the wake phrase still need
+  one run on real hardware — follow §6.1 and §7.3 for that check.
+- The wake-phrase accuracy is enrolment-dependent by construction (template
+  matching, not a trained keyword model): it recognises the enrolled speaker.
+  `tests/assistant-system.test.ts` pins the algorithm's properties, not its
+  real-world accuracy.
 
 Run the three scripts on your Windows machine; each prints every command and its
 exit code, and refuses to report success unless the artifact is on disk.

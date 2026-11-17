@@ -46,6 +46,7 @@ import { OnboardingClient } from "@/components/onboarding-client";
 import { CompareClient } from "@/components/compare-client";
 import { CanvasClient } from "@/components/canvas-client";
 import { JarvisAssistantBar } from "@/components/voice/jarvis-assistant-bar";
+import { NativeAssistantPanel } from "@/components/voice/native-assistant-panel";
 import { ToastProvider } from "@/components/toast";
 import { useAuthLifecycle } from "@/components/auth/auth-provider";
 import { markSessionEstablished } from "@/lib/auth/lifecycle";
@@ -66,6 +67,7 @@ import {
   type AssistantState,
   type PermissionStatus,
   onDeepLink,
+  takePendingAssistantTurn,
 } from "@/native/native-bridge";
 import type { SidebarConversation } from "@/lib/chat-utils";
 import type { ChatMessage } from "@/components/chat-client";
@@ -148,12 +150,45 @@ function DeepLinkBridge() {
   return null;
 }
 
+/**
+ * Android hands a turn to the app in two steps: the service marks a "pending"
+ * flag while the app is in the background, then brings the app forward. This
+ * consumes that flag exactly once — on mount and whenever the app becomes
+ * visible — and starts a voice turn through the same event the hotkey uses.
+ * The flag is cleared by the Rust side on read, so a wake phrase can never
+ * start two turns.
+ */
+function AssistantWakeBridge() {
+  useEffect(() => {
+    if (!isNativeShell()) return;
+    let disposed = false;
+    const consume = async () => {
+      const pending = await takePendingAssistantTurn();
+      if (disposed || !pending) return;
+      window.dispatchEvent(new CustomEvent("qorvyna://voice-activate"));
+    };
+    void consume();
+    const onForeground = () => {
+      if (document.visibilityState === "visible") void consume();
+    };
+    document.addEventListener("visibilitychange", onForeground);
+    window.addEventListener("focus", onForeground);
+    return () => {
+      disposed = true;
+      document.removeEventListener("visibilitychange", onForeground);
+      window.removeEventListener("focus", onForeground);
+    };
+  }, []);
+  return null;
+}
+
 export function NativeApp({ startPath = "/chat" }: { startPath?: string }) {
   const initial = parseHref(startPath);
   return (
     <RouterProvider initialPath={`${initial.pathname}${initial.search ? `?${initial.search}` : ""}`}>
       <ToastProvider>
         <DeepLinkBridge />
+        <AssistantWakeBridge />
         <NativeGate />
       </ToastProvider>
     </RouterProvider>
@@ -554,14 +589,33 @@ function FirstRunSetup({ onClose }: { onClose: () => void }) {
             </div>
             <p className="mt-1 text-[12px] leading-relaxed text-ink-2">{assistant.note}</p>
             <ul className="mt-2 space-y-1 text-[12px] text-ink-2">
-              <li>Wake word on this device: <strong>{assistant.wakeWordSupported ? (assistant.wakeWordEnabled ? "enabled" : "available") : "not supported"}</strong></li>
-              <li>Floating assistant: <strong>{assistant.overlaySupported ? "supported" : "not supported"}</strong></li>
+              <li>
+                Wake word on this device:{" "}
+                <strong>
+                  {assistant.wakeWordSupported
+                    ? assistant.wakeWordEnabled
+                      ? `enrolled (${assistant.wakeSamples}/${assistant.wakeRequired}) and listening`
+                      : "enrolled but switched off"
+                    : `${assistant.wakeSamples}/${assistant.wakeRequired} samples — not ready`}
+                </strong>
+              </li>
+              <li>
+                Floating assistant:{" "}
+                <strong>{assistant.platform === "android"
+                  ? assistant.overlaySupported
+                    ? "bubble allowed"
+                    : "needs “Display over other apps”"
+                  : "Ctrl+Shift+Space popup"}</strong>
+              </li>
               <li>Default assistant: <strong>{assistant.defaultAssistant ? "QORVYNA" : "not set"}</strong></li>
             </ul>
             <p className="mt-2 text-[11px] text-ink-3">
-              Detection runs on this device. Audio is only recorded after the wake word is heard, and only in the foreground
-              where the OS requires it.
+              Matching runs on this device against the phrase you recorded; audio never leaves the phone for it.
+              The microphone only opens for a turn, or while the enrolled phrase is being listened for.
             </p>
+            <div className="mt-3">
+              <NativeAssistantPanel />
+            </div>
           </div>
         ) : null}
 

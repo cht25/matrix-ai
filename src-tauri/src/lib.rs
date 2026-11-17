@@ -24,6 +24,7 @@ use tauri::{
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
+mod assistant;
 mod native;
 
 #[derive(Serialize)]
@@ -307,6 +308,24 @@ fn matrix_collect_device_activity() -> Result<CompanionActivityPayload, String> 
     })
 }
 
+/// Toggle the floating assistant, falling back to the main window.
+fn popup_or_main(app: &AppHandle) {
+    #[cfg(desktop)]
+    {
+        if let Ok(value) = assistant::popup(app, "toggle") {
+            let shown = value.get("shown").and_then(|v| v.as_bool()).unwrap_or(false);
+            if shown {
+                return;
+            }
+            // It was hidden by this toggle: nothing else to do.
+            if app.get_webview_window(assistant::ASSISTANT_WINDOW).is_some() {
+                return;
+            }
+        }
+    }
+    trigger_voice_activate(app);
+}
+
 fn trigger_voice_activate(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -325,7 +344,11 @@ pub fn run() {
                         && (shortcut.matches(Modifiers::CONTROL | Modifiers::SHIFT, Code::Space)
                             || shortcut.matches(Modifiers::SUPER | Modifiers::SHIFT, Code::Space))
                     {
-                        trigger_voice_activate(app);
+                        // The shortcut opens the floating assistant over the
+                        // current app. If that window cannot be created (a
+                        // headless session, a broken GPU context), the main
+                        // window is brought forward instead — never a no-op.
+                        popup_or_main(app);
                     }
                 })
                 .build(),
@@ -336,6 +359,9 @@ pub fn run() {
         // forwarded to the web UI as an app event so the existing router can
         // handle it; the Rust side never opens or executes anything itself.
         .plugin(tauri_plugin_deep_link::init())
+        // Floating-assistant bridge: an empty plugin on desktop, the Kotlin
+        // AssistantPlugin on Android (see src/assistant.rs).
+        .plugin(assistant::plugin())
         .setup(|app| {
             let _ = app
                 .global_shortcut()
@@ -375,7 +401,13 @@ pub fn run() {
             }
 
             let show_item = MenuItem::with_id(app, "show", "Open QORVYNA AI", true, None::<&str>)?;
-            let voice_item = MenuItem::with_id(app, "voice", "Speak to QORVYNA (Ctrl+Shift+Space)", true, None::<&str>)?;
+            let voice_item = MenuItem::with_id(
+                app,
+                "voice",
+                "Floating assistant (Ctrl+Shift+Space)",
+                true,
+                None::<&str>,
+            )?;
             let reload_item = MenuItem::with_id(app, "reload", "Reload Workspace", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit QORVYNA AI", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &voice_item, &reload_item, &quit_item])?;
@@ -393,7 +425,9 @@ pub fn run() {
                             }
                         }
                         "voice" => {
-                            trigger_voice_activate(app);
+                            // Same entry point as the hotkey: the floating popup,
+                            // with the in-app bar as the fallback.
+                            popup_or_main(app);
                         }
                         "reload" => {
                             if let Some(window) = app.get_webview_window("main") {
@@ -429,6 +463,11 @@ pub fn run() {
             native::qorvyna_wake_word_set,
             native::qorvyna_assistant_default_request,
             native::qorvyna_assistant_popup,
+            native::qorvyna_assistant_open_main,
+            native::qorvyna_assistant_take_pending,
+            native::qorvyna_assistant_settings,
+            native::qorvyna_wake_word_enrol,
+            native::qorvyna_wake_word_clear,
             native::qorvyna_device_fingerprint,
             native::qorvyna_inspection_state,
             native::qorvyna_inspection_stop
