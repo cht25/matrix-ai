@@ -2,7 +2,7 @@
   "name": "qorvyna",
   "version": "1.2.0",
   "private": true,
-  "description": "QORVYNA — one intelligence for AI, agents, connected devices, automation, cloud hosting and developer tools. Next.js + Firebase (Auth, Firestore). Operated by THAMJJ13.TOP White Hat Team.",
+  "description": "QORVYNA \u2014 one intelligence for AI, agents, connected devices, automation, cloud hosting and developer tools. Next.js + Firebase (Auth, Firestore). Operated by THAMJJ13.TOP White Hat Team.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -22,7 +22,12 @@
     "migrate:roles:dry-run": "node scripts/migrate-roles.mjs --dry-run",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "android:init": "tauri android init && node scripts/native/patch-android-manifest.mjs",
+    "android:manifest": "node scripts/native/patch-android-manifest.mjs",
+    "android:build": "node scripts/native/build-native-frontend.mjs && tauri android build",
+    "windows:build": "node scripts/native/build-native-frontend.mjs && tauri build",
+    "native:check": "node scripts/native/build-native-frontend.mjs --check"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.4",
