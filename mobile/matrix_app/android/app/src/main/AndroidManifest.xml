@@ -3,14 +3,25 @@
     <!-- Camera is used ONLY when the user opens Devices -> Scan QR to pair a
          new device. Nothing is ever captured in the background. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Microphone is used ONLY when the user taps Speak or activates Android
+         Assistant mode. No continuous background audio is streamed to cloud. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
-    <!-- Android 11+ package visibility for opening https://matrix.thamjj13.top/chat and APK downloads -->
+    <!-- Android 11+ package visibility for opening https links and installed apps -->
     <queries>
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <category android:name="android.intent.category.BROWSABLE" />
             <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
         </intent>
     </queries>
 
@@ -34,13 +45,42 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Standard Android Digital Assistant (ACTION_ASSIST) entry point -->
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.speech.action.VOICE_COMMAND" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="qorvyna.thamjj13.top" />
                 <data android:scheme="https" android:host="matrix.thamjj13.top" />
             </intent-filter>
         </activity>
+
+        <!-- Real OS Notification Listener (requires explicit user toggle in Settings) -->
+        <service
+            android:name=".QorvynaNotificationListenerService"
+            android:label="QORVYNA Notification Sync"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- Explicit foreground service for user-consented MediaProjection screen mirror -->
+        <service
+            android:name=".QorvynaScreenMirrorService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />

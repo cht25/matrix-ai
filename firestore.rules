@@ -301,6 +301,57 @@ service cloud.firestore {
       }
     }
 
+    // --- Jarvis, Multi-Device WebRTC Mirroring, Notification Ecosystem & Email -
+    match /device_sessions/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false;
+    }
+    match /mirror_sessions/{id} {
+      allow read: if (signedIn() && resource.data.owner_uid == request.auth.uid) || adminClaim();
+      allow write: if false;
+      match /signals/{sid} {
+        allow read: if (signedIn() && get(/databases/$(database)/documents/mirror_sessions/$(id)).data.owner_uid == request.auth.uid) || adminClaim();
+        allow write: if false;
+      }
+    }
+    match /notification_preferences/{uid} {
+      allow read: if isOwner(uid) || adminClaim();
+      allow write: if false;
+    }
+    match /synced_notifications/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false;
+    }
+    match /parent_links/{id} {
+      allow read, write: if false; // hashed verification tokens — server only
+    }
+    match /parent_policies/{uid} {
+      allow read: if isOwner(uid) || adminClaim();
+      allow write: if false;
+    }
+    match /protected_action_requests/{id} {
+      allow read: if (signedIn() && (resource.data.user_id == request.auth.uid || resource.data.parent_uid == request.auth.uid)) || adminClaim();
+      allow write: if false;
+    }
+    match /device_commands/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false;
+    }
+    match /reminders/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false;
+    }
+    match /tool_approvals/{id} {
+      allow read: if (signedIn() && resource.data.user_id == request.auth.uid) || adminClaim();
+      allow write: if false;
+    }
+    match /email_delivery_logs/{id} {
+      allow read, write: if false; // admin inspects via server RPC only
+    }
+    match /email_sender_health/{id} {
+      allow read, write: if false; // admin inspects via server RPC only
+    }
+
     // --- Default deny --------------------------------------------------------------
     match /{document=**} {
       allow read, write: if false;

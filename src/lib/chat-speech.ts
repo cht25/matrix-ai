@@ -91,13 +91,30 @@ export function primeSpeech(): void {
   }
 }
 
-function pickVoice(lang: string): SpeechSynthesisVoice | null {
+function pickVoice(lang: string, preferredVoiceName?: string): SpeechSynthesisVoice | null {
   const voices = window.speechSynthesis.getVoices();
   if (!voices.length) return null;
+  if (preferredVoiceName) {
+    const chosen = voices.find((v) => v.name === preferredVoiceName);
+    if (chosen) return chosen;
+  }
   const exact = voices.find((v) => v.lang === lang);
   if (exact) return exact;
   const prefix = lang.slice(0, 2).toLowerCase();
   return voices.find((v) => v.lang.toLowerCase().startsWith(prefix)) ?? voices.find((v) => v.default) ?? voices[0] ?? null;
+}
+
+export function listSpeechVoices(): Array<{ name: string; lang: string; localService: boolean }> {
+  if (!isSpeechSupported()) return [];
+  try {
+    return window.speechSynthesis.getVoices().map((v) => ({
+      name: v.name,
+      lang: v.lang,
+      localService: v.localService,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 function chunkText(text: string, max = 220): string[] {
@@ -123,7 +140,7 @@ function chunkText(text: string, max = 220): string[] {
 
 export function speakPlainText(
   text: string,
-  opts: { lang?: string; onend?: () => void; onerror?: () => void } = {},
+  opts: { lang?: string; voiceName?: string; rate?: number; onend?: () => void; onerror?: () => void } = {},
 ): boolean {
   if (!isSpeechSupported()) {
     opts.onerror?.();
@@ -174,9 +191,9 @@ export function speakPlainText(
     }
     const utterance = new SpeechSynthesisUtterance(chunks[index++]);
     utterance.lang = lang;
-    const voice = pickVoice(lang);
+    const voice = pickVoice(lang, opts.voiceName);
     if (voice) utterance.voice = voice;
-    utterance.rate = 1.02;
+    utterance.rate = typeof opts.rate === "number" && Number.isFinite(opts.rate) ? opts.rate : 1.02;
     utterance.pitch = 1;
     utterance.onend = speakNext;
     utterance.onerror = finishErr;
@@ -204,9 +221,9 @@ export function speakPlainText(
 
 export function speakMarkdown(
   md: string,
-  opts: { locale?: string; onend?: () => void; onerror?: () => void } = {},
+  opts: { locale?: string; voiceName?: string; rate?: number; onend?: () => void; onerror?: () => void } = {},
 ): boolean {
   const text = speechTextFromMarkdown(md);
   const lang = preferredSpeechLang(text, opts.locale ?? "en");
-  return speakPlainText(text, { lang, onend: opts.onend, onerror: opts.onerror });
+  return speakPlainText(text, { lang, voiceName: opts.voiceName, rate: opts.rate, onend: opts.onend, onerror: opts.onerror });
 }

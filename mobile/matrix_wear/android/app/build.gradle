@@ -2,7 +2,6 @@ plugins {
     id "com.android.application"
     id "kotlin-android"
     id "dev.flutter.flutter-gradle-plugin"
-    id "com.google.gms.google-services"
 }
 
 android {
@@ -13,13 +12,30 @@ android {
         applicationId = "top.thamjj13.matrixwear"
         minSdk = 30          // Wear OS 3+ (Android 11)
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = flutter.versionCode ?: 3
+        versionName = flutter.versionName ?: "1.2.0"
+    }
+
+    def keystorePropertiesFile = rootProject.file("key.properties")
+    def keystoreProperties = new Properties()
+    if (keystorePropertiesFile.exists()) {
+        keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+    }
+
+    signingConfigs {
+        release {
+            if (keystorePropertiesFile.exists()) {
+                keyAlias keystoreProperties["keyAlias"]
+                keyPassword keystoreProperties["keyPassword"]
+                storeFile rootProject.file(keystoreProperties["storeFile"])
+                storePassword keystoreProperties["storePassword"]
+            }
+        }
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.debug // replace with release keystore
+            signingConfig = keystorePropertiesFile.exists() ? signingConfigs.release : signingConfigs.debug
         }
     }
 

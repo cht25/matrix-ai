@@ -24,11 +24,25 @@ This guide covers prerequisites, environment configuration, local builds, signin
   - `CLOUDINARY_*` (optional private voice message storage & image assets; composer voice dictation `store=0` works without Cloudinary)
   - `NEXT_PUBLIC_APP_URL=https://qorvyna.thamjj13.top`
 
+### Server Email Configuration (Resend Dual-Sender Architecture)
+QORVYNA sends transactional, security, device, family, and verified-parent alert emails server-side via Resend:
+- `RESEND_API_KEY`: server-only Resend secret (never exposed to browser or admin UI)
+- `RESEND_FROM_PRIMARY=no-reply@qorvyna.top`
+- `RESEND_FROM_FALLBACKS=no-reply@matrix.thamjj13.top,no-reply@qorvyna.thamjj13.top`
+- **DNS Verification**: Every sender domain (`qorvyna.top`, `matrix.thamjj13.top`, `qorvyna.thamjj13.top`) must pass SPF/DKIM verification in the Resend dashboard. Fallback triggers ONLY when a sender domain returns an unverified/disallowed sender error — never on invalid API keys, invalid recipients, rate limits, or 5xx outages.
+- **Admin Diagnostics (`/admin/email`)**: Admins with `system.settings` can inspect domain verification health, probe Resend `/domains`, send a diagnostic test email, and review masked delivery logs.
+
+### Jarvis Voice, Notification Sync, Mirroring & Parent Safety
+- **Web Jarvis (`/chat`)**: Opt-in foreground `"Hey QORVYNA"` wake-word (English & Bangla), `Ctrl+Shift+Space` shortcut, configurable voice/rate, and explicit confirmation cards for device actions (`open_app`, `media_control`, `notifications.clear_history`).
+- **Desktop Companion (`src-tauri/`)**: Registers system-wide `Ctrl+Shift+Space` global shortcut, allowlisted Windows app launcher (`launch_app`), Windows media key controller (`media_control`), and hardware telemetry (`desktop_hardware_status`).
+- **Android (`mobile/matrix_app/`)**: Declares `ACTION_ASSIST` / `VOICE_COMMAND` Digital Assistant entry points, `QorvynaNotificationListenerService` (opt-in Notification Access in Android Settings), and foreground `QorvynaScreenMirrorService` (`MediaProjection` with explicit user consent).
+- **Notifications & Parent Safety (`/notifications`)**: Cross-device synced feed, privacy modes (`full`, `title_only`, `app_only`, `paused`), OTP redaction, excluded apps, and email-verified parent links (`parent_links`, `parent_policies`, `protected_action_requests`).
+- **Screen Mirroring (`/mirror`)**: Consent-gated WebRTC screen sharing (`view_only` default, max 15m TTL, instant revocation).
+
 ### Install & Verify Locally
 ```bash
 npm ci
 npm run typecheck
-npm run lint
 npm test
 npm run build
 npm run start -- -H 0.0.0.0 -p 3000
@@ -97,6 +111,47 @@ flutter analyze --no-fatal-infos
 flutter test
 ```
 
+### No `google-services.json` Needed
+Neither `mobile/matrix_app` nor `mobile/matrix_wear` requires `google-services.json`. Both apps initialize Firebase from your project's public web keys (`NEXT_PUBLIC_FIREBASE_*`) supplied via `--dart-define=FIREBASE_*` at build time (`lib/firebase_options.dart`).
+
+### Windows PC PowerShell Build Quickstart (Backend = `https://qorvyna.thamjj13.top`)
+```powershell
+# 1. Android Phone APK (mobile/matrix_app)
+cd mobile\matrix_app
+flutter create --platforms=android --project-name matrix_app --org top.thamjj13 .
+Remove-Item -ErrorAction SilentlyContinue test\widget_test.dart
+flutter pub get
+flutter analyze --no-fatal-infos
+flutter test
+flutter build apk --release `
+  --build-name=1.2.0 --build-number=3 `
+  --dart-define=QORVYNA_API_BASE=https://qorvyna.thamjj13.top `
+  --dart-define=QORVYNA_APP_VERSION=1.2.0 `
+  --dart-define=QORVYNA_APP_BUILD=3 `
+  --dart-define=FIREBASE_API_KEY="$env:NEXT_PUBLIC_FIREBASE_API_KEY" `
+  --dart-define=FIREBASE_APP_ID="$env:NEXT_PUBLIC_FIREBASE_APP_ID" `
+  --dart-define=FIREBASE_MESSAGING_SENDER_ID="$env:NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID" `
+  --dart-define=FIREBASE_PROJECT_ID="$env:NEXT_PUBLIC_FIREBASE_PROJECT_ID"
+
+# 2. Wear OS APK (mobile/matrix_wear)
+cd ..\matrix_wear
+flutter create --platforms=android --project-name matrix_wear --org top.thamjj13 .
+flutter pub get
+flutter analyze --no-fatal-infos
+flutter build apk --release `
+  --build-name=1.2.0 --build-number=3 `
+  --dart-define=QORVYNA_API_BASE=https://qorvyna.thamjj13.top `
+  --dart-define=FIREBASE_API_KEY="$env:NEXT_PUBLIC_FIREBASE_API_KEY" `
+  --dart-define=FIREBASE_APP_ID="$env:NEXT_PUBLIC_FIREBASE_APP_ID" `
+  --dart-define=FIREBASE_MESSAGING_SENDER_ID="$env:NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID" `
+  --dart-define=FIREBASE_PROJECT_ID="$env:NEXT_PUBLIC_FIREBASE_PROJECT_ID"
+
+# 3. Windows Desktop Installer (.exe / .msi) from repo root
+cd ..\..
+npm ci
+npx tauri build
+```
+
 ### Debug / Local APK Build
 ```bash
 cd mobile/matrix_app
@@ -151,13 +206,23 @@ flutter build apk --debug \
 
 ## 4. Wear OS App Build (`mobile/matrix_wear/`)
 
+No `google-services.json` is needed — Wear OS inherits the same `--dart-define=FIREBASE_*` options from `mobile/matrix_app/lib/firebase_options.dart`.
+
 ```bash
 cd mobile/matrix_wear
 flutter create --platforms=android --project-name matrix_wear --org top.thamjj13 .
 flutter pub get
 flutter analyze --no-fatal-infos
 flutter build apk --release \
-  --dart-define=QORVYNA_API_BASE=https://qorvyna.thamjj13.top
+  --build-name=1.2.0 \
+  --build-number=3 \
+  --dart-define=QORVYNA_API_BASE=https://qorvyna.thamjj13.top \
+  --dart-define=QORVYNA_APP_VERSION=1.2.0 \
+  --dart-define=QORVYNA_APP_BUILD=3 \
+  --dart-define=FIREBASE_API_KEY="$NEXT_PUBLIC_FIREBASE_API_KEY" \
+  --dart-define=FIREBASE_APP_ID="$NEXT_PUBLIC_FIREBASE_APP_ID" \
+  --dart-define=FIREBASE_MESSAGING_SENDER_ID="$NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID" \
+  --dart-define=FIREBASE_PROJECT_ID="$NEXT_PUBLIC_FIREBASE_PROJECT_ID"
 ```
 
 ---

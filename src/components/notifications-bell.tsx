@@ -155,6 +155,15 @@ export function NotificationsBell({ placement = "auto" }: { placement?: "up" | "
                 ))}
               </ul>
             )}
+            <div className="mt-1 border-t border-border pt-1">
+              <Link
+                href="/notifications"
+                onClick={() => setOpen(false)}
+                className="block rounded-md px-2 py-1.5 text-center text-[11px] font-medium text-accent hover:bg-surface-2"
+              >
+                Open Notification Sync &amp; Parent Safety →
+              </Link>
+            </div>
           </div>
         </>
       ) : null}

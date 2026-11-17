@@ -112,6 +112,28 @@ try {
   assert.equal(appVerBody.update_available, true);
   checks.push(`/api/app/version: HTTP 200 latest=v${appVerBody.latest_version}`);
 
+  for (const protectedRoute of ['/notifications', '/mirror', '/admin/email']) {
+    const r = await fetch(`${base}${protectedRoute}`, { redirect: 'manual' });
+    assert.equal(r.status >= 300 && r.status < 400, true, `${protectedRoute} must redirect unauthenticated visitors`);
+    checks.push(`${protectedRoute}: unauthenticated redirect HTTP ${r.status}`);
+  }
+
+  const rpcCrossOrigin = await fetch(`${base}/api/rpc`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://attacker.example' },
+    body: JSON.stringify({ action: 'admin_email_status' }),
+  });
+  assert.equal(rpcCrossOrigin.status, 403);
+  checks.push('/api/rpc (cross-origin): real HTTP 403');
+
+  const rpcUnauth = await fetch(`${base}/api/rpc`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: base },
+    body: JSON.stringify({ action: 'admin_email_status' }),
+  });
+  assert.equal(rpcUnauth.status, 401);
+  checks.push('/api/rpc admin_email_status (unauthenticated): real HTTP 401');
+
   const csrf = await fetch(`${base}/api/auth/session`, { method: 'DELETE', headers: { Origin: 'https://attacker.example' } });
   assert.equal(csrf.status, 403);
   checks.push('cross-origin session deletion: real HTTP 403');

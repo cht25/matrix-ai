@@ -21,7 +21,15 @@ export function parseDeviceToken(token: string): { deviceId: string; secret: str
   if (parts.length !== 3 || !/^[a-zA-Z0-9_-]{10,128}$/.test(parts[1]) || !/^[a-zA-Z0-9_-]{43}$/.test(parts[2])) return null;
   return { deviceId: parts[1], secret: parts[2] };
 }
-const millis = (value: unknown) => Number((value as { toMillis?: () => number })?.toMillis?.() ?? (typeof value === "number" ? value : 0));
+const millis = (value: unknown): number => {
+  if (typeof value === "number") return value;
+  if (value instanceof Date) return value.getTime();
+  const ts = value as { toMillis?: () => number; _seconds?: number; seconds?: number } | null | undefined;
+  if (typeof ts?.toMillis === "function") return Number(ts.toMillis());
+  if (typeof ts?._seconds === "number") return ts._seconds * 1000;
+  if (typeof ts?.seconds === "number") return ts.seconds * 1000;
+  return 0;
+};
 
 /** Raw credentials are never stored. Revocation/expiry is checked every request. */
 export async function verifyDeviceCredential(d: Db, token: string, nowMs = Date.now()): Promise<SessionUser | null> {
@@ -62,11 +70,17 @@ export function deviceScopeResponse(user: SessionUser, scope: string): Response 
 export function rpcDeviceScope(action: string, method = "POST"): string | null {
   void method;
   if (action.startsWith("conversation_")) return /^(conversation_list|conversation_get|conversation_history|conversation_messages)$/.test(action) ? "chat:read" : "chat:write";
+  if (action === "notifications_sync_list" || action === "notifications_sync_prefs_get" || action === "notifications_sync_mark_read") return "notifications:read";
+  if (action === "notifications_sync_ingest" || action === "notifications_sync_dismiss" || action === "notifications_sync_clear") return "notifications:write";
   if (action.startsWith("notifications_")) return action === "notifications_list" ? "notifications:read" : "notifications:write";
   if (action === "onboarding_status") return "account:read";
-  if (action === "device_activity_report") return "devices:write";
-  if (action === "device_activity_latest") return "devices:read";
-  if (action === "device_self" || action === "device_list") return "devices:read";
+  if (action === "device_activity_report" || action === "device_command_result") return "devices:write";
+  if (action === "device_activity_latest" || action === "device_self" || action === "device_list" || action === "reminders_list" || action === "device_commands_poll") return "devices:read";
+  if (action === "reminders_create" || action === "reminders_complete") return "notifications:write";
+  if (action === "device_command_queue") return "devices:control";
+  if (action === "mirror_session_create" || action === "mirror_session_signals" || action === "mirror_sessions_list") return "mirror:view";
+  if (action === "mirror_session_respond") return "mirror:share";
+  if (action === "mirror_session_signal" || action === "mirror_session_stop") return "mirror:view";
   if (action === "family_activity_report") return "family:report";
   if (action === "family_mirror_frame_upload" || action === "family_mirror_active" || action === "family_mirror_consent" || action === "family_mirror_stop") return "family:mirror";
   if (action === "family_list" || action === "family_overview" || action === "family_request_parent_access") return "family:read";

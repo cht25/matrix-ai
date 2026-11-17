@@ -1,17 +1,24 @@
 // =============================================================================
 // Family email delivery (server-only).
 //
-// Transport: Resend (https://resend.com) over HTTPS. This project never used
-// SMTP and does not depend on nodemailer: Resend's REST API is one server-only
-// API key, gives per-message ids, supports idempotency keys so a retry cannot
-// double-send, and needs no long-lived SMTP socket in a serverless runtime.
+// Transport: Resend (https://resend.com) over HTTPS via centralized dual-sender
+// engine (src/lib/server/email.ts).
 //
 // Delivery is honest: "accepted_by_provider" means Resend accepted the message,
 // NOT that it reached the inbox. The UI always keeps the invitation link and
 // QR available so a missed email is never a dead end — and a parent can resend.
 // =============================================================================
 import "server-only";
+import type { Db } from "@/lib/firebase/admin";
 import { siteOrigin } from "@/lib/seo";
+import {
+  escapeEmailHtml,
+  resendApiKey,
+  resolveSenderCandidates,
+  sendTransactionalEmail,
+} from "@/lib/server/email";
+
+export { escapeEmailHtml };
 
 export type InvitationDelivery = {
   status: "accepted_by_provider" | "not_configured" | "failed";
@@ -31,26 +38,12 @@ export function familyPairingUrl(token: string): string {
   return `${siteOrigin()}/devices#pair=${encodeURIComponent(token)}`;
 }
 
-export function escapeEmailHtml(text: string): string {
-  return text.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]!);
-}
-
-const PLACEHOLDERS = ["YOUR-", "replace-with", "..."];
-
-function configured(): { key: string; from: string } | null {
-  const key = process.env.RESEND_API_KEY?.trim() ?? "";
-  const from = process.env.RESEND_FROM_EMAIL?.trim() ?? "";
-  if (!key || !from) return null;
-  if (PLACEHOLDERS.some((placeholder) => key.includes(placeholder) || from.includes(placeholder))) return null;
-  return { key, from };
-}
-
 export function isFamilyEmailConfigured(): boolean {
-  return Boolean(process.env.RESEND_API_KEY?.trim() && process.env.RESEND_FROM_EMAIL?.trim());
+  return Boolean(resendApiKey()) && resolveSenderCandidates().length > 0;
 }
 
 /**
- * Server-only, bounded retries, stable idempotency key.
+ * Server-only, dual-sender fallback for domain errors, bounded retries, stable idempotency key.
  * Acceptance is not delivery.
  */
 export async function sendFamilyInvitation(input: {
@@ -62,9 +55,9 @@ export async function sendFamilyInvitation(input: {
   inviterName?: string;
   /** A resend keeps the same invitation id but must reach the inbox again. */
   resent?: boolean;
+  db?: Db;
 }): Promise<InvitationDelivery> {
-  const delivery = configured();
-  if (!delivery) return { status: "not_configured" };
+  if (!isFamilyEmailConfigured()) return { status: "not_configured" };
   const url = familyInvitationUrl(input.token);
   const familyName = escapeEmailHtml(input.familyName?.trim() || "a QORVYNA family");
   const inviter = escapeEmailHtml(input.inviterName?.trim() || "A parent");
@@ -79,17 +72,22 @@ export async function sendFamilyInvitation(input: {
   <p style="color:#94a3b8;font-size:13px;line-height:1.6;margin:0 0 8px">Sign in with <strong>${escapeEmailHtml(input.email)}</strong>. Single use · valid until ${expires}.</p>
   <p style="color:#64748b;font-size:12px;margin:0">If you were not expecting this, ignore the email — nothing happens until you accept.</p>
 </div>`;
-  // The initial message keeps the historical idempotency key so a retried save
-  // can never double-send; a resend must be a NEW message, so it is keyed on
-  // the rotated token instead of the invitation id.
-  return post({
-    delivery,
+
+  const result = await sendTransactionalEmail({
+    db: input.db,
+    templateType: "family_invitation",
     idempotencyKey: input.resent ? `family-invitation/${input.id}/resend/${input.token.slice(0, 12)}` : `family-invitation/${input.id}`,
     to: input.email,
     subject,
     text,
     html,
   });
+
+  if (result.status === "accepted_by_provider" || result.status === "deduplicated") {
+    return { status: "accepted_by_provider", ...(result.provider_id ? { provider_id: result.provider_id } : {}) };
+  }
+  if (result.status === "not_configured") return { status: "not_configured" };
+  return mapFailure(result.error_category);
 }
 
 /** Message kinds that are informative only (no bearer token inside). */
@@ -100,13 +98,15 @@ export async function sendFamilyNotice(input: {
   title: string;
   body: string;
   link?: string;
+  db?: Db;
 }): Promise<InvitationDelivery> {
-  const delivery = configured();
-  if (!delivery) return { status: "not_configured" };
+  if (!isFamilyEmailConfigured()) return { status: "not_configured" };
   const body = escapeEmailHtml(input.body);
   const link = input.link ? escapeEmailHtml(input.link) : "";
-  return post({
-    delivery,
+
+  const result = await sendTransactionalEmail({
+    db: input.db,
+    templateType: "family_notice",
     idempotencyKey: `family-notice/${input.kind}/${input.id}`,
     to: input.email,
     subject: `QORVYNA family · ${input.title}`,
@@ -119,53 +119,19 @@ export async function sendFamilyNotice(input: {
   <p style="color:#64748b;font-size:12px;margin:20px 0 0">You receive this because you are a member of a QORVYNA family. Manage notifications in Family settings.</p>
 </div>`,
   });
+
+  if (result.status === "accepted_by_provider" || result.status === "deduplicated") {
+    return { status: "accepted_by_provider", ...(result.provider_id ? { provider_id: result.provider_id } : {}) };
+  }
+  if (result.status === "not_configured") return { status: "not_configured" };
+  return mapFailure(result.error_category);
 }
 
-async function post(input: {
-  delivery: { key: string; from: string };
-  idempotencyKey: string;
-  to: string;
-  subject: string;
-  text: string;
-  html: string;
-}): Promise<InvitationDelivery> {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const response = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${input.delivery.key}`,
-          "Content-Type": "application/json",
-          "Idempotency-Key": input.idempotencyKey,
-        },
-        signal: AbortSignal.timeout(10_000),
-        body: JSON.stringify({
-          from: input.delivery.from,
-          to: [input.to],
-          subject: input.subject,
-          text: input.text,
-          html: input.html,
-        }),
-      });
-      if (response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { id?: string };
-        return { status: "accepted_by_provider", ...(body.id ? { provider_id: body.id } : {}) };
-      }
-      if (response.status === 401 || response.status === 403) return { status: "failed", reason: "provider_key_rejected" };
-      if (response.status === 422) return { status: "failed" };
-      if (response.status === 429) {
-        if (attempt < 2) { await wait(400 * 2 ** attempt); continue; }
-        return { status: "failed", reason: "provider_rate_limited" };
-      }
-      if (response.status < 500) return { status: "failed" };
-    } catch {
-      /* Do not log provider responses, invitation tokens or credentials. */
-    }
-    if (attempt < 2) await wait(250 * 2 ** attempt);
+function mapFailure(category?: string): InvitationDelivery {
+  if (category === "invalid_api_key") return { status: "failed", reason: "provider_key_rejected" };
+  if (category === "rate_limited") return { status: "failed", reason: "provider_rate_limited" };
+  if (category === "all_senders_unverified" || category === "domain_unverified") {
+    return { status: "failed", reason: "sender_domain_unverified" };
   }
   return { status: "failed" };
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

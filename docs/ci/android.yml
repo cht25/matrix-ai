@@ -11,7 +11,7 @@
 #   Required for a release-signed APK:
 #     ANDROID_KEYSTORE_BASE64 (base64 -w0 release.jks), ANDROID_KEYSTORE_PASSWORD,
 #     ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
-# Optional repository variable: QORVYNA_API_BASE (default https://matrix.thamjj13.top).
+# Optional repository variable: QORVYNA_API_BASE (default https://qorvyna.thamjj13.top).
 #   The former name MATRIX_API_BASE is still read, so an existing repository
 #   keeps working without any change.
 #
@@ -57,7 +57,7 @@ jobs:
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-      QORVYNA_API_BASE: ${{ vars.QORVYNA_API_BASE || vars.MATRIX_API_BASE || 'https://matrix.thamjj13.top' }}
+      QORVYNA_API_BASE: ${{ vars.QORVYNA_API_BASE || vars.MATRIX_API_BASE || 'https://qorvyna.thamjj13.top' }}
       INPUT_VERSION: ${{ inputs.app_version }}
       INPUT_BUILD: ${{ inputs.build_number }}
     steps:
