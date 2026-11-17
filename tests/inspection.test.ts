@@ -99,6 +99,31 @@ describe("Phase 8 — nothing starts silently", () => {
     expect(endsAt - Date.now()).toBeGreaterThan(4 * 60_000);
   });
 
+  it("does NOT extend the window when the device re-acknowledges an active session", async () => {
+    // A device that polls acknowledgement must not be able to keep an
+    // inspection alive indefinitely by confirming again.
+    const request = await requestInspection(stub as never, ADMIN, base);
+    const first = await acknowledgeInspection(stub as never, OWNER, { inspection_id: request.id, device_id: "dev-1" });
+    const firstEnd = Date.parse(first.ends_at);
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    const second = await acknowledgeInspection(stub as never, OWNER, { inspection_id: request.id, device_id: "dev-1" });
+    expect(Date.parse(second.ends_at)).toBe(firstEnd);
+    expect(second.status).toBe("active");
+  });
+
+  it("writes a start time once and keeps it stable", async () => {
+    const request = await requestInspection(stub as never, ADMIN, base);
+    await acknowledgeInspection(stub as never, OWNER, { inspection_id: request.id, device_id: "dev-1" });
+    const stored = stub._state.docs.get(`inspection_requests/${request.id}`)!;
+    const startsAt = stored.starts_at;
+    expect(startsAt).toBeTruthy();
+    // The value written must be a concrete timestamp, never undefined.
+    expect(startsAt).not.toBeUndefined();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await acknowledgeInspection(stub as never, OWNER, { inspection_id: request.id, device_id: "dev-1" });
+    expect(stub._state.docs.get(`inspection_requests/${request.id}`)!.starts_at).toEqual(startsAt);
+  });
+
   it("refuses a second concurrent session on the same device", async () => {
     await requestInspection(stub as never, ADMIN, base);
     await expect(requestInspection(stub as never, ADMIN, base)).rejects.toMatchObject({ code: "INSPECTION_ALREADY_ACTIVE" });

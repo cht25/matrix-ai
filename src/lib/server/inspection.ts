@@ -51,7 +51,12 @@ function millis(value: unknown): number {
   const ts = value as { toMillis?: () => number; toDate?: () => Date; _seconds?: number } | null | undefined;
   if (typeof ts?.toMillis === "function") return ts.toMillis();
   if (typeof ts?.toDate === "function") return ts.toDate().getTime();
-  if (typeof ts?._seconds === "number") return ts._seconds * 1000;
+  // Firestore timestamps serialised as plain objects carry seconds AND
+  // nanoseconds; ignoring the nanoseconds silently truncates to whole seconds.
+  if (typeof ts?._seconds === "number") {
+    const nanos = typeof (ts as { _nanoseconds?: number })._nanoseconds === "number" ? (ts as { _nanoseconds: number })._nanoseconds : 0;
+    return ts._seconds * 1000 + Math.floor(nanos / 1e6);
+  }
   return 0;
 }
 
@@ -305,16 +310,28 @@ export async function acknowledgeInspection(
     return { status: "expired", notice: STATUS_TEXT.expired, ends_at: "", scopes: [] };
   }
 
-  const endsAt = millis(request.ends_at) || nowMs + Math.min(request.minutes, INSPECTION_MAX_MINUTES) * 60_000;
-  await ref.set(
-    {
+  // Re-acknowledging an ALREADY active session must not extend it: a device
+  // that polls acknowledgement could otherwise keep an inspection alive
+  // forever. The window is fixed at the first acknowledgement.
+  const existingEnds = millis(request.ends_at);
+  if (request.status === "active" && existingEnds > 0) {
+    return {
       status: "active",
-      starts_at: request.starts_at ? undefined : nowTs(),
-      ends_at: Timestamp.fromMillis(endsAt),
-      acknowledged_at: nowTs(),
-    },
-    { merge: true },
-  );
+      notice: STATUS_TEXT.active,
+      ends_at: new Date(existingEnds).toISOString(),
+      scopes: request.scopes,
+    };
+  }
+
+  const endsAt = existingEnds || nowMs + Math.min(request.minutes, INSPECTION_MAX_MINUTES) * 60_000;
+  const patch: Record<string, unknown> = {
+    status: "active",
+    ends_at: Timestamp.fromMillis(endsAt),
+    acknowledged_at: nowTs(),
+  };
+  // Firestore rejects `undefined`, so only set the start time once.
+  if (!request.starts_at) patch.starts_at = nowTs();
+  await ref.set(patch, { merge: true });
   await audit(d, request, "activated", user.uid, { device_id: input.device_id });
   return {
     status: "active",

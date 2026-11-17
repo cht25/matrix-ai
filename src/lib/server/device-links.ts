@@ -73,7 +73,12 @@ function millis(value: unknown): number {
   const ts = value as { toMillis?: () => number; toDate?: () => Date; _seconds?: number; seconds?: number } | null | undefined;
   if (typeof ts?.toMillis === "function") return Number(ts.toMillis());
   if (typeof ts?.toDate === "function") return ts.toDate().getTime();
-  if (typeof ts?._seconds === "number") return ts._seconds * 1000;
+  // Firestore timestamps serialised as plain objects carry seconds AND
+  // nanoseconds; ignoring the nanoseconds silently truncates to whole seconds.
+  if (typeof ts?._seconds === "number") {
+    const nanos = typeof (ts as { _nanoseconds?: number })._nanoseconds === "number" ? (ts as { _nanoseconds: number })._nanoseconds : 0;
+    return ts._seconds * 1000 + Math.floor(nanos / 1e6);
+  }
   if (typeof ts?.seconds === "number") return ts.seconds * 1000;
   return 0;
 }
