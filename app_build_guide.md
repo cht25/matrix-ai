@@ -1,239 +1,502 @@
 # QORVYNA AI — Complete App Build & Release Guide
 
-> Current synchronized release version: **v1.2.0** (build **3**)
-> Canonical web origin: **https://qorvyna.thamjj13.top** (`/chat`)
+> Release: **v1.2.0** (build **3**) · Identifier: **`ai.matrix.desktop`**
+> Canonical web origin: **https://qorvyna.thamjj13.top**
 
-This guide covers prerequisites, environment configuration, local builds, signing, and OTA release publishing across all QORVYNA surfaces:
-1. Web & Progressive Web App (Next.js 15 + Service Worker + IndexedDB offline cache)
-2. Desktop Companion App (Tauri v2 / Rust)
-3. Android Phone App (`mobile/matrix_app` / Flutter)
-4. Wear OS Companion App (`mobile/matrix_wear` / Flutter)
+## Architecture: one frontend, three surfaces
+
+QORVYNA has **one** frontend: the Next.js app in `src/`. It is shipped three ways:
+
+| Surface | What ships | How |
+|---|---|---|
+| Web + PWA | `src/` rendered by Next.js | `next build` / `next start` |
+| Windows desktop | `public/native/` — the same `src/` components, bundled | Tauri 2, `src-tauri/` |
+| Android | the same `public/native/` bundle inside a Tauri 2 WebView | Tauri 2, `src-tauri/` |
+
+`src/native/` is the **shell adapter** for the bundled build: it provides the
+router, image and bridge shims the website's own components expect, and mounts
+those same components (AppShell, chat, settings, devices, admin). It is not a
+second app and must never be forked into one.
+
+The native shell loads `public/native/index.html` from the app bundle. It does
+**not** load `https://qorvyna.thamjj13.top` in a WebView — that URL appears in
+`tauri.conf.json` only as an allowlisted API/network policy.
+
+`mobile/` (Flutter) is the **retired** previous approach. It is kept only for
+history; nothing below builds from it.
 
 ---
 
-## 1. Web & PWA Build (`/` & `/chat`)
+## 1. Prerequisites
 
-### Prerequisites
-- **Node.js**: `20.x` or `22.x` LTS (`node -v`)
-- **npm**: `10.x+`
-- Server environment variables (never exposed to browser):
-  - `GROQ_API_KEY` (GPT OSS 120B, Whisper STT)
-  - `CLOUDFLARE_ACCOUNT_ID` & `CLOUDFLARE_API_TOKEN` (Cloudflare Workers AI `@cf/zai-org/glm-4.7-flash` + Whisper STT fallback)
-  - `OPENAI_API_KEY` (optional STT/chat backup)
-  - `NEXT_PUBLIC_FIREBASE_*`, `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`
-  - `CLOUDINARY_*` (optional private voice message storage & image assets; composer voice dictation `store=0` works without Cloudinary)
-  - `NEXT_PUBLIC_APP_URL=https://qorvyna.thamjj13.top`
+| Tool | Version | Check |
+|---|---|---|
+| Node.js | 20.x or 22.x LTS | `node -v` |
+| npm | 10.x+ | `npm -v` |
+| Rust (desktop + Android) | `rustc >= 1.77.2` | `rustc --version` |
+| Java (Android only) | OpenJDK 17 | `java -version` |
+| Android SDK (Android only) | Platform 34+, Build-Tools 34+ | `sdkmanager --list_installed` |
+| Tauri CLI | `^2` (already a devDependency) | `npx tauri --version` |
 
-### Server Email Configuration (Resend Dual-Sender Architecture)
-QORVYNA sends transactional, security, device, family, and verified-parent alert emails server-side via Resend:
-- `RESEND_API_KEY`: server-only Resend secret (never exposed to browser or admin UI)
-- `RESEND_FROM_PRIMARY=no-reply@qorvyna.top`
-- `RESEND_FROM_FALLBACKS=no-reply@matrix.thamjj13.top,no-reply@qorvyna.thamjj13.top`
-- **DNS Verification**: Every sender domain (`qorvyna.top`, `matrix.thamjj13.top`, `qorvyna.thamjj13.top`) must pass SPF/DKIM verification in the Resend dashboard. Fallback triggers ONLY when a sender domain returns an unverified/disallowed sender error — never on invalid API keys, invalid recipients, rate limits, or 5xx outages.
-- **Admin Diagnostics (`/admin/email`)**: Admins with `system.settings` can inspect domain verification health, probe Resend `/domains`, send a diagnostic test email, and review masked delivery logs.
+Tauri CLI is declared in `package.json` (`@tauri-apps/cli`), so `npm ci` is
+enough — do not install it globally.
 
-### Jarvis Voice, Notification Sync, Mirroring & Parent Safety
-- **Web Jarvis (`/chat`)**: Opt-in foreground `"Hey QORVYNA"` wake-word (English & Bangla), `Ctrl+Shift+Space` shortcut, configurable voice/rate, and explicit confirmation cards for device actions (`open_app`, `media_control`, `notifications.clear_history`).
-- **Desktop Companion (`src-tauri/`)**: Registers system-wide `Ctrl+Shift+Space` global shortcut, allowlisted Windows app launcher (`launch_app`), Windows media key controller (`media_control`), and hardware telemetry (`desktop_hardware_status`).
-- **Android (`mobile/matrix_app/`)**: Declares `ACTION_ASSIST` / `VOICE_COMMAND` Digital Assistant entry points, `QorvynaNotificationListenerService` (opt-in Notification Access in Android Settings), and foreground `QorvynaScreenMirrorService` (`MediaProjection` with explicit user consent).
-- **Notifications & Parent Safety (`/notifications`)**: Cross-device synced feed, privacy modes (`full`, `title_only`, `app_only`, `paused`), OTP redaction, excluded apps, and email-verified parent links (`parent_links`, `parent_policies`, `protected_action_requests`).
-- **Screen Mirroring (`/mirror`)**: Consent-gated WebRTC screen sharing (`view_only` default, max 15m TTL, instant revocation).
+Linux also needs the WebKitGTK stack:
 
-### Install & Verify Locally
+```bash
+sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+```
+
+Windows needs Microsoft Edge WebView2 Runtime and Visual Studio C++ Build Tools.
+macOS needs `xcode-select --install`.
+
+Verify the toolchain in one step:
+
 ```bash
 npm ci
-npm run typecheck
-npm test
-npm run build
+npx tauri info        # reports missing Rust/WebKit/Android pieces explicitly
+```
+
+---
+
+## 2. Environment variables
+
+Copy `.env.example` to `.env.local` for local work, and set the same names on
+the server. These are the **exact** names read by the code — nothing else is
+consulted.
+
+### Public (safe in the browser)
+
+```
+NEXT_PUBLIC_APP_URL=https://qorvyna.thamjj13.top
+NEXT_PUBLIC_FIREBASE_API_KEY=
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=
+NEXT_PUBLIC_FIREBASE_APP_ID=
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
+```
+
+`NEXT_PUBLIC_QORVYNA_NATIVE=1` is set automatically by the native bundle build
+script; do not set it by hand.
+
+### Server-only secrets (never prefixed `NEXT_PUBLIC_`)
+
+```
+# Firebase Admin
+FIREBASE_PROJECT_ID=
+FIREBASE_CLIENT_EMAIL=
+FIREBASE_PRIVATE_KEY=
+GOOGLE_APPLICATION_CREDENTIALS=          # alternative to the three above
+
+# Models
+GROQ_API_KEY=                            # GPT OSS 120B (openai/gpt-oss-120b)
+GROQ_API_KEYS=                           # optional comma-separated key pool
+GPT_OSS_API_KEY=                         # optional dedicated OpenAI-compatible endpoint
+GPT_OSS_BASE_URL=
+GPT_OSS_MODEL=
+CLOUDFLARE_ACCOUNT_ID=                   # Cloudflare Workers AI
+CLOUDFLARE_API_TOKEN=                    # @cf/zai-org/glm-4.7-flash (artifacts)
+TOGETHER_API_KEY=                        # optional image generation
+OPENAI_API_KEY=                          # optional STT/TTS backup
+
+# Email (Resend, dual-sender with automatic fallback)
+RESEND_API_KEY=
+RESEND_FROM_PRIMARY=no-reply@qorvyna.top
+RESEND_FROM_FALLBACKS=no-reply@matrix.thamjj13.top,no-reply@qorvyna.thamjj13.top
+
+# Pairing / security peppers
+PAIRING_HMAC_SECRET=
+IDENTITY_PEPPER=
+ADMIN_BOOTSTRAP_KEY=                     # first admin setup only
+
+# Optional media storage
+CLOUDINARY_CLOUD_NAME=
+CLOUDINARY_API_KEY=
+CLOUDINARY_API_SECRET=
+```
+
+The native shell's API origin defaults to `https://qorvyna.thamjj13.top` and can
+be overridden at **bundle** time (not runtime) with `QORVYNA_API_ORIGIN`:
+
+```bash
+QORVYNA_API_ORIGIN=https://staging.example.com node scripts/native/build-native-frontend.mjs
+```
+
+### Email sender rules
+
+- Only senders whose **domain is verified in Resend** (SPF + DKIM) may be used.
+- Fallback to the next sender happens **only** for an unverified/disallowed
+  sender-domain error. It never happens on 401 invalid key, invalid recipient,
+  429 rate limit, or a 5xx outage — those are reported, not masked.
+- Delivery metadata is logged to `email_delivery_logs`; sender health to
+  `email_sender_health`. Both are visible at `/admin/email` (`system.settings`).
+- Verify what the server actually accepts:
+
+```bash
+npx firebase emulators:start --only auth,firestore   # optional local stack
+npm run dev
+```
+
+---
+
+## 3. Web / PWA build
+
+```bash
+npm ci
+npm run typecheck        # tsc --noEmit
+npm test                 # vitest run — full suite
+npm run build            # next build
 npm run start -- -H 0.0.0.0 -p 3000
 ```
 
-### Offline Mode & Service Worker Verification
-- Service worker: `public/sw.js` (cached version `qorvyna-cache-v1.2.0-b3`)
-- Offline fallback page: `src/app/offline/page.tsx` (`/offline`)
-- Connectivity ping probe: `GET /api/ping` (`Cache-Control: no-store`)
-- Offline storage (`src/lib/client/offline-store.ts`): IndexedDB `qorvyna_offline_v1` (`conversations`, `drafts`, `outbox`)
-- In-app update check (`src/components/pwa-manager.tsx`): queries `/api/app/version?platform=web` and detects waiting SW updates cleanly.
+Offline/PWA pieces that must stay in sync with the release:
+
+| Piece | Location |
+|---|---|
+| Service worker + `CACHE_VERSION` | `public/sw.js` (`qorvyna-cache-v1.2.0-b3`) |
+| Offline fallback route | `src/app/offline/page.tsx` (`/offline`) |
+| Connectivity probe | `GET /api/ping` |
+| IndexedDB store | `src/lib/client/offline-store.ts` (`qorvyna_offline_v1`) |
+| Update check | `GET /api/app/version?platform=web` |
+
+Deployment configs present in the repo: `apphosting.yaml` (Firebase App
+Hosting), `render.yaml` (Render), `firebase.json` (Hosting + frameworks).
+Database rules:
+
+```bash
+npm run deploy           # firestore rules, firestore indexes, storage
+```
 
 ---
 
-## 2. Desktop App Build (`src-tauri/`)
+## 4. Native frontend bundle (`public/native/`)
 
-### Prerequisites
-- **Node.js** `20+` & installed dependencies (`npm ci`)
-- **Rust toolchain**: `rustc >= 1.77.2`, `cargo` (`rustup update stable`)
-- **Tauri CLI v2**: `npm i -D @tauri-apps/cli@^2` or `cargo install tauri-cli --version ^2`
-- **OS platform libraries**:
-  - **Linux**: `libwebkit2gtk-4.1-dev`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`
-  - **Windows**: Microsoft Edge WebView2 Runtime + Visual Studio C++ Build Tools
-  - **macOS**: Xcode Command Line Tools (`xcode-select --install`)
+This step is **required** before any desktop or Android build. It compiles the
+real `src/` components into a static bundle the WebView can load from disk.
 
-### Version Alignment
-Check that these match before building:
-- `package.json` → `"version": "1.2.0"`
-- `src-tauri/tauri.conf.json` → `"version": "1.2.0"`, `"frontendDist": "https://qorvyna.thamjj13.top/chat"`
-- `src-tauri/Cargo.toml` → `version = "1.2.0"`
-- `src/lib/version.ts` → `APP_VERSION = "1.2.0"`, `APP_BUILD_NUMBER = 3`
-
-### Local Development & Production Bundle Commands
 ```bash
-# Development window (starts Next.js on http://localhost:3000/chat)
-npx tauri dev
-
-# Release bundle (Windows .msi/.exe, macOS .dmg/.app, Linux .AppImage/.deb)
-npx tauri build
+node scripts/native/build-native-frontend.mjs           # build
+node scripts/native/build-native-frontend.mjs --check   # verify without writing
 ```
 
-Artifacts are generated under `src-tauri/target/release/bundle/`.
-The desktop runtime connects directly to `https://qorvyna.thamjj13.top/chat` and inherits live updates, Service Worker improvements, and `PwaManager` desktop version notifications (`GET /api/app/version?platform=desktop`).
+Output (all generated, safe to delete and rebuild):
+
+```
+public/native/app.js       ~2.7 MB   esbuild bundle of src/native/client/entry.tsx
+public/native/app.css      ~24 kB    Tailwind CLI output compiled from src/app/globals.css
+public/native/index.html   ~0.8 kB   shell that links the two files above
+public/native/sw.js                  copied service worker
+public/native/fonts/                 KaTeX fonts
+```
+
+Notes that matter if you change the build:
+
+- The CSS is compiled by the **Tailwind CLI** (`npx @tailwindcss/cli`), not by
+  esbuild. `src/native/client/entry.tsx` must not import `globals.css` —
+  esbuild cannot resolve Tailwind v4 export conditions.
+- `tauri.conf.json` sets `beforeBuildCommand` to this script, so
+  `npx tauri build` refreshes the bundle automatically.
 
 ---
 
-## 3. Android Phone App Build (`mobile/matrix_app/`)
+## 5. Windows desktop build
 
-### Prerequisites
-- **Flutter SDK**: `3.24.3+` (Dart SDK `>=3.4.0 <4.0.0`)
-- **Java**: OpenJDK `17` (Temurin)
-- **Android SDK**: Android API 34+ & Build-Tools installed (`flutter doctor -v` passes)
-- **Gradle Wrapper**: Not committed in Git. Generate once before building:
+Prerequisites: Rust + WebView2 + MSVC build tools (see §1).
 
 ```bash
-cd mobile/matrix_app
-flutter create --platforms=android --project-name matrix_app --org top.thamjj13 .
-rm -f test/widget_test.dart
-flutter pub get
-```
-
-### Static Analysis & Unit Tests
-```bash
-cd mobile/matrix_app
-flutter analyze --no-fatal-infos
-flutter test
-```
-
-### No `google-services.json` Needed
-Neither `mobile/matrix_app` nor `mobile/matrix_wear` requires `google-services.json`. Both apps initialize Firebase from your project's public web keys (`NEXT_PUBLIC_FIREBASE_*`) supplied via `--dart-define=FIREBASE_*` at build time (`lib/firebase_options.dart`).
-
-### Windows PC PowerShell Build Quickstart (Backend = `https://qorvyna.thamjj13.top`)
-```powershell
-# 1. Android Phone APK (mobile/matrix_app)
-cd mobile\matrix_app
-flutter create --platforms=android --project-name matrix_app --org top.thamjj13 .
-Remove-Item -ErrorAction SilentlyContinue test\widget_test.dart
-flutter pub get
-flutter analyze --no-fatal-infos
-flutter test
-flutter build apk --release `
-  --build-name=1.2.0 --build-number=3 `
-  --dart-define=QORVYNA_API_BASE=https://qorvyna.thamjj13.top `
-  --dart-define=QORVYNA_APP_VERSION=1.2.0 `
-  --dart-define=QORVYNA_APP_BUILD=3 `
-  --dart-define=FIREBASE_API_KEY="$env:NEXT_PUBLIC_FIREBASE_API_KEY" `
-  --dart-define=FIREBASE_APP_ID="$env:NEXT_PUBLIC_FIREBASE_APP_ID" `
-  --dart-define=FIREBASE_MESSAGING_SENDER_ID="$env:NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID" `
-  --dart-define=FIREBASE_PROJECT_ID="$env:NEXT_PUBLIC_FIREBASE_PROJECT_ID"
-
-# 2. Wear OS APK (mobile/matrix_wear)
-cd ..\matrix_wear
-flutter create --platforms=android --project-name matrix_wear --org top.thamjj13 .
-flutter pub get
-flutter analyze --no-fatal-infos
-flutter build apk --release `
-  --build-name=1.2.0 --build-number=3 `
-  --dart-define=QORVYNA_API_BASE=https://qorvyna.thamjj13.top `
-  --dart-define=FIREBASE_API_KEY="$env:NEXT_PUBLIC_FIREBASE_API_KEY" `
-  --dart-define=FIREBASE_APP_ID="$env:NEXT_PUBLIC_FIREBASE_APP_ID" `
-  --dart-define=FIREBASE_MESSAGING_SENDER_ID="$env:NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID" `
-  --dart-define=FIREBASE_PROJECT_ID="$env:NEXT_PUBLIC_FIREBASE_PROJECT_ID"
-
-# 3. Windows Desktop Installer (.exe / .msi) from repo root
-cd ..\..
 npm ci
-npx tauri build
+npm run windows:build
 ```
 
-### Debug / Local APK Build
+`windows:build` = `node scripts/native/build-native-frontend.mjs && tauri build`.
+
+Artifacts:
+
+```
+src-tauri/target/release/bundle/nsis/QORVYNA AI_1.2.0_x64-setup.exe
+src-tauri/target/release/bundle/msi/QORVYNA AI_1.2.0_x64_en-US.msi
+```
+
+`bundle.targets` is `all`, so the same command also produces `.deb`/`.AppImage`
+on Linux and `.dmg`/`.app` on macOS.
+
+### Desktop development loop
+
 ```bash
-cd mobile/matrix_app
-flutter build apk --debug \
-  --dart-define=QORVYNA_API_BASE=https://qorvyna.thamjj13.top \
-  --dart-define=QORVYNA_APP_VERSION=1.2.0 \
-  --dart-define=QORVYNA_APP_BUILD=3 \
-  --dart-define=FIREBASE_API_KEY="$NEXT_PUBLIC_FIREBASE_API_KEY" \
-  --dart-define=FIREBASE_APP_ID="$NEXT_PUBLIC_FIREBASE_APP_ID" \
-  --dart-define=FIREBASE_MESSAGING_SENDER_ID="$NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID" \
-  --dart-define=FIREBASE_PROJECT_ID="$NEXT_PUBLIC_FIREBASE_PROJECT_ID"
+# Terminal 1 — the web app the shell's devUrl points at
+npm run dev
+
+# Terminal 2 — the Tauri window
+npm run tauri:dev
 ```
 
-### Signed Release APK & App Bundle (AAB)
-1. Create or decrypt your upload keystore (`android/release.jks`, **never commit**):
-   ```bash
-   keytool -genkey -v -keystore android/release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias qorvyna
-   ```
-2. Create `mobile/matrix_app/android/key.properties` (**never commit**):
-   ```properties
-   storeFile=release.jks
-   storePassword=YOUR_STORE_PASSWORD
-   keyAlias=qorvyna
-   keyPassword=YOUR_KEY_PASSWORD
-   ```
-3. Build signed APK & SHA-256 checksum:
-   ```bash
-   cd mobile/matrix_app
-   flutter build apk --release \
-     --build-name=1.2.0 \
-     --build-number=3 \
-     --dart-define=QORVYNA_API_BASE=https://qorvyna.thamjj13.top \
-     --dart-define=QORVYNA_APP_VERSION=1.2.0 \
-     --dart-define=QORVYNA_APP_BUILD=3 \
-     --dart-define=FIREBASE_API_KEY="$NEXT_PUBLIC_FIREBASE_API_KEY" \
-     --dart-define=FIREBASE_APP_ID="$NEXT_PUBLIC_FIREBASE_APP_ID" \
-     --dart-define=FIREBASE_MESSAGING_SENDER_ID="$NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID" \
-     --dart-define=FIREBASE_PROJECT_ID="$NEXT_PUBLIC_FIREBASE_PROJECT_ID"
-
-   cp build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/matrix-android.apk
-   (cd build/app/outputs/flutter-apk && sha256sum matrix-android.apk > matrix-android.apk.sha256)
-   ```
-   For Play Store distribution:
-   ```bash
-   flutter build appbundle --release ... # same --build-name/--build-number/--dart-define flags
-   ```
-
-4. Clean up `android/release.jks` and `android/key.properties` after local builds if working on shared machines.
-5. CI workflow template is ready in `docs/ci/android.yml` (copy to `.github/workflows/android.yml` and configure repository secrets listed at the top of that file).
+`devUrl` is `http://localhost:3000/native-app`, and `/native-app` is a public
+route that performs its own client-side auth gate. Production builds never use
+`devUrl`.
 
 ---
 
-## 4. Wear OS App Build (`mobile/matrix_wear/`)
+## 6. Android build (Tauri 2)
 
-No `google-services.json` is needed — Wear OS inherits the same `--dart-define=FIREBASE_*` options from `mobile/matrix_app/lib/firebase_options.dart`.
+Prerequisites: Rust with Android targets, OpenJDK 17, Android SDK 34+, plus:
 
 ```bash
-cd mobile/matrix_wear
-flutter create --platforms=android --project-name matrix_wear --org top.thamjj13 .
-flutter pub get
-flutter analyze --no-fatal-infos
-flutter build apk --release \
-  --build-name=1.2.0 \
-  --build-number=3 \
-  --dart-define=QORVYNA_API_BASE=https://qorvyna.thamjj13.top \
-  --dart-define=QORVYNA_APP_VERSION=1.2.0 \
-  --dart-define=QORVYNA_APP_BUILD=3 \
-  --dart-define=FIREBASE_API_KEY="$NEXT_PUBLIC_FIREBASE_API_KEY" \
-  --dart-define=FIREBASE_APP_ID="$NEXT_PUBLIC_FIREBASE_APP_ID" \
-  --dart-define=FIREBASE_MESSAGING_SENDER_ID="$NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID" \
-  --dart-define=FIREBASE_PROJECT_ID="$NEXT_PUBLIC_FIREBASE_PROJECT_ID"
+rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+```
+
+### One-time project init
+
+```bash
+npm run android:init
+```
+
+`android:init` = `tauri android init` **then**
+`node scripts/native/patch-android-manifest.mjs`.
+
+The second command is not optional: it merges the
+`QorvynaNotificationListenerService` declaration into the manifest Tauri
+generates at `src-tauri/gen/android/app/src/main/AndroidManifest.xml`. That
+directory is generated and gets regenerated, so the patch is kept in a script
+(idempotent — running it twice leaves one declaration).
+
+Declaring the service grants **no** access. Android enables a
+`NotificationListenerService` only when the user turns it on in
+Settings → Notifications → Device & app notifications → QORVYNA. Until then
+`onListenerConnected` never fires and nothing is forwarded.
+
+### Build
+
+```bash
+# Debug APK for a device
+npm run android:build -- --debug --apk
+
+# Release APK
+npm run android:build -- --apk
+
+# Play Store AAB
+npm run android:build -- --aab
+```
+
+Artifacts land under
+`src-tauri/gen/android/app/build/outputs/apk/…` (or `bundle/…` for AAB).
+
+### Signing (release)
+
+1. Create an upload keystore — **never commit it**:
+
+```bash
+keytool -genkey -v -keystore qorvyna-upload.jks -keyalg RSA -keysize 2048 \
+  -validity 10000 -alias qorvyna
+```
+
+2. Point the Android Gradle project at it via environment variables (do not
+   write passwords into the repo):
+
+```bash
+export QORVYNA_KEY_STORE=/absolute/path/qorvyna-upload.jks
+export QORVYNA_KEY_STORE_PASSWORD=...
+export QORVYNA_KEY_ALIAS=qorvyna
+export QORVYNA_KEY_PASSWORD=...
+```
+
+3. Build, then verify the signature and publish a checksum:
+
+```bash
+npm run android:build -- --apk
+apksigner verify --print-certs src-tauri/gen/android/app/build/outputs/apk/release/app-release.apk
+sha256sum src-tauri/gen/android/app/build/outputs/apk/release/app-release.apk \
+  > qorvyna-android.apk.sha256
+```
+
+Android identifiers: application id `ai.matrix.desktop`, `minSdkVersion` 24.
+
+---
+
+## 7. Native capabilities (what JS may call)
+
+`src-tauri/capabilities/default.json` is an allowlist. Only these plugin
+permissions are exposed; anything else is denied by the runtime.
+
+Native commands registered in `src-tauri/src/lib.rs` (invoke handler):
+
+| Command | Purpose |
+|---|---|
+| `qorvyna_native_info` | platform + app metadata |
+| `qorvyna_permission_status` / `_request` / `_settings` | first-run permission checklist |
+| `qorvyna_assistant_state` | local wake-word availability |
+| `qorvyna_wake_word_set` | enable/disable on-device wake word |
+| `qorvyna_assistant_default_request` | ask to become the default assistant |
+| `qorvyna_assistant_popup` | show/hide the Jarvis popup (`show`/`hide` only) |
+| `qorvyna_device_fingerprint` | non-secret install id |
+| `qorvyna_inspection_state` / `_stop` | inspection transparency |
+| `matrix_notify`, `matrix_collect_device_activity` | desktop notifications, telemetry |
+| `qorvyna_desktop_info`, `desktop_hardware_status` | hardware telemetry |
+| `launch_app`, `media_control` | allowlisted app launch and media keys |
+
+No generic "run arbitrary command" bridge exists, and the shell plugin is
+configured for a fixed allowlist only.
+
+### Permissions the app asks for (all optional)
+
+`src/native/native-bridge.ts` → `PERMISSION_CATALOG`. Every entry is
+`required: false`: chat works with all of them denied.
+
+| Id | Label | Needed for | Platforms |
+|---|---|---|---|
+| `microphone` | Microphone | voice input **after** the wake word | all |
+| `notifications` | Notifications | local notifications | all |
+| `notification_access` | Notification access | forwarding (user enables in Settings) | android, ios |
+| `screen_capture` | Screen sharing | mirroring (MediaProjection consent each time) | all |
+| `overlay` | Draw over apps | Jarvis popup over other apps | android |
+| `background_microphone` | Background listening | on-device wake word while backgrounded | android |
+| `bluetooth` | Nearby devices | ESP32 nodes, headphones, wearables | android, ios |
+| `assistant_role` | Default assistant | "Hey QORVYNA" as the system assistant | android |
+
+All eight are `required: false`. The Rust side reports `granted` only when the
+OS has really granted it, `unsupported` on platforms where the capability does
+not exist, and `not_requested` otherwise — it never guesses.
+
+QORVYNA never promises universal always-listening. Wake-word detection is
+local; there is no continuous cloud microphone stream.
+
+---
+
+## 8. Deep links (`qorvyna://`)
+
+The desktop and Android builds register the `qorvyna` URL scheme
+(`src-tauri/tauri.conf.json` → `plugins["deep-link"].desktop.schemes`). Links
+arrive through `tauri-plugin-deep-link`, are re-emitted to the web UI as
+`qorvyna://deep-link`, and are routed by `parseDeepLink()` in
+`src/native/native-bridge.ts`.
+
+| Link | Effect |
+|---|---|
+| `qorvyna://link?code=ABCD-EFGH` | opens Devices and pre-fills the cross-account pairing dialog |
+| `qorvyna://pair?token=…` | same, with the long-form token |
+| `qorvyna://voice` / `qorvyna://assistant` | activates the Jarvis bar |
+| `qorvyna://chat/abc123` | navigates to that conversation |
+| `https://qorvyna.thamjj13.top/…` | universal link, navigates in-app |
+
+Anything else resolves to `unknown` and is ignored — including look-alike hosts
+(`qorvyna.thamjj13.top.evil.example`) and userinfo tricks
+(`qorvyna.thamjj13.top@evil.example`). The Rust side logs only the scheme,
+never the query string, because a pairing code can be in it.
+
+Test the parser:
+
+```bash
+npx vitest run tests/deep-links.test.ts
+```
+
+## 9. Inspection transparency
+
+An admin inspection is implemented in `src/lib/server/inspection.ts` and is
+visible by design:
+
+1. An admin with `privacy.access` creates a request. Nothing is inspected yet.
+2. Guardian-protected accounts (verified `parent_links`) require the guardian to
+   approve first — an e-mail address is never treated as a guardian.
+3. The target device shows a persistent bar naming the admin, the reason, the
+   scopes and a countdown. The session starts **only** after that device
+   confirms.
+4. The owner, the approving guardian, or the requesting admin can stop it at any
+   time; the next check stops everything.
+5. `messages`, `passwords`, `tokens`, `pairing_secrets`, `keystrokes` and
+   `other_apps` are rejected as scopes at creation.
+
+To audit what happened:
+
+```bash
+# Firestore collections
+inspection_requests     inspection_events     admin_audit_log
 ```
 
 ---
 
-## 5. Publishing an OTA Update Across Web, Desktop & Mobile
+## 10. Cross-account device pairing
 
-1. Update version constants together:
-   - `src/lib/version.ts` (`APP_VERSION`, `APP_BUILD_NUMBER`)
-   - `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`
-   - `mobile/matrix_app/pubspec.yaml` (`version: X.Y.Z+BUILD`)
-   - `public/sw.js` (`CACHE_VERSION`)
-2. Tag `mobile-vX.Y.Z` to publish `matrix-android.apk` + `.sha256` to GitHub Releases.
-3. Open **Admin → App Releases** (or call `saveAppReleaseConfig`) with the new version, build number, APK URL, SHA-256, and optional `force_update: true` / `min_supported_version`.
-4. All clients (`PwaManager`, `PhoneUpdateBanner`, `UpdateService` on Android, and Tauri Desktop) query `GET /api/app/version` and present an instant in-app update prompt.
+Two devices on **different** accounts pair without either account logging into
+the other. Implemented in `src/lib/server/device-links.ts`.
+
+- The invitation secret is 256 bits from `crypto.randomBytes`; only
+  `sha256(secret)` is stored, so a database dump cannot replay it.
+- The human code is 8 characters from an alphabet without `0/O/1/I/L`, valid for
+  **10 minutes**, rate-limited to 5 per account per hour, and **single-use**
+  (the claim is consumed inside a transaction).
+- Either side can revoke; revocation writes an audit event for both accounts.
+- Admins see a boolean "credential present" and pairing history — never a token
+  or its hash.
+
+Verify the rules:
+
+```bash
+npx vitest run tests/device-links.test.ts tests/admin-devices.test.ts
+```
+
+---
+
+## 11. Version bump checklist
+
+Update all of these together, or clients will disagree about what is installed:
+
+```
+package.json                  "version": "1.2.0"
+src-tauri/tauri.conf.json     "version": "1.2.0"
+src-tauri/Cargo.toml          version = "1.2.0"
+src/lib/version.ts            APP_VERSION = "1.2.0", APP_BUILD_NUMBER = 3
+public/sw.js                  CACHE_VERSION = "qorvyna-cache-v1.2.0-b3"
+```
+
+Then rebuild the native bundle (`node scripts/native/build-native-frontend.mjs`)
+because the version is compiled into it.
+
+## 12. Release publishing
+
+1. Tag and push.
+2. Upload the Windows installer, APK and AAB to the GitHub release, plus
+   `.sha256` files.
+3. Register the release in Admin → App Releases (`/admin/app-releases`) with
+   version, build number, download URL, SHA-256, and optionally
+   `force_update: true` / `min_supported_version`.
+4. Every client polls `GET /api/app/version` (`platform=web|android|desktop`) and
+   shows an in-app update prompt.
+
+---
+
+## 13. Verification commands (run these before shipping)
+
+```bash
+npm run typecheck                                   # TypeScript
+npm test                                            # full vitest suite
+node scripts/native/build-native-frontend.mjs --check   # bundle is current
+npx tauri info                                      # toolchain + config sanity
+
+# Focused suites for the risky areas
+npx vitest run tests/device-links.test.ts           # cross-account pairing
+npx vitest run tests/admin-devices.test.ts          # admin dashboard + RBAC
+npx vitest run tests/inspection.test.ts             # inspection consent chain
+npx vitest run tests/notification-forwarding.test.ts
+npx vitest run tests/native-shell.test.ts tests/native-render.test.ts
+npx vitest run tests/native-build-wiring.test.ts
+npx vitest run tests/deep-links.test.ts               # qorvyna:// routing
+npx vitest run tests/device-ui-render.test.ts         # pairing/admin UI renders
+npx vitest run tests/phase15-acceptance.test.ts       # the full checklist
+```
+
+### Known sandbox limitations (honest status)
+
+The following could not be executed in the development sandbox used for this
+work, and are therefore **unverified by execution** (the code is written and
+reviewed, not compiled):
+
+| Not run | Why | How to verify |
+|---|---|---|
+| `cargo build` / `tauri build` | no Rust toolchain in the sandbox | `npx tauri build` on a machine with Rust |
+| `tauri android build`, APK/AAB | no JDK or Android SDK | `npm run android:build -- --apk` |
+| Kotlin listener on a device | no emulator/physical device | install the APK, enable notification access |
+| Real browser E2E | no usable Chromium | `npm run test:browser` (Playwright) |
+| Resend live delivery | no API key | `/admin/email` → send test email |
+
+Everything TypeScript/React is covered by the test suite and `tsc --noEmit`
+runs clean.

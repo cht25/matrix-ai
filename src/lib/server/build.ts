@@ -406,10 +406,18 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
     // overwriting newer work. Each stage is one model's responsibility; when
     // that model cannot run, the next suitable enabled model takes the stage.
     let team: AIRouteTarget[] | null = null;
+    let teamDegraded: { wanted: string; used: string; detail: string } | null = null;
     let authorIndex = 0;
     const getTeam = async (): Promise<AIRouteTarget[]> => {
       if (team) return team;
-      const resolved = await resolvePool(d, user.uid);
+      // A build run is an artifact-generation job by definition: GLM 4.7 Flash
+      // leads when Cloudflare is configured, the GPT OSS team writes the files
+      // otherwise (and the run log says which).
+      const resolved = await resolvePool(d, user.uid, null, {
+        intent: "artifact",
+        reason: "Build runs generate project files, so they use the artifact class.",
+      });
+      teamDegraded = resolved.degraded;
       for (const skipped of resolved.skipped) note("generate", "warn", `${skipped.label} is enabled but not available: ${skipped.reason}`);
       // Stages write or repair real project files, so only code-capable models take part.
       const capable = resolved.targets.filter((target) => modelById(target.model)?.strengths.includes("coding"));
@@ -466,6 +474,10 @@ export async function runBuildPipeline(input: BuildPipelineInput): Promise<Build
           `${QORVYNA_MODEL_LABEL} is not configured on this deployment (GROQ_API_KEY is missing), so QORVYNA cannot generate project files. Nothing was changed.`,
           "generate",
         );
+      }
+      const degradedTeam = teamDegraded as { wanted: string; used: string; detail: string } | null;
+      if (degradedTeam) {
+        note("generate", "warn", `${degradedTeam.wanted} unavailable — ${degradedTeam.detail}. Writing the files with ${modelLabel(routes[0].model)} instead.`);
       }
       note("generate", "info", routes.length > 1
         ? `Model team: ${routes.map((route) => modelLabel(route.model)).join(", ")} — working on project ${projectId} at revision ${sourceRevision}.`

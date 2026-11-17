@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Activity, BookOpen, Cpu, Globe, LayoutDashboard, LibraryBig,
-  Mail, ScrollText, ShieldAlert, ShieldCheck, Sliders, UserCheck, Users,
+  Mail, ScrollText, ShieldAlert, ShieldCheck, Sliders, Smartphone, UserCheck, Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -39,6 +39,7 @@ const GROUPS: { title: string; items: Section[] }[] = [
   {
     title: "System",
     items: [
+      { href: "/admin/devices", label: "Devices", icon: Smartphone, permission: "security.view" },
       { href: "/admin/security", label: "Security", icon: ShieldAlert, permission: "security.view" },
       { href: "/admin/ai", label: "AI configuration", icon: Cpu, permission: "ai.view" },
       { href: "/admin/email", label: "Email provider", icon: Mail, permission: "system.settings" },

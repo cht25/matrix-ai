@@ -178,13 +178,10 @@ export function AccountForm({ profile, countries }: { profile: Profile | null; c
       </form>
       <div className="mt-6 border-t border-border pt-4">
         <h3 className="text-sm font-semibold text-ink">Linked sign-in</h3>
-        <p className="mt-1 text-xs text-ink-3">If Google/Facebook uses the same verified email as this account, link it here after signing in with email.</p>
+        <p className="mt-1 text-xs text-ink-3">If Google uses the same verified email as this account, link it here after signing in with email. Facebook sign-in is no longer offered, so it is not listed.</p>
         <div className="mt-3 flex flex-wrap gap-2">
           <Button type="button" variant="outline" disabled={linking !== null} onClick={() => void linkProvider("google")}>
             {linking === "google" ? <Spinner /> : null} Link Google
-          </Button>
-          <Button type="button" variant="outline" disabled={linking !== null} onClick={() => void linkProvider("facebook")}>
-            {linking === "facebook" ? <Spinner /> : null} Link Facebook
           </Button>
         </div>
       </div>

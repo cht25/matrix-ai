@@ -22,7 +22,12 @@
     "migrate:roles:dry-run": "node scripts/migrate-roles.mjs --dry-run",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "android:init": "tauri android init && node scripts/native/patch-android-manifest.mjs",
+    "android:manifest": "node scripts/native/patch-android-manifest.mjs",
+    "android:build": "node scripts/native/build-native-frontend.mjs && tauri android build",
+    "windows:build": "node scripts/native/build-native-frontend.mjs && tauri build",
+    "native:check": "node scripts/native/build-native-frontend.mjs --check"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.4",
@@ -58,12 +63,14 @@
   "devDependencies": {
     "@sparticuz/chromium": "^153.0.0",
     "@tailwindcss/postcss": "^4.1.8",
+    "@tauri-apps/cli": "^2.12.5",
     "@types/node": "^22.15.0",
     "@types/pdfkit": "^0.17.6",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "firebase-tools": "^15.27.0",
+    "jsdom": "^26.1.0",
     "playwright-core": "^1.65.0",
     "sharp": "^0.35.3",
     "tailwindcss": "^4.1.8",

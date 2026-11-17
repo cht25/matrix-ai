@@ -225,15 +225,10 @@ export function RegisterForm() {
       </form>
       <Divider />
       {starting ? (
-        <Alert tone="info">Completing sign-in with {starting === "google" ? "Google" : "Facebook"} in the popup window…</Alert>
+        <Alert tone="info">Completing sign-in with Google in the popup window…</Alert>
       ) : null}
       {notice && !error ? <Alert tone="info">{notice}</Alert> : null}
-      <OAuthButtons
-        onGoogle={() => oauth("google")}
-        onFacebook={() => oauth("facebook")}
-        busyProvider={starting}
-        disabled={busy}
-      />
+      <OAuthButtons onGoogle={() => oauth("google")} busyProvider={starting} disabled={busy} />
       <AuthFooterLink href="/login">Already have an account? Sign in</AuthFooterLink>
     </div>
   );

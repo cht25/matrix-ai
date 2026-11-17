@@ -1,7 +1,12 @@
 "use client";
 
 // =============================================================================
-// Google / Facebook sign-in for /login, /register, and Settings linking.
+// Google sign-in for /login, /register, and Settings linking.
+//
+// Facebook sign-in was removed from the product (sign-in UI, provider
+// construction and Settings linking). Google and email/password remain, and
+// existing Firebase accounts — including any that once linked Facebook — keep
+// working: nothing about the account store changes.
 //
 // TRANSPORT: popup OAuth (`signInWithPopup` / `linkWithPopup`).
 //   startOAuthSignIn() → signInWithPopup(auth, provider)
@@ -21,7 +26,6 @@
 // =============================================================================
 
 import {
-  FacebookAuthProvider,
   GoogleAuthProvider,
   getAdditionalUserInfo,
   linkWithPopup,
@@ -37,7 +41,8 @@ import { mintSessionCookie, type SessionProfileSummary } from "@/lib/client/api"
 import { postAuthDestination } from "@/lib/routing";
 import { logAuthDiagnostic, logAuthEvent } from "@/lib/auth/diagnostics";
 
-export type OAuthProviderId = "google" | "facebook";
+/** The only federated identity provider QORVYNA offers. */
+export type OAuthProviderId = "google";
 
 export type OAuthOk = {
   status: "ok";
@@ -163,7 +168,7 @@ function isStorageBlocked(err: unknown): boolean {
 
 export function describeOAuthFailure(err: unknown, provider: OAuthProviderId): string {
   const code = errorCode(err);
-  const label = provider === "google" ? "Google" : "Facebook";
+  const label = provider === "google" ? "Google" : "this provider";
 
   if (code === "BAD_ORIGIN") return BAD_ORIGIN_FAILED;
   if (code === "auth/popup-blocked") {
@@ -173,7 +178,7 @@ export function describeOAuthFailure(err: unknown, provider: OAuthProviderId): s
     return "The sign-in popup was closed before finishing. Please try again and keep the popup open until sign-in completes.";
   }
   if (code === "auth/account-exists-with-different-credential") {
-    return "An account with this email already exists. Sign in with email and password, then link Google or Facebook in Settings.";
+    return "An account with this email already exists. Sign in with email and password, then link Google in Settings.";
   }
   if (code === "auth/network-request-failed") {
     return "Network problem — check your internet connection and try again.";
@@ -242,17 +247,19 @@ function sessionFailureResult(err: unknown, provider: OAuthProviderId): OAuthRes
 // Public flows
 // -----------------------------------------------------------------------------
 
+/**
+ * The Firebase provider for an id. Only Google exists: any other id is
+ * rejected by the type system, and a stale caller passing "facebook" gets a
+ * clear error instead of silently starting a Facebook popup.
+ */
 function makeProvider(provider: OAuthProviderId): AuthProvider {
-  if (provider === "google") {
-    const p = new GoogleAuthProvider();
-    p.setCustomParameters({ prompt: "select_account" });
-    p.addScope("email");
-    p.addScope("profile");
-    return p;
+  if (provider !== "google") {
+    throw new Error("UNSUPPORTED_PROVIDER");
   }
-  const p = new FacebookAuthProvider();
+  const p = new GoogleAuthProvider();
+  p.setCustomParameters({ prompt: "select_account" });
   p.addScope("email");
-  p.addScope("public_profile");
+  p.addScope("profile");
   return p;
 }
 
@@ -429,7 +436,6 @@ async function finishSignIn(cred: UserCredential, provider: OAuthProviderId): Pr
 
 function providerFromCredential(cred: UserCredential): OAuthProviderId | null {
   const id = cred.providerId ?? cred.user?.providerData?.[0]?.providerId ?? "";
-  if (id.includes("facebook")) return "facebook";
   if (id.includes("google")) return "google";
   return null;
 }

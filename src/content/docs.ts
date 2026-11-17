@@ -61,7 +61,7 @@ export const DOC_SECTIONS: DocSection[] = [
       { t: "p", text: "Depending on your country and age, a parent or guardian may need to provide consent. The onboarding flow walks you through it; the security team reviews submissions and you'll get a notification when it's approved." },
       { t: "callout", tone: "success", text: "While verification is pending you can still explore the Scam Library and Documentation." },
       { t: "h2", text: "Sign in" },
-      { t: "p", text: "Use your email and password, or continue with Google or Facebook. If you've enabled two-factor authentication, you'll enter a 6-digit code from your authenticator app after your password." },
+      { t: "p", text: "Use your email and password, or continue with Google. If you've enabled two-factor authentication, you'll enter a 6-digit code from your authenticator app after your password." },
     ],
   },
   {

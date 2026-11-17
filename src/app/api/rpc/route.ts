@@ -12,6 +12,7 @@ import { type SessionUser } from "@/lib/firebase/session";
 import { getApiSessionUser, hasDeviceScope, rpcDeviceScope } from "@/lib/firebase/device-session";
 import { RpcError } from "@/lib/server/rpc";
 import * as rpc from "@/lib/server/rpc";
+import { getSidebarData } from "@/lib/server/queries";
 import * as imageConfig from "@/lib/ai/image/config";
 import * as providerAccounts from "@/lib/ai/accounts";
 import { cloudflareCredentials } from "@/lib/ai/cloudflare";
@@ -24,6 +25,9 @@ import * as deploy from "@/lib/server/deploy";
 import * as design from "@/lib/server/design";
 import * as family from "@/lib/server/family";
 import * as pairing from "@/lib/server/pairing";
+import * as deviceLinks from "@/lib/server/device-links";
+import * as adminDevices from "@/lib/server/admin-devices";
+import * as inspection from "@/lib/server/inspection";
 import * as hub from "@/lib/server/device-hub";
 import QRCode from "qrcode";
 import * as esp32 from "@/lib/server/esp32";
@@ -58,9 +62,15 @@ export const dynamic = "force-dynamic";
 function ok(data: unknown) {
   return NextResponse.json({ success: true, data });
 }
-function fail(code: string, status: number) {
+/**
+ * Error envelope. `detail` is only attached for 4xx responses: those carry a
+ * deliberate, user-facing explanation written by the handler (e.g. "choose at
+ * least one scope"). 5xx stays a bare stable code so no internal text leaks.
+ */
+function fail(code: string, status: number, detail?: string) {
+  const message = status < 500 && detail ? detail : code;
   return NextResponse.json(
-    { success: false, error: { code, message: code }, data: null },
+    { success: false, error: { code, message, detail: status < 500 ? detail : undefined }, data: null },
     { status },
   );
 }
@@ -116,7 +126,7 @@ export async function POST(req: NextRequest) {
     const result = await handler(d, user, body);
     return ok(result ?? true);
   } catch (err) {
-    if (err instanceof RpcError) return fail(err.code, err.status);
+    if (err instanceof RpcError) return fail(err.code, err.status, err.detail);
     if (err instanceof z.ZodError) {
       console.warn(`[QORVYNA] /api/rpc action "${action}" validation failed`, err.issues[0]?.message);
       return fail("BAD_REQUEST", 400);
@@ -330,6 +340,21 @@ const ACTIONS: Record<string, Handler> = {
   device_connection: (d, u, b) =>
     hub.setDeviceConnection(d, u, { device_id: z.string().min(1).max(128).parse(b.device_id), connected: z.boolean().parse(b.connected) }),
   device_revoke: (d, u, b) => hub.revokeHubDevice(d, u, z.string().min(1).max(128).parse(b.device_id)),
+  // --- cross-account device links (Phase 6) -------------------------------------
+  // Two devices owned by DIFFERENT accounts can link without a shared login.
+  // The invitation secret is returned exactly once and only its hash is stored.
+  device_link_invite_create: (d, u, b) =>
+    deviceLinks.createLinkInvitation(d, u, {
+      device_id: b.device_id ? z.string().max(128).parse(b.device_id) : null,
+      label: str(b.label).slice(0, 80),
+    }),
+  device_link_claim: (d, u, b) =>
+    deviceLinks.claimLinkInvitation(d, u, { token: z.string().min(8).max(400).parse(b.token) }),
+  device_link_list: (d, u) => deviceLinks.listDeviceLinks(d, u),
+  device_link_revoke: (d, u, b) =>
+    deviceLinks.revokeDeviceLink(d, u, z.string().min(1).max(128).parse(b.link_id)),
+  device_link_history: (d, u, b) =>
+    deviceLinks.linkHistory(d, u, z.string().min(1).max(128).parse(b.link_id)),
   device_self: (d, u) => hub.deviceSelf(d, u),
   esp32_pairing_create: (d, u, b) =>
     esp32.createEsp32Pairing(d, u, {
@@ -849,6 +874,106 @@ const ACTIONS: Record<string, Handler> = {
     return result;
   },
   security_score: (d, u) => rpc.securityScore(d, u),
+
+  // --- conversations (owner-scoped reads used by the native shell) --------------
+  // The website renders the sidebar on the server via getSidebarData(); the
+  // Tauri build has no server, so it needs these three reads over the same
+  // data source and the same ownership rules.
+  // --- transparent inspection (Phase 8) ---------------------------------------
+  // Nothing is inspected until the TARGET device acknowledges the visible
+  // notice; guardian-protected accounts need a verified guardian first.
+  inspection_request: (d, u, b) =>
+    inspection.requestInspection(d, u, {
+      target_uid: str(b.target_uid),
+      device_id: str(b.device_id),
+      reason: str(b.reason).slice(0, 400),
+      scopes: b.scopes,
+      minutes: b.minutes,
+    }),
+  inspection_guardian_queue: (d, u) => inspection.guardianInspectionQueue(d, u),
+  inspection_guardian_decide: (d, u, b) =>
+    inspection.decideInspectionAsGuardian(d, u, {
+      inspection_id: z.string().min(1).max(128).parse(b.inspection_id),
+      approve: bool(b.approve),
+      note: str(b.note).slice(0, 300),
+    }),
+  inspection_active: (d, u, b) => inspection.activeInspectionFor(d, u, z.string().min(1).max(128).parse(b.device_id)),
+  inspection_acknowledge: (d, u, b) =>
+    inspection.acknowledgeInspection(d, u, {
+      inspection_id: z.string().min(1).max(128).parse(b.inspection_id),
+      device_id: z.string().min(1).max(128).parse(b.device_id),
+    }),
+  inspection_stop: (d, u, b) =>
+    inspection.stopInspection(d, u, {
+      inspection_id: z.string().min(1).max(128).parse(b.inspection_id),
+      reason: str(b.reason).slice(0, 300),
+    }),
+  inspection_detail: (d, u, b) => inspection.inspectionDetail(d, u, z.string().min(1).max(128).parse(b.inspection_id)),
+
+  // --- admin device dashboard (Phase 7) — RBAC re-checked in the module -------
+  admin_devices_list: (d, u, b) =>
+    adminDevices.listAdminDevices(d, u, {
+      search: str(b.search).slice(0, 120),
+      status: str(b.status).slice(0, 30),
+      platform: str(b.platform).slice(0, 40),
+      online_only: bool(b.online_only),
+      limit: Number(b.limit) || 200,
+    }),
+  admin_device_detail: (d, u, b) => adminDevices.adminDeviceDetail(d, u, z.string().min(1).max(128).parse(b.device_id)),
+  admin_device_moderate: (d, u, b) =>
+    adminDevices.moderateDevice(d, u, {
+      device_id: z.string().min(1).max(128).parse(b.device_id),
+      action: z.enum(["disable", "enable", "block", "unblock", "revoke"]).parse(b.action),
+      reason: str(b.reason).slice(0, 400),
+    }),
+  admin_pairing_history: (d, u, b) => adminDevices.adminPairingHistory(d, u, Number(b.limit) || 100),
+  admin_device_policy: (d) => adminDevices.adminDevicePolicySummary(d),
+
+  conversation_list: async (d, u) => {
+    const sidebar = await getSidebarData(d, u.uid);
+    return { conversations: sidebar.conversations, profile: { name: sidebar.profileName, avatar: sidebar.profileAvatar }, isAdmin: sidebar.isAdmin };
+  },
+  conversation_get: async (d, u, b) => {
+    const id = z.string().min(1).max(128).parse(b.conversation_id ?? b.id);
+    const conv = await d.collection("conversations").doc(id).get();
+    if (!conv.exists || conv.data()!.user_id !== u.uid) throw new RpcError("NOT_FOUND", 404);
+    const data = conv.data()!;
+    return {
+      conversation: {
+        id,
+        title: data.title ?? "Untitled",
+        mode: data.mode ?? "chat",
+        selected_model: data.selected_model ?? null,
+        selected_provider: data.selected_provider ?? null,
+        archived_at: data.archived_at?.toDate?.().toISOString?.() ?? null,
+      },
+    };
+  },
+  settings_get: async (d, u) => {
+    const snap = await d.collection("profiles").doc(u.uid).get();
+    const data = snap.data() ?? {};
+    // Deliberately a fixed, named projection: never return the whole profile
+    // document, which may hold administrative or guardian fields.
+    return {
+      full_name: data.full_name ?? "",
+      avatar_url: data.avatar_url ?? "",
+      theme: data.theme ?? "system",
+      language: data.language ?? "en",
+      timezone: data.timezone ?? "UTC",
+      default_model: data.default_model ?? null,
+      auto_model_routing: data.auto_model_routing !== false,
+      onboarding_complete: data.onboarding_complete === true,
+      email: u.email ?? "",
+    };
+  },
+  dashboard_summary: async (d, u) => {
+    const [usage, score, onboarding] = await Promise.all([
+      rpc.usageSummary(d, u),
+      rpc.securityScore(d, u),
+      rpc.profileOnboardingComplete(d, u.uid),
+    ]);
+    return { usage, security: score, onboarding_complete: onboarding };
+  },
 
   // --- conversations (owner-scoped mutations + export) --------------------------
   // Incremental upward scroll: the chat page ships only the most recent

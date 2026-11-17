@@ -21,6 +21,20 @@ export function createFirestoreStub() {
     calls: [] as { collection: string; method: string; doc?: string }[],
   };
 
+  /** Compare numbers and Firestore-like timestamps. */
+  function toComparable(value: unknown): number {
+    if (typeof value === "number") return value;
+    if (value instanceof Date) return value.getTime();
+    if (typeof value === "string") {
+      const parsed = Date.parse(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+    const ts = value as { toMillis?: () => number; _seconds?: number } | null | undefined;
+    if (typeof ts?.toMillis === "function") return ts.toMillis();
+    if (typeof ts?._seconds === "number") return ts._seconds * 1000;
+    return 0;
+  }
+
   function nextId(): string {
     return `id_${Math.random().toString(36).slice(2, 12)}`;
   }
@@ -83,10 +97,29 @@ export function createFirestoreStub() {
           .map(([k, data]) => ({ id: k.slice(name.length + 1), data: () => data, exists: true, ref: makeDocRef(name, k.slice(name.length + 1)) }));
         for (const clause of whereClauses) {
           docs = docs.filter((d) => {
-            const value = (d.data() as Record<string, unknown>)[clause.field];
-            if (clause.op === "==") return value === clause.value;
-            if (clause.op === "in") return Array.isArray(clause.value) && (clause.value as unknown[]).includes(value);
-            return true;
+            // Firestore supports dotted field paths (`a.uid`) — resolve them
+            // rather than silently matching every document.
+            const value = clause.field
+              .split(".")
+              .reduce<unknown>((acc, part) => (acc as Record<string, unknown> | null)?.[part], d.data());
+            switch (clause.op) {
+              case "==":
+                return value === clause.value;
+              case "!=":
+                return value !== clause.value;
+              case "in":
+                return Array.isArray(clause.value) && (clause.value as unknown[]).includes(value);
+              case ">=":
+                return toComparable(value) >= toComparable(clause.value);
+              case "<=":
+                return toComparable(value) <= toComparable(clause.value);
+              case ">":
+                return toComparable(value) > toComparable(clause.value);
+              case "<":
+                return toComparable(value) < toComparable(clause.value);
+              default:
+                return false;
+            }
           });
         }
         if (limitCount !== null) docs = docs.slice(0, limitCount);
@@ -103,6 +136,8 @@ export function createFirestoreStub() {
     const path = `${name}/${docId}`;
     const self = {
       id: docId,
+      /** Full collection path — used by the transaction implementation. */
+      path,
       get: async () => {
         state.calls.push({ collection: name, method: "get", doc: docId });
         const fault = takeFault(name, "get");
@@ -148,9 +183,59 @@ export function createFirestoreStub() {
     return self;
   }
 
+  /**
+   * Transactions. The stub applies writes immediately (like the emulator) but
+   * runs reads-before-writes in the caller's order and rolls back every write
+   * recorded so far when the callback throws — so "single use" logic that
+   * relies on a transaction is exercised, not bypassed.
+   */
+  async function runTransaction<T>(fn: (tx: {
+    get: (ref: { id: string; path?: string }) => Promise<{ exists: boolean; data: () => DocRecord | undefined; id: string }>;
+    set: (ref: { id: string; path?: string }, data: DocRecord, options?: { merge?: boolean }) => void;
+    update: (ref: { id: string; path?: string }, data: DocRecord) => void;
+    delete: (ref: { id: string; path?: string }) => void;
+  }) => Promise<T> | T): Promise<T> {
+    const pending: Array<{ key: string; data: DocRecord; merge: boolean } | { key: string; remove: true }> = [];
+    const tx = {
+      get: async (ref: { id: string; path?: string }) => {
+        const key = (ref as { path?: string }).path ?? String(ref.id);
+        const data = state.docs.get(key);
+        return { exists: data !== undefined, data: () => (data ? structuredClone(data) : undefined), id: ref.id };
+      },
+      set: (ref: { id: string; path?: string }, data: DocRecord, options?: { merge?: boolean }) => {
+        const key = (ref as { path?: string }).path ?? String(ref.id);
+        pending.push({ key, data: structuredClone(data), merge: options?.merge === true });
+      },
+      update: (ref: { id: string; path?: string }, data: DocRecord) => {
+        const key = (ref as { path?: string }).path ?? String(ref.id);
+        pending.push({ key, data: structuredClone(data), merge: true });
+      },
+      delete: (ref: { id: string; path?: string }) => {
+        const key = (ref as { path?: string }).path ?? String(ref.id);
+        pending.push({ key, remove: true });
+      },
+    };
+    try {
+      const result = await fn(tx);
+      for (const write of pending) {
+        if ("remove" in write) {
+          state.docs.delete(write.key);
+          continue;
+        }
+        const previous = write.merge ? state.docs.get(write.key) ?? {} : {};
+        state.docs.set(write.key, { ...previous, ...write.data });
+      }
+      return result;
+    } catch (error) {
+      pending.length = 0; // rolled back: nothing is applied
+      throw error;
+    }
+  }
+
   return {
     _state: state,
     collection,
+    runTransaction,
     fault: (f: FirestoreFault) => state.faults.push(f),
     clearFaults: () => (state.faults.length = 0),
     dump: () => Object.fromEntries(state.docs),
@@ -176,6 +261,10 @@ export function makeAdminModule(stub: FirestoreStub) {
       createSessionCookie: vi.fn(async () => "stub-session-cookie"),
     })),
     nowTs: () => Date.now(),
-    Timestamp: { now: () => Date.now() },
+    Timestamp: {
+      now: () => Date.now(),
+      fromMillis: (ms: number) => ms,
+      fromDate: (date: Date) => date.getTime(),
+    },
   };
 }

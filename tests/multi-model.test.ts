@@ -617,6 +617,11 @@ describe("gateway end to end", () => {
     expect(result.run.status).toBe("succeeded");
     expect(result.run.model).toMatchObject({ model: QORVYNA_MODEL_ID });
     const log = JSON.stringify(result.run);
+    // Phase 5: a build run is artifact work, so GLM 4.7 Flash leads when it is
+    // configured. This deployment has no Cloudflare credential, so the run
+    // says exactly that and the GPT OSS team writes the files — no silent swap.
+    expect(log).toContain("GLM 4.7 Flash");
+    expect(log).toMatch(/GLM 4\.7 Flash unavailable/);
     expect(log).toContain("Model team: GPT OSS 120B, Llama 3.3 70B, Qwen 3 32B");
     // Only code-capable registered models were asked, and all for the same project.
     expect(requests.every((request) => [QORVYNA_MODEL_ID, QWEN, LLAMA].includes(request.model))).toBe(true);

@@ -7,7 +7,9 @@ export default defineConfig({
   // import real .tsx components.
   esbuild: { jsx: "automatic" },
   test: {
-    include: ["tests/**/*.test.ts"],
+    // `.test.tsx` files mount real components in jsdom (the native shell test);
+    // everything else runs in the fast node environment.
+    include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
     environment: "node",
   },
   resolve: {

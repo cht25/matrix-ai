@@ -334,7 +334,7 @@ describe("Phase 5, 6, 7 & 9 — Offline mode, SW, /api/ping, version sync, and a
     expect(offlineHtml).toContain("Cached conversations on this device");
   });
 
-  it("synchronizes app versions across web, Tauri desktop, Android mobile, and build guide", () => {
+  it("synchronizes app versions across web, Tauri desktop, Android, and build guide", () => {
     const pkg = JSON.parse(read("package.json")) as { version: string };
     const tauriConf = JSON.parse(read("src-tauri/tauri.conf.json")) as { version: string };
     const cargo = read("src-tauri/Cargo.toml");
@@ -351,8 +351,13 @@ describe("Phase 5, 6, 7 & 9 — Offline mode, SW, /api/ping, version sync, and a
 
     expect(existsSync(join(__dirname, "..", "app_build_guide.md"))).toBe(true);
     const guide = read("app_build_guide.md");
-    expect(guide).toContain("npx tauri build");
-    expect(guide).toContain("flutter build apk");
+    // Phase 14: the guide documents the CURRENT build system — the bundled
+    // Tauri app — not the retired Flutter project.
+    expect(guide).toContain("npm run windows:build");
+    expect(guide).toContain("npm run android:build");
     expect(guide).toContain("public/sw.js");
+    expect(guide).toContain("public/native");
+    expect(guide).toContain(APP_VERSION);
+    expect(guide).not.toContain("flutter build apk");
   });
 });

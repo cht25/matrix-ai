@@ -24,6 +24,8 @@ use tauri::{
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
+mod native;
+
 #[derive(Serialize)]
 pub struct CompanionAppUsage {
     pub name: String,
@@ -330,10 +332,47 @@ pub fn run() {
         )
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
+        // Deep links (`qorvyna://link?code=...`, `qorvyna://voice`). The URL is
+        // forwarded to the web UI as an app event so the existing router can
+        // handle it; the Rust side never opens or executes anything itself.
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             let _ = app
                 .global_shortcut()
                 .register("CmdOrCtrl+Shift+Space");
+
+            // --- Deep links ---------------------------------------------------
+            // Two paths matter: a warm app receives `open-url`, a cold start
+            // receives it before the window finishes loading. Both ultimately
+            // emit `qorvyna://deep-link` with the raw URL, and the web UI
+            // decides what to do (pair, navigate, activate voice). Nothing is
+            // fetched or executed here.
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        let raw = url.to_string();
+                        // Never log the query string: it can carry a pairing code.
+                        let scheme_only = raw.split('?').next().unwrap_or("qorvyna://").to_string();
+                        eprintln!("[QORVYNA] deep link received: {scheme_only}");
+                        let _ = handle.emit("qorvyna://deep-link", raw.clone());
+                        if let Some(window) = handle.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                });
+                // Register at runtime for dev/AppImage builds; on Windows/macOS
+                // the installer handles the scheme, and a failure here is not
+                // fatal — the app still works without deep links.
+                #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
+                {
+                    if let Err(error) = app.deep_link().register_all() {
+                        eprintln!("[QORVYNA] deep-link scheme registration skipped: {error}");
+                    }
+                }
+            }
 
             let show_item = MenuItem::with_id(app, "show", "Open QORVYNA AI", true, None::<&str>)?;
             let voice_item = MenuItem::with_id(app, "voice", "Speak to QORVYNA (Ctrl+Shift+Space)", true, None::<&str>)?;
@@ -378,7 +417,21 @@ pub fn run() {
             qorvyna_desktop_info,
             desktop_hardware_status,
             launch_app,
-            media_control
+            media_control,
+            // Native bridge used by the bundled shared frontend
+            // (src/native/native-bridge.ts). Every command is allowlisted
+            // individually — nothing is exposed generically.
+            native::qorvyna_native_info,
+            native::qorvyna_permission_status,
+            native::qorvyna_permission_request,
+            native::qorvyna_permission_settings,
+            native::qorvyna_assistant_state,
+            native::qorvyna_wake_word_set,
+            native::qorvyna_assistant_default_request,
+            native::qorvyna_assistant_popup,
+            native::qorvyna_device_fingerprint,
+            native::qorvyna_inspection_state,
+            native::qorvyna_inspection_stop
         ])
         .run(tauri::generate_context!())
         .expect("error while running QORVYNA AI Tauri application");
