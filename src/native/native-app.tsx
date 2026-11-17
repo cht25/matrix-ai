@@ -173,8 +173,12 @@ function AssistantWakeBridge() {
     };
     document.addEventListener("visibilitychange", onForeground);
     window.addEventListener("focus", onForeground);
+    // The bubble can be tapped while the app is already in the foreground, so
+    // visibility alone is not enough: poll the (already consumed) flag slowly.
+    const timer = window.setInterval(onForeground, 4000);
     return () => {
       disposed = true;
+      window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onForeground);
       window.removeEventListener("focus", onForeground);
     };

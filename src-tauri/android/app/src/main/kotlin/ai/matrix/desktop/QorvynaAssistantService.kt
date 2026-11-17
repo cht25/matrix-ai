@@ -484,15 +484,18 @@ class QorvynaAssistantService : Service() {
     private fun startTurn(source: String) {
         getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putBoolean(KEY_PENDING, true).apply()
-        try {
-            startActivity(
-                Intent(this, MainActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    .putExtra(EXTRA_SOURCE, source)
-                    .setData(Uri.parse("qorvyna://assistant?source=$source")),
-            )
-        } catch (_: Throwable) {
-            // The pending flag still opens the assistant on the next launch.
+        // Always from the main thread: the wake loop calls this from audio.
+        handler.post {
+            try {
+                startActivity(
+                    Intent(this, MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        .putExtra(EXTRA_SOURCE, source)
+                        .setData(Uri.parse("qorvyna://assistant?source=$source")),
+                )
+            } catch (_: Throwable) {
+                // The pending flag still opens the assistant on the next launch.
+            }
         }
     }
 }
