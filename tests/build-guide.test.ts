@@ -117,6 +117,19 @@ describe("Phase 14 — the build guide matches the repository", () => {
     expect(guide).toContain("from the app bundle");
   });
 
+  it("documents exactly the permissions that exist", () => {
+    // The guide once listed a `battery_optimization` permission that the app
+    // never defined. Pin the real catalog so it cannot drift again.
+    const bridge = readFileSync(path.join(ROOT, "src/native/native-bridge.ts"), "utf8");
+    const ids = [...bridge.matchAll(/^\s{4}id: "([a-z_]+)",$/gm)].map((match) => match[1]);
+    expect(ids.length).toBeGreaterThanOrEqual(8);
+    for (const id of ids) {
+      expect(guide, `guide omits permission ${id}`).toContain(`\`${id}\``);
+    }
+    // And it must not invent one.
+    expect(guide).not.toContain("battery_optimization");
+  });
+
   it("states the real version and identifier", () => {
     expect(guide).toContain(pkg.version);
     expect(guide).toContain("ai.matrix.desktop");

@@ -342,16 +342,20 @@ configured for a fixed allowlist only.
 `src/native/native-bridge.ts` → `PERMISSION_CATALOG`. Every entry is
 `required: false`: chat works with all of them denied.
 
-| Id | Needed for | Android only |
-|---|---|---|
-| `notifications` | local notifications | no |
-| `notification_access` | notification forwarding (user enables in Settings) | yes |
-| `microphone` | voice input **after** the wake word | no |
-| `background_microphone` | on-device wake word while backgrounded | yes |
-| `overlay` | Jarvis popup over other apps | yes |
-| `assistant_role` | "Hey QORVYNA" as system assistant | yes |
-| `battery_optimization` | keep the wake-word service alive | yes |
-| `screen_capture` | screen mirroring (MediaProjection consent each time) | no |
+| Id | Label | Needed for | Platforms |
+|---|---|---|---|
+| `microphone` | Microphone | voice input **after** the wake word | all |
+| `notifications` | Notifications | local notifications | all |
+| `notification_access` | Notification access | forwarding (user enables in Settings) | android, ios |
+| `screen_capture` | Screen sharing | mirroring (MediaProjection consent each time) | all |
+| `overlay` | Draw over apps | Jarvis popup over other apps | android |
+| `background_microphone` | Background listening | on-device wake word while backgrounded | android |
+| `bluetooth` | Nearby devices | ESP32 nodes, headphones, wearables | android, ios |
+| `assistant_role` | Default assistant | "Hey QORVYNA" as the system assistant | android |
+
+All eight are `required: false`. The Rust side reports `granted` only when the
+OS has really granted it, `unsupported` on platforms where the capability does
+not exist, and `not_requested` otherwise — it never guesses.
 
 QORVYNA never promises universal always-listening. Wake-word detection is
 local; there is no continuous cloud microphone stream.
