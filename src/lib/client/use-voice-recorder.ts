@@ -3,23 +3,22 @@
 // =============================================================================
 // Voice capture for the chat composer (Chat and Agent share it).
 //
-// This hook only RECORDS. What happens to a finished recording — send it as a
-// voice message, or transcribe it into the composer — is decided by the caller.
-// Three things that must never be confused live in three different places:
-//
-//   recording      → here (MediaRecorder + live level meter)
-//   transcription  → POST /api/voice/transcribe (Whisper)
-//   AI speech      → /api/voice/speech and the browser's speech synthesis
-//
-// Works on desktop and mobile browsers: the container/codec is negotiated with
-// MediaRecorder.isTypeSupported (WebM/Opus on Chromium and Firefox, MP4/AAC on
-// Safari and iOS), the meter is optional, and every failure maps to a plain
-// sentence. A browser with no recorder at all falls back to its own speech
-// recognition, which can only produce text (no audio message).
+// Supports both:
+//   • Mode A (Dictation — default): user controls Start & Stop; energy/VAD
+//     checks whether real speech occurred so silent recordings don't trigger
+//     hallucinated transcripts.
+//   • Mode B (Hands-free): optional VAD silence auto-stop (`silenceStopMs`)
+//     after speech starts so hands-free conversation flows turn-by-turn.
 // =============================================================================
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import { chooseVoiceEngine, mergeTranscript, voiceErrorMessage } from "@/lib/voice-input";
+import {
+  MIN_SPEECH_RMS_LEVEL,
+  chooseVoiceEngine,
+  hasMeaningfulSpeechAudio,
+  mergeTranscript,
+  voiceErrorMessage,
+} from "@/lib/voice-input";
 
 export type VoiceClip = {
   blob: Blob;
@@ -30,6 +29,10 @@ export type VoiceClip = {
   durationMs: number;
   /** 4–64 integer peaks (0–100) covering the WHOLE clip. */
   waveform: number[];
+  /** True when AudioContext meter confirmed speech above silence floor. */
+  hadSpeech: boolean;
+  /** Maximum RMS level (0–100) seen during capture. */
+  peakLevel: number;
   /**
    * What the browser's own speech recognition heard, when it could run next to
    * the recorder (desktop, a specific language). Only a fallback for when the
@@ -79,9 +82,7 @@ export function extensionForMime(mime: string): string {
 }
 
 /**
- * The container a recording really is, read from its first bytes. Some
- * browsers report an empty or generic MIME type; the speech service checks the
- * actual container, so the label has to be right.
+ * The container a recording really is, read from its first bytes.
  */
 export function sniffAudioMime(head: Uint8Array): string | null {
   const ascii = (from: number, length: number) => String.fromCharCode(...head.slice(from, from + length));
@@ -126,13 +127,19 @@ export function recorderSupport(): { recorder: boolean; recognition: boolean; se
 type Options = {
   /** BCP-47 code for recognition-only capture; "auto" follows the browser. */
   language?: string;
-  /** The recording ended on its own: time limit reached or the microphone was lost. */
-  onAutoStop?: (capture: VoiceCapture | null, reason: "limit" | "device") => void;
+  /** Optional VAD silence auto-stop delay in ms (used in Hands-free mode). */
+  silenceStopMs?: number | null;
+  /** The recording ended on its own: time limit, VAD silence, or device loss. */
+  onAutoStop?: (capture: VoiceCapture | null, reason: "limit" | "device" | "silence") => void;
 };
 
 export function useVoiceRecorder(options: Options = {}): {
   state: RecorderState;
   elapsedMs: number;
+  /** Live recognized preview text when browser SpeechRecognition runs alongside capture. */
+  liveText: string;
+  /** True once meter energy rose above background noise threshold. */
+  speechDetected: boolean;
   /** False when only speech recognition is running (no audio, no meter). */
   hasWaveform: boolean;
   canvasRef: RefObject<HTMLCanvasElement | null>;
@@ -144,6 +151,8 @@ export function useVoiceRecorder(options: Options = {}): {
 } {
   const [state, setState] = useState<RecorderState>("idle");
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [liveText, setLiveText] = useState("");
+  const [speechDetected, setSpeechDetected] = useState(false);
   const [hasWaveform, setHasWaveform] = useState(true);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -155,10 +164,11 @@ export function useVoiceRecorder(options: Options = {}): {
   const frameRef = useRef<number | null>(null);
   const clockRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /** Why the recorder stopped without the user pressing Stop or Cancel. */
-  const endedRef = useRef<"limit" | "device" | "error" | null>(null);
-  // Elapsed time excludes pauses: accumulated + (now - segmentStart).
+  const endedRef = useRef<"limit" | "device" | "silence" | "error" | null>(null);
   const accumulatedRef = useRef(0);
   const segmentRef = useRef<number | null>(null);
+  const lastSpeechAtRef = useRef<number | null>(null);
+  const sawSpeechRef = useRef(false);
   const discardRef = useRef(false);
   const resolveRef = useRef<((capture: VoiceCapture | null) => void) | null>(null);
   const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
@@ -196,7 +206,6 @@ export function useVoiceRecorder(options: Options = {}): {
     setGlobalRecording(false);
   }, [setGlobalRecording]);
 
-  // Leaving the page while recording would silently lose the message.
   useEffect(() => {
     if (state === "idle") return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
@@ -216,16 +225,29 @@ export function useVoiceRecorder(options: Options = {}): {
     clockRef.current = setInterval(() => {
       const ms = elapsed();
       setElapsedMs(ms);
-      // The limit counts recorded time, so a pause never eats into it.
       const recorder = recorderRef.current;
       if (ms >= MAX_RECORDING_MS && recorder && recorder.state !== "inactive") {
         endedRef.current = "limit";
         try { recorder.stop(); } catch { /* already stopping */ }
+        return;
       }
-    }, 200);
+      const silenceMs = optionsRef.current.silenceStopMs;
+      if (
+        silenceMs &&
+        silenceMs >= 800 &&
+        sawSpeechRef.current &&
+        lastSpeechAtRef.current !== null &&
+        recorder &&
+        recorder.state === "recording" &&
+        performance.now() - lastSpeechAtRef.current >= silenceMs
+      ) {
+        endedRef.current = "silence";
+        try { recorder.stop(); } catch { /* already stopping */ }
+      }
+    }, 150);
   }, [elapsed]);
 
-  /** Draw the scrolling level meter and keep every sample for the stored waveform. */
+  /** Draw the scrolling level meter and track VAD energy. */
   const startMeter = useCallback((stream: MediaStream, recorder: MediaRecorder) => {
     try {
       const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -246,7 +268,13 @@ export function useVoiceRecorder(options: Options = {}): {
           const level = Math.max(2, Math.min(100, Math.round(Math.sqrt(sum / samples.length) * 270)));
           const levels = levelsRef.current;
           levels.push(level);
-          // ~10 minutes at 60ms is 10k samples — bounded, and summarised on stop.
+          if (level >= MIN_SPEECH_RMS_LEVEL) {
+            lastSpeechAtRef.current = performance.now();
+            if (!sawSpeechRef.current) {
+              sawSpeechRef.current = true;
+              setSpeechDetected(true);
+            }
+          }
           if (levels.length > 12_000) levels.splice(0, levels.length - 12_000);
           const canvas = canvasRef.current;
           const ctx = canvas?.getContext("2d");
@@ -256,7 +284,6 @@ export function useVoiceRecorder(options: Options = {}): {
             const height = Math.round(canvas.clientHeight * scale);
             if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
             ctx.clearRect(0, 0, width, height);
-            // The bar colour comes from the design tokens via CSS `color`.
             ctx.fillStyle = getComputedStyle(canvas).color || "#888";
             const step = 4 * scale;
             const count = Math.max(8, Math.floor(width / step));
@@ -279,7 +306,7 @@ export function useVoiceRecorder(options: Options = {}): {
     } catch { /* the timer and the recording work without a meter */ }
   }, []);
 
-  /** Recognition-only capture for browsers without MediaRecorder. */
+  /** Browser speech recognition (preview / recognition-only fallback). */
   const startRecognition = useCallback((lang: string): boolean => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- vendor-prefixed constructor
     const Ctor = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
@@ -300,8 +327,14 @@ export function useVoiceRecorder(options: Options = {}): {
           else interim += text;
         }
         heardRef.current.interim = interim.trim();
+        const combined = mergeTranscript(heardRef.current.final, heardRef.current.interim);
+        if (combined) {
+          sawSpeechRef.current = true;
+          lastSpeechAtRef.current = performance.now();
+          setSpeechDetected(true);
+        }
+        setLiveText(combined);
       };
-      // Browsers end recognition after a pause; keep listening until Stop.
       recognition.onend = () => {
         if (recognitionWantedRef.current && recognitionRef.current === recognition) {
           try { recognition.start(); } catch { /* already restarting */ }
@@ -336,6 +369,10 @@ export function useVoiceRecorder(options: Options = {}): {
     heardRef.current = { final: "", interim: "" };
     accumulatedRef.current = 0;
     segmentRef.current = null;
+    lastSpeechAtRef.current = null;
+    sawSpeechRef.current = false;
+    setLiveText("");
+    setSpeechDetected(false);
     setElapsedMs(0);
 
     if (!support.recorder) {
@@ -384,9 +421,10 @@ export function useVoiceRecorder(options: Options = {}): {
         resolveRef.current = null;
         if (discardRef.current) { resolve?.(null); return; }
         const heard = mergeTranscript(heardRef.current.final, heardRef.current.interim).trim();
+        const energy = hasMeaningfulSpeechAudio(levels, durationMs);
         const deliver = (capture: VoiceCapture | null) => {
           if (resolve) resolve(capture);
-          else optionsRef.current.onAutoStop?.(capture, ended === "limit" ? "limit" : "device");
+          else optionsRef.current.onAutoStop?.(capture, ended === "limit" ? "limit" : ended === "silence" ? "silence" : "device");
         };
         const raw = new Blob(chunks, { type });
         if (!raw.size || ended === "error") { deliver(null); return; }
@@ -394,14 +432,24 @@ export function useVoiceRecorder(options: Options = {}): {
           .then((buffer) => sniffAudioMime(new Uint8Array(buffer)))
           .catch(() => null)
           .then((sniffed) => {
-            // Keep the codec parameter when the container agrees with it.
             const mime = sniffed && !type.toLowerCase().startsWith(sniffed) ? sniffed : type;
             const blob = mime === type ? raw : new Blob(chunks, { type: mime });
-            deliver({ kind: "clip", clip: { blob, url: URL.createObjectURL(blob), filename: `voice-${Date.now()}.${extensionForMime(mime)}`, mimeType: mime, durationMs, waveform: summarizeWaveform(levels), heard } });
+            deliver({
+              kind: "clip",
+              clip: {
+                blob,
+                url: URL.createObjectURL(blob),
+                filename: `voice-${Date.now()}.${extensionForMime(mime)}`,
+                mimeType: mime,
+                durationMs,
+                waveform: summarizeWaveform(levels),
+                hadSpeech: energy.ok || Boolean(heard),
+                peakLevel: energy.peak,
+                heard,
+              },
+            });
           });
       };
-      // Losing the microphone (unplugged, revoked, phone call) ends the
-      // recording with whatever was captured instead of hanging forever.
       stream.getAudioTracks().forEach((track) => {
         track.onended = () => {
           if (recorder.state === "inactive") return;
@@ -410,20 +458,17 @@ export function useVoiceRecorder(options: Options = {}): {
         };
       });
 
-      recorder.start(1000);
+      recorder.start(500);
       segmentRef.current = performance.now();
       startClock();
       startMeter(stream, recorder);
       setGlobalRecording(true);
-      // Where the browser can recognise speech next to the recorder (desktop,
-      // a specific language), keep what it hears as a fallback transcript.
       const language = optionsRef.current.language ?? "auto";
       const plan = chooseVoiceEngine(language, {
         speechRecognition: support.recognition, mediaRecorder: true,
         mobile: /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent), online: navigator.onLine !== false,
       });
       if (plan.live) startRecognition(language);
-      // Keep the screen awake on phones while the user is speaking.
       const wakeLock = (navigator as Navigator & { wakeLock?: { request: (type: "screen") => Promise<{ release: () => Promise<void> }> } }).wakeLock;
       void wakeLock?.request("screen").then((lock) => { if (recorderRef.current === recorder) wakeLockRef.current = lock; else void lock.release().catch(() => {}); }).catch(() => {});
       setState("recording");
@@ -441,7 +486,6 @@ export function useVoiceRecorder(options: Options = {}): {
     if (recorder && recorder.state !== "inactive") {
       return new Promise((resolve) => {
         resolveRef.current = resolve;
-        // Freeze the clock at the moment Stop was pressed.
         accumulatedRef.current = elapsed();
         segmentRef.current = null;
         try { recorder.stop(); } catch { resolveRef.current = null; release(); setState("idle"); resolve(null); }
@@ -469,6 +513,8 @@ export function useVoiceRecorder(options: Options = {}): {
       release();
       setState("idle");
     }
+    setLiveText("");
+    setSpeechDetected(false);
     setElapsedMs(0);
   }, [release]);
 
@@ -492,5 +538,5 @@ export function useVoiceRecorder(options: Options = {}): {
     setState("recording");
   }, []);
 
-  return { state, elapsedMs, hasWaveform, canvasRef, start, stop, cancel, pause, resume };
+  return { state, elapsedMs, liveText, speechDetected, hasWaveform, canvasRef, start, stop, cancel, pause, resume };
 }

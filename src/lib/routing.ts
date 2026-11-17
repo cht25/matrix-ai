@@ -21,7 +21,9 @@ export const PUBLIC_PATHS = [
   "/certificate/print",
   "/api/certificate",
   "/scams",
+  "/offline",
   "/api/health",
+  "/api/ping",
   "/api/ai",
   "/s",
   // Firebase's auth helper. Public by design: it is the page Google sends the

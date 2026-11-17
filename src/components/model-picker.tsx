@@ -9,20 +9,25 @@
 //
 //   · searchable (name, provider, identifier, strengths)
 //   · Auto hands the choice to QORVYNA; otherwise pick up to `max_active`
-//   · a model the provider is not offering is listed, explained and DISABLED —
-//     it can never be selected or sent a request
-//
-// The selection is saved to the account (PUT /api/models), so it applies to
-// every conversation in both modes and survives a reload. Provider routing
-// itself is untouched: this only edits the user's pool preference.
+//   · a model that isn't reachable displays its true diagnostic status
+//     (Requires configuration, Temporarily unavailable, Invalid credentials,
+//     Permission denied, Rate limited, Out of capacity, or Unavailable)
+//   · users can refresh availability or run a live server connectivity test
 // =============================================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import Link from "next/link";
-import { Check, ChevronDown, Layers, Loader2, RefreshCw, Search, Settings2, Sparkles } from "lucide-react";
+import { Activity, Check, ChevronDown, Layers, Loader2, RefreshCw, Search, Settings2, Sparkles } from "lucide-react";
 import { Popover } from "@/components/popover";
 import { cn } from "@/lib/utils";
-import { STRENGTH_LABEL, type ModelAvailability, type ModelStatus, type PoolPreference } from "@/lib/ai/models/types";
+import {
+  PROBE_STATE_LABEL,
+  STRENGTH_LABEL,
+  type ModelAvailability,
+  type ModelProbeState,
+  type ModelStatus,
+  type PoolPreference,
+} from "@/lib/ai/models/types";
 
 export type ModelPoolPayload = { models: ModelStatus[]; pool: PoolPreference; max_active: number; reveal_mode?: string };
 
@@ -62,6 +67,51 @@ export async function saveModelPool(pool: PoolPreference): Promise<PoolPreferenc
   return body.pool;
 }
 
+export async function testModelConnection(modelKey: string): Promise<{
+  ok: boolean;
+  status_code: ModelProbeState;
+  status_label: string;
+  latency_ms: number;
+  detail: string;
+  model: ModelStatus | null;
+}> {
+  const response = await fetch("/api/models/test", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model_key: modelKey }),
+  });
+  const body = (await response.json().catch(() => null)) as {
+    ok?: boolean;
+    status_code?: ModelProbeState;
+    status_label?: string;
+    latency_ms?: number;
+    detail?: string;
+    model?: ModelStatus | null;
+    error?: string;
+  } | null;
+  if (!response.ok || !body) {
+    throw new Error(body?.error ?? "TEST_FAILED");
+  }
+  if (cached && body.model) {
+    cached = {
+      at: Date.now(),
+      data: {
+        ...cached.data,
+        models: cached.data.models.map((item) => (item.key === body.model!.key ? body.model! : item)),
+      },
+    };
+  }
+  return {
+    ok: body.ok === true,
+    status_code: body.status_code ?? "temporarily_unavailable",
+    status_label: body.status_label ?? "Temporarily unavailable",
+    latency_ms: body.latency_ms ?? 0,
+    detail: body.detail ?? "Check completed.",
+    model: body.model ?? null,
+  };
+}
+
 /** Subscribe to pool changes made elsewhere on the page. */
 export function onModelPoolChange(listener: (pool: PoolPreference) => void): () => void {
   const handler = (event: Event) => listener((event as CustomEvent<PoolPreference>).detail);
@@ -71,10 +121,27 @@ export function onModelPoolChange(listener: (pool: PoolPreference) => void): () 
 
 const AVAILABILITY: Record<ModelAvailability, { label: string; tone: string; dot: string }> = {
   available: { label: "Available", tone: "text-success", dot: "bg-success" },
-  not_configured: { label: "Not configured", tone: "text-warning", dot: "bg-warning" },
-  not_offered: { label: "Not offered", tone: "text-ink-3", dot: "bg-ink-3" },
-  unverified: { label: "Unverified", tone: "text-warning", dot: "bg-warning" },
+  not_configured: { label: "Requires configuration", tone: "text-warning", dot: "bg-warning" },
+  not_offered: { label: "Unavailable", tone: "text-ink-3", dot: "bg-ink-3" },
+  unverified: { label: "Temporarily unavailable", tone: "text-warning", dot: "bg-warning" },
 };
+
+export function visualStateForModel(model: ModelStatus, testing = false): { label: string; tone: string; dot: string } {
+  if (testing) return { label: "Testing…", tone: "text-accent", dot: "bg-accent animate-pulse" };
+  const code = model.status_code;
+  if (code === "available" && model.availability === "available") return AVAILABILITY.available;
+  if (code === "configuration_missing") return AVAILABILITY.not_configured;
+  if (code === "temporarily_unavailable" || code === "rate_limited" || code === "out_of_capacity") {
+    return { label: model.status_label || PROBE_STATE_LABEL[code], tone: "text-warning", dot: "bg-warning" };
+  }
+  if (code === "invalid_credentials" || code === "permission_denied" || code === "model_not_found") {
+    return { label: model.status_label || PROBE_STATE_LABEL[code], tone: "text-danger", dot: "bg-danger" };
+  }
+  if (code === "unavailable_for_account" || code === "unavailable") {
+    return { label: model.status_label || "Unavailable", tone: "text-ink-3", dot: "bg-ink-3" };
+  }
+  return AVAILABILITY[model.availability] ?? AVAILABILITY.unverified;
+}
 
 function contextLabel(tokens: number): string {
   if (!tokens) return "";
@@ -87,8 +154,9 @@ export function filterModels(models: ModelStatus[], query: string): ModelStatus[
   if (!needle) return models;
   const terms = needle.split(/\s+/);
   return models.filter((model) => {
+    const stateLabel = model.status_label || AVAILABILITY[model.availability]?.label || "";
     const haystack = [
-      model.label, model.provider, model.model_id, model.summary, AVAILABILITY[model.availability]?.label ?? "",
+      model.label, model.provider, model.model_id, model.summary, stateLabel,
       ...model.strengths.map((strength) => STRENGTH_LABEL[strength] ?? strength),
       model.tool_calling ? "tools" : "", model.streaming ? "streaming" : "", model.structured_output ? "json structured" : "",
     ].join(" ").toLowerCase();
@@ -108,6 +176,8 @@ function ModelPanel({ data, setData, onReload, loadFailed }: { data: ModelPoolPa
   const [query, setQuery] = useState("");
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [testingKey, setTestingKey] = useState<string | null>(null);
+  const [testNote, setTestNote] = useState<string>("");
   const [error, setError] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -120,7 +190,7 @@ function ModelPanel({ data, setData, onReload, loadFailed }: { data: ModelPoolPa
   async function apply(next: PoolPreference) {
     if (!data || saving) return;
     const previous = data.pool;
-    setData((current) => (current ? { ...current, pool: next } : current)); // optimistic; rolled back on failure
+    setData((current) => (current ? { ...current, pool: next } : current));
     setSaving(true); setError("");
     try {
       const saved = await saveModelPool(next);
@@ -137,8 +207,29 @@ function ModelPanel({ data, setData, onReload, loadFailed }: { data: ModelPoolPa
     const base = pool.auto ? [] : pool.enabled.filter((key) => data.models.some((item) => item.key === key && item.availability === "available"));
     const next = base.includes(model.key) ? base.filter((key) => key !== model.key) : [...base, model.key];
     if (next.length > data.max_active) { setError(`Up to ${data.max_active} models can work together. Turn one off first.`); return; }
-    // Turning the last model off hands the choice back to Auto.
     void apply(next.length ? { auto: false, enabled: next } : { auto: true, enabled: [] });
+  }
+
+  async function runTest(model: ModelStatus) {
+    if (testingKey) return;
+    setTestingKey(model.key);
+    setError("");
+    setTestNote("");
+    try {
+      const res = await testModelConnection(model.key);
+      if (res.model) {
+        setData((current) =>
+          current
+            ? { ...current, models: current.models.map((item) => (item.key === res.model!.key ? res.model! : item)) }
+            : current,
+        );
+      }
+      setTestNote(`${model.label}: ${res.status_label}${res.ok ? ` (${res.latency_ms}ms)` : ` — ${res.detail}`}`);
+    } catch {
+      setError(`Could not run connectivity check for ${model.label}.`);
+    } finally {
+      setTestingKey(null);
+    }
   }
 
   function rows(): HTMLElement[] {
@@ -176,10 +267,10 @@ function ModelPanel({ data, setData, onReload, loadFailed }: { data: ModelPoolPa
         </label>
         <button
           type="button"
-          onClick={() => { setChecking(true); void onReload(true).finally(() => setChecking(false)); }}
+          onClick={() => { setChecking(true); setTestNote(""); void onReload(true).finally(() => setChecking(false)); }}
           disabled={checking}
-          aria-label="Check model availability again"
-          title="Check availability again"
+          aria-label="Refresh model availability"
+          title="Refresh model availability"
           className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-50"
         >
           <RefreshCw size={15} className={cn(checking && "animate-spin")} aria-hidden="true" />
@@ -219,51 +310,69 @@ function ModelPanel({ data, setData, onReload, loadFailed }: { data: ModelPoolPa
               const usable = model.availability === "available";
               const selected = usable && active.includes(model.key);
               const chosen = selected && !pool.auto;
-              const state = AVAILABILITY[model.availability] ?? AVAILABILITY.unverified;
+              const isTesting = testingKey === model.key;
+              const state = visualStateForModel(model, isTesting);
               const capabilities = [
                 ...model.strengths.slice(0, 3).map((strength) => STRENGTH_LABEL[strength] ?? strength),
                 model.tool_calling ? "Tools" : "", model.structured_output ? "JSON" : "", contextLabel(model.context_tokens),
               ].filter(Boolean);
               return (
-                <button
+                <div
                   key={model.key}
-                  type="button"
-                  data-model-row
-                  role="checkbox"
-                  aria-checked={chosen}
-                  aria-disabled={!usable}
-                  disabled={!usable}
-                  onClick={() => toggle(model)}
-                  title={usable ? undefined : model.reason || "This model is not available on this deployment."}
                   className={cn(
-                    "flex w-full items-start gap-3 rounded-xl px-2.5 py-2.5 text-left transition-colors focus-visible:outline-none",
-                    usable ? "hover:bg-surface-2 focus-visible:bg-surface-2" : "cursor-not-allowed opacity-55",
+                    "flex items-start gap-2 rounded-xl px-2.5 py-2.5 transition-colors",
+                    usable ? "hover:bg-surface-2" : "opacity-75",
                     chosen && "bg-accent-soft",
                   )}
                 >
-                  <span className={cn("mt-1 grid h-5 w-5 shrink-0 place-items-center rounded-md border", chosen ? "border-accent-solid bg-accent-solid text-accent-ink" : "border-border-strong")} aria-hidden="true">
-                    {chosen ? <Check size={13} strokeWidth={3} /> : null}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                      <span className="text-[14px] font-semibold text-ink">{model.label}</span>
-                      {model.is_default ? <span className="rounded bg-surface-2 px-1.5 py-px text-[10px] font-medium uppercase tracking-wide text-ink-2">Default</span> : null}
-                      <span className={cn("inline-flex items-center gap-1 text-[11.5px] font-medium", state.tone)}>
-                        <span className={cn("h-1.5 w-1.5 rounded-full", state.dot)} aria-hidden="true" />
-                        {usable && selected && pool.auto ? "In use" : state.label}
-                      </span>
+                  <button
+                    type="button"
+                    data-model-row
+                    role="checkbox"
+                    aria-checked={chosen}
+                    aria-disabled={!usable}
+                    disabled={!usable}
+                    onClick={() => toggle(model)}
+                    title={usable ? undefined : model.reason || "This model is not available on this deployment."}
+                    className={cn(
+                      "flex min-w-0 flex-1 items-start gap-3 text-left focus-visible:outline-none",
+                      !usable && "cursor-not-allowed",
+                    )}
+                  >
+                    <span className={cn("mt-1 grid h-5 w-5 shrink-0 place-items-center rounded-md border", chosen ? "border-accent-solid bg-accent-solid text-accent-ink" : "border-border-strong")} aria-hidden="true">
+                      {chosen ? <Check size={13} strokeWidth={3} /> : null}
                     </span>
-                    <span className="mt-0.5 block truncate font-mono text-[11px] text-ink-3">{model.provider} · {model.model_id}</span>
-                    <span className="mt-0.5 block text-[12.5px] leading-snug text-ink-2">{usable ? model.summary : model.reason || "Not available on this deployment."}</span>
-                    {usable && capabilities.length ? (
-                      <span className="mt-1.5 flex flex-wrap gap-1">
-                        {capabilities.map((capability) => (
-                          <span key={capability} className="rounded-md border border-border px-1.5 py-px text-[10.5px] text-ink-2">{capability}</span>
-                        ))}
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <span className="text-[14px] font-semibold text-ink">{model.label}</span>
+                        {model.is_default ? <span className="rounded bg-surface-2 px-1.5 py-px text-[10px] font-medium uppercase tracking-wide text-ink-2">Default</span> : null}
+                        <span className={cn("inline-flex items-center gap-1 text-[11.5px] font-medium", state.tone)}>
+                          <span className={cn("h-1.5 w-1.5 rounded-full", state.dot)} aria-hidden="true" />
+                          {!isTesting && usable && selected && pool.auto ? "In use" : state.label}
+                        </span>
                       </span>
-                    ) : null}
-                  </span>
-                </button>
+                      <span className="mt-0.5 block truncate font-mono text-[11px] text-ink-3">{model.provider} · {model.model_id}</span>
+                      <span className="mt-0.5 block text-[12.5px] leading-snug text-ink-2">{usable ? model.summary : model.reason || model.diagnostic_hint || "Unavailable on this deployment."}</span>
+                      {usable && capabilities.length ? (
+                        <span className="mt-1.5 flex flex-wrap gap-1">
+                          {capabilities.map((capability) => (
+                            <span key={capability} className="rounded-md border border-border px-1.5 py-px text-[10.5px] text-ink-2">{capability}</span>
+                          ))}
+                        </span>
+                      ) : null}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void runTest(model)}
+                    disabled={Boolean(testingKey)}
+                    aria-label={`Test connection for ${model.label}`}
+                    title={`Test connection for ${model.label}`}
+                    className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-border/70 text-ink-3 transition-colors hover:bg-surface hover:text-ink disabled:opacity-45"
+                  >
+                    {isTesting ? <Loader2 size={13} className="animate-spin text-accent" aria-hidden="true" /> : <Activity size={13} aria-hidden="true" />}
+                  </button>
+                </div>
               );
             })}
 
@@ -273,6 +382,7 @@ function ModelPanel({ data, setData, onReload, loadFailed }: { data: ModelPoolPa
       </div>
 
       <div className="shrink-0 border-t border-border px-2 pb-1 pt-2">
+        <p aria-live="polite" className="px-1 pb-1 text-[11.5px] text-ink-2 empty:hidden">{testNote}</p>
         <p aria-live="polite" className="px-1 pb-1.5 text-[12px] text-danger empty:hidden">{error}</p>
         <div className="flex items-center justify-between gap-2">
           <p className="min-w-0 truncate px-1 text-[12px] text-ink-3">
@@ -319,7 +429,7 @@ export function ModelSelector({ className, disabled }: { className?: string; dis
       align="left"
       open={open}
       onOpenChange={setOpen}
-      panelClassName="w-[23rem] max-w-[calc(100vw-1rem)] !p-1.5"
+      panelClassName="w-[24rem] max-w-[calc(100vw-1rem)] !p-1.5"
       className={className}
       trigger={({ toggle, open: isOpen, aria }) => (
         <button

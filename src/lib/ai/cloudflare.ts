@@ -25,7 +25,8 @@
 
 import "server-only";
 
-import { CLOUDFLARE_MODEL_ID, modelById } from "@/lib/ai/models/registry";
+import { CLOUDFLARE_MODEL_ID, MODEL_REGISTRY, modelById } from "@/lib/ai/models/registry";
+import type { ModelProbeState } from "@/lib/ai/models/types";
 import {
   AIProviderError,
   providerErrorFromException,
@@ -276,7 +277,7 @@ export class CloudflareProvider implements AIProvider {
     // Cloudflare wraps the model output in `result`; tolerate both shapes.
     const payload = (data.result ?? data) as Record<string, unknown>;
     const choices = Array.isArray(payload.choices) ? (payload.choices as Array<Record<string, unknown>>) : [];
-    const message = (choices[0]?.message ?? {}) as { content?: unknown; tool_calls?: unknown };
+    const message = (choices[0]?.message ?? {}) as { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown };
     const nativeToolCalls = Array.isArray(payload.tool_calls) ? payload.tool_calls : [];
     const rawToolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : nativeToolCalls;
     const toolCalls = (rawToolCalls as AIProviderToolCall[])
@@ -292,7 +293,11 @@ export class CloudflareProvider implements AIProvider {
 
     void recordCloudflareRequest({ model, ok: true, neurons: reportedNeurons(payload) }).catch(() => {});
     req.onUsage?.(usageOf(payload));
-    if (toolCalls.length) req.onReasoningActivity?.("done");
+    if (typeof message.reasoning_content === "string" && message.reasoning_content.trim()) {
+      req.onReasoningActivity?.("done");
+    } else if (toolCalls.length) {
+      req.onReasoningActivity?.("done");
+    }
     return { content, model, usage: usageOf(payload), finishReason, toolCalls };
   }
 
@@ -312,6 +317,7 @@ export class CloudflareProvider implements AIProvider {
     let buffer = "";
     let sawDone = false;
     let recorded = false;
+    let reasoningNotified = false;
     const finishUsage = () => {
       if (recorded) return;
       recorded = true;
@@ -360,7 +366,11 @@ export class CloudflareProvider implements AIProvider {
           }
           const result = (json.result ?? json) as Record<string, unknown>;
           const choices = Array.isArray(result.choices) ? (result.choices as Array<Record<string, unknown>>) : [];
-          const delta = (choices[0]?.delta ?? {}) as { content?: unknown };
+          const delta = (choices[0]?.delta ?? {}) as { content?: unknown; reasoning_content?: unknown };
+          if (typeof delta.reasoning_content === "string" && delta.reasoning_content.length > 0 && !reasoningNotified) {
+            reasoningNotified = true;
+            req.onReasoningActivity?.("start");
+          }
           let piece = "";
           if (typeof delta.content === "string") piece = delta.content;
           else if (typeof result.response === "string") piece = result.response as string;
@@ -411,24 +421,378 @@ export class CloudflareProvider implements AIProvider {
   }
 }
 
+function parseCloudflareCatalogEntries(entries: Array<Record<string, unknown>>): CatalogModel[] {
+  const seen = new Set<string>();
+  const out: CatalogModel[] = [];
+  for (const entry of entries) {
+    const rawName = typeof entry.name === "string" ? entry.name.trim() : "";
+    const rawId = typeof entry.id === "string" ? entry.id.trim() : "";
+    const rawModel = typeof entry.model === "string" ? entry.model.trim() : "";
+    // Cloudflare /ai/models/search sets `id` to a UUID and `name` to `@cf/...`;
+    // tests or proxies may put `@cf/...` in `id` or `model`.
+    const id = rawName.startsWith("@")
+      ? rawName
+      : rawId.startsWith("@")
+        ? rawId
+        : rawModel || rawId || rawName;
+    if (!id) continue;
+    const key = id.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const label = rawName && !rawName.startsWith("@")
+      ? rawName
+      : typeof entry.description === "string" && entry.description.trim()
+        ? id
+        : rawName || id;
+    out.push({ id, label });
+  }
+  return out;
+}
+
+export type CloudflareCatalogProbe =
+  | { ok: true; models: CatalogModel[] }
+  | {
+      ok: false;
+      state: ModelProbeState;
+      status: number | null;
+      code: string;
+      message: string;
+      retryable: boolean;
+    };
+
+export type CloudflareModelTestResult = {
+  ok: boolean;
+  state: ModelProbeState;
+  status: number | null;
+  code: string;
+  message: string;
+  latencyMs: number;
+  responsePreview?: string;
+};
+
+function classifyCloudflareFailure(status: number | null, rawBody: string): {
+  state: ModelProbeState;
+  code: string;
+  message: string;
+  retryable: boolean;
+} {
+  const parsed = parseCloudflareError(rawBody);
+  const msg = parsed.message || "Cloudflare Workers AI request failed";
+  const lower = msg.toLowerCase();
+  if (isCloudflareQuotaExhausted(status ?? 429, rawBody)) {
+    return {
+      state: "out_of_capacity",
+      code: "CLOUDFLARE_QUOTA_EXHAUSTED",
+      message: "Daily Cloudflare Workers AI free Neuron quota reached (resets 00:00 UTC).",
+      retryable: true,
+    };
+  }
+  if (status === 401 || /authentication error|invalid.*token|unauthorized/i.test(lower)) {
+    return {
+      state: "invalid_credentials",
+      code: "CLOUDFLARE_INVALID_CREDENTIALS",
+      message: "Cloudflare API token was rejected (401). Check CLOUDFLARE_API_TOKEN on the server.",
+      retryable: false,
+    };
+  }
+  if (status === 403 || /permission|scope|not authorized/i.test(lower)) {
+    return {
+      state: "permission_denied",
+      code: "CLOUDFLARE_PERMISSION_DENIED",
+      message: "Cloudflare API token lacks Workers AI read/edit permissions (403).",
+      retryable: false,
+    };
+  }
+  if (status === 404 && /account|route to account/i.test(lower)) {
+    return {
+      state: "invalid_credentials",
+      code: "INVALID_ACCOUNT_ID",
+      message: "Cloudflare Account ID could not be reached (404). Verify CLOUDFLARE_ACCOUNT_ID.",
+      retryable: false,
+    };
+  }
+  if (status === 404 || /no such model|model not found|unknown model/i.test(lower)) {
+    return {
+      state: "model_not_found",
+      code: "CLOUDFLARE_MODEL_NOT_FOUND",
+      message: sanitizeProviderDetail(msg),
+      retryable: false,
+    };
+  }
+  if (status === 429) {
+    return {
+      state: "rate_limited",
+      code: "CLOUDFLARE_RATE_LIMITED",
+      message: "Cloudflare Workers AI rate limit reached. Retry shortly.",
+      retryable: true,
+    };
+  }
+  if (status === 503 || /capacity|overloaded|busy/i.test(lower)) {
+    return {
+      state: "out_of_capacity",
+      code: "CLOUDFLARE_CAPACITY_UNAVAILABLE",
+      message: "Cloudflare model capacity is temporarily busy. Retry shortly.",
+      retryable: true,
+    };
+  }
+  if (status === 408 || status === 504 || /timeout|timed out|abort/i.test(lower)) {
+    return {
+      state: "temporarily_unavailable",
+      code: "CLOUDFLARE_TIMEOUT",
+      message: "Cloudflare request timed out. Retry in a moment.",
+      retryable: true,
+    };
+  }
+  return {
+    state: "temporarily_unavailable",
+    code: "CLOUDFLARE_TEMPORARILY_UNAVAILABLE",
+    message: sanitizeProviderDetail(msg),
+    retryable: true,
+  };
+}
+
 /**
  * Model ids this account can actually run, via
- * GET /accounts/{id}/ai/models/search. The caller treats a failure as
- * "could not verify" — it never guesses availability from thin air.
+ * GET /accounts/{id}/ai/models/search. Paginates across pages and searches
+ * specifically for registered Cloudflare models when the catalog exceeds one
+ * page, so `@cf/zai-org/glm-4.7-flash` is never missed regardless of ordering.
  */
 export async function listCloudflareModels(credentials: CloudflareCredentials): Promise<CatalogModel[]> {
-  const res = await fetch(`${API_BASE}/accounts/${encodeURIComponent(credentials.accountId)}/ai/models/search?per_page=100`, {
-    headers: { Authorization: `Bearer ${credentials.apiToken}` },
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!res.ok) throw new Error(`Cloudflare model list failed (${res.status})`);
-  const data = (await res.json().catch(() => ({}))) as { result?: Array<Record<string, unknown>> };
-  const results = Array.isArray(data.result) ? data.result : [];
-  return results
-    .map((entry) => {
-      const id = typeof entry.id === "string" ? entry.id : typeof entry.name === "string" ? entry.name : typeof entry.model === "string" ? entry.model : "";
-      const label = typeof entry.name === "string" ? entry.name : id;
-      return id ? { id, label } : null;
-    })
-    .filter((model): model is CatalogModel => model !== null);
+  const MAX_PAGES = 10;
+  const all: CatalogModel[] = [];
+  const seen = new Set<string>();
+  const add = (items: CatalogModel[]) => {
+    for (const item of items) {
+      const key = item.id.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      all.push(item);
+    }
+  };
+
+  let totalPages = 1;
+  let pageCounted = 0;
+  for (let page = 1; page <= Math.min(totalPages, MAX_PAGES); page += 1) {
+    const query = page === 1 ? "per_page=100" : `per_page=100&page=${page}`;
+    const res = await fetch(
+      `${API_BASE}/accounts/${encodeURIComponent(credentials.accountId)}/ai/models/search?${query}`,
+      {
+        headers: { Authorization: `Bearer ${credentials.apiToken}` },
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (!res.ok) throw new Error(`Cloudflare model list failed (${res.status})`);
+    const data = (await res.json().catch(() => ({}))) as {
+      result?: Array<Record<string, unknown>>;
+      result_info?: { total_pages?: number; count?: number; per_page?: number };
+    };
+    const results = Array.isArray(data.result) ? data.result : [];
+    pageCounted = results.length;
+    add(parseCloudflareCatalogEntries(results));
+    const reportedPages = typeof data.result_info?.total_pages === "number" ? data.result_info.total_pages : 1;
+    totalPages = Math.max(1, reportedPages);
+    if (results.length < 100 && reportedPages <= 1) break;
+  }
+
+  // If any registered Cloudflare model wasn't seen in the paged results (e.g.
+  // catalog > 10 pages or server truncated), query `?search=` directly for it.
+  const registeredCf = MODEL_REGISTRY.filter((spec) => spec.provider === "cloudflare");
+  for (const spec of registeredCf) {
+    if (seen.has(spec.id.toLowerCase())) continue;
+    if (totalPages <= 1 && pageCounted < 100) continue;
+    try {
+      const term = spec.id.split("/").pop() || spec.id;
+      const searchRes = await fetch(
+        `${API_BASE}/accounts/${encodeURIComponent(credentials.accountId)}/ai/models/search?search=${encodeURIComponent(term)}`,
+        {
+          headers: { Authorization: `Bearer ${credentials.apiToken}` },
+          signal: AbortSignal.timeout(8_000),
+        },
+      );
+      if (searchRes.ok) {
+        const searchData = (await searchRes.json().catch(() => ({}))) as { result?: Array<Record<string, unknown>> };
+        if (Array.isArray(searchData.result)) add(parseCloudflareCatalogEntries(searchData.result));
+      }
+    } catch {
+      /* targeted fallback check is best-effort */
+    }
+  }
+
+  return all;
+}
+
+export async function probeCloudflareCatalog(credentials: CloudflareCredentials): Promise<CloudflareCatalogProbe> {
+  const MAX_PAGES = 10;
+  const all: CatalogModel[] = [];
+  const seen = new Set<string>();
+  const add = (items: CatalogModel[]) => {
+    for (const item of items) {
+      const key = item.id.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      all.push(item);
+    }
+  };
+  let totalPages = 1;
+  let pageCounted = 0;
+
+  try {
+    for (let page = 1; page <= Math.min(totalPages, MAX_PAGES); page += 1) {
+      const query = page === 1 ? "per_page=100" : `per_page=100&page=${page}`;
+      const res = await fetch(
+        `${API_BASE}/accounts/${encodeURIComponent(credentials.accountId)}/ai/models/search?${query}`,
+        {
+          headers: { Authorization: `Bearer ${credentials.apiToken}` },
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        const classified = classifyCloudflareFailure(res.status, body);
+        return { ok: false, ...classified, status: res.status };
+      }
+      const data = (await res.json().catch(() => ({}))) as {
+        result?: Array<Record<string, unknown>>;
+        result_info?: { total_pages?: number };
+      };
+      const results = Array.isArray(data.result) ? data.result : [];
+      pageCounted = results.length;
+      add(parseCloudflareCatalogEntries(results));
+      const reportedPages = typeof data.result_info?.total_pages === "number" ? data.result_info.total_pages : 1;
+      totalPages = Math.max(1, reportedPages);
+      if (results.length < 100 && reportedPages <= 1) break;
+    }
+
+    const registeredCf = MODEL_REGISTRY.filter((spec) => spec.provider === "cloudflare");
+    for (const spec of registeredCf) {
+      if (seen.has(spec.id.toLowerCase())) continue;
+      if (totalPages <= 1 && pageCounted < 100) continue;
+      const term = spec.id.split("/").pop() || spec.id;
+      const searchRes = await fetch(
+        `${API_BASE}/accounts/${encodeURIComponent(credentials.accountId)}/ai/models/search?search=${encodeURIComponent(term)}`,
+        {
+          headers: { Authorization: `Bearer ${credentials.apiToken}` },
+          signal: AbortSignal.timeout(8_000),
+        },
+      ).catch(() => null);
+      if (searchRes?.ok) {
+        const searchData = (await searchRes.json().catch(() => ({}))) as { result?: Array<Record<string, unknown>> };
+        if (Array.isArray(searchData.result)) add(parseCloudflareCatalogEntries(searchData.result));
+      }
+    }
+    return { ok: true, models: all };
+  } catch (error) {
+    const raw = error instanceof Error ? error.message : "network error";
+    const isTimeout = error instanceof Error && (error.name === "TimeoutError" || /timeout|timed out|abort/i.test(raw));
+    return {
+      ok: false,
+      state: "temporarily_unavailable",
+      status: null,
+      code: isTimeout ? "CLOUDFLARE_TIMEOUT" : "CLOUDFLARE_NETWORK_ERROR",
+      message: isTimeout
+        ? "Timed out reaching Cloudflare Workers AI catalog."
+        : "Could not reach Cloudflare Workers AI catalog over the network.",
+      retryable: true,
+    };
+  }
+}
+
+/**
+ * Minimal real connectivity & inference test against Cloudflare Workers AI.
+ * Sends a tiny text generation request (`max_tokens: 16`) without storing
+ * credentials or exposing tokens in any response.
+ */
+export async function testCloudflareModel(
+  credentials: CloudflareCredentials,
+  modelId: string = credentials.model,
+): Promise<CloudflareModelTestResult> {
+  const started = Date.now();
+  try {
+    await assertCloudflareQuota(modelId);
+    const res = await fetch(runUrl(credentials, modelId), {
+      method: "POST",
+      redirect: "error",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${credentials.apiToken}`,
+      },
+      body: JSON.stringify({
+        messages: [{ role: "user", content: "Reply with OK." }],
+        max_tokens: 16,
+        temperature: 0,
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const latencyMs = Math.max(1, Date.now() - started);
+    if (!res.ok) {
+      const raw = await res.text().catch(() => "");
+      void recordCloudflareRequest({ model: modelId, ok: false, status: res.status }).catch(() => {});
+      const classified = classifyCloudflareFailure(res.status, raw);
+      return { ok: false, ...classified, status: res.status, latencyMs };
+    }
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    const payload = (json.result ?? json) as Record<string, unknown>;
+    const choices = Array.isArray(payload.choices) ? (payload.choices as Array<Record<string, unknown>>) : [];
+    const msg = (choices[0]?.message ?? {}) as { content?: unknown; reasoning_content?: unknown };
+    const content =
+      typeof msg.content === "string"
+        ? msg.content.trim()
+        : typeof payload.response === "string"
+          ? payload.response.trim()
+          : "";
+    const reasoning = typeof msg.reasoning_content === "string" ? msg.reasoning_content.trim() : "";
+    void recordCloudflareRequest({ model: modelId, ok: true, neurons: reportedNeurons(payload) }).catch(() => {});
+    if (!content && !reasoning) {
+      return {
+        ok: false,
+        state: "temporarily_unavailable",
+        status: res.status,
+        code: "CLOUDFLARE_EMPTY_RESPONSE",
+        message: "Cloudflare Workers AI returned an empty test response.",
+        latencyMs,
+      };
+    }
+    return {
+      ok: true,
+      state: "available",
+      status: res.status,
+      code: "OK",
+      message: "Cloudflare Workers AI responded cleanly.",
+      latencyMs,
+      responsePreview: (content || "OK").slice(0, 80),
+    };
+  } catch (error) {
+    const latencyMs = Math.max(1, Date.now() - started);
+    if (error instanceof AIProviderError) {
+      const state: ModelProbeState =
+        error.code === "CLOUDFLARE_QUOTA_EXHAUSTED"
+          ? "out_of_capacity"
+          : error.type === "authentication"
+            ? error.status === 403 ? "permission_denied" : "invalid_credentials"
+            : error.type === "rate_limit"
+              ? "rate_limited"
+              : "temporarily_unavailable";
+      return {
+        ok: false,
+        state,
+        status: error.status ?? null,
+        code: error.code ?? error.type,
+        message: sanitizeProviderDetail(error.detail),
+        latencyMs,
+      };
+    }
+    const raw = error instanceof Error ? error.message : "network error";
+    const isTimeout = error instanceof Error && (error.name === "TimeoutError" || /timeout|abort/i.test(raw));
+    return {
+      ok: false,
+      state: "temporarily_unavailable",
+      status: null,
+      code: isTimeout ? "CLOUDFLARE_TIMEOUT" : "CLOUDFLARE_NETWORK_ERROR",
+      message: isTimeout
+        ? "Connectivity test timed out waiting for Cloudflare."
+        : sanitizeProviderDetail(raw),
+      latencyMs,
+    };
+  }
 }

@@ -52,6 +52,7 @@ class _ChatScreenState extends State<ChatScreen> {
   String _mode = 'general'; // general | code | study | image
   bool _sending = false;
   String? _error;
+  String? _failedPrompt;
 
   static const _modes = <({String id, String label, IconData icon})>[
     (id: 'general', label: 'Fast / Auto', icon: Icons.bolt_rounded),
@@ -60,14 +61,15 @@ class _ChatScreenState extends State<ChatScreen> {
     (id: 'image', label: 'Image', icon: Icons.palette_outlined),
   ];
 
-  Future<void> _send() async {
-    final text = _input.text.trim();
+  Future<void> _send([String? overrideText]) async {
+    final text = (overrideText ?? _input.text).trim();
     if (text.isEmpty || _sending) return;
-    _input.clear();
+    if (overrideText == null) _input.clear();
     setState(() {
-      _messages.add(_Message(role: 'user', content: text));
+      if (overrideText == null) _messages.add(_Message(role: 'user', content: text));
       _sending = true;
       _error = null;
+      _failedPrompt = null;
     });
 
     try {
@@ -146,9 +148,15 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       }
     } on ApiException catch (e) {
-      setState(() => _error = 'AI service error (${e.code}).');
+      setState(() {
+        _error = 'AI service error (${e.code}).';
+        _failedPrompt = text;
+      });
     } catch (_) {
-      setState(() => _error = 'Network error — check your connection.');
+      setState(() {
+        _error = 'You appear to be offline — check your connection and tap Retry.';
+        _failedPrompt = text;
+      });
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -192,8 +200,19 @@ class _ChatScreenState extends State<ChatScreen> {
           Container(
             width: double.infinity,
             color: const Color(0xFF3A1216),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            child: Text(_error!, style: const TextStyle(color: Color(0xFFFCA5A5), fontSize: 13)),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(_error!, style: const TextStyle(color: Color(0xFFFCA5A5), fontSize: 13)),
+                ),
+                if (_failedPrompt != null)
+                  TextButton(
+                    onPressed: _sending ? null : () => _send(_failedPrompt),
+                    child: const Text('Retry', style: TextStyle(color: Color(0xFFFCA5A5), fontWeight: FontWeight.w600)),
+                  ),
+              ],
+            ),
           ),
         Expanded(
           child: _messages.isEmpty
@@ -209,7 +228,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          'GPT OSS 120B powers chat, coding and web development.\nSynced with ${MatrixConfig.chatUri}',
+                          'Powered by QORVYNA Model Pool (Cloudflare GLM 4.7 Flash & GPT OSS 120B).\nSynced with ${MatrixConfig.chatUri}',
                           textAlign: TextAlign.center,
                           style: const TextStyle(color: Colors.white60, fontSize: 12.5, height: 1.45),
                         ),

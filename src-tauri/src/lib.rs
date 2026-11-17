@@ -50,6 +50,24 @@ pub struct CompanionActivityPayload {
     pub browser_history: Vec<CompanionBrowserVisit>,
 }
 
+#[derive(Serialize)]
+pub struct DesktopAppInfo {
+    pub app_name: String,
+    pub version: String,
+    pub platform: String,
+    pub chat_url: String,
+}
+
+#[tauri::command]
+fn qorvyna_desktop_info() -> DesktopAppInfo {
+    DesktopAppInfo {
+        app_name: "QORVYNA AI".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        platform: std::env::consts::OS.to_string(),
+        chat_url: "https://qorvyna.thamjj13.top/chat".to_string(),
+    }
+}
+
 #[tauri::command]
 fn matrix_notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
     app.notification()
@@ -139,8 +157,9 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             let show_item = MenuItem::with_id(app, "show", "Open QORVYNA AI", true, None::<&str>)?;
+            let reload_item = MenuItem::with_id(app, "reload", "Reload Workspace", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit QORVYNA AI", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let menu = Menu::with_items(app, &[&show_item, &reload_item, &quit_item])?;
 
             if let Some(icon) = app.default_window_icon().cloned() {
                 let _tray = TrayIconBuilder::new()
@@ -150,6 +169,13 @@ pub fn run() {
                     .on_menu_event(|app, event| match event.id.as_ref() {
                         "show" => {
                             if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "reload" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.eval("window.location.reload()");
                                 let _ = window.show();
                                 let _ = window.set_focus();
                             }
@@ -165,7 +191,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             matrix_notify,
-            matrix_collect_device_activity
+            matrix_collect_device_activity,
+            qorvyna_desktop_info
         ])
         .run(tauri::generate_context!())
         .expect("error while running QORVYNA AI Tauri application");

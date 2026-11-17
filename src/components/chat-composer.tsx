@@ -21,9 +21,10 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { ArrowUp, Code2, FileCode2, FileText, Globe, Loader2, Mic, Paperclip, Plus, Square, X } from "lucide-react";
-import { MenuItem, Popover } from "@/components/popover";
+import { Popover, MenuItem } from "@/components/popover";
 import { VoiceRecordingPanel, VoiceTranscribing } from "@/components/voice-composer";
 import type { RecorderState } from "@/lib/client/use-voice-recorder";
+import type { VoiceInputMode } from "@/lib/voice-input";
 import { cn } from "@/lib/utils";
 
 export type ComposerAttachment = { name: string; size: number; type?: string };
@@ -66,14 +67,18 @@ export function ChatComposer(props: {
   recorderState: RecorderState;
   recorderElapsedMs: number;
   recorderHasWaveform: boolean;
+  recorderLiveText?: string;
+  recorderSpeechDetected?: boolean;
   recorderCanvasRef: RefObject<HTMLCanvasElement | null>;
   voiceLanguage: string;
   onVoiceLanguage: (code: string) => void;
+  voiceMode?: VoiceInputMode;
+  onExitHandsFree?: () => void;
   onStartVoice: () => void;
   onCancelVoice: () => void;
   onPauseVoice: () => void;
   onStopVoice: () => void;
-  onTranscribeVoice: () => void;
+  onSendAudioClip?: () => void;
   transcribing: boolean;
   onCancelTranscribe: () => void;
 
@@ -167,12 +172,15 @@ export function ChatComposer(props: {
           elapsedMs={props.recorderElapsedMs}
           canvasRef={props.recorderCanvasRef}
           hasWaveform={props.recorderHasWaveform}
+          liveText={props.recorderLiveText}
+          speechDetected={props.recorderSpeechDetected}
+          voiceMode={props.voiceMode}
           language={props.voiceLanguage}
           onLanguage={props.onVoiceLanguage}
           onCancel={props.onCancelVoice}
           onPause={props.onPauseVoice}
           onStop={props.onStopVoice}
-          onTranscribe={props.onTranscribeVoice}
+          onSendAudioClip={props.onSendAudioClip}
         />
       ) : (
         <>
@@ -211,8 +219,13 @@ export function ChatComposer(props: {
             </ul>
           ) : null}
 
-          {props.webSearch || props.codeFocus ? (
+          {props.webSearch || props.codeFocus || props.voiceMode === "hands_free" ? (
             <div className="flex flex-wrap gap-1.5 px-3 pt-2">
+              {props.voiceMode === "hands_free" && props.onExitHandsFree ? (
+                <button type="button" onClick={props.onExitHandsFree} aria-label="Turn off hands-free voice mode" className="inline-flex min-h-7 items-center gap-1.5 rounded-full bg-accent-soft pl-2.5 pr-1.5 text-[11.5px] font-medium text-accent">
+                  <Mic size={12} aria-hidden="true" /> Hands-free voice <X size={12} aria-hidden="true" />
+                </button>
+              ) : null}
               {props.webSearch ? (
                 <button type="button" onClick={props.onToggleWebSearch} aria-label="Turn off web knowledge" className="inline-flex min-h-7 items-center gap-1.5 rounded-full bg-accent-soft pl-2.5 pr-1.5 text-[11.5px] font-medium text-accent">
                   <Globe size={12} aria-hidden="true" /> Web knowledge <X size={12} aria-hidden="true" />
@@ -283,8 +296,8 @@ export function ChatComposer(props: {
                     type="button"
                     onClick={props.onStartVoice}
                     disabled={props.transcribing}
-                    aria-label={hasAttachments ? "Record a voice message with these attachments" : "Record a voice message"}
-                    title="Record a voice message"
+                    aria-label={props.voiceMode === "hands_free" ? "Start hands-free voice turn" : hasAttachments ? "Dictate message with attachments" : "Dictate message by voice"}
+                    title={props.voiceMode === "hands_free" ? "Start hands-free voice turn" : "Voice to text (dictate into message box)"}
                     className={cn(ROUND, hasAttachments || hasText ? "text-ink-2 hover:bg-surface-2 hover:text-ink" : "bg-surface-2 text-ink hover:bg-surface-3", "disabled:opacity-40")}
                   >
                     <Mic size={18} strokeWidth={1.8} aria-hidden="true" />

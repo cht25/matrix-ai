@@ -13,6 +13,8 @@ type Health = {
   ok: boolean;
   firebase: string;
   ai: string;
+  aiProvider?: string;
+  aiModel?: string;
   codingAi: string;
   codingProvider?: string;
   codingModel?: string;
@@ -63,13 +65,21 @@ export function ProviderStatus() {
 
   const rows: Row[] = health
     ? [
-        rowFor("Text AI", health.ai),
+        rowFor(
+          "Text AI",
+          health.ai,
+          health.ai === "online" ? `${health.aiProvider ?? ""} ${health.aiModel ?? ""}`.trim() : "",
+        ),
         rowFor(
           "Image generation",
           health.imageAi,
           health.imageAi === "online" ? `${health.imageProvider ?? "Provider"} connected` : "",
         ),
-        rowFor("Agent runtime (same model)", health.codingAi, health.codingAi === "online" ? `${health.codingProvider ?? ""} ${health.codingModel ?? ""}`.trim() : ""),
+        rowFor(
+          "Agent runtime",
+          health.codingAi,
+          health.codingAi === "online" ? `${health.codingProvider ?? ""} ${health.codingModel ?? ""}`.trim() : "",
+        ),
         rowFor("Database", health.firebase, health.firebase === "reachable" ? "Healthy" : ""),
       ]
     : [];

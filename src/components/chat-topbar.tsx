@@ -20,14 +20,14 @@
 
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import {
-  Archive, ChevronLeft, ChevronRight, Download, EyeOff, FlaskConical, Languages, MessageSquareText, MonitorPlay, Pencil,
+  Archive, ChevronLeft, ChevronRight, Download, EyeOff, FlaskConical, Languages, MessageSquareText, Mic, MonitorPlay, Pencil,
   Settings2, SlidersHorizontal, Trash2, Type, Volume2, VolumeX,
 } from "lucide-react";
 import { QORVYNA_MODES, type ChatMode, type ResponseStrategy } from "@/lib/ai/modes";
 import { MenuItem, MenuLabel, MenuSeparator, Popover } from "@/components/popover";
 import { ConfirmModal, Modal } from "@/components/modal";
 import { ModelSelector } from "@/components/model-picker";
-import { VOICE_LANGUAGES, voiceLanguage } from "@/lib/voice-input";
+import { VOICE_LANGUAGES, voiceLanguage, type VoiceInputMode } from "@/lib/voice-input";
 import type { RevealMode } from "@/lib/stream-reveal";
 import { cn } from "@/lib/utils";
 
@@ -75,6 +75,8 @@ export function ChatTopBar({
   onRevealModeChange,
   voiceLang,
   onVoiceLangChange,
+  voiceMode,
+  onVoiceModeChange,
   status,
   locked,
   autoSpeak,
@@ -94,6 +96,8 @@ export function ChatTopBar({
   onRevealModeChange: (mode: RevealMode) => void;
   voiceLang: string;
   onVoiceLangChange: (code: string) => void;
+  voiceMode?: VoiceInputMode;
+  onVoiceModeChange?: (mode: VoiceInputMode) => void;
   status: ToolbarStatus;
   /** Temporary chats stay in Chat mode and are never saved. */
   locked?: boolean;
@@ -296,6 +300,16 @@ export function ChatTopBar({
                 <MenuSeparator />
                 <MenuLabel>Voice</MenuLabel>
                 {drill("voice", <Languages size={15} />, "Voice language", voice.code === "auto" ? "Auto-detect" : voice.label)}
+                {onVoiceModeChange ? (
+                  <MenuItem
+                    icon={<Mic size={15} />}
+                    checked={voiceMode === "hands_free"}
+                    description={voiceMode === "hands_free" ? "Auto-sends voice turns after pause" : "Dictate words into composer first"}
+                    onClick={() => { onVoiceModeChange(voiceMode === "hands_free" ? "dictate" : "hands_free"); close(); }}
+                  >
+                    Hands-free voice mode
+                  </MenuItem>
+                ) : null}
                 {!agent ? (
                   <MenuItem icon={autoSpeak ? <Volume2 size={15} /> : <VolumeX size={15} />} checked={autoSpeak} onClick={() => { onToggleAutoSpeak(); close(); }}>
                     {autoSpeak ? autoSpeakLabels.on : autoSpeakLabels.off}

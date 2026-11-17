@@ -3,29 +3,88 @@
 //
 // Availability is established from facts only:
 //   configured  a server credential that can serve the model is installed
-//   offered     the provider's live model catalog lists the model ID
-// A model that fails either check is reported as unavailable with the reason,
-// and is never enabled, scheduled, or shown as working.
+//   offered     the provider's live model catalog lists the model ID (or a
+//               direct connectivity probe succeeded)
+// Temporary discovery errors are NEVER cached as permanent unavailability.
 
 import "server-only";
 import { nowTs, type Db } from "@/lib/firebase/admin";
 import { fetchModelCatalog } from "@/lib/ai/model-catalog";
 import { QORVYNA_MODEL_BASE_URL } from "@/lib/ai/model";
 import { ensureAccounts } from "@/lib/ai/accounts";
-import { cloudflareCredentials, cloudflareConfigured, listCloudflareModels } from "@/lib/ai/cloudflare";
+import {
+  cloudflareConfigured,
+  cloudflareCredentials,
+  probeCloudflareCatalog,
+} from "@/lib/ai/cloudflare";
 import { hostedProviderKey, qorvynaModelRoute, routeForModel, type AIRouteTarget } from "@/lib/ai/config";
-import { CLOUDFLARE_MODEL_ID, CLOUDFLARE_MODEL_KEY, DEFAULT_MODEL_KEY, MODEL_REGISTRY, defaultModel, modelById, sanitizeModelKeys, type ModelSpec } from "@/lib/ai/models/registry";
+import {
+  CLOUDFLARE_MODEL_KEY,
+  DEFAULT_MODEL_KEY,
+  MODEL_REGISTRY,
+  defaultModel,
+  modelById,
+  sanitizeModelKeys,
+  type ModelSpec,
+} from "@/lib/ai/models/registry";
 import { cooldownRemainingMs } from "@/lib/ai/orchestrator/scheduler";
-import type { ModelAvailability, ModelStatus, PoolPreference } from "@/lib/ai/models/types";
+import {
+  PROBE_STATE_LABEL,
+  type ModelAvailability,
+  type ModelDiagnosticError,
+  type ModelProbeState,
+  type ModelStatus,
+  type PoolPreference,
+} from "@/lib/ai/models/types";
 
-export type { ModelAvailability, ModelStatus, PoolPreference };
+export type { ModelAvailability, ModelDiagnosticError, ModelProbeState, ModelStatus, PoolPreference };
 
 /** The most models that collaborate on a single request. */
 export const MAX_ACTIVE_MODELS = 4;
 const COLLECTION = "model_pools";
 
-type Catalog = { ids: Map<string, number | undefined> } | { error: string } | null;
-type IdCatalog = { ids: Set<string> } | { error: string } | null;
+type Catalog = { ids: Map<string, number | undefined> } | { error: string; state: ModelProbeState } | null;
+type IdCatalog =
+  | { ids: Set<string> }
+  | { error: string; state: ModelProbeState; status: number | null; code: string }
+  | null;
+
+type RuntimeModelHealth = {
+  lastTestedAt: string | null;
+  lastTestedOk: boolean | null;
+  lastState: ModelProbeState | null;
+  lastError: ModelDiagnosticError | null;
+};
+
+const runtimeHealth = new Map<string, RuntimeModelHealth>();
+
+export function recordModelProbeResult(
+  modelKey: string,
+  result: {
+    ok: boolean;
+    state: ModelProbeState;
+    code: string;
+    message: string;
+    status: number | null;
+    at?: string;
+  },
+): void {
+  const at = result.at ?? new Date().toISOString();
+  const prev = runtimeHealth.get(modelKey);
+  runtimeHealth.set(modelKey, {
+    lastTestedAt: result.ok ? at : prev?.lastTestedAt ?? null,
+    lastTestedOk: result.ok,
+    lastState: result.state,
+    lastError: result.ok
+      ? null
+      : { code: result.code, message: result.message, status: result.status, at },
+  });
+}
+
+export function resetModelHealthForTests(): void {
+  runtimeHealth.clear();
+  cloudflareCatalogCache = null;
+}
 
 /** Live catalog for the hosted provider. null = no hosted credential. */
 async function hostedCatalog(refresh = false): Promise<Catalog> {
@@ -35,76 +94,279 @@ async function hostedCatalog(refresh = false): Promise<Catalog> {
     const result = await fetchModelCatalog({ baseUrl: QORVYNA_MODEL_BASE_URL, apiKey: key, provider: "Groq", refresh });
     return { ids: new Map(result.models.map((model) => [model.id.toLowerCase(), model.contextTokens])) };
   } catch (error) {
-    return { error: error instanceof Error ? error.message.slice(0, 160) : "catalog request failed" };
+    const message = error instanceof Error ? error.message.slice(0, 160) : "catalog request failed";
+    const lower = message.toLowerCase();
+    const state: ModelProbeState = /401|auth/.test(lower)
+      ? "invalid_credentials"
+      : /403|permission/.test(lower)
+        ? "permission_denied"
+        : /429|rate/.test(lower)
+          ? "rate_limited"
+          : "temporarily_unavailable";
+    return { error: message, state };
   }
 }
 
 const CLOUDFLARE_CATALOG_TTL_MS = 5 * 60_000;
-let cloudflareCatalogCache: { at: number; value: IdCatalog } | null = null;
+let cloudflareCatalogCache: { at: number; accountId: string; ids: Set<string> } | null = null;
 
 /**
  * Live model list for this Cloudflare account (GET /ai/models/search).
- * null = Cloudflare is not configured. A failed read is reported as
- * `{error}` — availability then falls back to the configured default only.
+ * null = Cloudflare is not configured.
+ * Temporary lookup errors are NEVER cached as permanent unavailability.
  */
 async function cloudflareCatalog(refresh = false): Promise<IdCatalog> {
-  if (!cloudflareConfigured()) return null;
-  if (!refresh && cloudflareCatalogCache && Date.now() - cloudflareCatalogCache.at < CLOUDFLARE_CATALOG_TTL_MS) {
-    return cloudflareCatalogCache.value;
+  if (!cloudflareConfigured()) {
+    cloudflareCatalogCache = null;
+    return null;
   }
   const credentials = cloudflareCredentials();
-  if (!credentials) return null;
-  try {
-    const models = await listCloudflareModels(credentials);
-    const value: IdCatalog = { ids: new Set(models.map((model) => model.id.toLowerCase())) };
-    cloudflareCatalogCache = { at: Date.now(), value };
-    return value;
-  } catch (error) {
-    const value: IdCatalog = { error: error instanceof Error ? error.message.slice(0, 160) : "catalog request failed" };
-    cloudflareCatalogCache = { at: Date.now(), value };
-    return value;
+  if (!credentials) {
+    cloudflareCatalogCache = null;
+    return null;
+  }
+  if (
+    !refresh &&
+    cloudflareCatalogCache &&
+    cloudflareCatalogCache.accountId === credentials.accountId &&
+    Date.now() - cloudflareCatalogCache.at < CLOUDFLARE_CATALOG_TTL_MS
+  ) {
+    return { ids: cloudflareCatalogCache.ids };
+  }
+
+  const probe = await probeCloudflareCatalog(credentials);
+  if (probe.ok) {
+    const ids = new Set(probe.models.map((model) => model.id.toLowerCase()));
+    cloudflareCatalogCache = { at: Date.now(), accountId: credentials.accountId, ids };
+    return { ids };
+  }
+
+  // Do NOT poison `cloudflareCatalogCache` on failures — next check or refresh
+  // immediately retries Cloudflare cleanly.
+  return { error: probe.message, state: probe.state, status: probe.status, code: probe.code };
+}
+
+function diagnosticHintFor(state: ModelProbeState, spec: ModelSpec): string | null {
+  switch (state) {
+    case "configuration_missing":
+      return spec.provider === "cloudflare"
+        ? "Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN on the server."
+        : "Set GROQ_API_KEY (or dedicated endpoint credentials) on the server.";
+    case "invalid_credentials":
+      return spec.provider === "cloudflare"
+        ? "Verify CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN in Cloudflare Profile → API Tokens."
+        : "Verify the provider API key on the server.";
+    case "permission_denied":
+      return "Ensure the Cloudflare API token has Workers AI Read and Workers AI Edit permissions.";
+    case "model_not_found":
+      return `Confirm the catalog model identifier (${spec.id}) is enabled on this account.`;
+    case "out_of_capacity":
+      return "Daily free quota or model capacity reached. Wait for reset (00:00 UTC) or retry shortly.";
+    case "rate_limited":
+      return "Provider rate limit active. Retry in a few moments.";
+    case "temporarily_unavailable":
+      return "Temporary upstream/network issue. Press Refresh status or Test connection to retry.";
+    case "unavailable_for_account":
+      return "This account's model catalog did not include this model. Check Cloudflare account access or token permissions.";
+    default:
+      return null;
   }
 }
 
-/** The Cloudflare model this deployment is configured to run. */
-function configuredCloudflareModelId(): string {
-  const fromEnv = (process.env.CLOUDFLARE_DEFAULT_MODEL ?? "").trim();
-  return (fromEnv || CLOUDFLARE_MODEL_ID).toLowerCase();
-}
+type AvailabilityEvaluation = {
+  availability: ModelAvailability;
+  contextTokens: number;
+  statusCode: ModelProbeState;
+  statusLabel: string;
+  reason: string;
+  lastTestedAt: string | null;
+  lastError: ModelDiagnosticError | null;
+  diagnosticHint: string | null;
+};
 
-function availabilityOf(spec: ModelSpec, catalog: Catalog, cfCatalog: IdCatalog): { availability: ModelAvailability; contextTokens: number } {
+function availabilityOf(spec: ModelSpec, catalog: Catalog, cfCatalog: IdCatalog): AvailabilityEvaluation {
   const isDefault = spec.key === DEFAULT_MODEL_KEY;
+  const health = runtimeHealth.get(spec.key);
   const route = routeForModel(spec);
-  if (!route) return { availability: "not_configured", contextTokens: spec.contextTokens };
+  if (!route) {
+    return {
+      availability: "not_configured",
+      contextTokens: spec.contextTokens,
+      statusCode: "configuration_missing",
+      statusLabel: PROBE_STATE_LABEL.configuration_missing,
+      reason: REASON.not_configured,
+      lastTestedAt: health?.lastTestedAt ?? null,
+      lastError: health?.lastError ?? null,
+      diagnosticHint: diagnosticHintFor("configuration_missing", spec),
+    };
+  }
 
   // Cloudflare specs are verified against the account's own model list —
   // never against the Groq catalog, and never assumed.
   if (spec.provider === "cloudflare") {
-    if (!cfCatalog) return { availability: "not_configured", contextTokens: spec.contextTokens };
-    if ("error" in cfCatalog) {
-      // The list could not be read (token without list permission, network).
-      // The model the operator explicitly configured keeps working — its own
-      // requests report real errors — nothing else is assumed available.
+    if (!cfCatalog) {
       return {
-        availability: spec.id.toLowerCase() === configuredCloudflareModelId() ? "available" : "unverified",
+        availability: "not_configured",
         contextTokens: spec.contextTokens,
+        statusCode: "configuration_missing",
+        statusLabel: PROBE_STATE_LABEL.configuration_missing,
+        reason: REASON.not_configured,
+        lastTestedAt: health?.lastTestedAt ?? null,
+        lastError: health?.lastError ?? null,
+        diagnosticHint: diagnosticHintFor("configuration_missing", spec),
       };
     }
-    if (!cfCatalog.ids.has(spec.id.toLowerCase())) return { availability: "not_offered", contextTokens: spec.contextTokens };
-    return { availability: "available", contextTokens: spec.contextTokens };
+    if ("error" in cfCatalog) {
+      // If a direct inference test (`POST /api/models/test`) recently succeeded,
+      // honour that verified result when only catalog listing failed due to
+      // missing Read scope (403). Never claim Ready on 401 invalid credentials!
+      if (cfCatalog.state === "permission_denied" && health?.lastTestedOk) {
+        return {
+          availability: "available",
+          contextTokens: spec.contextTokens,
+          statusCode: "available",
+          statusLabel: PROBE_STATE_LABEL.available,
+          reason: "Verified via direct inference test (catalog read requires Workers AI Read permission).",
+          lastTestedAt: health.lastTestedAt,
+          lastError: null,
+          diagnosticHint: diagnosticHintFor("permission_denied", spec),
+        };
+      }
+      const catalogError: ModelDiagnosticError = {
+        code: cfCatalog.code,
+        message: cfCatalog.error,
+        status: cfCatalog.status,
+        at: new Date().toISOString(),
+      };
+      return {
+        availability: "unverified",
+        contextTokens: spec.contextTokens,
+        statusCode: cfCatalog.state,
+        statusLabel: PROBE_STATE_LABEL[cfCatalog.state] ?? PROBE_STATE_LABEL.temporarily_unavailable,
+        reason: cfCatalog.error,
+        lastTestedAt: health?.lastTestedAt ?? null,
+        lastError: health?.lastError ?? catalogError,
+        diagnosticHint: diagnosticHintFor(cfCatalog.state, spec),
+      };
+    }
+
+    if (!cfCatalog.ids.has(spec.id.toLowerCase())) {
+      // If a direct inference probe succeeded (e.g. account can run model even
+      // if search omitted it), report available; otherwise unavailable_for_account.
+      if (health?.lastTestedOk) {
+        return {
+          availability: "available",
+          contextTokens: spec.contextTokens,
+          statusCode: "available",
+          statusLabel: PROBE_STATE_LABEL.available,
+          reason: "Ready (verified via direct connectivity test).",
+          lastTestedAt: health.lastTestedAt,
+          lastError: null,
+          diagnosticHint: null,
+        };
+      }
+      return {
+        availability: "not_offered",
+        contextTokens: spec.contextTokens,
+        statusCode: "unavailable_for_account",
+        statusLabel: PROBE_STATE_LABEL.unavailable_for_account,
+        reason: "This Cloudflare account's model catalog did not include this model.",
+        lastTestedAt: health?.lastTestedAt ?? null,
+        lastError: health?.lastError ?? null,
+        diagnosticHint: diagnosticHintFor("unavailable_for_account", spec),
+      };
+    }
+
+    // Listed in Cloudflare catalog — also check if the most recent direct
+    // connectivity test explicitly failed (e.g. quota, invalid creds, 503).
+    if (health?.lastTestedOk === false && health.lastState && health.lastError) {
+      return {
+        availability: health.lastState === "model_not_found" ? "not_offered" : "available",
+        contextTokens: spec.contextTokens,
+        statusCode: health.lastState,
+        statusLabel: PROBE_STATE_LABEL[health.lastState],
+        reason: health.lastError.message,
+        lastTestedAt: health.lastTestedAt,
+        lastError: health.lastError,
+        diagnosticHint: diagnosticHintFor(health.lastState, spec),
+      };
+    }
+
+    return {
+      availability: "available",
+      contextTokens: spec.contextTokens,
+      statusCode: "available",
+      statusLabel: PROBE_STATE_LABEL.available,
+      reason: REASON.available,
+      lastTestedAt: health?.lastTestedAt ?? null,
+      lastError: health?.lastError ?? null,
+      diagnosticHint: null,
+    };
   }
 
   // The default model on a dedicated endpoint is not part of the hosted catalog.
-  if (isDefault && route.providerId === "gpt-oss") return { availability: "available", contextTokens: spec.contextTokens };
-  if (!catalog) return { availability: "not_configured", contextTokens: spec.contextTokens };
+  if (isDefault && route.providerId === "gpt-oss") {
+    return {
+      availability: "available",
+      contextTokens: spec.contextTokens,
+      statusCode: "available",
+      statusLabel: PROBE_STATE_LABEL.available,
+      reason: REASON.available,
+      lastTestedAt: health?.lastTestedAt ?? null,
+      lastError: health?.lastError ?? null,
+      diagnosticHint: null,
+    };
+  }
+  if (!catalog) {
+    return {
+      availability: "not_configured",
+      contextTokens: spec.contextTokens,
+      statusCode: "configuration_missing",
+      statusLabel: PROBE_STATE_LABEL.configuration_missing,
+      reason: REASON.not_configured,
+      lastTestedAt: health?.lastTestedAt ?? null,
+      lastError: health?.lastError ?? null,
+      diagnosticHint: diagnosticHintFor("configuration_missing", spec),
+    };
+  }
   if ("error" in catalog) {
-    // The catalog could not be read. The default model keeps working exactly
-    // as before (its own requests report real errors); nothing else is assumed.
-    return { availability: isDefault ? "available" : "unverified", contextTokens: spec.contextTokens };
+    // The catalog could not be read. The default model keeps working; nothing else is assumed.
+    const avail: ModelAvailability = isDefault ? "available" : "unverified";
+    const statusCode: ModelProbeState = isDefault ? "available" : catalog.state;
+    return {
+      availability: avail,
+      contextTokens: spec.contextTokens,
+      statusCode,
+      statusLabel: PROBE_STATE_LABEL[statusCode],
+      reason: isDefault ? REASON.available : catalog.error || REASON.unverified,
+      lastTestedAt: health?.lastTestedAt ?? null,
+      lastError: isDefault ? health?.lastError ?? null : { code: catalog.state.toUpperCase(), message: catalog.error, status: null, at: new Date().toISOString() },
+      diagnosticHint: isDefault ? null : diagnosticHintFor(catalog.state, spec),
+    };
   }
   const id = spec.id.toLowerCase();
-  if (!catalog.ids.has(id)) return { availability: "not_offered", contextTokens: spec.contextTokens };
-  return { availability: "available", contextTokens: catalog.ids.get(id) ?? spec.contextTokens };
+  if (!catalog.ids.has(id)) {
+    return {
+      availability: "not_offered",
+      contextTokens: spec.contextTokens,
+      statusCode: "unavailable_for_account",
+      statusLabel: PROBE_STATE_LABEL.unavailable_for_account,
+      reason: REASON.not_offered,
+      lastTestedAt: health?.lastTestedAt ?? null,
+      lastError: health?.lastError ?? null,
+      diagnosticHint: diagnosticHintFor("unavailable_for_account", spec),
+    };
+  }
+  return {
+    availability: "available",
+    contextTokens: catalog.ids.get(id) ?? spec.contextTokens,
+    statusCode: "available",
+    statusLabel: PROBE_STATE_LABEL.available,
+    reason: REASON.available,
+    lastTestedAt: health?.lastTestedAt ?? null,
+    lastError: health?.lastError ?? null,
+    diagnosticHint: null,
+  };
 }
 
 const REASON: Record<ModelAvailability, string> = {
@@ -121,23 +383,33 @@ export async function listModelStatus(opts: { refresh?: boolean } = {}): Promise
   // not be inferred from the primary route (which may be Cloudflare).
   const dedicated = routeForModel(defaultModel())?.providerId === "gpt-oss";
   return MODEL_REGISTRY.map((spec) => {
-    const { availability, contextTokens } = availabilityOf(spec, catalog, cfCatalog);
+    const evalResult = availabilityOf(spec, catalog, cfCatalog);
     const cooling = cooldownRemainingMs(spec.key);
+    const rateLimited = evalResult.availability === "available" && cooling > 0;
+    const statusCode: ModelProbeState = rateLimited ? "rate_limited" : evalResult.statusCode;
     return {
       key: spec.key,
       label: spec.label,
       summary: spec.summary,
       model_id: spec.id,
       provider: spec.key === DEFAULT_MODEL_KEY && dedicated ? "Dedicated endpoint" : spec.providerLabel,
-      availability,
-      reason: availability === "available" && cooling > 0 ? `Rate-limited by the provider; resumes in about ${Math.ceil(cooling / 1000)}s.` : REASON[availability],
+      availability: evalResult.availability,
+      reason: rateLimited
+        ? `Rate-limited by the provider; resumes in about ${Math.ceil(cooling / 1000)}s.`
+        : evalResult.reason,
       is_default: spec.key === DEFAULT_MODEL_KEY,
       strengths: [...spec.strengths],
-      context_tokens: contextTokens,
+      context_tokens: evalResult.contextTokens,
       max_output_tokens: spec.maxOutputTokens,
       streaming: spec.streaming,
       tool_calling: spec.toolCalling,
       structured_output: spec.structuredOutput,
+      status_code: statusCode,
+      status_label: PROBE_STATE_LABEL[statusCode],
+      supported_modes: [...spec.supportedModes],
+      last_tested_at: evalResult.lastTestedAt,
+      last_error: evalResult.lastError,
+      diagnostic_hint: evalResult.diagnosticHint,
     };
   });
 }
@@ -204,9 +476,15 @@ export async function resolvePool(d: Db | null, uid: string | null, override?: {
     targets.push({ ...route, contextTokens: status.context_tokens });
   }
   targets.sort((a, b) => rank(a) - rank(b));
-  // If none of the user's chosen models can run, continue with the default
-  // model rather than failing the request — and say so via `skipped`.
-  if (!targets.length && !preference.auto) {
+  // Never silently substitute GPT OSS when the user explicitly locked only
+  // Cloudflare GLM (`auto: false`, `enabled: ["glm-4.7-flash"]`). For other
+  // unavailable models in a manual pool, fall back to the default route and
+  // report `skipped` transparently.
+  const explicitGlmOnly =
+    !preference.auto &&
+    preference.enabled.length === 1 &&
+    preference.enabled[0] === CLOUDFLARE_MODEL_KEY;
+  if (!targets.length && !preference.auto && !explicitGlmOnly) {
     const fallback = qorvynaModelRoute();
     if (fallback) targets.push(fallback);
   }
