@@ -30,6 +30,7 @@ import {
 import type { FamilyListRow, FamilyMemberSummary, MirrorState } from "@/lib/family";
 import { cn } from "@/lib/utils";
 import { DeviceHub } from "@/components/devices/device-hub";
+import { CrossAccountLinks } from "@/components/devices/cross-account-links";
 
 type Device = {
   id: string;
@@ -661,6 +662,7 @@ export function DevicesClient() {
       {/* =================================================================== */}
       {tab === "devices" ? (
         <div className="space-y-5">
+          <CrossAccountLinks />
           <DeviceHub />
           <div className="grid gap-4">
             {/* Cross-account family devices */}

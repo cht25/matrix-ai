@@ -193,7 +193,13 @@ describe("Pillars 4 & 5 — Phone-First OTA Update System, Phone App & Canonical
     expect(read("mobile/matrix_app/lib/config.dart")).toContain("https://qorvyna.thamjj13.top");
     expect(read("mobile/matrix_app/lib/update_service.dart")).toContain("/api/app/version");
     expect(read("mobile/matrix_app/lib/chat_screen.dart")).toContain("Worked ·");
-    expect(read("src-tauri/tauri.conf.json")).toContain("https://qorvyna.thamjj13.top/chat");
+    // Phase 2: the desktop/mobile shell BUNDLES the real frontend, so the app
+    // origin must appear only as an allowlisted API/remote-URL policy — never
+    // as the main window target. Loading the site remotely is forbidden.
+    const tauriConf = read("src-tauri/tauri.conf.json");
+    expect(tauriConf).toContain("https://qorvyna.thamjj13.top");
+    expect(tauriConf).toContain("../public/native");
+    expect(tauriConf).not.toContain("https://qorvyna.thamjj13.top/chat");
     expect(read("apphosting.yaml")).toContain("https://qorvyna.thamjj13.top");
     expect(read("render.yaml")).toContain("https://qorvyna.thamjj13.top");
     expect(read("docs/ci/android.yml")).toContain("matrix-android.apk");

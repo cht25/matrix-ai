@@ -397,15 +397,37 @@ export function JarvisAssistantBar({
     };
     window.addEventListener("keydown", onKeyDown);
 
+    // Two entry points into QORVYNA's voice mode from the native shell:
+    //   • the global shortcut / tray menu emits `qorvyna://voice-activate`;
+    //   • the system opens the app URI `qorvyna://voice` (see tauri.conf.json).
+    // Both end up here, and both are wrapped so a missing bridge is harmless.
     let unlistenTauri: (() => void) | null = null;
-    const tauriListen = (window as unknown as TauriGlobal).__TAURI__?.event?.listen;
+    const activate = () => {
+      onInterruptSpeech();
+      onStartPushToTalk();
+    };
+    const tauriGlobal = window as unknown as TauriGlobal;
+    const tauriListen = tauriGlobal.__TAURI__?.event?.listen;
     if (tauriListen) {
-      void tauriListen("qorvyna://voice-activate", () => {
-        onInterruptSpeech();
-        onStartPushToTalk();
-      }).then((fn) => {
-        unlistenTauri = fn;
-      });
+      void tauriListen("qorvyna://voice-activate", activate)
+        .then((fn) => {
+          unlistenTauri = fn;
+        })
+        .catch(() => {
+          /* event API unavailable — the shortcut listener below still notifies */
+        });
+    } else {
+      const internals = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> } }).__TAURI_INTERNALS__;
+      if (internals?.invoke) {
+        // Tauri v2 exposes events through the core plugin when the global
+        // object is absent (withGlobalTauri disabled). The reply is an event
+        // id; the listener itself keeps the closure alive for the session.
+        void internals
+          .invoke("plugin:event|listen", { event: "qorvyna://voice-activate", target: { kind: "Any" } })
+          .catch(() => {
+            /* stay silent: native voice activation is optional */
+          });
+      }
     }
 
     return () => {

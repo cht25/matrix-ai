@@ -96,7 +96,7 @@ const COPY: Record<AuthErrorKind, string> = {
   provider:
     "Server setup problem — this sign-in method isn't enabled in Firebase (console → Authentication → Sign-in method).",
   "account-exists":
-    "An account with this email already exists. Sign in with email and password, then link Google or Facebook in Settings.",
+    "An account with this email already exists. Sign in with email and password, then link Google in Settings.",
   session:
     "Signed in with your account, but the server could not create your session. Tap Retry session — you will not create a second account.",
   origin:

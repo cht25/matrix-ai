@@ -4,6 +4,11 @@
 /** Routes anyone may hit without a session cookie. `/` is exact-only. */
 export const PUBLIC_PATHS = [
   "/",
+  // The Tauri shell mount point. It is a client-rendered application that
+  // performs its own authentication gate (src/native/native-app.tsx) — the
+  // server never renders account data here, so it can be served without a
+  // session and the app can show its own login screen.
+  "/native-app",
   "/login",
   "/register",
   "/forgot-password",

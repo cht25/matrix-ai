@@ -98,53 +98,46 @@ export function Divider() {
 }
 
 /**
- * Google / Facebook buttons.
+ * The single federated sign-in action: Google.
  *
- * Both providers use Firebase popup sign-in (`signInWithPopup`). `busyProvider`
- * keeps the clicked button active and locks both buttons while the popup is
- * open so a second click cannot trigger `auth/cancelled-popup-request`.
+ * Email + password stays the primary form above/below this button. Facebook
+ * was removed from the product, so there is exactly one OAuth button — a
+ * full-width secondary action rather than a half-empty two-column grid.
+ * `busyProvider` keeps the button in its loading state while the popup is open
+ * so a second click cannot raise `auth/cancelled-popup-request`.
  */
 export function OAuthButtons({
   onGoogle,
-  onFacebook,
   busyProvider = null,
   disabled = false,
+  label = "Continue with Google",
 }: {
   onGoogle: () => void | Promise<void>;
-  onFacebook: () => void | Promise<void>;
   busyProvider?: OAuthProviderId | null;
   disabled?: boolean;
+  label?: string;
 }) {
-  const [busy, setBusy] = useState<OAuthProviderId | null>(null);
-  async function run(which: OAuthProviderId, fn: () => void | Promise<void>) {
-    setBusy(which);
+  const [busy, setBusy] = useState(false);
+  async function run(fn: () => void | Promise<void>) {
+    setBusy(true);
     try {
       await fn();
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   }
-  const active = busyProvider ?? busy;
-  const locked = disabled || busyProvider !== null || busy !== null;
+  const active = busyProvider ?? (busy ? "google" : null);
+  const locked = disabled || busyProvider !== null || busy;
   return (
-    <div className="grid grid-cols-2 gap-2.5">
-      <button
-        type="button"
-        disabled={locked}
-        onClick={() => { void run("google", onGoogle); }}
-        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border-strong bg-surface px-3 text-[13px] font-medium text-ink transition-colors hover:border-accent hover:text-accent disabled:opacity-60"
-      >
-        {active === "google" ? <Spinner /> : <GoogleIcon />} Google
-      </button>
-      <button
-        type="button"
-        disabled={locked}
-        onClick={() => { void run("facebook", onFacebook); }}
-        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border-strong bg-surface px-3 text-[13px] font-medium text-ink transition-colors hover:border-accent hover:text-accent disabled:opacity-60"
-      >
-        {active === "facebook" ? <Spinner /> : <FacebookIcon />} Facebook
-      </button>
-    </div>
+    <button
+      type="button"
+      disabled={locked}
+      onClick={() => { void run(onGoogle); }}
+      className="inline-flex min-h-10 w-full items-center justify-center gap-2.5 rounded-lg border border-border-strong bg-surface px-3 text-[13px] font-medium text-ink transition-colors hover:border-accent hover:text-accent disabled:opacity-60"
+    >
+      {active === "google" ? <Spinner /> : <GoogleIcon />}
+      {active === "google" ? "Signing in with Google…" : label}
+    </button>
   );
 }
 
@@ -155,14 +148,6 @@ export function GoogleIcon() {
       <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23Z" />
       <path fill="#FBBC05" d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84Z" />
       <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15A11 11 0 0 0 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52Z" />
-    </svg>
-  );
-}
-
-export function FacebookIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true">
-      <path fill="#1877F2" d="M24 12a12 12 0 1 0-13.88 11.85v-8.38H7.08V12h3.04V9.36c0-3 1.79-4.67 4.53-4.67 1.31 0 2.69.24 2.69.24v2.95h-1.52c-1.49 0-1.96.92-1.96 1.87V12h3.33l-.53 3.47h-2.8v8.38A12 12 0 0 0 24 12Z" />
     </svg>
   );
 }
@@ -424,15 +409,10 @@ export function LoginForm() {
 
       <Divider />
       {starting ? (
-        <Alert tone="info">Completing sign-in with {starting === "google" ? "Google" : "Facebook"} in the popup window…</Alert>
+        <Alert tone="info">Completing sign-in with Google in the popup window…</Alert>
       ) : null}
       {notice && !error ? <Alert tone="info">{notice}</Alert> : null}
-      <OAuthButtons
-        onGoogle={() => oauth("google")}
-        onFacebook={() => oauth("facebook")}
-        busyProvider={starting}
-        disabled={busy}
-      />
+      <OAuthButtons onGoogle={() => oauth("google")} busyProvider={starting} disabled={busy} />
       <p className="mt-6 text-center text-[13px] text-ink-2">
         Don't have an account?{" "}
         <Link href="/register" className="font-medium text-ink transition-colors hover:text-accent">

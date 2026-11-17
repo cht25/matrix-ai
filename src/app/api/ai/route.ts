@@ -29,6 +29,7 @@ import { createAIRoutesFromDb, logAIConfiguration, type AIRouteTarget } from "@/
 import { QORVYNA_MODEL_ID, QORVYNA_MODEL_LABEL } from "@/lib/ai/model";
 import { completeWithModel, streamWithModel } from "@/lib/ai/executor";
 import { resolvePool } from "@/lib/ai/models/pool";
+import { classifyRoute } from "@/lib/ai/routing-policy";
 import { modelLabel } from "@/lib/ai/models/registry";
 import { planCollaboration } from "@/lib/ai/orchestrator/plan";
 import { completeWithFallback, runCollaboration, separateAnswers, streamWithFallback } from "@/lib/ai/orchestrator/run";
@@ -648,10 +649,26 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
   }
   const codingDetected = route.coding || mode === "agent" || isCodingRequest(message, attachments);
   const useAgentPolicy = mode === "agent" || mode === "code";
-  // The user's model pool (coordinator first). A per-request selection in the
-  // body is honoured only for models that are really available; provider or
-  // raw model fields are ignored.
-  const pool = await resolvePool(d, user.uid, body.models && typeof body.models === "object" ? body.models as { auto?: boolean; enabled?: unknown } : null);
+  // Phase 5 — classify the turn, THEN resolve the model class:
+  //   conversation → GPT OSS 120B, GPT OSS 20B as the documented fallback
+  //   artifact     → GLM 4.7 Flash (Cloudflare Workers AI), GPT OSS team when
+  //                  Cloudflare is not configured (reported, never silent)
+  //   image        → image provider (handled by the dedicated action below)
+  // A per-request model selection in `body.models` is honoured exactly; the
+  // classifier only decides the AUTOMATIC order.
+  const routeClass = classifyRoute({
+    message,
+    mode,
+    imageRequested: lane === "image" || mode === "image",
+    exportRequested: typeof body.export_format === "string" && Boolean(body.export_format),
+    attachments: attachments.length,
+  });
+  const pool = await resolvePool(
+    d,
+    user.uid,
+    body.models && typeof body.models === "object" ? body.models as { auto?: boolean; enabled?: unknown } : null,
+    { intent: routeClass.intent, reason: routeClass.reason },
+  );
   const poolTargets = pool.targets;
   const targets = poolTargets.slice(0, 1);
   const selectedModel = targets[0]?.model ?? QORVYNA_MODEL_ID;
@@ -816,11 +833,25 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
           upsertStep({
             id: "route",
             label: collaborationPlan.mode === "single" ? `Using ${modelLabel(activeTarget.model)}` : `${poolTargets.length} models working together`,
-            detail: collaborationPlan.mode === "single" ? collaborationPlan.reason : poolTargets.map((target) => modelLabel(target.model)).join(" · "),
+            detail: [
+              collaborationPlan.mode === "single" ? collaborationPlan.reason : poolTargets.map((target) => modelLabel(target.model)).join(" · "),
+              pool.manual ? "your selected model" : routeClass.reason,
+            ].filter(Boolean).join(" · "),
             status: "done",
             at: Date.now(),
             durationMs: Math.max(1, Date.now() - started),
           });
+          // An artifact request that had to be answered without the artifact
+          // model is reported exactly once, before the answer starts.
+          if (pool.degraded) {
+            upsertStep({
+              id: `degraded-${pool.degraded.wanted}`,
+              label: `${pool.degraded.wanted} unavailable`,
+              detail: `${pool.degraded.detail} — answered with ${pool.degraded.used}.`,
+              status: "failed",
+              at: Date.now(),
+            });
+          }
           for (const skipped of pool.skipped) {
             upsertStep({ id: `skipped-${skipped.key}`, label: `${skipped.label} is not available`, detail: skipped.reason, status: "failed", at: Date.now() });
           }
@@ -990,6 +1021,14 @@ async function handleChat(d: Db, user: SessionUser, body: Record<string, unknown
             model: activeTarget.model,
             provider: activeTarget.provider,
             tier: route.tier,
+            // Phase 5: what the request was classified as, which model really
+            // answered, and — when the preferred class was unavailable — why.
+            routing: {
+              intent: routeClass.intent,
+              signals: routeClass.signals,
+              manual: pool.manual,
+              degraded: pool.degraded,
+            },
             steps: recordedSteps,
             duration_ms: Math.max(1, Date.now() - started),
             coding_detected: codingDetected,

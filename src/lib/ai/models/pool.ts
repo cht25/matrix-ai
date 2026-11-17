@@ -22,11 +22,13 @@ import {
   CLOUDFLARE_MODEL_KEY,
   DEFAULT_MODEL_KEY,
   MODEL_REGISTRY,
+  artifactModel,
   defaultModel,
   modelById,
   sanitizeModelKeys,
   type ModelSpec,
 } from "@/lib/ai/models/registry";
+import type { RouteIntent } from "@/lib/ai/routing-policy";
 import { cooldownRemainingMs } from "@/lib/ai/orchestrator/scheduler";
 import {
   PROBE_STATE_LABEL,
@@ -444,49 +446,154 @@ export type ResolvedPool = {
   auto: boolean;
   /** Enabled models that were skipped because they are not available now. */
   skipped: { key: string; label: string; reason: string }[];
+  /** Which routing class produced this pool (Phase 5). */
+  intent: RouteIntent;
+  /** Why this class was chosen — shown in the execution steps verbatim. */
+  reason: string;
+  /** True when the user's own selection was honoured (no policy override). */
+  manual: boolean;
+  /**
+   * Set when the preferred class could not be served (e.g. an artifact request
+   * with no Cloudflare credential). The gateway reports this — never silently.
+   */
+  degraded: { wanted: string; used: string; detail: string } | null;
 };
 
 function rank(target: AIRouteTarget): number {
   return modelById(target.model)?.coordinatorRank ?? 99;
 }
 
+/** Registry order is the policy order inside one tier (primary, fallback…). */
+function tierOrder(key: string): number {
+  const spec = MODEL_REGISTRY.find((model) => model.key === key);
+  if (!spec) return 99;
+  const tierRank = { artifact: 0, primary: 1, fallback: 2, specialist: 3 }[spec.tier] ?? 4;
+  return tierRank * 100 + spec.coordinatorRank;
+}
+
+export type ResolvePoolOptions = {
+  /** Classification of this specific turn (see ../routing-policy.ts). */
+  intent?: RouteIntent;
+  /** Human explanation for the classification, forwarded to the UI steps. */
+  reason?: string;
+};
+
 /**
- * The models that may work on a request for this user, strongest coordinator
- * first. `override` is a per-request selection (still filtered to models that
- * are available — a client can never force an unavailable model).
+ * The models that may work on THIS request for this user.
+ *
+ * Ordering rules (Phase 5):
+ *   • artifact turns lead with GLM 4.7 Flash (Cloudflare Workers AI); when
+ *     Cloudflare is not configured/available the GPT OSS team answers and the
+ *     call is recorded in `degraded` — the UI says so.
+ *   • conversation turns lead with GPT OSS 120B and put GPT OSS 20B second as
+ *     the documented fallback.
+ *   • a manual selection (`auto: false`) is honoured exactly; it is never
+ *     silently overridden, and unavailable picks are reported in `skipped`.
+ *
+ * Availability is always taken from `listModelStatus()` (live provider
+ * catalog), so a model is only ever scheduled when it can really answer.
  */
-export async function resolvePool(d: Db | null, uid: string | null, override?: { auto?: boolean; enabled?: unknown } | null): Promise<ResolvedPool> {
+export async function resolvePool(
+  d: Db | null,
+  uid: string | null,
+  override?: { auto?: boolean; enabled?: unknown } | null,
+  options: ResolvePoolOptions = {},
+): Promise<ResolvedPool> {
   await ensureAccounts(d);
   const statuses = await listModelStatus();
   const preference: PoolPreference = override && (override.auto !== undefined || override.enabled !== undefined)
     ? { auto: override.auto === true || sanitizeModelKeys(override.enabled).length === 0, enabled: sanitizeModelKeys(override.enabled) }
     : d && uid ? await getPoolPreference(d, uid) : { auto: true, enabled: [] };
-  const wanted = preference.auto ? statuses.map((model) => model.key) : preference.enabled;
+  const manual = !preference.auto;
+  const intent: RouteIntent = options.intent ?? "conversation";
+  const available = new Map(statuses.map((model) => [model.key, model]));
+
+  const routeFor = (key: string): AIRouteTarget | null => {
+    const status = available.get(key);
+    const spec = MODEL_REGISTRY.find((model) => model.key === key);
+    if (!status || !spec || status.availability !== "available") return null;
+    const route = routeForModel(spec);
+    return route ? { ...route, contextTokens: status.context_tokens } : null;
+  };
+
   const targets: AIRouteTarget[] = [];
   const skipped: ResolvedPool["skipped"] = [];
-  for (const key of wanted) {
-    const status = statuses.find((model) => model.key === key);
-    const spec = MODEL_REGISTRY.find((model) => model.key === key);
-    if (!status || !spec) continue;
-    const route = status.availability === "available" ? routeForModel(spec) : null;
-    if (!route) {
-      if (!preference.auto) skipped.push({ key, label: spec.label, reason: status.reason });
-      continue;
+  let degraded: ResolvedPool["degraded"] = null;
+
+  if (manual) {
+    // Manual selection: exactly the user's models, in the user's order.
+    for (const key of preference.enabled) {
+      const route = routeFor(key);
+      if (route) {
+        targets.push(route);
+      } else {
+        const spec = MODEL_REGISTRY.find((model) => model.key === key);
+        const status = available.get(key);
+        skipped.push({
+          key,
+          label: spec?.label ?? key,
+          reason: status?.reason ?? "This model is not available on this deployment right now.",
+        });
+      }
     }
-    targets.push({ ...route, contextTokens: status.context_tokens });
+    // Never silently substitute GPT OSS when the user explicitly locked only
+    // Cloudflare GLM (`auto: false`, `enabled: ["glm-4.7-flash"]`). For other
+    // unavailable models in a manual pool, fall back to the default route and
+    // report `skipped` transparently.
+    const explicitGlmOnly = preference.enabled.length === 1 && preference.enabled[0] === CLOUDFLARE_MODEL_KEY;
+    if (!targets.length && !explicitGlmOnly) {
+      const fallback = qorvynaModelRoute();
+      if (fallback) {
+        targets.push(fallback);
+        degraded = {
+          wanted: preference.enabled.map((key) => MODEL_REGISTRY.find((m) => m.key === key)?.label ?? key).join(", ") || "your selection",
+          used: modelById(fallback.model)?.label ?? fallback.model,
+          detail: "Your selected model was not available, so this answer used the default route.",
+        };
+      }
+    }
+    return { targets: targets.slice(0, MAX_ACTIVE_MODELS), auto: false, skipped, intent, reason: options.reason ?? "Manual model selection", manual, degraded };
   }
-  targets.sort((a, b) => rank(a) - rank(b));
-  // Never silently substitute GPT OSS when the user explicitly locked only
-  // Cloudflare GLM (`auto: false`, `enabled: ["glm-4.7-flash"]`). For other
-  // unavailable models in a manual pool, fall back to the default route and
-  // report `skipped` transparently.
-  const explicitGlmOnly =
-    !preference.auto &&
-    preference.enabled.length === 1 &&
-    preference.enabled[0] === CLOUDFLARE_MODEL_KEY;
-  if (!targets.length && !preference.auto && !explicitGlmOnly) {
-    const fallback = qorvynaModelRoute();
-    if (fallback) targets.push(fallback);
+
+  // Automatic policy: the artifact model leads artifact work; conversation
+  // leads with the primary (GPT OSS 120B), then its documented fallback
+  // (GPT OSS 20B), then any specialist the user pool made available. Order is
+  // what makes 120B the model that answers normal chat.
+  const orderedKeys: string[] = [];
+  const artifactSpec = artifactModel();
+  if (intent === "artifact" && artifactSpec) orderedKeys.unshift(artifactSpec.key);
+  const byRank = MODEL_REGISTRY
+    .filter((spec) => spec.tier === "primary" || spec.tier === "fallback" || spec.tier === "specialist")
+    .slice()
+    .sort((a, b) => tierOrder(a.key) - tierOrder(b.key));
+  for (const spec of byRank) if (!orderedKeys.includes(spec.key)) orderedKeys.push(spec.key);
+
+  for (const key of orderedKeys) {
+    const route = routeFor(key);
+    if (route) targets.push(route);
   }
-  return { targets: targets.slice(0, MAX_ACTIVE_MODELS), auto: preference.auto, skipped };
+
+  // An artifact turn that could not reach Cloudflare still has to be answered;
+  // record the degradation so the gateway can report the model that really ran.
+  if (intent === "artifact" && artifactSpec && !targets.some((target) => modelById(target.model)?.key === artifactSpec.key)) {
+    const spec = available.get(artifactSpec.key);
+    degraded = {
+      wanted: artifactSpec.label,
+      used: targets[0] ? modelById(targets[0].model)?.label ?? targets[0].model : "no model",
+      detail:
+        spec && spec.availability !== "available"
+          ? `${artifactSpec.label} is unavailable (${spec.reason})`
+          : `${artifactSpec.label} is not configured on this deployment`,
+    };
+  }
+
+  return {
+    targets: targets.slice(0, MAX_ACTIVE_MODELS),
+    auto: true,
+    skipped,
+    intent,
+    reason: options.reason ?? "Automatic routing",
+    manual,
+    degraded,
+  };
 }

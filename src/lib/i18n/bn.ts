@@ -45,7 +45,6 @@ export const bn: En = {
   "auth.resetTitle": "পাসওয়ার্ড রিসেট করুন",
   "auth.newPassword": "নতুন পাসওয়ার্ড",
   "auth.google": "গুগল দিয়ে চালিয়ে যান",
-  "auth.facebook": "ফেসবুক দিয়ে চালিয়ে যান",
   "auth.needAccount": "নতুন? একটি অ্যাকাউন্ট খুলুন",
   "auth.haveAccount": "ইতিমধ্যে অ্যাকাউন্ট আছে? সাইন ইন করুন",
   "auth.ageNote": "QORVYNA AI ১১–১৭ বছর বয়সীদের জন্য।",

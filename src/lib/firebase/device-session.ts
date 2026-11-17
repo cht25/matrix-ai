@@ -76,6 +76,10 @@ export function rpcDeviceScope(action: string, method = "POST"): string | null {
   if (action === "onboarding_status") return "account:read";
   if (action === "device_activity_report" || action === "device_command_result") return "devices:write";
   if (action === "device_activity_latest" || action === "device_self" || action === "device_list" || action === "reminders_list" || action === "device_commands_poll") return "devices:read";
+  // Cross-account links: a paired device may create/claim/list/revoke links it
+  // is part of, within the same device scope it already holds.
+  if (action === "device_link_list" || action === "device_link_history") return "devices:read";
+  if (action === "device_link_invite_create" || action === "device_link_claim" || action === "device_link_revoke") return "devices:write";
   if (action === "reminders_create" || action === "reminders_complete") return "notifications:write";
   if (action === "device_command_queue") return "devices:control";
   if (action === "mirror_session_create" || action === "mirror_session_signals" || action === "mirror_sessions_list") return "mirror:view";

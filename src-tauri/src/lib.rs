@@ -24,6 +24,8 @@ use tauri::{
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
+mod native;
+
 #[derive(Serialize)]
 pub struct CompanionAppUsage {
     pub name: String,
@@ -378,7 +380,21 @@ pub fn run() {
             qorvyna_desktop_info,
             desktop_hardware_status,
             launch_app,
-            media_control
+            media_control,
+            // Native bridge used by the bundled shared frontend
+            // (src/native/native-bridge.ts). Every command is allowlisted
+            // individually — nothing is exposed generically.
+            native::qorvyna_native_info,
+            native::qorvyna_permission_status,
+            native::qorvyna_permission_request,
+            native::qorvyna_permission_settings,
+            native::qorvyna_assistant_state,
+            native::qorvyna_wake_word_set,
+            native::qorvyna_assistant_default_request,
+            native::qorvyna_assistant_popup,
+            native::qorvyna_device_fingerprint,
+            native::qorvyna_inspection_state,
+            native::qorvyna_inspection_stop
         ])
         .run(tauri::generate_context!())
         .expect("error while running QORVYNA AI Tauri application");

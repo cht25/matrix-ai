@@ -23,6 +23,18 @@ import { brandEnv } from "@/lib/brand-env";
 /** What a model is good at. Drives which responsibility it is given. */
 export type ModelStrength = "planning" | "coding" | "review" | "reasoning" | "research" | "writing" | "fast";
 
+/**
+ * The role a model plays in the routing policy (see ../routing-policy.ts).
+ *
+ *   primary       normal conversation and coding answers — GPT OSS 120B
+ *   fallback      takes over ONLY when the primary is unavailable — GPT OSS 20B
+ *   artifact      multi-file / document generation — GLM 4.7 Flash
+ *   specialist    optional extra capacity the user may enable
+ *
+ * The tier is what the resolver reads; it never guesses from the model name.
+ */
+export type ModelTier = "primary" | "fallback" | "artifact" | "specialist";
+
 export type ModelSpec = {
   /** Stable key stored in user preferences (never the provider ID). */
   key: string;
@@ -49,11 +61,15 @@ export type ModelSpec = {
   supportedModes: readonly string[];
   /** Lower = preferred coordinator (plans, reviews, writes the final answer). */
   coordinatorRank: number;
+  /** Role in the routing policy. Drives artifact vs conversation selection. */
+  tier: ModelTier;
 };
 
 const ALL_CHAT_MODES = ["general", "code", "study", "research", "health", "orchestrator", "agent"] as const;
 
 export const DEFAULT_MODEL_KEY = "gpt-oss-120b";
+/** The documented fallback when the primary is unavailable (Phase 5). */
+export const FALLBACK_MODEL_KEY = "gpt-oss-20b";
 
 /**
  * Cloudflare Workers AI (see src/lib/ai/cloudflare.ts). The id below is the
@@ -68,7 +84,7 @@ export const MODEL_REGISTRY: readonly ModelSpec[] = [
   {
     key: DEFAULT_MODEL_KEY, id: QORVYNA_MODEL_ID, label: QORVYNA_MODEL_LABEL, summary: "Strongest all-rounder for planning, code and careful answers.",
     provider: "groq", providerLabel: "Groq", publisher: QORVYNA_MODEL_PUBLISHER, contextTokens: 131_072, maxOutputTokens: 16_384, tpm: 30_000,
-    strengths: ["planning", "coding", "reasoning", "review", "writing"], reasoning: "effort", streaming: true, toolCalling: true, structuredOutput: true, supportedModes: ALL_CHAT_MODES, coordinatorRank: 1,
+    strengths: ["planning", "coding", "reasoning", "review", "writing"], reasoning: "effort", streaming: true, toolCalling: true, structuredOutput: true, supportedModes: ALL_CHAT_MODES, coordinatorRank: 1, tier: "primary",
   },
   {
     // Cloudflare Workers AI free tier — primary when CLOUDFLARE_ACCOUNT_ID +
@@ -76,27 +92,27 @@ export const MODEL_REGISTRY: readonly ModelSpec[] = [
     // the existing providers remain the automatic fallback).
     key: CLOUDFLARE_MODEL_KEY, id: CLOUDFLARE_MODEL_ID, label: "GLM 4.7 Flash", summary: "Cloudflare Workers AI free-tier model for fast chat, code and structured answers.",
     provider: "cloudflare", providerLabel: "Cloudflare", publisher: "Zhipu AI", contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 12_000,
-    strengths: ["fast", "coding", "writing", "reasoning"], reasoning: "none", streaming: true, toolCalling: true, structuredOutput: true, supportedModes: ALL_CHAT_MODES, coordinatorRank: 0,
+    strengths: ["fast", "coding", "writing", "reasoning"], reasoning: "none", streaming: true, toolCalling: true, structuredOutput: true, supportedModes: ALL_CHAT_MODES, coordinatorRank: 0, tier: "artifact",
   },
   {
     key: "qwen3-32b", id: "qwen/qwen3-32b", label: "Qwen 3 32B", summary: "Step-by-step reasoning and code review.",
     provider: "groq", providerLabel: "Groq", publisher: "Alibaba Cloud", contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 12_000,
-    strengths: ["reasoning", "coding", "review"], reasoning: "format", streaming: true, toolCalling: true, structuredOutput: true, supportedModes: ALL_CHAT_MODES, coordinatorRank: 3,
+    strengths: ["reasoning", "coding", "review"], reasoning: "format", streaming: true, toolCalling: true, structuredOutput: true, supportedModes: ALL_CHAT_MODES, coordinatorRank: 3, tier: "specialist",
   },
   {
     key: "llama-3.3-70b", id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", summary: "Clear writing, research summaries and second opinions.",
     provider: "groq", providerLabel: "Groq", publisher: "Meta", contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 12_000,
-    strengths: ["writing", "research", "review", "coding"], reasoning: "none", streaming: true, toolCalling: true, structuredOutput: true, supportedModes: ALL_CHAT_MODES, coordinatorRank: 2,
+    strengths: ["writing", "research", "review", "coding"], reasoning: "none", streaming: true, toolCalling: true, structuredOutput: true, supportedModes: ALL_CHAT_MODES, coordinatorRank: 2, tier: "specialist",
   },
   {
     key: "gpt-oss-20b", id: "openai/gpt-oss-20b", label: "GPT OSS 20B", summary: "Quick drafts and small code tasks.",
     provider: "groq", providerLabel: "Groq", publisher: QORVYNA_MODEL_PUBLISHER, contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 12_000,
-    strengths: ["fast", "coding", "planning"], reasoning: "effort", streaming: true, toolCalling: true, structuredOutput: true, supportedModes: ALL_CHAT_MODES, coordinatorRank: 4,
+    strengths: ["fast", "coding", "planning"], reasoning: "effort", streaming: true, toolCalling: true, structuredOutput: true, supportedModes: ALL_CHAT_MODES, coordinatorRank: 4, tier: "fallback",
   },
   {
     key: "llama-3.1-8b", id: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant", summary: "Very fast checks and short summaries.",
     provider: "groq", providerLabel: "Groq", publisher: "Meta", contextTokens: 131_072, maxOutputTokens: 8_192, tpm: 6_000,
-    strengths: ["fast", "writing"], reasoning: "none", streaming: true, toolCalling: true, structuredOutput: true, supportedModes: ALL_CHAT_MODES, coordinatorRank: 5,
+    strengths: ["fast", "writing"], reasoning: "none", streaming: true, toolCalling: true, structuredOutput: true, supportedModes: ALL_CHAT_MODES, coordinatorRank: 5, tier: "specialist",
   },
 ];
 
@@ -131,4 +147,24 @@ export function sanitizeModelKeys(value: unknown): string[] {
 export function modelTpm(spec: ModelSpec, env: Record<string, string | undefined> = process.env): number {
   const override = Number(brandEnv(`MODEL_TPM_${spec.key.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`, env));
   return Number.isFinite(override) && override >= 1000 ? Math.floor(override) : spec.tpm;
+}
+
+/** Every registered model that plays a given routing role. */
+export function modelsByTier(tier: ModelTier): ModelSpec[] {
+  return MODEL_REGISTRY.filter((spec) => spec.tier === tier);
+}
+
+/** The model the policy prefers for normal conversation (first `primary`). */
+export function primaryConversationModel(): ModelSpec {
+  return modelsByTier("primary")[0] ?? defaultModel();
+}
+
+/** The documented fallback for conversation when the primary is unavailable. */
+export function fallbackConversationModel(): ModelSpec | null {
+  return modelByKey(FALLBACK_MODEL_KEY) ?? modelsByTier("fallback")[0] ?? null;
+}
+
+/** The model the policy prefers for artifact/document generation. */
+export function artifactModel(): ModelSpec | null {
+  return modelsByTier("artifact")[0] ?? null;
 }

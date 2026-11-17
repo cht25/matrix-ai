@@ -12,6 +12,7 @@ import { type SessionUser } from "@/lib/firebase/session";
 import { getApiSessionUser, hasDeviceScope, rpcDeviceScope } from "@/lib/firebase/device-session";
 import { RpcError } from "@/lib/server/rpc";
 import * as rpc from "@/lib/server/rpc";
+import { getSidebarData } from "@/lib/server/queries";
 import * as imageConfig from "@/lib/ai/image/config";
 import * as providerAccounts from "@/lib/ai/accounts";
 import { cloudflareCredentials } from "@/lib/ai/cloudflare";
@@ -24,6 +25,7 @@ import * as deploy from "@/lib/server/deploy";
 import * as design from "@/lib/server/design";
 import * as family from "@/lib/server/family";
 import * as pairing from "@/lib/server/pairing";
+import * as deviceLinks from "@/lib/server/device-links";
 import * as hub from "@/lib/server/device-hub";
 import QRCode from "qrcode";
 import * as esp32 from "@/lib/server/esp32";
@@ -330,6 +332,21 @@ const ACTIONS: Record<string, Handler> = {
   device_connection: (d, u, b) =>
     hub.setDeviceConnection(d, u, { device_id: z.string().min(1).max(128).parse(b.device_id), connected: z.boolean().parse(b.connected) }),
   device_revoke: (d, u, b) => hub.revokeHubDevice(d, u, z.string().min(1).max(128).parse(b.device_id)),
+  // --- cross-account device links (Phase 6) -------------------------------------
+  // Two devices owned by DIFFERENT accounts can link without a shared login.
+  // The invitation secret is returned exactly once and only its hash is stored.
+  device_link_invite_create: (d, u, b) =>
+    deviceLinks.createLinkInvitation(d, u, {
+      device_id: b.device_id ? z.string().max(128).parse(b.device_id) : null,
+      label: str(b.label).slice(0, 80),
+    }),
+  device_link_claim: (d, u, b) =>
+    deviceLinks.claimLinkInvitation(d, u, { token: z.string().min(8).max(400).parse(b.token) }),
+  device_link_list: (d, u) => deviceLinks.listDeviceLinks(d, u),
+  device_link_revoke: (d, u, b) =>
+    deviceLinks.revokeDeviceLink(d, u, z.string().min(1).max(128).parse(b.link_id)),
+  device_link_history: (d, u, b) =>
+    deviceLinks.linkHistory(d, u, z.string().min(1).max(128).parse(b.link_id)),
   device_self: (d, u) => hub.deviceSelf(d, u),
   esp32_pairing_create: (d, u, b) =>
     esp32.createEsp32Pairing(d, u, {
@@ -849,6 +866,56 @@ const ACTIONS: Record<string, Handler> = {
     return result;
   },
   security_score: (d, u) => rpc.securityScore(d, u),
+
+  // --- conversations (owner-scoped reads used by the native shell) --------------
+  // The website renders the sidebar on the server via getSidebarData(); the
+  // Tauri build has no server, so it needs these three reads over the same
+  // data source and the same ownership rules.
+  conversation_list: async (d, u) => {
+    const sidebar = await getSidebarData(d, u.uid);
+    return { conversations: sidebar.conversations, profile: { name: sidebar.profileName, avatar: sidebar.profileAvatar }, isAdmin: sidebar.isAdmin };
+  },
+  conversation_get: async (d, u, b) => {
+    const id = z.string().min(1).max(128).parse(b.conversation_id ?? b.id);
+    const conv = await d.collection("conversations").doc(id).get();
+    if (!conv.exists || conv.data()!.user_id !== u.uid) throw new RpcError("NOT_FOUND", 404);
+    const data = conv.data()!;
+    return {
+      conversation: {
+        id,
+        title: data.title ?? "Untitled",
+        mode: data.mode ?? "chat",
+        selected_model: data.selected_model ?? null,
+        selected_provider: data.selected_provider ?? null,
+        archived_at: data.archived_at?.toDate?.().toISOString?.() ?? null,
+      },
+    };
+  },
+  settings_get: async (d, u) => {
+    const snap = await d.collection("profiles").doc(u.uid).get();
+    const data = snap.data() ?? {};
+    // Deliberately a fixed, named projection: never return the whole profile
+    // document, which may hold administrative or guardian fields.
+    return {
+      full_name: data.full_name ?? "",
+      avatar_url: data.avatar_url ?? "",
+      theme: data.theme ?? "system",
+      language: data.language ?? "en",
+      timezone: data.timezone ?? "UTC",
+      default_model: data.default_model ?? null,
+      auto_model_routing: data.auto_model_routing !== false,
+      onboarding_complete: data.onboarding_complete === true,
+      email: u.email ?? "",
+    };
+  },
+  dashboard_summary: async (d, u) => {
+    const [usage, score, onboarding] = await Promise.all([
+      rpc.usageSummary(d, u),
+      rpc.securityScore(d, u),
+      rpc.profileOnboardingComplete(d, u.uid),
+    ]);
+    return { usage, security: score, onboarding_complete: onboarding };
+  },
 
   // --- conversations (owner-scoped mutations + export) --------------------------
   // Incremental upward scroll: the chat page ships only the most recent
