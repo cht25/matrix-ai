@@ -22,6 +22,7 @@ import { ToastProvider } from "@/components/toast";
 import { SignOutButton } from "@/components/sign-out-button";
 import { NotificationsBell } from "@/components/notifications-bell";
 import { MirrorAndLockBanner } from "@/components/family/mirror-banner";
+import { InspectionIndicator } from "@/components/devices/inspection-indicator";
 import { UserAvatar } from "@/components/avatar";
 import { MobileNav } from "@/components/mobile-nav";
 import { groupConversations, groupConversationsUtc, groupLabel, formatTime, type SidebarConversation } from "@/lib/chat-utils";
@@ -389,6 +390,7 @@ export function AppShell({
   isAdmin,
   sidebarError = null,
   renderedAt,
+  inspectionDeviceId = null,
   children,
 }: {
   user: ShellUser | null;
@@ -396,6 +398,8 @@ export function AppShell({
   isAdmin: boolean;
   sidebarError?: string | null;
   renderedAt?: string;
+  /** The current device, for the inspection indicator. Null = resolve natively. */
+  inspectionDeviceId?: string | null;
   children: ReactNode;
 }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -497,6 +501,7 @@ export function AppShell({
             </div>
           ) : null}
           <MirrorAndLockBanner />
+          <InspectionIndicator deviceId={inspectionDeviceId} />
           {sidebarError ? (
             <div
               role="alert"

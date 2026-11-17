@@ -79,6 +79,9 @@ export function rpcDeviceScope(action: string, method = "POST"): string | null {
   // Cross-account links: a paired device may create/claim/list/revoke links it
   // is part of, within the same device scope it already holds.
   if (action === "device_link_list" || action === "device_link_history") return "devices:read";
+  // The inspected device reads its own notice and can always stop a session.
+  if (action === "inspection_active") return "devices:read";
+  if (action === "inspection_acknowledge" || action === "inspection_stop") return "devices:write";
   if (action === "device_link_invite_create" || action === "device_link_claim" || action === "device_link_revoke") return "devices:write";
   if (action === "reminders_create" || action === "reminders_complete") return "notifications:write";
   if (action === "device_command_queue") return "devices:control";

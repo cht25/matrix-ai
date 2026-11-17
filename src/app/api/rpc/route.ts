@@ -27,6 +27,7 @@ import * as family from "@/lib/server/family";
 import * as pairing from "@/lib/server/pairing";
 import * as deviceLinks from "@/lib/server/device-links";
 import * as adminDevices from "@/lib/server/admin-devices";
+import * as inspection from "@/lib/server/inspection";
 import * as hub from "@/lib/server/device-hub";
 import QRCode from "qrcode";
 import * as esp32 from "@/lib/server/esp32";
@@ -61,9 +62,15 @@ export const dynamic = "force-dynamic";
 function ok(data: unknown) {
   return NextResponse.json({ success: true, data });
 }
-function fail(code: string, status: number) {
+/**
+ * Error envelope. `detail` is only attached for 4xx responses: those carry a
+ * deliberate, user-facing explanation written by the handler (e.g. "choose at
+ * least one scope"). 5xx stays a bare stable code so no internal text leaks.
+ */
+function fail(code: string, status: number, detail?: string) {
+  const message = status < 500 && detail ? detail : code;
   return NextResponse.json(
-    { success: false, error: { code, message: code }, data: null },
+    { success: false, error: { code, message, detail: status < 500 ? detail : undefined }, data: null },
     { status },
   );
 }
@@ -119,7 +126,7 @@ export async function POST(req: NextRequest) {
     const result = await handler(d, user, body);
     return ok(result ?? true);
   } catch (err) {
-    if (err instanceof RpcError) return fail(err.code, err.status);
+    if (err instanceof RpcError) return fail(err.code, err.status, err.detail);
     if (err instanceof z.ZodError) {
       console.warn(`[QORVYNA] /api/rpc action "${action}" validation failed`, err.issues[0]?.message);
       return fail("BAD_REQUEST", 400);
@@ -872,6 +879,37 @@ const ACTIONS: Record<string, Handler> = {
   // The website renders the sidebar on the server via getSidebarData(); the
   // Tauri build has no server, so it needs these three reads over the same
   // data source and the same ownership rules.
+  // --- transparent inspection (Phase 8) ---------------------------------------
+  // Nothing is inspected until the TARGET device acknowledges the visible
+  // notice; guardian-protected accounts need a verified guardian first.
+  inspection_request: (d, u, b) =>
+    inspection.requestInspection(d, u, {
+      target_uid: str(b.target_uid),
+      device_id: str(b.device_id),
+      reason: str(b.reason).slice(0, 400),
+      scopes: b.scopes,
+      minutes: b.minutes,
+    }),
+  inspection_guardian_queue: (d, u) => inspection.guardianInspectionQueue(d, u),
+  inspection_guardian_decide: (d, u, b) =>
+    inspection.decideInspectionAsGuardian(d, u, {
+      inspection_id: z.string().min(1).max(128).parse(b.inspection_id),
+      approve: bool(b.approve),
+      note: str(b.note).slice(0, 300),
+    }),
+  inspection_active: (d, u, b) => inspection.activeInspectionFor(d, u, z.string().min(1).max(128).parse(b.device_id)),
+  inspection_acknowledge: (d, u, b) =>
+    inspection.acknowledgeInspection(d, u, {
+      inspection_id: z.string().min(1).max(128).parse(b.inspection_id),
+      device_id: z.string().min(1).max(128).parse(b.device_id),
+    }),
+  inspection_stop: (d, u, b) =>
+    inspection.stopInspection(d, u, {
+      inspection_id: z.string().min(1).max(128).parse(b.inspection_id),
+      reason: str(b.reason).slice(0, 300),
+    }),
+  inspection_detail: (d, u, b) => inspection.inspectionDetail(d, u, z.string().min(1).max(128).parse(b.inspection_id)),
+
   // --- admin device dashboard (Phase 7) — RBAC re-checked in the module -------
   admin_devices_list: (d, u, b) =>
     adminDevices.listAdminDevices(d, u, {
