@@ -65,6 +65,7 @@ import {
   openPermissionSettings,
   type AssistantState,
   type PermissionStatus,
+  onDeepLink,
 } from "@/native/native-bridge";
 import type { SidebarConversation } from "@/lib/chat-utils";
 import type { ChatMessage } from "@/components/chat-client";
@@ -119,11 +120,40 @@ function screenFor(pathname: string): Screen {
 // Root
 // ---------------------------------------------------------------------------
 
+/**
+ * Applies `qorvyna://` deep links to the router. Mounted inside the
+ * RouterProvider so it can navigate. Pairing links open the Devices screen with
+ * the code pre-filled; `qorvyna://voice` triggers the Jarvis bar; everything
+ * else navigates. Unknown schemes are ignored (parseDeepLink returns
+ * `unknown`) so a hostile link cannot steer the app anywhere.
+ */
+function DeepLinkBridge() {
+  const router = useRouter();
+  useEffect(() => {
+    return onDeepLink((intent) => {
+      if (intent.kind === "pair") {
+        router.push(`/devices?link=${encodeURIComponent(intent.token)}`);
+        return;
+      }
+      if (intent.kind === "voice") {
+        window.dispatchEvent(new CustomEvent("qorvyna://voice-activate"));
+        return;
+      }
+      if (intent.kind === "navigate") {
+        const safe = parseHref(intent.path);
+        router.push(`${safe.pathname}${safe.search ? `?${safe.search}` : ""}`);
+      }
+    });
+  }, [router]);
+  return null;
+}
+
 export function NativeApp({ startPath = "/chat" }: { startPath?: string }) {
   const initial = parseHref(startPath);
   return (
     <RouterProvider initialPath={`${initial.pathname}${initial.search ? `?${initial.search}` : ""}`}>
       <ToastProvider>
+        <DeepLinkBridge />
         <NativeGate />
       </ToastProvider>
     </RouterProvider>

@@ -55,5 +55,13 @@
       "minSdkVersion": 24
     }
   },
-  "plugins": {}
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "qorvyna"
+        ]
+      }
+    }
+  }
 }

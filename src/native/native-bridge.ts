@@ -259,3 +259,97 @@ export async function stopInspection(): Promise<boolean> {
 }
 
 export { invoke as invokeNative };
+
+// ---------------------------------------------------------------------------
+// Deep links
+// ---------------------------------------------------------------------------
+
+/** How a `qorvyna://` URL should be handled by the app. */
+export type DeepLinkIntent =
+  | { kind: "pair"; token: string }
+  | { kind: "voice" }
+  | { kind: "navigate"; path: string }
+  | { kind: "unknown"; url: string };
+
+/**
+ * Parse a deep link into something the router can act on.
+ *
+ * Supported forms:
+ *   qorvyna://link?code=ABCD-EFGH   → pair (cross-account device link)
+ *   qorvyna://voice                 → activate Jarvis
+ *   qorvyna://chat/<id>             → navigate
+ *   https://qorvyna.thamjj13.top/x  → navigate (universal link)
+ *
+ * Anything else returns `unknown` rather than guessing — an unrecognised link
+ * must never be silently turned into a navigation to an attacker-chosen path.
+ */
+export function parseDeepLink(raw: string | null | undefined): DeepLinkIntent {
+  const input = String(raw ?? "").trim();
+  if (!input) return { kind: "unknown", url: "" };
+
+  let url: URL;
+  try {
+    url = new URL(input);
+  } catch {
+    return { kind: "unknown", url: input };
+  }
+
+  const host = url.hostname.toLowerCase();
+  const isAppScheme = url.protocol === "qorvyna:";
+  const isWebOrigin = /(^|\.)qorvyna\.thamjj13\.top$/.test(host);
+  if (!isAppScheme && !isWebOrigin) return { kind: "unknown", url: input };
+
+  if (isAppScheme) {
+    // qorvyna://link?code=… parses with hostname "link" and an empty path.
+    const action = (url.hostname || url.pathname.replace(/^\/+/, "")).toLowerCase();
+    if (action === "link" || action === "pair") {
+      const token = url.searchParams.get("code") ?? url.searchParams.get("token") ?? "";
+      return token ? { kind: "pair", token } : { kind: "unknown", url: input };
+    }
+    if (action === "voice" || action === "assistant") return { kind: "voice" };
+    // `qorvyna://chat/abc123` parses as hostname "chat", pathname "/abc123".
+    // Re-assemble the host as the first segment or the route would lose "chat".
+    const rest = url.pathname.replace(/^\/+/, "");
+    const hasRouteHost = Boolean(action) && action !== "link";
+    if (rest) return { kind: "navigate", path: `/${hasRouteHost ? `${action}/` : ""}${rest}${url.search}` };
+    if (hasRouteHost) return { kind: "navigate", path: `/${action}${url.search}` };
+    return { kind: "unknown", url: input };
+  }
+
+  // Universal link: keep the path and query exactly as the site would see it.
+  return { kind: "navigate", path: `${url.pathname || "/"}${url.search}` };
+}
+
+type UnlistenFn = () => void;
+
+/**
+ * Subscribe to deep links delivered by the Rust side as `qorvyna://deep-link`.
+ * Returns an unsubscribe function; a no-op when not running in the shell.
+ */
+export function onDeepLink(handler: (intent: DeepLinkIntent, raw: string) => void): UnlistenFn {
+  if (typeof window === "undefined" || !isNativeShell()) return () => {};
+  const internals = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> } }).__TAURI_INTERNALS__;
+  const invoke = internals?.invoke;
+  if (!invoke) return () => {};
+
+  let disposed = false;
+  void (async () => {
+    try {
+      await invoke("plugin:event|listen", {
+        event: "qorvyna://deep-link",
+        target: { kind: "Any" },
+        handler: (event: unknown) => {
+          const payload = (event as { payload?: unknown })?.payload;
+          if (typeof payload !== "string" || disposed) return;
+          handler(parseDeepLink(payload), payload);
+        },
+      });
+    } catch {
+      // Event plugin unavailable: deep links are best-effort, never required.
+    }
+  })();
+
+  return () => {
+    disposed = true;
+  };
+}
