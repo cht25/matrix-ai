@@ -2,7 +2,7 @@
   "name": "qorvyna",
   "version": "1.2.0",
   "private": true,
-  "description": "QORVYNA \u2014 one intelligence for AI, agents, connected devices, automation, cloud hosting and developer tools. Next.js + Firebase (Auth, Firestore). Operated by THAMJJ13.TOP White Hat Team.",
+  "description": "QORVYNA — one intelligence for AI, agents, connected devices, automation, cloud hosting and developer tools. Next.js + Firebase (Auth, Firestore). Operated by THAMJJ13.TOP White Hat Team.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -63,6 +63,7 @@
   "devDependencies": {
     "@sparticuz/chromium": "^153.0.0",
     "@tailwindcss/postcss": "^4.1.8",
+    "@tauri-apps/cli": "^2.12.5",
     "@types/node": "^22.15.0",
     "@types/pdfkit": "^0.17.6",
     "@types/qrcode": "^1.5.6",
