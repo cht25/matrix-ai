@@ -721,6 +721,21 @@ export function ProjectWorkspace({
                   <p>This file is a binary asset — it is served in the preview, not edited as text.</p>
                   <img src={`/api/projects/${project?.id}/preview/${active.path}`} alt={active.path} className="max-h-48 rounded-lg border border-border object-contain" />
                 </div>
+              ) : files.length === 0 ? (
+                // An empty workspace is a fact with a reason, never a blank panel.
+                <div className="grid flex-1 place-items-center p-6 text-center">
+                  <div className="max-w-sm">
+                    <p className="text-sm font-medium text-ink">This project has no files yet.</p>
+                    <p className="mt-1 text-[12.5px] leading-snug text-ink-3">
+                      The Agent only creates a file after the model returns it <em>and</em> it is written to project storage.
+                      A run that failed, asked a question, or produced no usable file leaves this workspace empty — the chat card
+                      for that run says which of those happened, with its logs.
+                    </p>
+                    <button type="button" onClick={() => void addFile()} className="mt-3 inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-border px-3 text-[12.5px] font-medium text-ink-2 hover:text-ink">
+                      <Plus size={13} aria-hidden="true" /> Create a file
+                    </button>
+                  </div>
+                </div>
               ) : (
                 <p className="p-4 text-sm text-ink-3">No file selected.</p>
               )}

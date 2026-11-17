@@ -171,6 +171,8 @@ export type BuildRun = {
   logs: BuildLogLine[];
   startedAt: number;
   updatedAt: number;
+  /** Last time the worker that owns this run proved it was still alive. */
+  heartbeatAt?: number | null;
   finishedAt: number | null;
 };
 
@@ -382,27 +384,68 @@ function isActiveDeployment(status: DeploymentStatus): boolean {
 }
 
 /**
+ * How alive is this run right now?
+ *
+ * A run is only "running" while the worker that owns it keeps proving it is
+ * alive (a heartbeat written with every persisted event) AND the stage it is
+ * on has not blown its own budget. Both numbers are reported so the UI can say
+ * how long it has been silent instead of pretending work is happening.
+ */
+export type RunLiveness = {
+  /** True while the run is in a non-terminal state. */
+  inFlight: boolean;
+  /** Stage the run is working on, or null when no stage is running. */
+  stageId: BuildStageId | null;
+  /** The stage's own budget, in ms. */
+  limitMs: number;
+  /** Milliseconds since the last sign of life from the worker. */
+  silentMs: number;
+  /** True once the run has exceeded its lease: nothing is processing it. */
+  stale: boolean;
+};
+
+/** The lease is deliberately looser than a stage budget: one extra idle slot. */
+export const LEASE_SLACK_MS = 60_000;
+
+export function runLiveness(run: BuildRun, now: number): RunLiveness {
+  const inFlight = run.status === "running" || run.status === "requested";
+  if (!inFlight) {
+    return { inFlight: false, stageId: null, limitMs: 0, silentMs: 0, stale: false };
+  }
+  const active = run.stages.find((stage) => stage.state === "running") ?? null;
+  const limitMs = active ? stageDef(active.id).timeoutMs : 180_000;
+  const from = Math.max(
+    active?.startedAt ?? 0,
+    run.heartbeatAt ?? 0,
+    run.updatedAt ?? 0,
+    run.startedAt ?? 0,
+  );
+  const silentMs = Math.max(0, now - from);
+  return { inFlight: true, stageId: active?.id ?? null, limitMs, silentMs, stale: silentMs >= limitMs };
+}
+
+/**
  * Fail a run that has gone silent (§4: "Publishing..." must never be
- * permanent). Uses the active stage's real timeout when one is running.
+ * permanent). Uses the active stage's real timeout and the worker heartbeat,
+ * so a dead worker is reported as dead instead of "Running".
  */
 export function applyStaleness(run: BuildRun, now: number): BuildRun {
   if (run.status !== "running" && run.status !== "requested") return run;
-  const active = run.stages.find((stage) => stage.state === "running");
-  const def = active ? stageDef(active.id) : null;
-  const from = active?.startedAt ?? run.updatedAt;
-  const limit = def?.timeoutMs ?? 180_000;
-  if (now - from < limit) return run;
+  const active = run.stages.find((stage) => stage.state === "running") ?? null;
+  const liveness = runLiveness(run, now);
+  if (!liveness.stale) return run;
   const phase: RunContinuation["phase"] = active?.id === "publish" ? "publish" : active?.id === "validate" || active?.id === "build" || active?.id === "install" ? "repair" : "generate";
+  const silentFor = Math.round(liveness.silentMs / 1000);
   const stale = failRun(
     run,
     {
       code: "BUILD_RUN_STALE",
       message: active
-        ? `QORVYNA stopped receiving updates during "${stageDef(active.id).label}". The build was marked failed — nothing was published by this card.`
-        : "QORVYNA stopped receiving updates for this build. Nothing was published by this card.",
+        ? `The build worker stopped reporting ${silentFor}s into "${stageDef(active.id).label}" (its limit is ${Math.round(liveness.limitMs / 1000)}s). Nothing is processing this run and nothing was published — the files saved so far are in the project.`
+        : `The build worker stopped reporting ${silentFor}s ago. Nothing is processing this run and nothing was published.`,
     },
     now,
-  );;
+  );
   // The work saved so far is still in the project: the run can be resumed.
   return { ...stale, continuation: { available: true, reason: "interrupted", phase, retryAt: null, message: "This build was interrupted. Its saved progress can be continued." } };
 }

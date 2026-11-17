@@ -37,6 +37,8 @@ pub struct PermissionEntry {
 
 #[derive(Serialize, Clone)]
 pub struct AssistantState {
+    /// "android" | "desktop" — the UI shows the right controls, nothing more.
+    pub platform: String,
     #[serde(rename = "wakeWordSupported")]
     pub wake_word_supported: bool,
     #[serde(rename = "wakeWordEnabled")]
@@ -45,6 +47,12 @@ pub struct AssistantState {
     pub overlay_supported: bool,
     #[serde(rename = "defaultAssistant")]
     pub default_assistant: bool,
+    /// Enrolled wake-phrase samples on this device (0 when none / not Android).
+    #[serde(rename = "wakeSamples")]
+    pub wake_samples: u32,
+    /// Samples required before "Hey QORVYNA" can work.
+    #[serde(rename = "wakeRequired")]
+    pub wake_required: u32,
     pub note: String,
 }
 
@@ -196,23 +204,65 @@ pub fn qorvyna_permission_settings(permission: String) -> Result<serde_json::Val
 #[tauri::command]
 pub fn qorvyna_assistant_state<R: Runtime>(app: AppHandle<R>) -> AssistantState {
     let prefs = read_prefs(&app);
-    let enabled = prefs
+    let requested = prefs
         .get("wakeWordEnabled")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+
+    // Android: ask the foreground service what it really has (overlay grant,
+    // bubble running, on-device model present). Nothing is assumed.
+    let service = crate::assistant::mobile_state();
+    let overlay_granted = service
+        .as_ref()
+        .and_then(|state| state.get("overlayGranted"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let wake_model = service
+        .as_ref()
+        .and_then(|state| state.get("wakeWordReady"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let default_assistant = service
+        .as_ref()
+        .and_then(|state| state.get("defaultAssistant"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let service_note = service
+        .as_ref()
+        .and_then(|state| state.get("detail"))
+        .and_then(|value| value.as_str())
+        .map(|text| text.to_string());
+
     let android = cfg!(target_os = "android");
+    let wake_word_supported = android && wake_model;
+
+    let wake_samples = service
+        .as_ref()
+        .and_then(|state| state.get("templates"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0) as u32;
+    let wake_required = service
+        .as_ref()
+        .and_then(|state| state.get("requiredTemplates"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(2) as u32;
+
     AssistantState {
-        // On Android the wake-word service is part of the mobile build; here we
-        // report support honestly instead of claiming always-on listening.
-        wake_word_supported: android,
-        wake_word_enabled: enabled && android,
-        overlay_supported: android,
-        default_assistant: false,
-        note: if android {
-            "QORVYNA can listen for “Hey QORVYNA” on this device when the wake-word service is permitted. Detection is on-device; audio is sent only after the phrase is heard.".to_string()
-        } else {
-            "Wake-word listening and the floating bubble are Android features. On desktop, use Ctrl+Shift+Space (or the tray menu) to talk to QORVYNA.".to_string()
-        },
+        platform: if android { "android".to_string() } else { "desktop".to_string() },
+        // Only true when an on-device model is actually installed.
+        wake_word_supported,
+        wake_word_enabled: requested && wake_word_supported,
+        overlay_supported: android && overlay_granted,
+        default_assistant,
+        wake_samples,
+        wake_required,
+        note: service_note.unwrap_or_else(|| {
+            if android {
+                "The floating assistant needs the Android overlay ("Display over other apps") and an on-device wake-word model; until both are present QORVYNA uses the assistant role and the bubble button only.".to_string()
+            } else {
+                "Press Ctrl+Shift+Space (or use the tray menu) to open the floating assistant. Wake-word listening needs an on-device model, which is not bundled with the desktop build.".to_string()
+            }
+        }),
     }
 }
 
@@ -221,6 +271,10 @@ pub fn qorvyna_wake_word_set<R: Runtime>(app: AppHandle<R>, enabled: bool) -> Re
     let mut prefs = read_prefs(&app);
     prefs.insert("wakeWordEnabled".to_string(), serde_json::Value::Bool(enabled));
     write_prefs(&app, &prefs)?;
+    // Kotlin keeps the real preference (it owns the microphone); tell it too.
+    if let Err(error) = crate::assistant::set_wake_word(enabled) {
+        eprintln!("[QORVYNA] wake word toggle: {error}");
+    }
     Ok(qorvyna_assistant_state(app))
 }
 
@@ -237,14 +291,42 @@ pub fn qorvyna_assistant_default_request() -> serde_json::Value {
 }
 
 #[tauri::command]
-pub fn qorvyna_assistant_popup(action: String) -> Result<serde_json::Value, String> {
-    match action.as_str() {
-        "show" | "hide" => Ok(serde_json::json!({
-            "shown": false,
-            "detail": "The floating assistant window exists on Android builds only."
-        })),
-        _ => Err("UNKNOWN_ACTION".to_string()),
-    }
+pub fn qorvyna_assistant_popup<R: Runtime>(
+    app: AppHandle<R>,
+    action: String,
+) -> Result<serde_json::Value, String> {
+    crate::assistant::popup(&app, action.as_str())
+}
+
+/// Record one wake-phrase sample so "Hey QORVYNA" works on this device.
+#[tauri::command]
+pub fn qorvyna_wake_word_enrol() -> Result<serde_json::Value, String> {
+    crate::assistant::enrol_wake_word()
+}
+
+/// Delete every enrolled wake-phrase sample from this device.
+#[tauri::command]
+pub fn qorvyna_wake_word_clear() -> Result<serde_json::Value, String> {
+    crate::assistant::clear_wake_word()
+}
+
+/// Open the Android overlay / digital-assistant settings page.
+#[tauri::command]
+pub fn qorvyna_assistant_settings(which: String) -> Result<serde_json::Value, String> {
+    crate::assistant::open_assistant_settings(which.as_str())
+}
+
+/// True when a wake phrase / bubble tap asked for a turn while the UI was away.
+/// Consuming it clears the flag, so a turn is never started twice.
+#[tauri::command]
+pub fn qorvyna_assistant_take_pending() -> bool {
+    crate::assistant::take_pending()
+}
+
+/// Bring the full app forward and dismiss the floating assistant.
+#[tauri::command]
+pub fn qorvyna_assistant_open_main<R: Runtime>(app: AppHandle<R>) -> serde_json::Value {
+    crate::assistant::open_main(&app)
 }
 
 // ---------------------------------------------------------------------------

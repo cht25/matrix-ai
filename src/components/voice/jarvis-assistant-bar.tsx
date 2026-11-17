@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import { Check, Ear, EarOff, Mic, Settings2, ShieldCheck, Volume2, VolumeX, X } from "lucide-react";
+import { NativeAssistantPanel } from "@/components/voice/native-assistant-panel";
 import { Modal } from "@/components/modal";
 import { Badge, Button } from "@/components/ui";
 import { rpc, RpcCallError } from "@/lib/client/api";
@@ -529,6 +530,11 @@ export function JarvisAssistantBar({
           <div className="rounded-xl border border-border bg-surface-2/60 p-3 text-xs text-ink-2">
             Web wake-word listening (&ldquo;Hey QORVYNA&rdquo;) runs strictly in the foreground while this tab is active — continuous background audio is never streamed to the cloud.
           </div>
+
+          {/* The installed app has a real system assistant (popup on desktop,
+              bubble + ASSIST role + on-device wake phrase on Android). The web
+              toggle below only ever covers the foreground browser tab. */}
+          <NativeAssistantPanel />
 
           <label className="flex items-center justify-between gap-3 rounded-xl border border-border p-3">
             <div>

@@ -268,7 +268,7 @@ describe("Phase 3 & 4 — Voice STT VAD, Whisper hallucination guards, Cloudflar
     expect((await silentRes.json()).error).toBe("NO_SPEECH_DETECTED");
   });
 
-  it("renders Mode A (Done -> transcribe) by default and Mode B (Hands-free -> Send) when enabled", () => {
+  it("renders Mode A (Send -> transcribe + send once) by default and Mode B (Hands-free -> Send) when enabled", () => {
     const modeAHtml = renderToStaticMarkup(
       createElement(VoiceRecordingPanel, {
         paused: false,
@@ -284,8 +284,9 @@ describe("Phase 3 & 4 — Voice STT VAD, Whisper hallucination guards, Cloudflar
         onStop: () => {},
       }),
     );
-    expect(modeAHtml).toContain("Done");
-    expect(modeAHtml).toContain("Stop recording and transcribe to composer");
+    // One action: the primary button sends the recording; no second Send click.
+    expect(modeAHtml).toContain(">Send<");
+    expect(modeAHtml).toContain("Stop, transcribe and send this voice message");
     expect(modeAHtml).not.toContain("Hands-free");
 
     const modeBHtml = renderToStaticMarkup(

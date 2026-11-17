@@ -53,16 +53,21 @@ describe("stable streaming render", () => {
     expect(source).toContain('key !== settledKey && "msg-in"');
   });
 
-  it("Default voice mode (Mode A) transcribes into the composer without auto-sending; Hands-free / Clip support sending", () => {
+  it("Default voice mode (Mode A) transcribes and sends exactly once; text-only dictation is an explicit opt-out", () => {
     const source = readFileSync("src/components/chat-client.tsx", "utf8");
     // One composer for every mode, Agent included.
     expect(source).toContain("<ChatComposer");
-    expect(source).toContain('onStopVoice={() => void finishVoice(voiceModeRef.current === "hands_free" ? "hands_free_send" : "transcribe")}');
-    expect(source).toContain('onSendAudioClip={() => void finishVoice("send")}');
-    // Optional audio clip → the recording is sent as a voice message.
+    // The primary button stops the recording and sends the turn — the user
+    // never has to press Send a second time after a transcript.
+    expect(source).toContain("onStopVoice={() => void finishVoice(voiceStopIntent(voiceModeRef.current))}");
+    // Transcript-in-the-box remains available, but only as its own button.
+    expect(source).toContain('onDictateOnly={() => void finishVoice("transcribe")}');
+    // A recorded turn is transcribed and sent as one voice message.
     const sendFn = source.slice(source.indexOf("async function sendVoiceMessage"), source.indexOf("function discardVoice"));
     expect(sendFn).toMatch(/await send\(undefined, transcript, \{ voice:/);
-    // Mode A default (transcribeToComposer) → editable text in the composer, and nothing is auto-sent.
+    // …and never twice for the same recording.
+    expect(sendFn).toContain("if (!sentVoiceTurnsRef.current.claim(turnId)) return;");
+    // Mode A opt-out (transcribeToComposer) only fills the composer.
     const dictate = source.slice(source.indexOf("async function transcribeToComposer"), source.indexOf("async function transcribeAndSendTurn"));
     expect(dictate).toContain("placeTranscript(");
     expect(dictate).not.toMatch(/\bsend\(/);

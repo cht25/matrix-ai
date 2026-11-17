@@ -67,7 +67,7 @@ export type BuildStartInput = {
 
 const IDLE_TIMEOUT_MS = 90_000;
 const POLL_INTERVAL_MS = 3_000;
-const POLL_LIMIT_MS = 15 * 60_000;
+const POLL_LIMIT_MS = 20 * 60_000;
 
 /**
  * POST /api/build with `Accept: text/event-stream`. Resolves with the final
@@ -256,24 +256,54 @@ async function streamSegment(body: Record<string, unknown>, handlers: BuildStrea
   } finally {
     if (idle) clearTimeout(idle);
   }
-  // Anything still "running" after the feed ended is judged by its timestamps.
+  // The feed ending is NOT the run ending. A dropped stream, an idle abort or
+  // a restarted server leaves the run non-terminal, and the stored document is
+  // the only thing that can say whether a worker is still alive. Follow it to a
+  // real terminal state instead of returning "Running" to the UI.
+  const stopAfterFeed = handlers.signal?.aborted === true;
+  const beforePoll = last as BuildRun | null;
+  if (!stopAfterFeed && beforePoll && isInFlight(beforePoll)) {
+    const polled = await pollBuildRun(beforePoll.id, handlers).catch(() => null);
+    if (polled) last = polled;
+  }
+  // Anything still "running" after that is judged by its own timestamps.
   const run = last ? applyStaleness(last, Date.now()) : null;
   return { run, reply, projectId: run?.projectId ?? null, conversationId, done: donePayload };
 }
 
-/** Poll the persisted run (used after a reload or when the stream dropped). */
+/** A run whose worker may still be working on it. */
+function isInFlight(run: BuildRun): boolean {
+  return run.status === "running" || run.status === "requested";
+}
+
+/**
+ * Poll the persisted run (after a reload, when the stream dropped, or while a
+ * worker is still alive). Every read goes through the server, which reconciles
+ * a silent worker to `failed`, so this loop ends for a reason rather than
+ * spinning forever.
+ */
 export async function pollBuildRun(runId: string, handlers: BuildStreamHandlers = {}): Promise<BuildRun | null> {
   if (!runId) return null;
   const deadline = Date.now() + POLL_LIMIT_MS;
+  let latest: BuildRun | null = null;
   while (Date.now() < deadline) {
+    if (handlers.signal?.aborted) return latest;
     const run = await readBuildRun(runId);
-    if (!run) return null;
-    handlers.onRun?.(run);
-    if (run.status === "succeeded" || run.status === "failed" || run.status === "awaiting_input" || run.status === "cancelled" || run.status === "paused") return run;
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    if (!run) return latest;
+    // Never move a card backwards: a slow poll must not undo a newer event.
+    if (!latest || run.updatedAt >= latest.updatedAt || isTerminal(run)) {
+      latest = run;
+      handlers.onRun?.(run);
+    }
+    if (isTerminal(run) || run.status === "paused") return run;
+    await sleep(POLL_INTERVAL_MS, handlers.signal);
   }
   const final = await readBuildRun(runId);
-  return final ? applyStaleness(final, Date.now()) : null;
+  return final ? applyStaleness(final, Date.now()) : latest;
+}
+
+function isTerminal(run: BuildRun): boolean {
+  return run.status === "succeeded" || run.status === "failed" || run.status === "cancelled" || run.status === "awaiting_input";
 }
 
 export async function readBuildRun(runId: string): Promise<BuildRun | null> {

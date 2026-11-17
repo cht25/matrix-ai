@@ -16,7 +16,7 @@ import {
   AlertTriangle, Check, ChevronDown, Copy, ExternalLink, FileCode2, FolderTree, Globe2, RefreshCcw, Rocket, Terminal, X,
 } from "lucide-react";
 import type { BuildRun } from "@/lib/deploy/stages";
-import { buildRunCopy, stageProgress } from "@/lib/deploy/stages";
+import { buildRunCopy, runLiveness, stageProgress } from "@/lib/deploy/stages";
 import type { ProjectDeploymentOverview } from "@/lib/deploy/provider";
 import { copyToClipboard, formatBytes, pluralize, shortUrl } from "@/lib/deploy/format";
 import { BuildChecks, ChangeSummary, DeploymentLogsDisclosure } from "@/components/build/build-progress";
@@ -168,7 +168,18 @@ export function DeploymentRow({
         <div className="space-y-3 border-t border-border px-3 py-3">
           <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <Stat label="Files" value={String(run.fileCount || overview?.files || 0)} />
-            <Stat label="Build" value={run.status === "succeeded" ? "Successful" : run.status === "failed" ? "Failed" : "Running"} />
+            <Stat
+              label="Build"
+              value={
+                run.status === "succeeded" ? "Successful"
+                  : run.status === "failed" ? "Failed"
+                    : run.status === "cancelled" ? "Cancelled"
+                      : run.status === "paused" ? "Waiting"
+                        // A run that stopped reporting is not "Running".
+                        : runLiveness(run, Date.now()).stale ? "Stopped"
+                          : "Running"
+              }
+            />
             <Stat label="Deployment" value={overview ? overview.status_label : progress.activeLabel} />
             <Stat label="URLs" value={String(urls.length || (liveUrl ? 1 : 0))} />
             {overview?.deployments?.[0]?.version ? <Stat label="Version" value={`v${overview.deployments[0].version}`} /> : null}

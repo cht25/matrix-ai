@@ -1,9 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "QORVYNA AI desktop & mobile \u2014 explicit, minimal command permissions for the bundled frontend window.",
+  "description": "QORVYNA AI desktop & mobile — explicit, minimal command permissions for the bundled frontend window and the floating assistant popup.",
   "windows": [
-    "main"
+    "main",
+    "assistant"
   ],
   "permissions": [
     "core:default",

@@ -110,6 +110,50 @@ export function isRtlText(text: string): boolean {
   return rtl / letters.length > 0.5;
 }
 
+/**
+ * What pressing the primary button while recording means.
+ *
+ * The microphone is one action, not two: stop → transcribe → send the turn
+ * exactly once. "Dictate into the box and press Send yourself" is the opt-out,
+ * never the default, so a transcribed message can never be left sitting in the
+ * composer waiting for a click that the user already made.
+ */
+export function voiceStopIntent(mode: VoiceInputMode | undefined): "send" | "hands_free_send" {
+  return mode === "hands_free" ? "hands_free_send" : "send";
+}
+
+/**
+ * One recording = one message.
+ *
+ * The ledger is claimed before a voice turn is dispatched and released only if
+ * the dispatch genuinely did not happen (transcription failed, the send was
+ * rejected). Every entry point — the Send button, the bubble's "Try again",
+ * a double click, a slow network — goes through it, so the same recording can
+ * never produce two messages.
+ */
+export function createVoiceTurnLedger() {
+  const sent = new Set<string>();
+  return {
+    has: (turnId: string): boolean => sent.has(turnId),
+    /** True only for the first claim of a turn. */
+    claim: (turnId: string): boolean => {
+      if (!turnId || sent.has(turnId)) return false;
+      sent.add(turnId);
+      return true;
+    },
+    /** The turn did not actually go out: allow a retry of the same recording. */
+    release: (turnId: string): void => {
+      sent.delete(turnId);
+    },
+    size: (): number => sent.size,
+    clear: (): void => {
+      sent.clear();
+    },
+  };
+}
+
+export type VoiceTurnLedger = ReturnType<typeof createVoiceTurnLedger>;
+
 export type VoiceEngine = "browser" | "server";
 
 export type VoiceEnvironment = {
