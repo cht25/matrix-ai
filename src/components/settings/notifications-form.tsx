@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { rpc } from "@/lib/client/api";
 import { Alert, Button, Card } from "@/components/ui";
@@ -56,6 +57,11 @@ export function NotificationsForm({ settings }: { settings: Settings | null }) {
       <p className="mt-3 text-xs text-ink-3">
         Email templates never include passwords, verification data or security secrets.
       </p>
+      <div className="mt-4 border-t border-border pt-3">
+        <Link href="/notifications" className="text-sm font-medium text-accent hover:underline">
+          Manage Cross-Device Notification Sync, Excluded Apps &amp; Parent Safety →
+        </Link>
+      </div>
     </Card>
   );
 }

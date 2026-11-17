@@ -10,7 +10,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
-  Bot, ChevronDown, Code2, Columns3, Cpu, FileSearch, GraduationCap, History, LayoutGrid, MessageSquare,
+  Bell, Bot, Cast, ChevronDown, Code2, Columns3, Cpu, FileSearch, GraduationCap, History, LayoutGrid, MessageSquare,
   MoreVertical, PanelLeft, Plus, Search, Settings, Shield, ShieldAlert, Sliders, Smartphone, User, Users, Zap,
 } from "lucide-react";
 import { rpc } from "@/lib/client/api";
@@ -233,6 +233,8 @@ function SidebarBody({
   const { t } = useI18n();
   const icons = { new: Plus, chat: MessageSquare, agent: Bot, workspace: LayoutGrid, canvas: Columns3, automations: Zap, devices: Smartphone, family: Users, projects: Code2, models: Cpu, settings: Settings };
   const tools = [
+    { href: "/notifications", label: "Notification Sync", icon: <Bell size={16} />, detail: "Cross-device sync & parent safety" },
+    { href: "/mirror", label: "Screen Mirroring", icon: <Cast size={16} />, detail: "Consent-gated live device view" },
     { href: "/history", label: "Chat history", icon: <History size={16} />, detail: "Search your conversations" },
     { href: "/temporary-chat", label: "Private workspace", icon: <MessageSquare size={16} />, detail: "Unsaved conversation" },
     { href: "/scanner", label: t("nav.scanner"), icon: <FileSearch size={16} />, detail: "Images & suspicious content" },

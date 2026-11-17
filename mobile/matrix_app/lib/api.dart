@@ -280,4 +280,65 @@ class MatrixApi {
   /// Keep a cached copy of the last token for diagnostics (never the raw token
   /// is logged; storage is platform-encrypted).
   static Future<void> rememberSignedIn() => _storage.write(key: 'matrix_signed_in', value: '1');
+
+  // --- Notification Ecosystem, Reminders, Mirroring & Device Commands --------
+
+  Future<Map<String, dynamic>> listSyncedNotifications({int limit = 50}) =>
+      rpc('notifications_sync_list', {'include_dismissed': false, 'limit': limit});
+
+  Future<Map<String, dynamic>> ingestSyncedNotification(Map<String, dynamic> payload) =>
+      rpc('notifications_sync_ingest', payload);
+
+  Future<Map<String, dynamic>> dismissSyncedNotification(String id) =>
+      rpc('notifications_sync_dismiss', {'id': id});
+
+  Future<Map<String, dynamic>> pollDeviceCommands({String? targetDeviceId}) =>
+      rpc('device_commands_poll', {if (targetDeviceId != null) 'target_device_id': targetDeviceId});
+
+  Future<Map<String, dynamic>> reportDeviceCommandResult({
+    required String commandId,
+    required bool ok,
+    required String status,
+    required String message,
+  }) =>
+      rpc('device_command_result', {
+        'command_id': commandId,
+        'ok': ok,
+        'status': status,
+        'message': message,
+      });
+
+  Future<Map<String, dynamic>> listMirrorSessions() => rpc('mirror_sessions_list');
+
+  Future<Map<String, dynamic>> respondMirrorConsent({
+    required String sessionId,
+    required bool accept,
+    bool allowRemoteControl = false,
+  }) =>
+      rpc('mirror_session_respond', {
+        'session_id': sessionId,
+        'accept': accept,
+        'allow_remote_control': allowRemoteControl,
+      });
+
+  Future<Map<String, dynamic>> postMirrorSignal({
+    required String sessionId,
+    required String fromRole,
+    required String kind,
+    required Map<String, dynamic> payload,
+  }) =>
+      rpc('mirror_session_signal', {
+        'session_id': sessionId,
+        'from_role': fromRole,
+        'kind': kind,
+        'payload': payload,
+      });
+
+  Future<Map<String, dynamic>> stopMirrorSession(String sessionId, [String reason = 'user_stopped']) =>
+      rpc('mirror_session_stop', {'session_id': sessionId, 'reason': reason});
+
+  Future<Map<String, dynamic>> createReminder(String title) =>
+      rpc('reminders_create', {'title': title});
+
+  Future<Map<String, dynamic>> listReminders() => rpc('reminders_list');
 }

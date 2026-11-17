@@ -75,7 +75,9 @@ export async function ensureUserDocuments(
     },
     { merge: true },
   );
+  let createdNewUser = false;
   if (!existing.exists) {
+    createdNewUser = true;
     await profileRef.set(
       {
         date_of_birth: "",
@@ -118,6 +120,12 @@ export async function ensureUserDocuments(
     revoked_at: null,
     created_at: nowTs(),
   });
+  if (createdNewUser && email) {
+    const { resendApiKey, sendWelcomeEmail } = await import("@/lib/server/email");
+    if (resendApiKey()) {
+      void sendWelcomeEmail({ db: d, userId: uid, email, fullName }).catch(() => {});
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -665,13 +673,43 @@ const CLIENT_EVENT_TYPES = new Set([
 
 export async function recordSecurityEvent(d: Db, user: SessionUser, eventType: string, metadata: Record<string, unknown> = {}) {
   if (!CLIENT_EVENT_TYPES.has(eventType)) throw new RpcError("EVENT_TYPE_FORBIDDEN");
-  await d.collection("security_events").add({
+  const ref = await d.collection("security_events").add({
     user_id: user.uid,
     event_type: eventType,
     metadata,
     ip_hash: "",
     created_at: nowTs(),
   });
+  if (user.email && ["password_changed", "password_reset", "mfa_enabled", "mfa_disabled", "new_device", "suspicious_activity"].includes(eventType)) {
+    try {
+      const settingsSnap = await d.collection("user_security_settings").doc(user.uid).get();
+      const settings = settingsSnap.exists ? settingsSnap.data()! : {};
+      const alertsEnabled = settings.notifications_security_alerts !== false;
+      const { resendApiKey, sendPasswordResetNoticeEmail, sendSecurityAlertEmail } = await import("@/lib/server/email");
+      if (alertsEnabled && resendApiKey()) {
+        if (eventType === "password_changed" || eventType === "password_reset") {
+          void sendPasswordResetNoticeEmail({ db: d, userId: user.uid, email: user.email, eventId: ref.id }).catch(() => {});
+        } else {
+          const titles: Record<string, string> = {
+            mfa_enabled: "Two-factor authentication enabled",
+            mfa_disabled: "Two-factor authentication disabled",
+            new_device: "New device sign-in detected",
+            suspicious_activity: "Suspicious account activity detected",
+          };
+          void sendSecurityAlertEmail({
+            db: d,
+            userId: user.uid,
+            email: user.email,
+            eventId: ref.id,
+            title: titles[eventType] ?? "Security alert",
+            detail: `Security event recorded on your QORVYNA account: ${eventType.replace(/_/g, " ")}.`,
+          }).catch(() => {});
+        }
+      }
+    } catch {
+      /* never fail the primary security event write if email notification is unavailable */
+    }
+  }
   return true;
 }
 

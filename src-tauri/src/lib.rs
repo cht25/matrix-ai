@@ -2,25 +2,26 @@
 // QORVYNA AI — Tauri v2 Desktop & Companion Core
 //
 // Exposes:
-//   1. `matrix_notify(title, body)` — native OS notifications whenever any AI
-//      build, security scan, automation workflow, family mirror/lock event, or
-//      ESP32 hardware event finishes.
-//   2. `matrix_collect_device_activity()` — opt-in companion telemetry (app
-//      usage minutes, hidden/background executables, and system uptime) for
-//      both own-device inspection and consented Family supervision.
-//   3. System tray icon so QORVYNA stays reachable in the background and never
-//      misses a completed task alert.
+//   1. `matrix_notify(title, body)` — native OS notifications.
+//   2. `matrix_collect_device_activity()` — opt-in companion telemetry.
+//   3. `qorvyna_desktop_info()` & `desktop_hardware_status()` — real system telemetry.
+//   4. `launch_app(app_name)` — allowlisted app launcher (no arbitrary shell exec).
+//   5. `media_control(action)` — OS media/volume control on Windows.
+//   6. Global hotkey `CmdOrCtrl+Shift+Space` + system tray voice activation
+//      emitting `qorvyna://voice-activate` to the web UI.
 // =============================================================================
 
 use chrono::Utc;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::process::Command;
 use sysinfo::{ProcessesToUpdate, System};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Manager,
+    AppHandle, Emitter, Manager,
 };
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
 #[derive(Serialize)]
@@ -56,6 +57,24 @@ pub struct DesktopAppInfo {
     pub version: String,
     pub platform: String,
     pub chat_url: String,
+    pub global_hotkey: String,
+}
+
+#[derive(Serialize)]
+pub struct DesktopActionOutcome {
+    pub ok: bool,
+    pub status: String,
+    pub message: String,
+}
+
+#[derive(Serialize)]
+pub struct DesktopHardwareStatus {
+    pub host_name: String,
+    pub os_name: String,
+    pub uptime_minutes: u64,
+    pub total_memory_mb: u64,
+    pub used_memory_mb: u64,
+    pub cpu_count: usize,
 }
 
 #[tauri::command]
@@ -65,6 +84,142 @@ fn qorvyna_desktop_info() -> DesktopAppInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
         platform: std::env::consts::OS.to_string(),
         chat_url: "https://qorvyna.thamjj13.top/chat".to_string(),
+        global_hotkey: "Ctrl+Shift+Space".to_string(),
+    }
+}
+
+#[tauri::command]
+fn desktop_hardware_status() -> DesktopHardwareStatus {
+    let mut sys = System::new_all();
+    sys.refresh_memory();
+    DesktopHardwareStatus {
+        host_name: System::host_name().unwrap_or_else(|| "QORVYNA-Desktop".to_string()),
+        os_name: System::long_os_version().unwrap_or_else(|| std::env::consts::OS.to_string()),
+        uptime_minutes: (System::uptime() / 60),
+        total_memory_mb: sys.total_memory() / (1024 * 1024),
+        used_memory_mb: sys.used_memory() / (1024 * 1024),
+        cpu_count: sys.cpus().len(),
+    }
+}
+
+/// Safe allowlisted app launcher: never invokes arbitrary user shell strings.
+#[tauri::command]
+fn launch_app(app_name: String) -> DesktopActionOutcome {
+    let normalized = app_name.trim().to_lowercase();
+    let target: Option<&str> = match normalized.as_str() {
+        "notepad" => Some("notepad.exe"),
+        "calculator" | "calc" => Some("calc.exe"),
+        "paint" | "mspaint" => Some("mspaint.exe"),
+        "explorer" | "file explorer" | "files" => Some("explorer.exe"),
+        "terminal" | "cmd" => Some("cmd.exe"),
+        "powershell" => Some("powershell.exe"),
+        "chrome" | "google chrome" => Some("chrome.exe"),
+        "edge" | "microsoft edge" => Some("msedge.exe"),
+        "vscode" | "vs code" | "code" => Some("code.cmd"),
+        "spotify" => Some("spotify.exe"),
+        "settings" | "windows settings" => Some("ms-settings:"),
+        _ => None,
+    };
+
+    let Some(exe) = target else {
+        return DesktopActionOutcome {
+            ok: false,
+            status: "not_allowed".to_string(),
+            message: format!(
+                "\"{}\" is not in the desktop safe-launch allowlist (notepad, calculator, explorer, terminal, chrome, edge, vscode, spotify, settings).",
+                app_name.trim()
+            ),
+        };
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        let spawned = if exe.ends_with(':') {
+            Command::new("cmd").args(["/C", "start", "", exe]).spawn()
+        } else {
+            Command::new("cmd").args(["/C", "start", "", exe]).spawn()
+        };
+        return match spawned {
+            Ok(_) => DesktopActionOutcome {
+                ok: true,
+                status: "executed".to_string(),
+                message: format!("Launched {} on Windows Desktop.", app_name.trim()),
+            },
+            Err(err) => DesktopActionOutcome {
+                ok: false,
+                status: "failed".to_string(),
+                message: format!("Could not launch {}: {}", app_name.trim(), err),
+            },
+        };
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = exe;
+        DesktopActionOutcome {
+            ok: false,
+            status: "not_supported".to_string(),
+            message: "Desktop app launch allowlist currently targets Windows Desktop hosts.".to_string(),
+        }
+    }
+}
+
+#[tauri::command]
+fn media_control(action: String) -> DesktopActionOutcome {
+    let key_code: Option<(u8, &str)> = match action.trim().to_lowercase().as_str() {
+        "play_pause" | "pause" | "play" => Some((0xB3, "play/pause")),
+        "next" => Some((0xB0, "next track")),
+        "previous" | "prev" => Some((0xB1, "previous track")),
+        "volume_down" => Some((0xAE, "volume down")),
+        "volume_up" => Some((0xAF, "volume up")),
+        "mute" => Some((0xAD, "mute")),
+        _ => None,
+    };
+
+    let Some((vk, label)) = key_code else {
+        return DesktopActionOutcome {
+            ok: false,
+            status: "not_supported".to_string(),
+            message: format!("Unsupported media action: {}", action),
+        };
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        let script = format!(
+            "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class K {{ [DllImport(\"user32.dll\")] public static extern void keybd_event(byte vk, byte scan, int flags, int extra); }}'; [K]::keybd_event({}, 0, 0, 0); [K]::keybd_event({}, 0, 2, 0);",
+            vk, vk
+        );
+        return match Command::new("powershell")
+            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+            .output()
+        {
+            Ok(out) if out.status.success() => DesktopActionOutcome {
+                ok: true,
+                status: "executed".to_string(),
+                message: format!("Sent Windows media control: {}.", label),
+            },
+            Ok(out) => DesktopActionOutcome {
+                ok: false,
+                status: "failed".to_string(),
+                message: format!("Media command failed (exit {:?}).", out.status.code()),
+            },
+            Err(err) => DesktopActionOutcome {
+                ok: false,
+                status: "failed".to_string(),
+                message: format!("PowerShell media command failed: {}", err),
+            },
+        };
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (vk, label);
+        DesktopActionOutcome {
+            ok: false,
+            status: "not_supported".to_string(),
+            message: "Hardware media key simulation is supported on Windows Desktop hosts.".to_string(),
+        }
     }
 }
 
@@ -150,16 +305,41 @@ fn matrix_collect_device_activity() -> Result<CompanionActivityPayload, String> 
     })
 }
 
+fn trigger_voice_activate(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.emit("qorvyna://voice-activate", ());
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if event.state() == ShortcutState::Pressed
+                        && (shortcut.matches(Modifiers::CONTROL | Modifiers::SHIFT, Code::Space)
+                            || shortcut.matches(Modifiers::SUPER | Modifiers::SHIFT, Code::Space))
+                    {
+                        trigger_voice_activate(app);
+                    }
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
+            let _ = app
+                .global_shortcut()
+                .register("CmdOrCtrl+Shift+Space");
+
             let show_item = MenuItem::with_id(app, "show", "Open QORVYNA AI", true, None::<&str>)?;
+            let voice_item = MenuItem::with_id(app, "voice", "Speak to QORVYNA (Ctrl+Shift+Space)", true, None::<&str>)?;
             let reload_item = MenuItem::with_id(app, "reload", "Reload Workspace", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit QORVYNA AI", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &reload_item, &quit_item])?;
+            let menu = Menu::with_items(app, &[&show_item, &voice_item, &reload_item, &quit_item])?;
 
             if let Some(icon) = app.default_window_icon().cloned() {
                 let _tray = TrayIconBuilder::new()
@@ -172,6 +352,9 @@ pub fn run() {
                                 let _ = window.show();
                                 let _ = window.set_focus();
                             }
+                        }
+                        "voice" => {
+                            trigger_voice_activate(app);
                         }
                         "reload" => {
                             if let Some(window) = app.get_webview_window("main") {
@@ -192,7 +375,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             matrix_notify,
             matrix_collect_device_activity,
-            qorvyna_desktop_info
+            qorvyna_desktop_info,
+            desktop_hardware_status,
+            launch_app,
+            media_control
         ])
         .run(tauri::generate_context!())
         .expect("error while running QORVYNA AI Tauri application");

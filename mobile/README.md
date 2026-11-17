@@ -1,7 +1,7 @@
 # QORVYNA AI — Android app (`mobile/matrix_app`)
 
 Flutter app for Android. It talks to the QORVYNA backend
-(`https://matrix.thamjj13.top` by default).
+(`https://qorvyna.thamjj13.top` by default).
 
 ## What it does
 
@@ -46,7 +46,7 @@ Optional build settings, all read in `lib/config.dart`:
 
 | `--dart-define` | Default | Purpose |
 |---|---|---|
-| `QORVYNA_API_BASE` | `https://matrix.thamjj13.top` | The backend the app talks to |
+| `QORVYNA_API_BASE` | `https://qorvyna.thamjj13.top` | The backend the app talks to |
 | `QORVYNA_APP_VERSION` | the version in `config.dart` | Version reported to the update check |
 | `QORVYNA_APP_BUILD` | the build number in `config.dart` | Build number reported to the update check |
 

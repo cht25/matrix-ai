@@ -7,17 +7,39 @@ export type DeviceRole = "parent" | "child";
  * enforces on every request made with that device's credential
  * (src/lib/firebase/device-session.ts) — nothing here is display-only.
  */
-export const DEVICE_PERMISSIONS = ["chat:read", "chat:write", "devices:read", "devices:write", "notifications:read"] as const;
+export const DEVICE_PERMISSIONS = [
+  "chat:read",
+  "chat:write",
+  "devices:read",
+  "devices:write",
+  "notifications:read",
+  "notifications:write",
+  "devices:control",
+  "mirror:view",
+  "mirror:share",
+  "remote:control",
+] as const;
 export type DevicePermission = (typeof DEVICE_PERMISSIONS)[number];
 
-export const DEFAULT_CHILD_PERMISSIONS: readonly DevicePermission[] = ["chat:read", "chat:write", "devices:read", "notifications:read"];
+/** Safe default least-privilege permissions for newly paired Child devices. */
+export const DEFAULT_CHILD_PERMISSIONS: readonly DevicePermission[] = [
+  "chat:read",
+  "chat:write",
+  "devices:read",
+  "notifications:read",
+];
 
-export const PERMISSION_INFO: Record<DevicePermission, { label: string; detail: string }> = {
+export const PERMISSION_INFO: Record<DevicePermission, { label: string; detail: string; sensitive?: boolean }> = {
   "chat:read": { label: "Read conversations", detail: "Open the account's chats and history." },
   "chat:write": { label: "Send messages", detail: "Start chats and send messages as this account." },
   "devices:read": { label: "See devices", detail: "View the device list and its own connection status." },
   "devices:write": { label: "Report device activity", detail: "Send its own activity and unlink devices." },
-  "notifications:read": { label: "Receive notifications", detail: "Read the account's notifications." },
+  "notifications:read": { label: "Receive notifications", detail: "Read synced notifications and account alerts." },
+  "notifications:write": { label: "Sync & dismiss notifications", detail: "Forward notifications from this device and sync dismissals." },
+  "devices:control": { label: "Assistant device actions", detail: "Run voice assistant reminders, status checks, and confirmed app/media controls.", sensitive: true },
+  "mirror:view": { label: "View screen mirror", detail: "View active screen-mirroring sessions approved by the source device.", sensitive: true },
+  "mirror:share": { label: "Share screen mirror", detail: "Allow requested screen-mirroring sessions after explicit local confirmation.", sensitive: true },
+  "remote:control": { label: "Opt-in remote control", detail: "Allow per-session, explicitly approved remote input during screen mirroring (off by default).", sensitive: true },
 };
 
 export function sanitizePermissions(value: unknown): DevicePermission[] {
@@ -60,6 +82,9 @@ export type HubDevice = {
   registered_at: string;
   last_active_at: string;
   is_current: boolean;
+  voice_enabled?: boolean;
+  notification_sync_enabled?: boolean;
+  mirror_enabled?: boolean;
 };
 
 export type PairingRequestView = {
@@ -87,9 +112,15 @@ export function deviceCapabilities(device: Pick<HubDevice, "platform" | "role" |
   const platform = device.platform.toLowerCase();
   const caps: string[] = ["Chat"];
   if (device.role === "parent") caps.push("Manage devices", "Approve pairing");
-  if (platform === "android") caps.push("QR scanner", "App updates");
-  if (platform === "web" || platform === "windows" || platform === "macos" || platform === "linux") caps.push("Agent workspace");
-  return caps;
+  if (platform === "android") caps.push("QR scanner", "App updates", "Notification listener", "Jarvis voice", "Screen share");
+  if (platform === "wearos") caps.push("Quick voice", "Device status", "Notifications");
+  if (platform === "windows-tauri" || platform === "macos-tauri" || platform === "linux-tauri") {
+    caps.push("Agent workspace", "Desktop hotkey", "Screen share", "Native controls");
+  }
+  if (platform === "web" || platform === "windows" || platform === "macos" || platform === "linux") {
+    caps.push("Agent workspace", "Foreground voice", "WebRTC mirror");
+  }
+  return [...new Set(caps)];
 }
 
 /** Best-effort description of this browser for registration. */

@@ -5,8 +5,9 @@
 // device only appears once it has really completed pairing.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
-  Check, Clock, Copy, Loader2, Monitor, Pencil, Plug, QrCode, ScanLine, ShieldCheck, Smartphone, Tablet, Trash2, Unplug, Users, Watch, X,
+  Bell, Cast, Check, Clock, Copy, Loader2, Monitor, Pencil, Plug, QrCode, ScanLine, ShieldCheck, Smartphone, Tablet, Trash2, Unplug, Users, Watch, X,
 } from "lucide-react";
 import { Alert, Badge, Button, Card, EmptyState, Field, Input } from "@/components/ui";
 import { Modal, ConfirmModal } from "@/components/modal";
@@ -351,12 +352,16 @@ export function DeviceHub() {
 
   const revoke = (device: HubDevice) =>
     run(`revoke:${device.id}`, async () => {
-      await rpc("device_revoke", { device_id: device.id });
+      const res = await rpc<true | { status: "pending_approval"; request_id?: string }>("device_revoke", { device_id: device.id });
+      setConfirmRevoke(null);
+      if (typeof res === "object" && res !== null && res.status === "pending_approval") {
+        setNotice("A verified parent policy requires in-app parent approval before unpairing this device. Approval request sent.");
+        return;
+      }
       if (device.id === currentId) {
         write(KEY.role, null); write(KEY.parent, null); write(KEY.child, null);
         setRole(null); setParentId(""); setChild(null); setPairing(null);
       }
-      setConfirmRevoke(null);
       await loadDevices();
     }, "The device couldn't be removed. Try again.");
 
@@ -370,6 +375,33 @@ export function DeviceHub() {
 
   return (
     <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Link href="/mirror" className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-surface p-4 transition hover:border-accent/60">
+          <div className="flex items-center gap-3">
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-accent-soft/25 text-accent">
+              <Cast size={18} />
+            </span>
+            <div>
+              <p className="text-sm font-semibold text-ink">Screen Mirroring</p>
+              <p className="text-xs text-ink-3">Consent-gated live WebRTC device view</p>
+            </div>
+          </div>
+          <Badge>Open →</Badge>
+        </Link>
+        <Link href="/notifications" className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-surface p-4 transition hover:border-accent/60">
+          <div className="flex items-center gap-3">
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-accent-soft/25 text-accent">
+              <Bell size={18} />
+            </span>
+            <div>
+              <p className="text-sm font-semibold text-ink">Notification Sync &amp; Parent Safety</p>
+              <p className="text-xs text-ink-3">Cross-device notifications &amp; parent links</p>
+            </div>
+          </div>
+          <Badge>Open →</Badge>
+        </Link>
+      </div>
+
       <Card className="space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>

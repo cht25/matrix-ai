@@ -43,6 +43,8 @@ import {
   type HubDevice,
   type PairingRequestView,
 } from "@/lib/devices/model";
+import { resendApiKey, sendDeviceDisconnectedEmail, sendNewDevicePairingEmail } from "@/lib/server/email";
+import { evaluateAndHandleProtectedEvent } from "@/lib/server/parent-policy";
 
 const CHALLENGES = "pairing_challenges";
 const DEVICES = "devices";
@@ -418,6 +420,16 @@ export async function claimPairing(
     const parentSnap = await d.collection(DEVICES).doc(data.parent_device_id).get();
     if (parentSnap.exists && parentSnap.data()!.user_id === scanner.uid) parent = { id: data.parent_device_id, device_name: text(parentSnap.data()!.device_name, 80) };
   }
+  if (resendApiKey() && scanner.email) {
+    void sendNewDevicePairingEmail({
+      db: d,
+      userId: scanner.uid,
+      email: scanner.email,
+      deviceId,
+      deviceName: text(data.device_name, 80) || "QORVYNA device",
+      platform: text(data.platform, 40) || "unknown",
+    }).catch(() => {});
+  }
   return {
     status: "approved",
     device: toDevice(deviceId, data, nowMs, deviceId),
@@ -473,8 +485,21 @@ export async function updateDevice(
     patch.scopes = permissions;
   }
   if (!Object.keys(patch).length) throw new RpcError("BAD_REQUEST", 400);
+  const prevScopes = Array.isArray(data.scopes) ? data.scopes.map(String) : [];
   await ref.set(patch, { merge: true });
   await audit(d, user.uid, permissions ? "device.permissions" : "device.rename", input.device_id, permissions ? "Device permissions changed" : "Device renamed", permissions ? { permissions } : {});
+  if (permissions) {
+    const sensitive = ["notifications:write", "devices:control", "mirror:share"];
+    const removedCritical = sensitive.filter((scope) => prevScopes.includes(scope) && !permissions!.includes(scope as DevicePermission));
+    if (removedCritical.length > 0) {
+      await evaluateAndHandleProtectedEvent(d, user, {
+        event_type: "critical_permission_revoked",
+        action_type: "device_permission_change",
+        target_id: input.device_id,
+        summary: `Sensitive permission(s) (${removedCritical.join(", ")}) were removed on ${text(data.device_name, 80)}.`,
+      }).catch(() => {});
+    }
+  }
   const snap = await ref.get();
   return toDevice(input.device_id, snap.data()!, Date.now(), null);
 }
@@ -489,16 +514,54 @@ export async function setDeviceConnection(d: Db, user: SessionUser, input: { dev
   if (data.role === "parent") throw new RpcError("PARENT_CONNECTION_FIXED", 400);
   await ref.set({ suspended_at: input.connected ? null : nowTs() }, { merge: true });
   await audit(d, user.uid, input.connected ? "device.reconnect" : "device.disconnect", input.device_id, input.connected ? "Device reconnected" : "Device disconnected");
+  if (!input.connected && resendApiKey() && user.email) {
+    void sendDeviceDisconnectedEmail({
+      db: d,
+      userId: user.uid,
+      email: user.email,
+      deviceId: input.device_id,
+      deviceName: text(data.device_name, 80) || "QORVYNA device",
+      reason: "disconnected",
+      eventKey: String(Date.now()),
+    }).catch(() => {});
+  }
   const snap = await ref.get();
   return toDevice(input.device_id, snap.data()!, Date.now(), null);
 }
 
-/** Permanently revoke a device. Its credential stops working immediately. */
-export async function revokeHubDevice(d: Db, user: SessionUser, deviceId: string): Promise<true> {
+/** Permanently revoke a device. Respects verified parent approval policies when active. */
+export async function revokeHubDevice(
+  d: Db,
+  user: SessionUser,
+  deviceId: string,
+): Promise<true | { status: "pending_approval"; request_id?: string }> {
   accountOnly(user);
-  const { ref } = await ownedDevice(d, user.uid, deviceId);
+  const { ref, data } = await ownedDevice(d, user.uid, deviceId);
+  const deviceName = text(data.device_name, 80) || "QORVYNA device";
+  const policyOutcome = await evaluateAndHandleProtectedEvent(d, user, {
+    event_type: "device_unpaired",
+    action_type: "revoke_device",
+    target_id: deviceId,
+    summary: `Requested unpairing / revoking device "${deviceName}" (${text(data.platform, 40)}).`,
+  }).catch(() => ({ allowed: true, status: "no_parent_policy" as const, request_id: undefined }));
+
+  if (policyOutcome.status === "pending_approval") {
+    return { status: "pending_approval", request_id: policyOutcome.request_id };
+  }
+
   await ref.set({ revoked_at: nowTs(), access_token_hash: null }, { merge: true });
   await audit(d, user.uid, "device.revoke", deviceId, "User revoked device access");
+  if (resendApiKey() && user.email) {
+    void sendDeviceDisconnectedEmail({
+      db: d,
+      userId: user.uid,
+      email: user.email,
+      deviceId,
+      deviceName,
+      reason: "revoked",
+      eventKey: String(Date.now()),
+    }).catch(() => {});
+  }
   return true;
 }
 

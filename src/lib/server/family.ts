@@ -27,7 +27,6 @@ import {
   familyInvitationUrl,
   familyPairingUrl,
   sendFamilyInvitation,
-  sendFamilyNotice,
 } from "@/lib/server/family-email";
 import { adminDb, nowTs, type Db } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
@@ -395,6 +394,7 @@ export async function inviteMember(
   const familySnap = await d.collection(FAMILIES).doc(input.family_id).get();
   const inviter = await profileOf(d, user.uid);
   const delivery = await sendFamilyInvitation({
+    db: d,
     id: ref.id,
     email,
     token,
@@ -448,6 +448,7 @@ export async function resendInvitation(d: Db, user: SessionUser, invitationId: s
   const familySnap = await d.collection(FAMILIES).doc(familyId).get();
   const inviter = await profileOf(d, user.uid);
   const delivery = await sendFamilyInvitation({
+    db: d,
     id: invitationId,
     email: String(data.invitee_email ?? ""),
     token,

@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'api.dart';
 import 'chat_screen.dart';
 import 'config.dart';
 import 'devices_screen.dart';
+import 'native_bridge.dart';
+import 'notifications_screen.dart';
 import 'update_service.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -17,9 +20,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _index = 0;
   AppUpdateInfo? _forcedUpdate;
   bool _checkingUpdate = false;
+  final ValueNotifier<int> _assistTrigger = ValueNotifier<int>(0);
+  StreamSubscription<Map<String, dynamic>>? _nativeEventSub;
 
   late final List<({String label, IconData icon, Widget page})> _tabs = [
-    (label: 'Chat', icon: Icons.chat_bubble_outline, page: const ChatScreen()),
+    (label: 'Chat', icon: Icons.chat_bubble_outline, page: ChatScreen(assistTrigger: _assistTrigger)),
+    (label: 'Alerts & Mirror', icon: Icons.notifications_outlined, page: NotificationsScreen(api: widget.api)),
     (label: 'Devices', icon: Icons.devices_other, page: DevicesScreen(api: widget.api)),
   ];
 
@@ -27,11 +33,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _runUpdateCheck(manual: false));
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      _runUpdateCheck(manual: false);
+      final launchedAsAssist = await NativeBridge.instance.consumeInitialAssistLaunch();
+      if (launchedAsAssist && mounted) {
+        setState(() => _index = 0);
+        _assistTrigger.value++;
+      }
+    });
+    _nativeEventSub = NativeBridge.instance.events.listen((ev) {
+      if (ev['type'] == 'assist_launch' && mounted) {
+        setState(() => _index = 0);
+        _assistTrigger.value++;
+      }
+    });
   }
 
   @override
   void dispose() {
+    _nativeEventSub?.cancel();
+    _assistTrigger.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }

@@ -32,6 +32,12 @@ import * as toolApprovals from "@/lib/server/tool-approvals";
 import * as agentDeploy from "@/lib/server/agent-deploy";
 import * as automations from "@/lib/server/automations";
 import * as canvas from "@/lib/server/canvas";
+import * as emailAdmin from "@/lib/server/email";
+import * as parentPolicy from "@/lib/server/parent-policy";
+import * as notifySync from "@/lib/server/notifications-sync";
+import * as mirrorWebrtc from "@/lib/server/mirror-webrtc";
+import * as deviceActions from "@/lib/server/device-actions";
+import { executeAgentTool } from "@/lib/server/tool-gateway";
 import { canvasDocumentSchema } from "@/lib/canvas";
 import { designTokensSchema } from "@/lib/design/tokens";
 import { latestBuildRunForProject, readBuildRun } from "@/lib/server/build";
@@ -361,9 +367,171 @@ const ACTIONS: Record<string, Handler> = {
     if (status !== "cancelled") throw new RpcError("SERVER_WRITTEN", 403);
     return agentTasks.cancelAgentTask(d, u, z.string().min(1).parse(b.task_id));
   },
-  // --- Tool approvals (real one-time records, owner-decided) -----------------
+  // --- Tool approvals & explicit tool execution (one-time records) -----------
   tool_approval_request: (d, u, b) => toolApprovals.requestToolApproval(d, u, { tool_id: z.string().min(3).max(64).parse(b.tool_id), args: b.args ?? {} }),
   tool_approval_decide: (d, u, b) => toolApprovals.decideToolApproval(d, u, z.string().min(1).max(120).parse(b.approval_id), z.boolean().parse(b.approve)),
+  tool_execute: (d, u, b) =>
+    executeAgentTool(d, u, z.string().min(3).max(64).parse(b.tool_id), b.args ?? {}, {
+      approvalId: b.approval_id ? z.string().min(1).max(120).parse(b.approval_id) : undefined,
+      dryRun: bool(b.dry_run, false),
+      modelInitiated: false,
+    }),
+
+  // --- Jarvis Reminders & Cross-Device Commands ------------------------------
+  reminders_list: (d, u) => deviceActions.listReminders(d, u),
+  reminders_create: (d, u, b) =>
+    deviceActions.createReminder(d, u, {
+      title: z.string().min(1).max(160).parse(b.title),
+      due_at: b.due_at ? z.string().max(64).parse(b.due_at) : null,
+      note: b.note ? z.string().max(400).parse(b.note) : undefined,
+      target_device_id: b.target_device_id ? z.string().max(128).parse(b.target_device_id) : null,
+    }),
+  reminders_complete: (d, u, b) =>
+    deviceActions.completeReminder(d, u, z.string().min(1).max(128).parse(b.id), b.completed !== false),
+  device_command_queue: (d, u, b) =>
+    deviceActions.queueDeviceCommand(d, u, {
+      target_device_id: z.string().min(1).max(128).parse(b.target_device_id),
+      command: z.enum(["open_app", "media_control", "dismiss_notification", "device_status_ping"]).parse(b.command),
+      args: (b.args && typeof b.args === "object" ? b.args : {}) as Record<string, unknown>,
+      requires_confirmation: b.requires_confirmation !== false,
+    }),
+  device_commands_poll: async (d, u, b) => ({
+    commands: await deviceActions.pollDeviceCommands(d, u, b.target_device_id ? z.string().max(128).parse(b.target_device_id) : undefined),
+  }),
+  device_command_result: (d, u, b) =>
+    deviceActions.reportDeviceCommandResult(d, u, {
+      command_id: z.string().min(1).max(128).parse(b.command_id),
+      ok: z.boolean().parse(b.ok),
+      status: b.status ? z.enum(["executed", "not_supported", "permission_denied", "failed"]).parse(b.status) : undefined,
+      message: z.string().max(300).parse(b.message ?? ""),
+    }),
+
+  // --- Multi-Device WebRTC Mirroring & Signaling -----------------------------
+  mirror_session_create: (d, u, b) =>
+    mirrorWebrtc.createMirrorSession(d, u, {
+      source_device_id: z.string().min(1).max(128).parse(b.source_device_id),
+      viewer_device_id: b.viewer_device_id ? z.string().max(128).parse(b.viewer_device_id) : undefined,
+      remote_control_requested: bool(b.remote_control_requested, false),
+      ttl_minutes: b.ttl_minutes === undefined ? undefined : z.number().int().min(1).max(15).parse(b.ttl_minutes),
+    }),
+  mirror_session_respond: (d, u, b) =>
+    mirrorWebrtc.respondMirrorConsent(d, u, {
+      session_id: z.string().min(1).max(128).parse(b.session_id),
+      accept: z.boolean().parse(b.accept),
+      allow_remote_control: bool(b.allow_remote_control, false),
+    }),
+  mirror_session_signal: (d, u, b) =>
+    mirrorWebrtc.postMirrorSignal(d, u, {
+      session_id: z.string().min(1).max(128).parse(b.session_id),
+      from_role: z.enum(["viewer", "source"]).parse(b.from_role),
+      kind: z.enum(["offer", "answer", "ice", "snapshot", "remote_command"]).parse(b.kind),
+      payload: (b.payload && typeof b.payload === "object" ? b.payload : {}) as Record<string, unknown>,
+    }),
+  mirror_session_signals: (d, u, b) =>
+    mirrorWebrtc.listMirrorSignals(d, u, {
+      session_id: z.string().min(1).max(128).parse(b.session_id),
+      after_ms: b.after_ms === undefined ? 0 : z.number().min(0).parse(b.after_ms),
+    }),
+  mirror_session_stop: (d, u, b) =>
+    mirrorWebrtc.stopMirrorSession(d, u, {
+      session_id: z.string().min(1).max(128).parse(b.session_id),
+      reason: b.reason ? z.string().max(80).parse(b.reason) : undefined,
+    }),
+  mirror_sessions_list: (d, u) => mirrorWebrtc.listMirrorSessions(d, u),
+
+  // --- Notification Ecosystem Sync & Preferences -----------------------------
+  notifications_sync_list: (d, u, b) =>
+    notifySync.listSyncedNotifications(d, u, {
+      include_dismissed: bool(b.include_dismissed, false),
+      limit: b.limit === undefined ? 100 : z.number().int().min(1).max(200).parse(b.limit),
+    }),
+  notifications_sync_ingest: (d, u, b) =>
+    notifySync.ingestSyncedNotification(d, u, {
+      source_device_id: b.source_device_id ? z.string().max(128).parse(b.source_device_id) : undefined,
+      source_device_name: b.source_device_name ? z.string().max(80).parse(b.source_device_name) : undefined,
+      source_platform: b.source_platform ? z.string().max(40).parse(b.source_platform) : undefined,
+      package_name: z.string().min(1).max(140).parse(b.package_name),
+      app_name: z.string().min(1).max(80).parse(b.app_name),
+      title: z.string().min(1).max(180).parse(b.title),
+      body: b.body ? z.string().max(600).parse(b.body) : "",
+      group_key: b.group_key ? z.string().max(120).parse(b.group_key) : undefined,
+      category: b.category ? z.string().max(40).parse(b.category) : undefined,
+      is_protected: bool(b.is_protected, false),
+      external_key: b.external_key ? z.string().max(240).parse(b.external_key) : undefined,
+      posted_at: b.posted_at ? z.string().max(64).parse(b.posted_at) : undefined,
+    }),
+  notifications_sync_prefs_get: (d, u) => notifySync.getNotificationPreferences(d, u.uid),
+  notifications_sync_prefs_update: (d, u, b) =>
+    notifySync.updateNotificationPreferences(d, u, {
+      sync_enabled: typeof b.sync_enabled === "boolean" ? b.sync_enabled : undefined,
+      privacy_mode: b.privacy_mode ? z.enum(["full", "title_only", "app_only", "paused"]).parse(b.privacy_mode) : undefined,
+      redact_otp: typeof b.redact_otp === "boolean" ? b.redact_otp : undefined,
+      excluded_apps: Array.isArray(b.excluded_apps) ? z.array(z.string().max(120)).max(100).parse(b.excluded_apps) : undefined,
+      allowed_target_device_ids: Array.isArray(b.allowed_target_device_ids) ? z.array(z.string().max(128)).max(50).parse(b.allowed_target_device_ids) : undefined,
+    }),
+  notifications_sync_mark_read: (d, u, b) =>
+    notifySync.markSyncedNotificationRead(d, u, {
+      id: b.id ? z.string().max(128).parse(b.id) : undefined,
+      all: bool(b.all, false),
+    }),
+  notifications_sync_dismiss: (d, u, b) =>
+    notifySync.dismissSyncedNotification(d, u, { id: z.string().min(1).max(128).parse(b.id) }),
+  notifications_sync_clear: (d, u) => notifySync.clearSyncedNotificationHistory(d, u),
+
+  // --- Verified Parent Links, Policies & Protected Action Approvals ----------
+  parent_link_request: (d, u, b) =>
+    parentPolicy.requestParentLink(d, u, {
+      parent_email: z.string().email().parse(b.parent_email),
+      relationship_label: b.relationship_label ? z.string().max(48).parse(b.relationship_label) : undefined,
+    }),
+  parent_link_verify: (d, u, b) =>
+    parentPolicy.verifyParentLink(d, u, { token: z.string().min(16).max(200).parse(b.token) }),
+  parent_link_revoke: (d, u, b) =>
+    parentPolicy.revokeParentLink(d, u, z.string().min(1).max(128).parse(b.link_id)),
+  parent_policy_dashboard: (d, u) => parentPolicy.listParentDashboard(d, u),
+  parent_policy_update: (d, u, b) =>
+    parentPolicy.updateParentPolicy(d, u, {
+      target_uid: b.target_uid ? z.string().max(128).parse(b.target_uid) : undefined,
+      rules: b.rules ?? {},
+    }),
+  protected_action_decide: (d, u, b) =>
+    parentPolicy.decideProtectedAction(d, u, {
+      request_id: z.string().min(1).max(128).parse(b.request_id),
+      approve: z.boolean().parse(b.approve),
+      reason: b.reason ? z.string().max(240).parse(b.reason) : undefined,
+    }),
+
+  // --- Admin Email Provider Diagnostics (Resend dual-sender, key never sent) -
+  admin_email_status: async (d, u) => {
+    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
+    return emailAdmin.getEmailAdminStatus(d);
+  },
+  admin_email_refresh_domains: async (d, u) => {
+    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
+    const probe = await emailAdmin.refreshResendDomainHealth(d);
+    await rpc.logAudit(d, u.uid, "email_domains_probed", "email_sender_health", "resend", "", probe);
+    return { probe, status: await emailAdmin.getEmailAdminStatus(d) };
+  },
+  admin_email_test_send: async (d, u) => {
+    if (!(await rpc.hasPermission(d, u.uid, "system.settings"))) throw new RpcError("PERMISSION_DENIED", 403);
+    if (!u.email) throw new RpcError("ADMIN_EMAIL_MISSING", 400);
+    const result = await emailAdmin.sendAppAlertEmail({
+      db: d,
+      userId: u.uid,
+      email: u.email,
+      alertId: `admin-test-${Date.now()}`,
+      title: "QORVYNA Dual-Sender Resend Diagnostic Test",
+      detail: "This test confirmed Resend email dispatch from QORVYNA Admin Email Status using the Primary -> Fallback sender resolver.",
+      skipDedupe: true,
+    });
+    await rpc.logAudit(d, u.uid, "email_test_sent", "email_delivery_logs", result.provider_id ?? "none", "", {
+      ok: result.ok,
+      sender_used: result.sender_used ?? null,
+      fallback_used: result.fallback_used,
+      error_code: result.error_code ?? null,
+    });
+    return { result, status: await emailAdmin.getEmailAdminStatus(d) };
+  },
   // --- Automations (actions only reference registry tools; LOW-risk only) -----
   automation_create: (d, u, b) =>
     automations.createAutomation(d, u, {

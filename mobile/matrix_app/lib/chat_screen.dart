@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'api.dart';
 import 'config.dart';
+import 'native_bridge.dart';
 import 'update_service.dart';
 
 class _StepItem {
@@ -39,7 +41,8 @@ class _Message {
 }
 
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key});
+  const ChatScreen({super.key, this.assistTrigger});
+  final ValueNotifier<int>? assistTrigger;
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -51,8 +54,13 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _conversationId;
   String _mode = 'general'; // general | code | study | image
   bool _sending = false;
+  bool _listening = false;
+  bool _autoSpeak = false;
+  bool _speaking = false;
+  String _voiceLang = 'en-US';
   String? _error;
   String? _failedPrompt;
+  StreamSubscription<Map<String, dynamic>>? _nativeSub;
 
   static const _modes = <({String id, String label, IconData icon})>[
     (id: 'general', label: 'Fast / Auto', icon: Icons.bolt_rounded),
@@ -60,6 +68,152 @@ class _ChatScreenState extends State<ChatScreen> {
     (id: 'study', label: 'Deep Study', icon: Icons.psychology_outlined),
     (id: 'image', label: 'Image', icon: Icons.palette_outlined),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    widget.assistTrigger?.addListener(_onAssistTriggered);
+    _nativeSub = NativeBridge.instance.events.listen((ev) {
+      if (ev['type'] == 'speech_state') {
+        final st = (ev['data'] as Map?)?['state']?.toString();
+        if (mounted) setState(() => _listening = st == 'listening');
+      }
+    });
+  }
+
+  void _onAssistTriggered() {
+    if (!mounted) return;
+    _startJarvisVoice();
+  }
+
+  Future<void> _speakReply(String text) async {
+    setState(() => _speaking = true);
+    final ok = await NativeBridge.instance.speakText(
+      text.length > 600 ? text.substring(0, 600) : text,
+      language: RegExp(r'[\u0980-\u09FF]').hasMatch(text) ? 'bn-BD' : _voiceLang,
+    );
+    if (!ok && mounted) setState(() => _speaking = false);
+  }
+
+  Future<void> _interruptSpeech() async {
+    await NativeBridge.instance.stopSpeaking();
+    if (mounted) setState(() => _speaking = false);
+  }
+
+  Future<void> _startJarvisVoice() async {
+    await _interruptSpeech();
+    if (_listening) {
+      await NativeBridge.instance.stopSpeechRecognition();
+      return;
+    }
+    setState(() {
+      _listening = true;
+      _error = null;
+    });
+    try {
+      final spoken = await NativeBridge.instance.startSpeechRecognition(language: _voiceLang);
+      if (!mounted) return;
+      setState(() => _listening = false);
+      final cleaned = spoken.trim();
+      if (cleaned.isEmpty) return;
+
+      final handled = await _tryDeviceCommandIntent(cleaned);
+      if (!handled) {
+        await _send(cleaned);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _listening = false;
+        _error = 'Voice input unavailable: $e';
+      });
+    }
+  }
+
+  Future<bool> _tryDeviceCommandIntent(String text) async {
+    final lower = text.toLowerCase();
+    // Low-risk: device status
+    if (lower.contains('device status') || lower.contains('battery status')) {
+      final st = await NativeBridge.instance.getDeviceStatus();
+      final msg = '${st['device_model'] ?? 'Android'} · Battery ${st['battery_percent'] ?? '?'}% (${st['charging'] == true ? 'charging' : 'battery'})';
+      setState(() {
+        _messages.add(_Message(role: 'user', content: text));
+        _messages.add(_Message(role: 'assistant', content: msg, provider: 'DEVICE'));
+      });
+      if (_autoSpeak) await _speakReply(msg);
+      return true;
+    }
+    // Low-risk: reminder
+    final remMatch = RegExp(r'^(?:remind me to|set a reminder to)\s+(.+)$', caseSensitive: false).firstMatch(text);
+    if (remMatch != null) {
+      final title = remMatch.group(1)!.trim();
+      await MatrixApi.instance.createReminder(title);
+      final msg = 'Reminder saved: "$title"';
+      setState(() {
+        _messages.add(_Message(role: 'user', content: text));
+        _messages.add(_Message(role: 'assistant', content: msg, provider: 'REMINDERS'));
+      });
+      if (_autoSpeak) await _speakReply(msg);
+      return true;
+    }
+    // Sensitive: open app (requires explicit confirmation dialog!)
+    final openMatch = RegExp(r'^(?:open|launch)\s+(.+)$', caseSensitive: false).firstMatch(text);
+    if (openMatch != null && mounted) {
+      final targetApp = openMatch.group(1)!.trim();
+      final approved = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Confirm Device Action'),
+          content: Text('Open installed app "$targetApp" on this phone?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Confirm')),
+          ],
+        ),
+      );
+      if (approved == true) {
+        final res = await NativeBridge.instance.openInstalledApp(targetApp);
+        final msg = res['message']?.toString() ?? 'Completed.';
+        setState(() {
+          _messages.add(_Message(role: 'user', content: text));
+          _messages.add(_Message(role: 'assistant', content: msg, provider: 'ANDROID'));
+        });
+        if (_autoSpeak) await _speakReply(msg);
+      }
+      return true;
+    }
+    // Sensitive: media controls (requires confirmation dialog!)
+    if (RegExp(r'^(?:pause|play|next|previous|mute)\b', caseSensitive: false).hasMatch(lower) && mounted) {
+      final action = lower.contains('next')
+          ? 'next'
+          : lower.contains('prev')
+              ? 'previous'
+              : lower.contains('mute')
+                  ? 'mute'
+                  : 'play_pause';
+      final approved = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Confirm Media Control'),
+          content: Text('Execute media action "$action"?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Confirm')),
+          ],
+        ),
+      );
+      if (approved == true) {
+        final res = await NativeBridge.instance.mediaControl(action);
+        final msg = res['message']?.toString() ?? 'Executed media command.';
+        setState(() {
+          _messages.add(_Message(role: 'user', content: text));
+          _messages.add(_Message(role: 'assistant', content: msg, provider: 'MEDIA'));
+        });
+      }
+      return true;
+    }
+    return false;
+  }
 
   Future<void> _send([String? overrideText]) async {
     final text = (overrideText ?? _input.text).trim();
@@ -138,6 +292,9 @@ class _ChatScreenState extends State<ChatScreen> {
             steps: parsedSteps,
           ));
         });
+        if (_autoSpeak) {
+          unawaited(_speakReply(reply));
+        }
       }
       await Future<void>.delayed(const Duration(milliseconds: 50));
       if (_scroll.hasClients) {
@@ -164,6 +321,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    widget.assistTrigger?.removeListener(_onAssistTriggered);
+    _nativeSub?.cancel();
     _input.dispose();
     _scroll.dispose();
     super.dispose();
@@ -186,6 +345,30 @@ class _ChatScreenState extends State<ChatScreen> {
                     label: Text(m.label, style: const TextStyle(fontSize: 12)),
                     selected: _mode == m.id,
                     onSelected: (_) => setState(() => _mode = m.id),
+                  ),
+                ),
+              ActionChip(
+                avatar: Icon(_autoSpeak ? Icons.volume_up : Icons.volume_off, size: 14),
+                label: Text(_autoSpeak ? 'Read aloud: On' : 'Read aloud: Off', style: const TextStyle(fontSize: 12)),
+                onPressed: () {
+                  if (_autoSpeak) _interruptSpeech();
+                  setState(() => _autoSpeak = !_autoSpeak);
+                },
+              ),
+              const SizedBox(width: 6),
+              ActionChip(
+                avatar: const Icon(Icons.language, size: 14),
+                label: Text(_voiceLang == 'bn-BD' ? 'বাংলা' : 'EN', style: const TextStyle(fontSize: 12)),
+                onPressed: () => setState(() => _voiceLang = _voiceLang == 'en-US' ? 'bn-BD' : 'en-US'),
+              ),
+              const SizedBox(width: 6),
+              if (_speaking)
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: ActionChip(
+                    avatar: const Icon(Icons.stop_circle_outlined, size: 14, color: Colors.redAccent),
+                    label: const Text('Interrupt', style: TextStyle(fontSize: 12)),
+                    onPressed: _interruptSpeech,
                   ),
                 ),
               ActionChip(
@@ -314,11 +497,22 @@ class _ChatScreenState extends State<ChatScreen> {
                     textInputAction: TextInputAction.send,
                     onSubmitted: (_) => _send(),
                     decoration: InputDecoration(
-                      hintText: _mode == 'image' ? 'Describe an image…' : 'Message QORVYNA…',
+                      hintText: _listening
+                          ? 'Listening ($_voiceLang)…'
+                          : (_mode == 'image' ? 'Describe an image…' : 'Message QORVYNA…'),
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
+                IconButton(
+                  tooltip: _listening ? 'Stop listening' : 'Jarvis voice input',
+                  onPressed: _sending ? null : _startJarvisVoice,
+                  icon: Icon(
+                    _listening ? Icons.mic : Icons.mic_none_rounded,
+                    color: _listening ? Colors.redAccent : null,
+                  ),
+                ),
+                const SizedBox(width: 4),
                 IconButton.filled(
                   onPressed: _sending ? null : _send,
                   icon: const Icon(Icons.arrow_upward),

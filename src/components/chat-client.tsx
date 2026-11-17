@@ -103,6 +103,8 @@ import { DeploySuccessPopup } from "@/components/build/deploy-card";
 import { toRunSnapshot, type BuildRun } from "@/lib/deploy/stages";
 import { planOrchestrator } from "@/lib/ai/router";
 import type { AgentStageId, PipelineAnalytics } from "@/lib/ai/pipeline";
+import { JarvisAssistantBar } from "@/components/voice/jarvis-assistant-bar";
+import { DEFAULT_JARVIS_SETTINGS, type JarvisSettings } from "@/lib/voice/jarvis-engine";
 
 export type { ChatMessage, MessageMetadata };
 
@@ -271,6 +273,8 @@ export function ChatClient({
   const [hasMoreHistory, setHasMoreHistory] = useState(initialHasMore);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [input, setInput] = useState("");
+  const jarvisSettingsRef = useRef<JarvisSettings>(DEFAULT_JARVIS_SETTINGS);
+  const jarvisDispatchRef = useRef<((text: string) => Promise<void>) | null>(null);
   const [convId, setConvId] = useState<string | null>(initialConvId);
   const [title, setTitle] = useState(initialTitle);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
@@ -1019,6 +1023,8 @@ export function ChatClient({
       primeSpeech();
       const ok = speakMarkdown(text, {
         locale: localeRef.current,
+        voiceName: jarvisSettingsRef.current.voiceName || undefined,
+        rate: jarvisSettingsRef.current.speechRate,
         onend: () => setSpeakingId((current) => (current === id ? null : current)),
         onerror: () => setSpeakingId((current) => (current === id ? null : current)),
       });
@@ -1032,6 +1038,8 @@ export function ChatClient({
     if (!cleaned) return;
     const ok = speakMarkdown(cleaned, {
       locale: localeRef.current,
+      voiceName: jarvisSettingsRef.current.voiceName || undefined,
+      rate: jarvisSettingsRef.current.speechRate,
       onend: () => setSpeakingId((current) => (current === "auto" ? null : current)),
       onerror: () => setSpeakingId((current) => (current === "auto" ? null : current)),
     });
@@ -1262,6 +1270,10 @@ export function ChatClient({
     const spoken = result.ok ? result.transcript : (!result.aborted && clip.heard ? clip.heard : "");
     if (spoken) {
       URL.revokeObjectURL(clip.url);
+      if (!input.trim() && jarvisDispatchRef.current) {
+        await jarvisDispatchRef.current(spoken);
+        return;
+      }
       const combined = mergeTranscript(input, spoken);
       setInput("");
       await send(undefined, combined);
@@ -2814,6 +2826,31 @@ export function ChatClient({
         autoSpeakLabels={{ on: t("chat.autoSpeakOn"), off: t("chat.autoSpeakOff") }}
         conversation={conversationActions}
       />
+
+      {!isTemporary ? (
+        <JarvisAssistantBar
+          speaking={speakingId !== null}
+          autoSpeak={autoSpeak}
+          voiceLang={voiceLang}
+          onVoiceLangChange={setVoiceLang}
+          onToggleAutoSpeak={toggleAutoSpeak}
+          onInterruptSpeech={() => {
+            stopSpeech();
+            stopGeneratedSpeech();
+            setSpeakingId(null);
+          }}
+          onStartPushToTalk={() => {
+            changeVoiceMode("hands_free");
+            void startVoice();
+          }}
+          onSubmitSpokenCommand={(spoken) => send(undefined, spoken)}
+          onJarvisNotice={(msg) => setNotice(msg)}
+          onJarvisSettingsChanged={(next) => {
+            jarvisSettingsRef.current = next;
+          }}
+          commandDispatchRef={jarvisDispatchRef}
+        />
+      ) : null}
 
       {/* While the conversation is empty the stage is a size container, so the
           welcome screen can fit itself to the room it really has. */}
