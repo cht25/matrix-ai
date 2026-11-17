@@ -17,7 +17,7 @@
 // =============================================================================
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, cpSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -42,8 +42,43 @@ console.log(`[native] bundling the shared QORVYNA frontend`);
 console.log(`[native] API origin: ${API_ORIGIN}`);
 console.log(`[native] version:    ${APP_VERSION}`);
 
+/**
+ * `--check` used to only verify that esbuild was installed, which meant a stale
+ * bundle (code changed, `public/native` never rebuilt) passed silently. It now
+ * fails when any bundled source is newer than the output, or when a source file
+ * the bundle imports does not exist in the output at all.
+ */
+function newestMtime(dir) {
+  let newest = 0;
+  const walk = (current) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = join(current, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else newest = Math.max(newest, statSync(full).mtimeMs);
+    }
+  };
+  walk(dir);
+  return newest;
+}
+
 if (checkOnly) {
-  console.log("[native] --check: inputs verified, nothing written.");
+  const bundlePath = join(outDir, "app.js");
+  const cssPath = join(outDir, "app.css");
+  if (!existsSync(bundlePath) || !existsSync(cssPath)) {
+    fail("public/native is missing its bundle. Run `node scripts/native/build-native-frontend.mjs`.");
+  }
+  const builtAt = Math.min(statSync(bundlePath).mtimeMs, statSync(cssPath).mtimeMs);
+  const sources = ["src", "scripts/native"].map((dir) => newestMtime(join(root, dir)));
+  const newestSource = Math.max(...sources);
+  if (newestSource > builtAt) {
+    const drift = Math.round((newestSource - builtAt) / 1000);
+    fail(
+      `public/native is STALE: source changed ${drift}s after the last build.\n` +
+        `  Rebuild with: node scripts/native/build-native-frontend.mjs\n` +
+        `  (a native build would otherwise ship the old frontend)`,
+    );
+  }
+  console.log(`[native] --check: bundle is current (${Math.round((builtAt - newestSource) / 1000)}s ahead of sources).`);
   process.exit(0);
 }
 

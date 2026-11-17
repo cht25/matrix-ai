@@ -24,7 +24,7 @@
 // =============================================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronRight, Loader2, Mic, RefreshCw, ShieldAlert, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronRight, Loader2, Mic, RefreshCw, XCircle } from "lucide-react";
 import { AuthShell, AuthUnavailable, LoginForm } from "@/components/auth/login-screen";
 import { AppShell } from "@/components/app-shell";
 import { ChatClient } from "@/components/chat-client";
@@ -63,8 +63,6 @@ import {
   permissionStatus,
   requestPermission,
   openPermissionSettings,
-  activeInspection,
-  stopInspection,
   type AssistantState,
   type PermissionStatus,
 } from "@/native/native-bridge";
@@ -126,47 +124,9 @@ export function NativeApp({ startPath = "/chat" }: { startPath?: string }) {
   return (
     <RouterProvider initialPath={`${initial.pathname}${initial.search ? `?${initial.search}` : ""}`}>
       <ToastProvider>
-        <NativeStatusBanner />
         <NativeGate />
       </ToastProvider>
     </RouterProvider>
-  );
-}
-
-/** Inspection indicator — always visible while an admin session is active. */
-function NativeStatusBanner() {
-  const [inspection, setInspection] = useState<{ active: boolean; adminName?: string; reason?: string } | null>(null);
-  useEffect(() => {
-    if (!isNativeShell()) return;
-    let cancelled = false;
-    const poll = () => {
-      void activeInspection().then((state) => {
-        if (!cancelled) setInspection(state);
-      });
-    };
-    poll();
-    const timer = window.setInterval(poll, 15_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, []);
-  if (!inspection?.active) return null;
-  return (
-    <div className="fixed inset-x-0 top-0 z-[100] flex flex-wrap items-center justify-center gap-2 bg-danger px-3 py-2 text-center text-[12.5px] font-medium text-white">
-      <ShieldAlert className="h-4 w-4" aria-hidden="true" />
-      <span>
-        QORVYNA Administrator{inspection.adminName ? ` (${inspection.adminName})` : ""} is inspecting this device
-        {inspection.reason ? ` — ${inspection.reason}` : ""}.
-      </span>
-      <button
-        type="button"
-        className="rounded-md border border-white/50 px-2 py-0.5 text-[11.5px] font-semibold"
-        onClick={() => void stopInspection().then(() => setInspection({ active: false }))}
-      >
-        Stop now
-      </button>
-    </div>
   );
 }
 

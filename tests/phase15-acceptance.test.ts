@@ -64,6 +64,17 @@ describe("Phase 15 — one frontend, no duplicates", () => {
     expect(conf.build.frontendDist).toBe("../public/native");
   });
 
+  it("does not re-implement a shared component inside the native shell", () => {
+    // The shell had its own inspection banner alongside the shared
+    // InspectionIndicator. Two indicators = one of them silently wrong.
+    const shell = readFileSync(path.join(ROOT, "src/native/native-app.tsx"), "utf8");
+    expect(shell).not.toContain("NativeStatusBanner");
+    expect(shell).not.toMatch(/is inspecting this device/);
+    // The single indicator lives in the shared shell that both surfaces mount.
+    const appShell = readFileSync(path.join(ROOT, "src/components/app-shell.tsx"), "utf8");
+    expect(appShell).toContain("InspectionIndicator");
+  });
+
   it("mounts the same website components in the native shell", () => {
     const shell = readFileSync(path.join(ROOT, "src/native/native-app.tsx"), "utf8");
     for (const component of ["AppShell", "ChatClient"]) {
