@@ -362,7 +362,34 @@ local; there is no continuous cloud microphone stream.
 
 ---
 
-## 8. Inspection transparency
+## 8. Deep links (`qorvyna://`)
+
+The desktop and Android builds register the `qorvyna` URL scheme
+(`src-tauri/tauri.conf.json` → `plugins["deep-link"].desktop.schemes`). Links
+arrive through `tauri-plugin-deep-link`, are re-emitted to the web UI as
+`qorvyna://deep-link`, and are routed by `parseDeepLink()` in
+`src/native/native-bridge.ts`.
+
+| Link | Effect |
+|---|---|
+| `qorvyna://link?code=ABCD-EFGH` | opens Devices and pre-fills the cross-account pairing dialog |
+| `qorvyna://pair?token=…` | same, with the long-form token |
+| `qorvyna://voice` / `qorvyna://assistant` | activates the Jarvis bar |
+| `qorvyna://chat/abc123` | navigates to that conversation |
+| `https://qorvyna.thamjj13.top/…` | universal link, navigates in-app |
+
+Anything else resolves to `unknown` and is ignored — including look-alike hosts
+(`qorvyna.thamjj13.top.evil.example`) and userinfo tricks
+(`qorvyna.thamjj13.top@evil.example`). The Rust side logs only the scheme,
+never the query string, because a pairing code can be in it.
+
+Test the parser:
+
+```bash
+npx vitest run tests/deep-links.test.ts
+```
+
+## 9. Inspection transparency
 
 An admin inspection is implemented in `src/lib/server/inspection.ts` and is
 visible by design:
@@ -387,7 +414,7 @@ inspection_requests     inspection_events     admin_audit_log
 
 ---
 
-## 9. Cross-account device pairing
+## 10. Cross-account device pairing
 
 Two devices on **different** accounts pair without either account logging into
 the other. Implemented in `src/lib/server/device-links.ts`.
@@ -409,7 +436,7 @@ npx vitest run tests/device-links.test.ts tests/admin-devices.test.ts
 
 ---
 
-## 10. Version bump checklist
+## 11. Version bump checklist
 
 Update all of these together, or clients will disagree about what is installed:
 
@@ -424,7 +451,7 @@ public/sw.js                  CACHE_VERSION = "qorvyna-cache-v1.2.0-b3"
 Then rebuild the native bundle (`node scripts/native/build-native-frontend.mjs`)
 because the version is compiled into it.
 
-## 11. Release publishing
+## 12. Release publishing
 
 1. Tag and push.
 2. Upload the Windows installer, APK and AAB to the GitHub release, plus
@@ -437,7 +464,7 @@ because the version is compiled into it.
 
 ---
 
-## 12. Verification commands (run these before shipping)
+## 13. Verification commands (run these before shipping)
 
 ```bash
 npm run typecheck                                   # TypeScript
@@ -452,6 +479,9 @@ npx vitest run tests/inspection.test.ts             # inspection consent chain
 npx vitest run tests/notification-forwarding.test.ts
 npx vitest run tests/native-shell.test.ts tests/native-render.test.ts
 npx vitest run tests/native-build-wiring.test.ts
+npx vitest run tests/deep-links.test.ts               # qorvyna:// routing
+npx vitest run tests/device-ui-render.test.ts         # pairing/admin UI renders
+npx vitest run tests/phase15-acceptance.test.ts       # the full checklist
 ```
 
 ### Known sandbox limitations (honest status)
