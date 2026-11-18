@@ -116,7 +116,12 @@ export function AssistantPopup() {
         form.append("duration_ms", String(clip.durationMs));
         form.append("language", "auto");
         form.append("store", "0");
-        const response = await fetch("/api/voice/transcribe", { method: "POST", credentials: "same-origin", body: form });
+        const response = await fetch("/api/voice/transcribe", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: await optionalAuthHeaders(),
+          body: form,
+        });
         const data = (await response.json().catch(() => ({}))) as { transcript?: string; error?: string };
         const transcript = String(data.transcript ?? "").trim();
         if (!response.ok || !transcript) {

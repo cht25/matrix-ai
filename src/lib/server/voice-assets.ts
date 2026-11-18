@@ -26,7 +26,14 @@ export async function sendableVoiceAsset(d: Db, uid: string, assetId: string, tr
   const saved = snapshot?.data();
   if (!snapshot?.exists || !saved || saved.user_id !== uid) return { ok: false, code: "AUDIO_NOT_FOUND" };
   if (saved.conversation_id) return { ok: false, code: "AUDIO_ALREADY_SENT" };
-  if (saved.transcription_status !== "complete" || typeof saved.transcript !== "string" || saved.transcript.trim() !== transcript.trim()) {
+  // An empty transcript is not a transcript: it would attach the audio to a
+  // message with no words, which the user never spoke.
+  if (
+    saved.transcription_status !== "complete" ||
+    typeof saved.transcript !== "string" ||
+    !saved.transcript.trim() ||
+    saved.transcript.trim() !== transcript.trim()
+  ) {
     return { ok: false, code: "AUDIO_TRANSCRIPT_MISMATCH" };
   }
   return {
