@@ -16,6 +16,7 @@ export type ApiFailureKind =
   | "billing"
   | "invalid-request"
   | "vision-unsupported" // the model cannot read images
+  | "voice-audio" // the recording and its transcript no longer match
   | "storage" // QORVYNA backend (Firestore) unavailable — NOT an AI problem
   | "server";
 
@@ -95,6 +96,12 @@ const FAILURE_COPY: Record<ApiFailureKind, { title: string; detail: string; retr
     detail: "The request could not be processed. Check the request and try again.",
     retryable: false,
   },
+  "voice-audio": {
+    title: "Voice message could not be sent",
+    detail:
+      "The recording and its transcript no longer match, so QORVYNA did not send it. Say it again, or type what you said — nothing was discarded.",
+    retryable: true,
+  },
   "vision-unsupported": {
     title: "Images are not supported",
     detail: "QORVYNA's models are text models and cannot read images. Remove the image and describe it, or paste the text it contains.",
@@ -137,6 +144,12 @@ const CODE_TO_KIND: Record<string, ApiFailureKind> = {
   INVALID_TOKEN: "auth",
   MISSING_TOKEN: "auth",
   STORAGE_OWNERSHIP_VIOLATION: "auth",
+  AUDIO_TRANSCRIPT_MISMATCH: "voice-audio",
+  AUDIO_NOT_FOUND: "voice-audio",
+  AUDIO_ALREADY_SENT: "voice-audio",
+  AUDIO_TYPE_UNSUPPORTED: "voice-audio",
+  AUDIO_CONTENT_INVALID: "voice-audio",
+  NO_SPEECH_DETECTED: "voice-audio",
 };
 
 function kindFromStatus(status: number): ApiFailureKind {

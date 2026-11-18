@@ -129,7 +129,7 @@ export const VoiceMessage = memo(function VoiceMessage({
 
       {status === "processing" ? (
         <p className="mt-2 flex items-center gap-1.5 text-[12px] text-ink-3" role="status" aria-live="polite">
-          <Loader2 size={12} className="animate-spin" aria-hidden="true" /> Sending voice message…
+          <Loader2 size={12} className="animate-spin" aria-hidden="true" /> Uploading and transcribing…
         </p>
       ) : status === "failed" ? (
         <div className="mt-2 space-y-2" role="alert">

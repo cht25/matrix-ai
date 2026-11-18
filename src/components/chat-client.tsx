@@ -52,6 +52,7 @@ import { ChatComposer } from "@/components/chat-composer";
 import { UserMessage } from "@/components/user-message";
 import type { ChatAction } from "@/components/response-actions";
 import { MAX_AUDIO_BYTES, MIN_RECORDING_MS, useVoiceRecorder, type VoiceCapture, type VoiceClip } from "@/lib/client/use-voice-recorder";
+import { TRANSCRIBE_TIMEOUT_MS, voiceDispatchBlocker } from "@/lib/client/voice-dispatch";
 import { useKeyboardInset } from "@/lib/client/use-keyboard-inset";
 import { copyText, shareText } from "@/lib/client/share";
 import { clearDraft, enqueueOutboxMessage, listOutboxMessages, loadDraft, removeOutboxMessage, saveCachedConversation, saveDraft } from "@/lib/client/offline-store";
@@ -444,6 +445,14 @@ export function ChatClient({
         : "The microphone was disconnected before you finished.");
     },
   });
+  /**
+   * The recorder state as of the LATEST render. `send()` is called from the
+   * closure that stopped the recording, where `recorder.state` is still
+   * "recording"; reading the ref keeps the guard honest without relying on a
+   * re-render having happened yet.
+   */
+  const recorderStateRef = useRef(recorder.state);
+  recorderStateRef.current = recorder.state;
   /** Anything in flight: the composer's primary button becomes Stop. */
   const busy = streaming || voiceSending;
   useEffect(() => {
@@ -1099,7 +1108,15 @@ export function ChatClient({
    * unless one was chosen). `store` keeps the original audio with the account
    * so the voice message can be played back later.
    */
-  async function requestTranscript(clip: VoiceClip, options: { store: boolean; signal: AbortSignal; retryAssetId?: string | null }): Promise<TranscriptResult> {
+  async function requestTranscript(clip: VoiceClip, options: { store: boolean; signal: AbortSignal; retryAssetId?: string | null; timeoutMs?: number }): Promise<TranscriptResult> {
+    // A stuck upload must not leave the bubble "Sending…" forever: the request
+    // is abandoned with an explanation the user can act on.
+    const controller = new AbortController();
+    let timedOut = false;
+    const forwardAbort = () => controller.abort();
+    if (options.signal.aborted) controller.abort();
+    else options.signal.addEventListener("abort", forwardAbort);
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, options.timeoutMs ?? TRANSCRIBE_TIMEOUT_MS);
     try {
       const form = new FormData();
       if (options.retryAssetId) form.append("audio_asset_id", options.retryAssetId);
@@ -1110,8 +1127,16 @@ export function ChatClient({
       }
       form.append("language", voiceLangRef.current);
       form.append("store", options.store ? "1" : "0");
-      const response = await fetch("/api/voice/transcribe", { method: "POST", credentials: "same-origin", body: form, signal: options.signal });
-      const data = await response.json().catch(() => ({})) as { transcript?: string; audio_asset_id?: string | null; detected_language?: string | null; error?: string };
+      const response = await fetch("/api/voice/transcribe", {
+        method: "POST",
+        credentials: "same-origin",
+        // Same bearer fallback as /api/ai: an embedded WebView (or a browser
+        // that drops the session cookie) must still be able to transcribe.
+        headers: await optionalAuthHeaders(),
+        body: form,
+        signal: controller.signal,
+      });
+      const data = await response.json().catch(() => ({})) as { transcript?: string; audio_asset_id?: string | null; detected_language?: string | null; error?: string; detail?: string };
       const assetId = typeof data.audio_asset_id === "string" && data.audio_asset_id ? data.audio_asset_id : null;
       const transcript = data.transcript?.trim() ?? "";
       if (!response.ok || !transcript) {
@@ -1121,9 +1146,14 @@ export function ChatClient({
     } catch (error) {
       const aborted = error instanceof Error && error.name === "AbortError";
       return {
-        ok: false, assetId: null, aborted,
-        message: aborted ? "Sending was cancelled." : navigator.onLine === false ? "You are offline. Reconnect and try again." : "The recording could not be uploaded. Check your connection and try again.",
+        ok: false, assetId: null, aborted: aborted && !timedOut,
+        message: timedOut
+          ? "The speech service took too long to answer. Your recording is kept — try again."
+          : aborted ? "Sending was cancelled." : navigator.onLine === false ? "You are offline. Reconnect and try again." : "The recording could not be uploaded. Check your connection and try again.",
       };
+    } finally {
+      clearTimeout(timer);
+      options.signal.removeEventListener("abort", forwardAbort);
     }
   }
 
@@ -1202,7 +1232,21 @@ export function ChatClient({
   /** Upload + transcribe a recorded voice message, then send it. Also "Try again". */
   async function sendVoiceMessage(turnId: string) {
     const draft = voiceDraftsRef.current.get(turnId);
-    if (!draft || voiceAbortRef.current || requestInFlightRef.current) return;
+    // A transcription for this same recording is already running: one request.
+    if (!draft || voiceAbortRef.current) return;
+    // The previous answer is still streaming. Say so on the bubble instead of
+    // returning silently — a voice message must never look sent-but-unanswered.
+    const blocker = voiceDispatchBlocker({
+      recorderState: recorderStateRef.current,
+      voiceTurn: true,
+      streaming,
+      uploadingImage,
+      requestInFlight: requestInFlightRef.current,
+    });
+    if (blocker) {
+      patchVoice(turnId, null, { voice_status: "failed", voice_error: blocker.message });
+      return;
+    }
     // Already dispatched for this recording: nothing is sent twice.
     if (!sentVoiceTurnsRef.current.claim(turnId)) return;
     const controller = new AbortController();
@@ -1218,21 +1262,33 @@ export function ChatClient({
     let transcript = "";
     let assetId: string | null = null;
     let language: string | null = null;
+    let audioMismatch = false;
     if (result.ok) {
       transcript = result.transcript; assetId = result.assetId; language = result.language;
     } else if (!result.aborted && draft.clip.heard) {
-      // The speech service failed, but the browser heard the words itself.
+      // The speech service failed, but the browser heard the words itself. The
+      // stored audio belongs to a transcript the server never produced, so the
+      // turn is sent WITHOUT the asset: /api/ai matches audio against its own
+      // transcript and would reject the pair (AUDIO_TRANSCRIPT_MISMATCH).
       transcript = draft.clip.heard;
+      assetId = null;
+      audioMismatch = Boolean(result.assetId);
+      if (result.assetId) draft.assetId = result.assetId;
     } else {
       if (result.assetId) draft.assetId = result.assetId;
+      // Nothing went out, so the same recording may be tried again.
+      sentVoiceTurnsRef.current.release(turnId);
       patchVoice(turnId, null, { voice_status: "failed", voice_error: result.message });
       return;
     }
-    draft.assetId = assetId;
+    if (!audioMismatch) draft.assetId = assetId;
     patchVoice(turnId, transcript, {
       voice_status: undefined, voice_error: undefined, audio_language: language,
       ...(assetId ? { audio_asset_id: assetId } : {}),
     });
+    if (audioMismatch) {
+      setNotice("QORVYNA used the words this browser heard, because the speech service did not answer. The audio stays in this session only.");
+    }
     // The transcript is the request; the recording stays attached to it.
     // The turn is marked before the send so a second trigger is ignored, and
     // released again if the send itself failed (the bubble then offers Retry).
@@ -1240,13 +1296,21 @@ export function ChatClient({
       await send(undefined, transcript, { voice: { turnId, assetId, attachments: draft.attachments } });
     } catch (error) {
       sentVoiceTurnsRef.current.release(turnId);
+      patchVoice(turnId, transcript, { voice_status: "failed", voice_error: "The message could not be sent. Your recording is kept." });
       throw error;
     }
     const dispatched = lastTurnRef.current?.turnId === turnId;
     const failed = messagesRef.current.some((item) => item.role === "user" && item.metadata?.turn_id === turnId && item.metadata?.send_failed);
     if (!dispatched || failed) {
-      // The message never reached the thread: allow a retry of the same turn.
+      // The message never reached the thread: allow a retry of the same turn
+      // and say why, so the bubble never sits there with no answer.
       sentVoiceTurnsRef.current.release(turnId);
+      if (!failed) {
+        patchVoice(turnId, transcript, {
+          voice_status: "failed",
+          voice_error: "QORVYNA did not accept this message. Try again.",
+        });
+      }
     }
   }
 
@@ -1883,7 +1947,22 @@ export function ChatClient({
       (messageOverride ?? input).trim() ||
       (attachedImage ? "Analyse this attached image clearly and thoroughly." : pending.length ? "Review these attached files and help me with them." : "");
     // One request at a time: a fast Enter + click can never send twice.
-    if (!message || streaming || uploadingImage || requestInFlightRef.current || recorder.state !== "idle") return;
+    // A voice turn is exempt from the recorder check — its audio was already
+    // stopped before it reached here (see voice-dispatch.ts).
+    if (!message) return;
+    const blocker = voiceDispatchBlocker({
+      recorderState: recorderStateRef.current,
+      voiceTurn: Boolean(turn.voice),
+      streaming,
+      uploadingImage,
+      requestInFlight: requestInFlightRef.current,
+    });
+    if (blocker) {
+      // A voice turn reports this on its bubble (sendVoiceMessage); typed input
+      // gets the reason instead of nothing happening at all.
+      if (!turn.voice) setNotice(blocker.message);
+      return;
+    }
     // Composer capabilities are opt-in hints, never automatic invocations.
     const rawMessage = message;
     if (fromComposer) {
