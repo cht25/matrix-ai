@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "extensions": {
+    "agent-context": {
+      "version": "1.0.3",
+      "source": "local",
+      "manifest_hash": "sha256:790fe14ee139490b46d25ebdc37964b9e620e88c65d92ba21e6bdf5274ea7a81",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "copilot": [
+          "speckit.agent-context.update"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-11-19T02:24:12.148095+00:00"
+    }
+  }
+}
