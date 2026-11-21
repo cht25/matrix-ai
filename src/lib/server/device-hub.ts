@@ -30,6 +30,7 @@ import { Timestamp } from "firebase-admin/firestore";
 import { nowTs, type Db } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
 import { RpcError } from "@/lib/server/rpc";
+import { safeIso, safeMillis } from "@/lib/server/sort";
 import { deviceCredentialHash, DEVICE_TOKEN_PREFIX, DEVICE_CREDENTIAL_TTL_MS } from "@/lib/firebase/device-session";
 import { createPairingChallenge, verifyQrPayload, PAIRING_TTL_MS } from "@/lib/server/pairing";
 import {
@@ -58,12 +59,8 @@ const MANUAL_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I
 const MAX_ATTEMPTS = 12;
 const ATTEMPT_WINDOW_MS = 1000 * 60 * 5;
 
-const millis = (value: unknown): number =>
-  Number((value as { toMillis?: () => number } | null)?.toMillis?.() ?? (value instanceof Date ? value.getTime() : typeof value === "number" ? value : 0));
-const iso = (value: unknown): string => {
-  const ms = millis(value);
-  return ms ? new Date(ms).toISOString() : "";
-};
+const millis = (value: unknown): number => safeMillis(value);
+const iso = (value: unknown): string => safeIso(value);
 const text = (value: unknown, max: number): string => String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max);
 const sha256 = (value: string): string => crypto.createHash("sha256").update(value).digest("hex");
 
@@ -448,7 +445,7 @@ export async function listHubDevices(d: Db, user: SessionUser, opts: { current_d
   const current = user.deviceId ?? opts.current_device_id ?? null;
   const snap = await d.collection(DEVICES).where("user_id", "==", user.uid).get();
   return snap.docs
-    .map((doc) => ({ id: doc.id, data: doc.data() as Record<string, unknown> }))
+    .map((doc) => ({ id: doc.id, data: (doc.data() ?? {}) as Record<string, unknown> }))
     .filter(({ data }) => !data.revoked_at)
     // An approved registration that the Child has not collected yet is not a device.
     .filter(({ data }) => data.role === "parent" || typeof data.access_token_hash === "string")

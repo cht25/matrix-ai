@@ -4,3 +4,15 @@ export class RpcError extends Error {
     this.name = "RpcError";
   }
 }
+
+export function isRpcError(err: unknown): err is RpcError {
+  if (err instanceof RpcError) return true;
+  if (!err || typeof err !== "object") return false;
+  const candidate = err as { name?: unknown; code?: unknown; status?: unknown };
+  return (
+    candidate.name === "RpcError" &&
+    typeof candidate.code === "string" &&
+    typeof candidate.status === "number"
+  );
+}
+

@@ -19,14 +19,82 @@
 /** Structural type so this module works with any Firestore snapshot shape. */
 export type ReadableDoc = { id: string; data(): Record<string, any> };
 
+const MAX_DATE_MS = 8_640_000_000_000_000;
+
+/**
+ * Bounded, exception-safe epoch-millisecond converter for Firestore Timestamps,
+ * serialized {_seconds, _nanoseconds} objects, Dates, ISO strings, and numbers.
+ * Returns 0 for absent, NaN, or out-of-range values so Date.toISOString() never throws.
+ */
+export function safeMillis(value: unknown): number {
+  if (value == null) return 0;
+  if (typeof value === "number") {
+    return Number.isFinite(value) && Math.abs(value) <= MAX_DATE_MS ? value : 0;
+  }
+  if (value instanceof Date) {
+    const t = value.getTime();
+    return Number.isFinite(t) && Math.abs(t) <= MAX_DATE_MS ? t : 0;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return 0;
+    const parsed = Date.parse(trimmed);
+    return Number.isFinite(parsed) && Math.abs(parsed) <= MAX_DATE_MS ? parsed : 0;
+  }
+  if (typeof value === "object") {
+    const ts = value as {
+      toMillis?: () => number;
+      toDate?: () => Date;
+      _seconds?: number;
+      _nanoseconds?: number;
+      seconds?: number;
+      nanoseconds?: number;
+    };
+    if (typeof ts.toMillis === "function") {
+      try {
+        const ms = Number(ts.toMillis());
+        return Number.isFinite(ms) && Math.abs(ms) <= MAX_DATE_MS ? ms : 0;
+      } catch {
+        return 0;
+      }
+    }
+    if (typeof ts.toDate === "function") {
+      try {
+        const t = ts.toDate().getTime();
+        return Number.isFinite(t) && Math.abs(t) <= MAX_DATE_MS ? t : 0;
+      } catch {
+        return 0;
+      }
+    }
+    const secs = typeof ts._seconds === "number" ? ts._seconds : typeof ts.seconds === "number" ? ts.seconds : null;
+    if (secs !== null && Number.isFinite(secs)) {
+      const nanos =
+        typeof ts._nanoseconds === "number"
+          ? ts._nanoseconds
+          : typeof ts.nanoseconds === "number"
+            ? ts.nanoseconds
+            : 0;
+      const ms = secs * 1000 + Math.floor((Number.isFinite(nanos) ? nanos : 0) / 1_000_000);
+      return Number.isFinite(ms) && Math.abs(ms) <= MAX_DATE_MS ? ms : 0;
+    }
+  }
+  return 0;
+}
+
+/** Safe ISO-8601 string serializer for Firestore timestamp-like values ("" when absent/invalid). */
+export function safeIso(value: unknown): string {
+  const ms = safeMillis(value);
+  if (!ms) return "";
+  try {
+    return new Date(ms).toISOString();
+  } catch {
+    return "";
+  }
+}
+
 /** Milliseconds for Firestore Timestamps / Dates / ISO strings (0 when absent). */
 export function millis(value: unknown): number {
-  const ts = value as { toMillis?: () => number; toDate?: () => Date } | null | undefined;
-  if (ts && typeof ts.toMillis === "function") return ts.toMillis();
-  if (ts && typeof ts.toDate === "function") return ts.toDate().getTime();
-  if (value instanceof Date) return value.getTime();
-  const parsed = typeof value === "string" ? Date.parse(value) : NaN;
-  return Number.isNaN(parsed) ? 0 : parsed;
+  return safeMillis(value);
 }
 
 function isTimeLike(value: unknown): boolean {

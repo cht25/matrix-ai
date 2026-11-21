@@ -54,6 +54,7 @@ export function MirrorPanel() {
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const lastSignalMsRef = useRef<number>(0);
   const seenSignalIdsRef = useRef<Set<string>>(new Set());
+  const loadErrorActiveRef = useRef<boolean>(false);
 
   const cleanupRtc = useCallback(() => {
     try {
@@ -79,13 +80,24 @@ export function MirrorPanel() {
     try {
       const [devList, sessRes] = await Promise.all([
         rpc<HubDevice[]>("device_list"),
-        rpc<{ sessions: MirrorSession[] }>("mirror_sessions_list"),
+        rpc<{ sessions: MirrorSession[] } | MirrorSession[]>("mirror_sessions_list"),
       ]);
-      setDevices(devList.filter((d) => d.status !== "revoked"));
-      setSessions(sessRes.sessions ?? []);
-      setSourceId((prev) => prev || devList[0]?.id || "");
+      const activeDevs = (Array.isArray(devList) ? devList : []).filter((d) => d.status !== "revoked");
+      const nextSessions = Array.isArray(sessRes) ? sessRes : (sessRes?.sessions ?? []);
+      setDevices(activeDevs);
+      setSessions(nextSessions);
+      setSourceId((prev) => (prev && activeDevs.some((d) => d.id === prev) ? prev : activeDevs[0]?.id || ""));
+      if (loadErrorActiveRef.current) {
+        loadErrorActiveRef.current = false;
+        setError("");
+      }
     } catch (err) {
-      setError(err instanceof RpcCallError ? err.code : "Could not load devices and mirror sessions.");
+      loadErrorActiveRef.current = true;
+      if (err instanceof RpcCallError) {
+        setError(err.requestId ? `${err.code} (ref: ${err.requestId})` : err.code);
+      } else {
+        setError("Could not load devices and mirror sessions.");
+      }
     }
   }, []);
 

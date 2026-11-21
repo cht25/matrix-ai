@@ -50,6 +50,13 @@ import { ascDoc, descDoc } from "@/lib/server/sort";
 import { ADMIN_ROLES, NO_ROLE } from "@/lib/roles";
 import { ALL_ADMIN_PERMISSION_CODES } from "@/lib/admin-rbac";
 import { mutationCsrfResponse } from "@/lib/server/request-security";
+import {
+  classifyRpcException,
+  isTransientFirestoreError,
+  logRpcFailure,
+  READ_ONLY_RPC_ACTIONS,
+  resolveRpcRequestId,
+} from "@/lib/server/rpc-diagnostics";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -59,19 +66,27 @@ export const dynamic = "force-dynamic";
 // `error` is also mirrored as a top-level string for backwards compatibility
 // with older clients. The human-readable message is produced in the browser by
 // src/lib/admin-errors.ts — the server only emits stable machine codes.
-function ok(data: unknown) {
-  return NextResponse.json({ success: true, data });
+function ok(data: unknown, requestId: string) {
+  return NextResponse.json(
+    { success: true, data, request_id: requestId },
+    { headers: { "X-QORVYNA-Request-ID": requestId } },
+  );
 }
 /**
  * Error envelope. `detail` is only attached for 4xx responses: those carry a
  * deliberate, user-facing explanation written by the handler (e.g. "choose at
  * least one scope"). 5xx stays a bare stable code so no internal text leaks.
  */
-function fail(code: string, status: number, detail?: string) {
+function fail(code: string, status: number, requestId: string, detail?: string) {
   const message = status < 500 && detail ? detail : code;
   return NextResponse.json(
-    { success: false, error: { code, message, detail: status < 500 ? detail : undefined }, data: null },
-    { status },
+    {
+      success: false,
+      error: { code, message, detail: status < 500 ? detail : undefined, request_id: requestId },
+      data: null,
+      request_id: requestId,
+    },
+    { status, headers: { "X-QORVYNA-Request-ID": requestId } },
   );
 }
 
@@ -104,37 +119,73 @@ function isAllowedAvatarUrl(url: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
+  const startedAt = Date.now();
+  let requestId = resolveRpcRequestId(req);
+
   const csrf = mutationCsrfResponse(req);
-  if (csrf) return csrf;
+  if (csrf) {
+    csrf.headers.set("X-QORVYNA-Request-ID", requestId);
+    return csrf;
+  }
+
   let body: Record<string, unknown>;
   try {
-    body = (await req.json()) as Record<string, unknown>;
-  } catch {
-    return fail("BAD_REQUEST", 400);
-  }
-  const action = str(body.action);
-
-  const user = await getApiSessionUser(req);
-  if (!user) return fail("UNAUTHENTICATED", 401);
-
-  const d = adminDb();
-  try {
-    const scope = rpcDeviceScope(action);
-    if (user.deviceId && (!scope || !hasDeviceScope(user, scope))) return fail("DEVICE_SCOPE_DENIED", 403);
-    const handler = ACTIONS[action];
-    if (!handler) return fail("UNKNOWN_ACTION", 400);
-    const result = await handler(d, user, body);
-    return ok(result ?? true);
-  } catch (err) {
-    if (err instanceof RpcError) return fail(err.code, err.status, err.detail);
-    if (err instanceof z.ZodError) {
-      console.warn(`[QORVYNA] /api/rpc action "${action}" validation failed`, err.issues[0]?.message);
-      return fail("BAD_REQUEST", 400);
+    const parsed: unknown = await req.json();
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return fail("BAD_REQUEST", 400, requestId);
     }
+    body = parsed as Record<string, unknown>;
+  } catch {
+    return fail("BAD_REQUEST", 400, requestId);
+  }
+
+  requestId = resolveRpcRequestId(req, body);
+  const action = str(body.action);
+  let user: SessionUser | null = null;
+
+  try {
+    user = await getApiSessionUser(req);
+    if (!user) return fail("UNAUTHENTICATED", 401, requestId);
+
+    const scope = rpcDeviceScope(action);
+    if (user.deviceId && (!scope || !hasDeviceScope(user, scope))) {
+      return fail("DEVICE_SCOPE_DENIED", 403, requestId);
+    }
+
+    const handler = ACTIONS[action];
+    if (!handler) return fail("UNKNOWN_ACTION", 400, requestId);
+
+    const d = adminDb();
+    let result: unknown;
+    try {
+      result = await handler(d, user, body);
+    } catch (firstErr) {
+      if (READ_ONLY_RPC_ACTIONS.has(action) && isTransientFirestoreError(firstErr)) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        result = await handler(d, user, body);
+      } else {
+        throw firstErr;
+      }
+    }
+    return ok(result ?? true, requestId);
+  } catch (err) {
+    const classified = classifyRpcException(err);
     // Never leak internal error text (stack, SQL, file paths, provider
-    // details) to the browser — log server-side, return a stable code.
-    console.error(`[QORVYNA] /api/rpc action "${action}" failed`, err);
-    return fail("INTERNAL", 500);
+    // details) to the browser — log structured, redacted context server-side
+    // and return a stable machine code with request_id correlation.
+    logRpcFailure({
+      requestId,
+      action,
+      status: classified.status,
+      code: classified.code,
+      category: classified.category,
+      upstreamCode: classified.upstreamCode,
+      authenticated: Boolean(user),
+      viaDeviceToken: Boolean(user?.deviceId),
+      durationMs: Math.max(0, Date.now() - startedAt),
+      err,
+    });
+    return fail(classified.code, classified.status, requestId, classified.detail);
   }
 }
 
@@ -462,7 +513,7 @@ const ACTIONS: Record<string, Handler> = {
       session_id: z.string().min(1).max(128).parse(b.session_id),
       reason: b.reason ? z.string().max(80).parse(b.reason) : undefined,
     }),
-  mirror_sessions_list: (d, u) => mirrorWebrtc.listMirrorSessions(d, u),
+  mirror_sessions_list: async (d, u) => ({ sessions: await mirrorWebrtc.listMirrorSessions(d, u) }),
 
   // --- Notification Ecosystem Sync & Preferences -----------------------------
   notifications_sync_list: (d, u, b) =>
@@ -954,6 +1005,7 @@ const ACTIONS: Record<string, Handler> = {
     const data = snap.data() ?? {};
     // Deliberately a fixed, named projection: never return the whole profile
     // document, which may hold administrative or guardian fields.
+    const onboardingComplete = await rpc.profileOnboardingComplete(d, u.uid);
     return {
       full_name: data.full_name ?? "",
       avatar_url: data.avatar_url ?? "",
@@ -962,7 +1014,7 @@ const ACTIONS: Record<string, Handler> = {
       timezone: data.timezone ?? "UTC",
       default_model: data.default_model ?? null,
       auto_model_routing: data.auto_model_routing !== false,
-      onboarding_complete: data.onboarding_complete === true,
+      onboarding_complete: onboardingComplete,
       email: u.email ?? "",
     };
   },

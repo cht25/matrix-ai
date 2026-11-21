@@ -15,7 +15,12 @@ export class RpcCallError extends Error {
    * deployment accepts). It is appended to the message so callers that render
    * `error.message` see it, while `code` stays machine-comparable.
    */
-  constructor(readonly code: string, readonly status: number, readonly detail?: string) {
+  constructor(
+    readonly code: string,
+    readonly status: number,
+    readonly detail?: string,
+    readonly requestId?: string,
+  ) {
     super(detail && detail !== code ? `${code}: ${detail}` : code);
     this.name = "RpcCallError";
   }
@@ -73,14 +78,24 @@ export async function rpc<T = unknown>(action: string, args: Record<string, unkn
   const data = (await res.json().catch(() => ({}))) as {
     success?: boolean;
     data?: T;
-    error?: string | { code?: string; message?: string };
+    request_id?: string;
+    error?: string | { code?: string; message?: string; detail?: string; request_id?: string };
   };
+  const headerRequestId = typeof res.headers?.get === "function" ? res.headers.get("x-qorvyna-request-id") ?? undefined : undefined;
   if (!res.ok || data.success === false) {
     const code =
       typeof data.error === "string"
         ? data.error
         : data.error?.code ?? `HTTP_${res.status}`;
-    throw new RpcCallError(code, res.status);
+    const detail =
+      typeof data.error === "object" && data.error !== null
+        ? data.error.detail ?? (data.error.message !== code ? data.error.message : undefined)
+        : undefined;
+    const requestId =
+      data.request_id ??
+      (typeof data.error === "object" && data.error !== null ? data.error.request_id : undefined) ??
+      headerRequestId;
+    throw new RpcCallError(code, res.status, detail, requestId);
   }
   return data.data as T;
 }

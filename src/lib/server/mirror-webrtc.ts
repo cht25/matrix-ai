@@ -14,6 +14,7 @@ import { Timestamp } from "firebase-admin/firestore";
 import { nowTs, type Db } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
 import { RpcError } from "@/lib/server/errors";
+import { safeIso, safeMillis } from "@/lib/server/sort";
 
 const SESSIONS = "mirror_sessions";
 const DEVICES = "devices";
@@ -38,19 +39,8 @@ export type MirrorSessionView = {
   ended_reason: string | null;
 };
 
-const millis = (v: unknown): number => {
-  if (typeof v === "number") return v;
-  if (v instanceof Date) return v.getTime();
-  const ts = v as { toMillis?: () => number; _seconds?: number; seconds?: number } | null | undefined;
-  if (typeof ts?.toMillis === "function") return Number(ts.toMillis());
-  if (typeof ts?._seconds === "number") return ts._seconds * 1000;
-  if (typeof ts?.seconds === "number") return ts.seconds * 1000;
-  return 0;
-};
-const iso = (v: unknown): string => {
-  const m = millis(v);
-  return m ? new Date(m).toISOString() : "";
-};
+const millis = (v: unknown): number => safeMillis(v);
+const iso = (v: unknown): string => safeIso(v);
 const clean = (v: unknown, max: number) => String(v ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max);
 
 async function audit(d: Db, uid: string, action: string, targetId: string, metadata: Record<string, unknown> = {}) {
@@ -254,13 +244,16 @@ export async function listMirrorSignals(
   const signalsSnap = await ref.collection("signals").get();
   const after = Number(input.after_ms ?? 0);
   const signals = signalsSnap.docs
-    .map((doc) => ({
-      id: doc.id,
-      from_role: String(doc.data().from_role ?? ""),
-      kind: String(doc.data().kind ?? ""),
-      payload: (doc.data().payload ?? {}) as Record<string, unknown>,
-      created_at_ms: Number(doc.data().created_at_ms ?? 0),
-    }))
+    .map((doc) => {
+      const sigData = (doc.data() ?? {}) as Record<string, unknown>;
+      return {
+        id: doc.id,
+        from_role: String(sigData.from_role ?? ""),
+        kind: String(sigData.kind ?? ""),
+        payload: (sigData.payload && typeof sigData.payload === "object" ? sigData.payload : {}) as Record<string, unknown>,
+        created_at_ms: Number(sigData.created_at_ms ?? 0),
+      };
+    })
     .filter((s) => s.created_at_ms > after)
     .sort((a, b) => a.created_at_ms - b.created_at_ms)
     .slice(-60);
@@ -297,7 +290,7 @@ export async function listMirrorSessions(d: Db, user: SessionUser): Promise<Mirr
   const snap = await d.collection(SESSIONS).where("owner_uid", "==", user.uid).get();
   const nowMs = Date.now();
   return snap.docs
-    .map((doc) => toView(doc.id, doc.data(), nowMs))
+    .map((doc) => toView(doc.id, (doc.data() ?? {}) as Record<string, unknown>, nowMs))
     .sort((a, b) => b.started_at.localeCompare(a.started_at))
     .slice(0, 25);
 }
