@@ -54,12 +54,21 @@ export async function verifyDeviceCredential(d: Db, token: string, nowMs = Date.
 
 /** Only explicitly device-aware APIs opt in; account/admin/file APIs do not. */
 export async function getApiSessionUser(request?: Request): Promise<SessionUser | null> {
-  const authorization = request ? request.headers.get("authorization") ?? "" : (await headers()).get("authorization") ?? "";
-  const token = /^Bearer\s+(.+)$/i.exec(authorization)?.[1];
+  let authorization = "";
+  if (request) {
+    authorization = request.headers.get("authorization") ?? "";
+  } else {
+    try {
+      authorization = (await headers()).get("authorization") ?? "";
+    } catch {
+      authorization = "";
+    }
+  }
+  const token = /^Bearer\s+(.+)$/i.exec(authorization)?.[1]?.trim();
   if (token?.startsWith(DEVICE_TOKEN_PREFIX)) {
     try { return await verifyDeviceCredential(adminDb(), token); } catch { return null; }
   }
-  return getSessionUser();
+  return getSessionUser(request);
 }
 export function hasDeviceScope(user: SessionUser, scope: string): boolean {
   return !user.deviceId || Boolean(user.scopes?.includes(scope));

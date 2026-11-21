@@ -57,13 +57,40 @@ export async function verifyIdToken(idToken: string): Promise<SessionUser> {
   return { uid: decoded.uid, email: decoded.email ?? null, emailVerified: decoded.email_verified ?? false };
 }
 
-/** Current signed-in user for server components, or null. */
-export async function getSessionUser(): Promise<SessionUser | null> {
+function extractCookieFromHeader(cookieHeader: string | null | undefined, name: string): string | null {
+  if (!cookieHeader) return null;
+  for (const part of cookieHeader.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq <= 0) continue;
+    if (part.slice(0, eq).trim() === name) {
+      const raw = part.slice(eq + 1).trim();
+      if (!raw) return null;
+      try {
+        return decodeURIComponent(raw);
+      } catch {
+        return raw;
+      }
+    }
+  }
+  return null;
+}
+
+/** Current signed-in user for server components and route handlers, or null. */
+export async function getSessionUser(request?: Request): Promise<SessionUser | null> {
   if (!adminConfigured()) return null;
   // Native apps (Android/Windows/Wear) authenticate with a Firebase ID token
   // in the Authorization header; browsers use the httpOnly session cookie.
-  const hdrs = await headers();
-  const authorization = hdrs.get("authorization");
+  let authorization: string | null = null;
+  if (request) {
+    authorization = request.headers.get("authorization");
+  } else {
+    try {
+      const hdrs = await headers();
+      authorization = hdrs.get("authorization");
+    } catch {
+      authorization = null;
+    }
+  }
   if (authorization !== null) {
     const bearer = extractBearerToken(authorization);
     if (!bearer) return null;
@@ -74,8 +101,24 @@ export async function getSessionUser(): Promise<SessionUser | null> {
       return null;
     }
   }
-  const store = await cookies();
-  const value = store.get(SESSION_COOKIE)?.value;
+
+  let value: string | undefined;
+  if (request) {
+    const nextReq = request as Partial<NextRequest>;
+    if (nextReq.cookies && typeof nextReq.cookies.get === "function") {
+      value = nextReq.cookies.get(SESSION_COOKIE)?.value;
+    } else {
+      value = extractCookieFromHeader(request.headers.get("cookie"), SESSION_COOKIE) ?? undefined;
+    }
+  }
+  if (!value) {
+    try {
+      const store = await cookies();
+      value = store.get(SESSION_COOKIE)?.value;
+    } catch {
+      return null;
+    }
+  }
   if (!value) return null;
   try {
     return await verifySession(value);

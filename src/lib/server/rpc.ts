@@ -10,7 +10,7 @@ import "server-only";
 import crypto from "node:crypto";
 import { Db, nowTs, toTs } from "@/lib/firebase/admin";
 import type { SessionUser } from "@/lib/firebase/session";
-import { descDoc } from "@/lib/server/sort";
+import { descDoc, safeIso } from "@/lib/server/sort";
 import { identityHashes, maskLast4, validateCertNumber } from "@/lib/server/identity-number";
 import { env, isIdentityPepperConfigured } from "@/lib/env";
 import { isThemeMode, isThemeTemplateId } from "@/lib/theme-templates";
@@ -314,15 +314,19 @@ export async function listNotifications(d: Db, user: SessionUser) {
   return snap.docs
     .sort(descDoc("created_at"))
     .slice(0, 30)
-    .map((doc) => ({
-      id: doc.id,
-      type: doc.data().type ?? "info",
-      title: doc.data().title ?? "",
-      body: doc.data().body ?? "",
-      link: doc.data().link ?? "",
-      read_at: doc.data().read_at ? doc.data().read_at.toDate?.().toISOString?.() ?? null : null,
-      created_at: doc.data().created_at?.toDate?.().toISOString?.() ?? "",
-    }));
+    .map((doc) => {
+      const data = (doc.data() ?? {}) as Record<string, unknown>;
+      const readAtIso = data.read_at != null ? safeIso(data.read_at) : "";
+      return {
+        id: doc.id,
+        type: typeof data.type === "string" && data.type ? data.type : "info",
+        title: typeof data.title === "string" ? data.title : "",
+        body: typeof data.body === "string" ? data.body : "",
+        link: typeof data.link === "string" ? data.link : "",
+        read_at: readAtIso || null,
+        created_at: safeIso(data.created_at),
+      };
+    });
 }
 
 export async function markNotificationsRead(d: Db, user: SessionUser, p: { id?: string; all?: boolean }) {
